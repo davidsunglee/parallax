@@ -4,10 +4,11 @@ import datetime as dt
 import decimal
 import uuid
 from array import array
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Final, Literal, NamedTuple, Protocol, cast
 
+from parallax.core import concurrency
 from parallax.core.base import UnknownFamilyTag
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._construction_input import ABSENT
@@ -16,6 +17,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     MemberIdentity,
+    Metamodel,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
@@ -626,22 +628,24 @@ class PageSchedule(NamedTuple):
 _RAW_ROWS: Final = PageSchedule(None, False)
 
 
-def page_schedule(
-    page: Page, carries_write_evidence: Callable[[EntityIdentity], bool], *, atomic: bool
-) -> PageSchedule:
-    """``page``'s schedule for one publication of its roots.
+def page_schedule(page: Page, model: Metamodel, *, atomic: bool) -> PageSchedule:
+    """``page``'s schedule for one publication of its roots under ``model``.
 
     A non-atomic publication drops its Page whole, so it neither defers states
     nor releases at last use. An atomic one defers the states recording left
-    unjudged exactly when every root's family carries write evidence, which
-    holds vacuously for no roots, and releases at last use when it defers or the
-    Page holds a logical row of several fetched rows. Scheduling judges no state.
+    unjudged exactly when every root's family settles a write against its
+    observation, which holds vacuously for no roots, and releases at last use
+    when it defers or the Page holds a logical row of several fetched rows.
+    Scheduling judges no state.
     """
     if not atomic:
         return _RAW_ROWS
     rows = page_rows(page)
     layouts = rows.layouts
-    defers_states = all(carries_write_evidence(layouts[root].concrete) for root in rows.roots)
+    versioning = concurrency.view(model)
+    defers_states = all(
+        versioning.settles_against(layouts[root].concrete) == "observation" for root in rows.roots
+    )
     if defers_states or any(
         not isinstance(fetched, int) for fetched in rows.fetched_rows_by_logical_row
     ):

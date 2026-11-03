@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Literal
 
 from parallax.core import inheritance, read_planning
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import InheritancePositionView
@@ -31,7 +32,6 @@ from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
-from parallax.core.unit_work import Concurrency
 
 
 def compile_read(
@@ -45,7 +45,7 @@ def compile_read(
     limit: int | None = None,
     temporal: Mapping[TemporalDimension, TemporalSelection] | None = None,
     result_form: Literal["row", "instance"] = "row",
-    preference: Concurrency | None = None,
+    preference: ConcurrencyPreference | None = None,
 ) -> CompiledRead:
     """Compile ``predicate`` as the predicate of ``target``'s Entity Query,
     planned as production plans every read."""

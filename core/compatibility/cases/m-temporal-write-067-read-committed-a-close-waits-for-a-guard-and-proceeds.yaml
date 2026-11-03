@@ -3,7 +3,7 @@
 # and resumes on A's commit. At Read Committed B's statement rechecks the new row
 # version, whose in_z still matches, and proceeds.
 model: models/balance.yaml
-tags: [m-temporal-write, m-opt-lock, m-unit-work, isolation, concurrency, temporal, audit-only, unchanged-milestone, read-committed, slice-snapshot-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, isolation, concurrency, temporal, audit-only, unchanged-milestone, read-committed, slice-snapshot-1]
 shape: concurrencySuccess
 compileEligibility:
   mode: run-only

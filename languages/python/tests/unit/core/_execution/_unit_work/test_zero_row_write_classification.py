@@ -83,7 +83,7 @@ def _locking_policy(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
-            concurrency="locking",
+            preference="locking",
             composed_writes=observed_buffer([write], model, observations),
         )
     )

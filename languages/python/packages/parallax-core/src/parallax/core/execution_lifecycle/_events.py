@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from parallax.core._execution._unit_work.uow import Concurrency, FlushTrigger
+from parallax.core._execution._unit_work.uow import FlushTrigger
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
     AcquisitionReason,
@@ -283,7 +284,7 @@ class OuterInvocation:
     """
 
     access_mode: AccessMode | None
-    concurrency: Concurrency | None
+    concurrency: ConcurrencyPreference | None
     retry_policy: RetryPolicy
     isolation: IsolationLevel | None
 

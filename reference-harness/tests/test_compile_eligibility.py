@@ -39,14 +39,14 @@ def _errors(case: dict[str, Any]) -> list[str]:
 
 
 def test_conflict_shape_left_eligible_is_flagged() -> None:
-    case = {"model": "models/account.yaml", "tags": ["m-opt-lock"], "shape": "conflict"}
+    case = {"model": "models/account.yaml", "tags": ["m-concurrency"], "shape": "conflict"}
     assert _errors(case)
 
 
 def test_given_apply_left_eligible_is_flagged() -> None:
     case = {
         "model": "models/account.yaml",
-        "tags": ["m-opt-lock"],
+        "tags": ["m-concurrency"],
         "shape": "writeSequence",
         "given": {"apply": [{"sql": "update account set version = 2 where id = 1"}]},
     }
@@ -66,7 +66,7 @@ def test_when_concurrency_left_eligible_is_flagged() -> None:
 def test_detectable_case_with_wrong_reason_is_flagged() -> None:
     case = {
         "model": "models/account.yaml",
-        "tags": ["m-opt-lock"],
+        "tags": ["m-concurrency"],
         "shape": "conflict",
         "compileEligibility": {"mode": "run-only", "reason": "query-result-dependent"},
     }
@@ -76,7 +76,7 @@ def test_detectable_case_with_wrong_reason_is_flagged() -> None:
 def test_detectable_case_declared_single_connection_passes() -> None:
     case = {
         "model": "models/account.yaml",
-        "tags": ["m-opt-lock"],
+        "tags": ["m-concurrency"],
         "shape": "conflict",
         "compileEligibility": {"mode": "run-only", "reason": "single-connection"},
     }
@@ -127,7 +127,7 @@ def _run_only_envelope() -> dict[str, Any]:
         "command": "compile",
         "status": "run-only",
         "adapter": {"language": "python", "name": "parallax-conformance", "version": "0.1.0"},
-        "case": "core/compatibility/cases/m-opt-lock-005-conflict.yaml",
+        "case": "core/compatibility/cases/m-concurrency-005-conflict.yaml",
         "dialect": "postgres",
         "caseShape": "conflict",
         "diagnostics": [

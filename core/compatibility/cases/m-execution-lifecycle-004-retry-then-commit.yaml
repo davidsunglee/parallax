@@ -2,7 +2,7 @@
 # physical attempts of one logical invocation, and zero-row enforcement is
 # attributed to the call that COMPLETED.
 model: models/account.yaml
-tags: [m-execution-lifecycle, m-opt-lock, m-auto-retry, m-api-conformance, slice-snapshot-1, retry]
+tags: [m-execution-lifecycle, m-concurrency, m-auto-retry, m-api-conformance, slice-snapshot-1, retry]
 lane: api-conformance
 shape: boundary
 compileEligibility:

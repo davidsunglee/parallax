@@ -16,7 +16,6 @@ from parallax.core import (
     Rel,
     TxTemporal,
     attr,
-    opt_lock,
     rel,
 )
 from parallax.core.base import INFINITY
@@ -48,6 +47,7 @@ from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Pin
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells
+from tests.unit._root_publication_support import deferring_schedule
 
 _NAMESPACE = "page.schedule"
 
@@ -74,7 +74,6 @@ class Journal(TxTemporal, table="journal", namespace=_NAMESPACE):
 
 _META = model_of(DomainModel(Ledger, Entry, Account, Journal))
 _CATALOGED = CatalogedModel(_META)
-_WRITE_EVIDENCE = opt_lock.write_evidence(_META)
 _ANIMAL = corpus_model("animal")
 
 _ROWS: Mapping[str, Mapping[str, object]] = {
@@ -156,7 +155,7 @@ def test_an_atomic_page_defers_states_exactly_when_every_root_family_carries_wri
 ) -> None:
     page = _flat_page(*roots)
 
-    schedule = page_schedule(page, _WRITE_EVIDENCE, atomic=True)
+    schedule = page_schedule(page, _META, atomic=True)
 
     assert schedule.defers_states is defers
     if not defers:
@@ -171,7 +170,7 @@ def test_an_atomic_page_defers_states_exactly_when_every_root_family_carries_wri
 def test_an_atomic_page_with_no_roots_defers_vacuously_and_has_no_last_use() -> None:
     page = PageBuilder(ViewSchema.of()).finish((), Pin())
 
-    schedule = page_schedule(page, _WRITE_EVIDENCE, atomic=True)
+    schedule = page_schedule(page, _META, atomic=True)
 
     assert schedule.defers_states is True
     assert schedule.last_uses is not None
@@ -185,7 +184,7 @@ def test_a_grouped_claim_releases_at_last_use_and_marks_every_claimant() -> None
     again = _node(builder, "Ledger", {"id": 1})
     page = builder.finish((first, other, again), Pin())
 
-    schedule = page_schedule(page, _WRITE_EVIDENCE, atomic=True)
+    schedule = page_schedule(page, _META, atomic=True)
 
     assert schedule.defers_states is False
     assert schedule.last_uses is not None
@@ -199,7 +198,7 @@ def test_a_stream_neither_defers_nor_releases_at_last_use() -> None:
     roots = tuple(_node(builder, "Account", {"id": 1, "version": 1}) for _ in range(2))
     page = builder.finish(roots, Pin())
 
-    assert page_schedule(page, _WRITE_EVIDENCE, atomic=False) == PageSchedule(None, False)
+    assert page_schedule(page, _META, atomic=False) == PageSchedule(None, False)
 
 
 def test_scheduling_judges_no_root_state() -> None:
@@ -210,8 +209,7 @@ def test_scheduling_judges_no_root_state() -> None:
     page = builder.finish(ledgers, Pin())
     rows = page_rows(page)
 
-    page_schedule(page, _WRITE_EVIDENCE, atomic=True)
-    page_schedule(page, lambda _entity: True, atomic=True)
+    page_schedule(page, _META, atomic=True)
 
     assert all(
         rows.judged_states.singleton(logical) is None
@@ -225,7 +223,7 @@ def test_an_edge_free_page_computes_its_last_uses_without_walking_a_root(
     page = _flat_page("Account", "Account", "Journal")
     _refuse_walking(monkeypatch)
 
-    schedule = page_schedule(page, _WRITE_EVIDENCE, atomic=True)
+    schedule = page_schedule(page, _META, atomic=True)
 
     assert schedule.last_uses is not None
     assert tuple(schedule.last_uses[0]) == (0, 1, 2)
@@ -311,7 +309,7 @@ def test_last_use_release_frees_a_projection_and_its_state_once_no_later_root_re
     page, (first, second), shared = _shared_entry_page()
     rows = page_rows(page)
     logical = rows.logical_rows[shared]
-    schedule = page_schedule(page, lambda _entity: True, atomic=True)
+    schedule = deferring_schedule(page)
 
     release_finished_rows(page, schedule, 0, _reached(page, first))
 
@@ -347,7 +345,7 @@ def test_last_use_release_frees_a_finished_fetched_rows_identity_issues() -> Non
     page = builder.finish((root,), Pin())
     rows = page_rows(page)
     assert rows.issues[root]
-    schedule = page_schedule(page, _WRITE_EVIDENCE, atomic=True)
+    schedule = page_schedule(page, _META, atomic=True)
 
     release_finished_rows(page, schedule, 0, _reached(page, root))
 
@@ -395,11 +393,7 @@ def test_a_keyless_pending_claim_keeps_its_raw_row_until_its_last_use(last_use: 
     rows = page_rows(page)
     assert rows.keys[animal] is None and rows.decoders.pending(animal)
     first, second = rows.roots
-    schedule = (
-        page_schedule(page, lambda _entity: True, atomic=True)
-        if last_use
-        else PageSchedule(None, False)
-    )
+    schedule = deferring_schedule(page) if last_use else PageSchedule(None, False)
 
     release_finished_rows(page, schedule, 0, _reached(page, first))
 

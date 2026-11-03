@@ -2,12 +2,12 @@
 # observed state is one delete — the destructive intent supersedes the assignments
 # buffered before it.
 model: models/account.yaml
-tags: [m-unit-work, m-opt-lock, m-sql, coalescing, delete, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-concurrency, m-sql, coalescing, delete, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the surviving delete's gate binds the observed version the group's own find returned — a query result (m-opt-lock)"
+  note: "the surviving delete's gate binds the observed version the group's own find returned — a query result (m-concurrency)"
 when:
   scenario:
     - uow: superseded-assignment

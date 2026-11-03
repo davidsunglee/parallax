@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyStrategy
 from parallax.core.dialect import LockMode
 
 __all__ = ["mode_for"]
 
 
-def mode_for(strategy: Concurrency | None) -> LockMode | None:
+def mode_for(strategy: ConcurrencyStrategy | None) -> LockMode | None:
     """The read-lock policy: the ``m-dialect`` :data:`LockMode` an
     in-transaction object find's compiled read carries, given the Effective
     Concurrency Strategy of the Entity that read materializes (`m-read-lock`
-    "Automatic read-lock correctness"; `m-opt-lock.md` L16-20).
+    "Automatic read-lock correctness"; `m-concurrency`).
 
     The argument is the ALREADY-DERIVED strategy, never a raw Concurrency
     Preference: an unversioned Non-Temporal Entity read under the `optimistic`
     preference resolves to Locking and locks here, and one deep-fetch level of a
     transaction may therefore lock while the next does not.
 
-    ``Concurrency`` and ``LockMode`` are the SAME closed vocabulary
+    ``ConcurrencyStrategy`` and ``LockMode`` are the SAME closed vocabulary
     (``Literal["locking", "optimistic"]``), declared independently by
-    ``m-unit-work`` and ``m-dialect`` per the dependency graph, so this
+    ``m-concurrency`` and ``m-dialect`` per the dependency graph, so this
     mapping is the identity function — but it is the single seam that
     legally names BOTH vocabularies and states that coincidence as POLICY,
     rather than three call sites each silently assuming it holds.

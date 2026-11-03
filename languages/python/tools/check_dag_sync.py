@@ -123,7 +123,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-execution-lifecycle": "parallax.core.execution_lifecycle",
     "m-read-delivery": "parallax.core.read_delivery",
     "m-execution": "parallax.core._execution",
-    "m-opt-lock": "parallax.core.opt_lock",
+    "m-concurrency": "parallax.core.concurrency",
     "m-temporal-read": "parallax.core.temporal_read",
     "m-temporal-write": "parallax.core.temporal_write",
     "m-batch-write": "parallax.core.batch_write",
@@ -162,7 +162,6 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.db_port",
         "parallax.core.sql_gen",
         "parallax.core.write_plan",
-        "parallax.core.opt_lock",
     }
 )
 
@@ -205,7 +204,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.value_object",
             "parallax.core.relationship",
             "parallax.core.temporal_read",
-            "parallax.core.opt_lock",
+            "parallax.core.concurrency",
         }
     ),
     "parallax.descriptor._hub": frozenset({"parallax.core.entity"}),
@@ -274,9 +273,8 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # Metamodel, so they are scoped apart from the frontend that owns them and
     # granted only the facets a layout is derived from. Granting them narrowly is
     # what lets row-to-graph materialization take the layouts alone: the parent
-    # frontend reaches model formation, Object Query, and — through
-    # `_formation_profile -> opt_lock -> unit_work` — the Database Port, none of
-    # which a positional member row depends on.
+    # frontend reaches model formation and Object Query, neither of which a
+    # positional member row depends on.
     "parallax.core.entity._layout": frozenset(
         {
             "parallax.core.metamodel",
@@ -302,12 +300,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # milestone edge through the advanced Entity seam, and carries the opaque
     # evidence a node retains through the unit of work's evidence child, and
     # nothing else, so its row proves it reaches no driver, no read planner, no
-    # SQL, and no dialect. The Database Port is NOT one of those: the granted
-    # Entity frontend reaches it through `_formation_profile -> opt_lock ->
-    # unit_work -> db_port`, and a forbidden row is the complement of a closure,
-    # so this row admits it — `parallax.core._execution._read_query` below is the
-    # scope whose grant is narrowed for exactly the boundary this one cannot
-    # state.
+    # SQL, no dialect, and no Database Port.
     "parallax.snapshot._inspection": frozenset(
         {
             "parallax.core.entity",
@@ -379,11 +372,9 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # contract proves what its module docstring claims: resolving a target and
     # validating a query names no SQL generation, no dialect, no Database Port,
     # no deep-fetch planning and no materialization. The grant is the Object
-    # Query scope rather than the Entity frontend precisely so
-    # the Database Port falls OUTSIDE this row's closure: the frontend package
-    # reaches one through `_formation_profile -> opt_lock -> unit_work ->
-    # db_port`, and a forbidden row is the complement of a closure, so a grant
-    # wide enough to include that chain could never forbid its endpoint.
+    # Query scope rather than the Entity frontend, which also reaches model
+    # formation and the Entity Class machinery, so the row forbids the frontend
+    # outright.
     "parallax.core._execution._read_query": frozenset(
         {
             "parallax.core.metamodel",
@@ -484,7 +475,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # generated contract carries the OUTWARD half of its boundary: what a read
     # retains is a pure function of accepted metadata, the member layout a row is
     # judged against, and the write plan's observation vocabulary, and each family
-    # fact it reads — key, Temporal Shape, optimistic key — is named at its owner
+    # fact it reads — key, Temporal Shape, version source — is named at its owner
     # rather than through an execution sibling. The half facing INTO the package
     # is beyond any contract sourced here and is graded by its SEALED policy below.
     #
@@ -514,7 +505,6 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.temporal_read",
             "parallax.core._execution._unit_work",
             "parallax.core.write_plan",
-            "parallax.core.opt_lock",
         }
     ),
     # The lifecycle extension's one Python-only edge: its facades and write

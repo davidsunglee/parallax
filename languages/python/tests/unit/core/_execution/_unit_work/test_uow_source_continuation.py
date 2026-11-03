@@ -26,7 +26,6 @@ from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
-from parallax.core import opt_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -101,7 +100,6 @@ def _uow(
         acquire_rows=HeldRows(meta),
         planner=build_write_planner(meta),
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(meta).required_key,
     )
     return uow, simulated
 
@@ -246,7 +244,7 @@ def test_a_versioned_source_read_before_its_states_completed_change_is_stale() -
 def test_a_locking_versioned_source_carrying_no_observation_settles_against_nothing() -> None:
     # Locking needs no observation to admit the source, and the planner's
     # required-observation rule refuses the write it would settle.
-    uow, _simulated = _uow(_ACCOUNT, settings=TransactionSettings(concurrency="locking"))
+    uow, _simulated = _uow(_ACCOUNT, settings=TransactionSettings(preference="locking"))
     evidence = ReadEvidence(
         _account(1).entity, _account(1), uow.source_authority.participation, None
     )
@@ -537,7 +535,6 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         acquire_rows=store.acquisition(_POSITION),
         planner=build_write_planner(_POSITION),
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(_POSITION).required_key,
     )
     prepared = prepare_wire_write(
         KeyedWriteInstruction(

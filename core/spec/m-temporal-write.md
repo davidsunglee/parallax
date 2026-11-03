@@ -11,7 +11,8 @@ Predecessor Rows it settles into; on `m-temporal-read`, whose intervals and axes
 it shares with as-of reads; on `m-inheritance`, `m-core`, and `m-metamodel` for
 the family-effective state it carries; and on `m-document-codec` for effective
 comparison. `m-unit-work`'s Write Planner drives the expansion, the SQL emission
-is `m-sql`, and the conflict/retry contract is `m-opt-lock`.
+is `m-sql`, conflict classification is `m-unit-work`'s, and the retry contract is
+`m-auto-retry`'s.
 
 ## Milestones of one object never overlap
 
@@ -220,7 +221,7 @@ trail. Key invariants the suite pins down:
   closes*, below). Under Optimistic the inactivation additionally gates on the
   observed `txStart`, appended **after** the address:
   `… and thru_z = ? and out_z = ? and in_z = ?`. The observed `in_z` is the
-  version analogue (`m-opt-lock`, `m-opt-lock --> m-temporal-read`); the chained
+  version analogue (`m-concurrency`, `m-concurrency --> m-temporal-read`); the chained
   `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`. On a
   table-per-hierarchy concrete subtype the tag guard joins the identity
   predicates immediately after the primary key, before the per-axis upper bounds,
@@ -576,7 +577,7 @@ facts and the attempt's ownership as it stands then:
   `CarriedFrom` the predecessor and is never itself marked terminated;
 - the **gate**: under Optimistic the close binds the predecessor's observed
   Transaction-Time start, whatever the profile, and under Locking the explicit
-  `Ungated` decision (`m-opt-lock`). A predecessor holding a caller's start fails
+  `Ungated` decision (`m-concurrency`). A predecessor holding a caller's start fails
   its gate as that caller's precondition rather than as a conflict;
 - the predecessor's own effect by ownership (*Ownership disposal*, below), and
   its nonempty successors; a close is refused where the attempt's instant does
@@ -826,8 +827,7 @@ of the row its own coverage became.
 ### An overlapped observation is retired, not transformed
 
 Two observations of one object whose coverage overlaps cannot both describe
-current state (`m-opt-lock` *Composed temporal writes keep every source
-condition*). The later-authored one is the predecessor the transform applies to;
+current state (`m-unit-work` *Observed-State Coalescing*). The later-authored one is the predecessor the transform applies to;
 the earlier is retired on its own address before anything is opened, as
 `Terminated`, with no successor and under the same gate and ownership rules: a
 milestone that existed before the attempt is closed, and one the attempt opened
@@ -850,7 +850,7 @@ Optimistic the stale observed `in_z` rides the gate, matches zero rows against
 the newer current milestone, and reports the conflict. Locking
 renders no gate and needs none: its observing read holds a shared read lock on
 the milestone the observation names, which is the same milestone the close
-addresses, so no concurrent writer can have superseded it (`m-opt-lock`,
+addresses, so no concurrent writer can have superseded it (`m-concurrency`,
 `m-read-lock`).
 
 An observation of a milestone the Transaction-Time past holds is a different
@@ -905,8 +905,8 @@ binds: [<txInstant>, <pk>, <infinity>, <observedTxStart>]
 ```
 
 The observed `in_z` is the optimistic-lock **version analogue** for a temporal
-entity, which carries no version column (the `m-opt-lock` composition,
-`m-opt-lock --> m-temporal-read`). A zero-row gated close is a **retriable
+entity, which carries no version column (the `m-concurrency` composition,
+`m-concurrency --> m-temporal-read`). A zero-row gated close is a **retriable
 conflict** (`updatedRows != 1`); a zero-row *ungated* (effective-Locking) close is a
 distinct **non-retriable** stale/consistency error — a categorically different
 outcome from the gated conflict, but not a new `m-db-error` category: `then`
@@ -920,8 +920,8 @@ binding *that row's* observed `in_z`, each affecting exactly one row — while t
 chained replacement rows are plain ungated `INSERT`s whose fresh `in_z = txInstant`
 is the advance a later stale writer then misses. No version column exists or
 advances. Current rows of the same key *outside* the written window keep their
-`in_z`: conflict granularity is the milestone, not the primary key. The
-conflict/retry contract itself is `m-opt-lock`.
+`in_z`: conflict granularity is the milestone, not the primary key. Conflict
+classification is `m-unit-work`'s and the retry contract `m-auto-retry`'s.
 
 ## Composition with inheritance
 
@@ -934,8 +934,8 @@ not restated here. The corpus proves Transaction-Time-Only terminate composed wi
 
 **Composed predicate order under optimistic mode.** A temporal close on a
 table-per-hierarchy concrete subtype composes the tag guard with the observed-`in_z`
-gate below, the direct extension of `m-opt-lock`'s gate-last invariant (*Optimistic
-locking composes with inheritance*) to a milestone close: the tag guard rides the
+gate below, the direct extension of `m-sql`'s gate-last invariant (*Version-gate
+composition*) to a milestone close: the tag guard rides the
 **identity predicates** — immediately after the primary key, before the
 current-row predicate — and the observed-`in_z` gate still binds **last**:
 

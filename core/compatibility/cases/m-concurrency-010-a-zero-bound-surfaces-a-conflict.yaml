@@ -1,0 +1,22 @@
+model: models/account.yaml
+tags: [m-concurrency, m-auto-retry, m-api-conformance, conflict, slice-snapshot-1, slice-managed-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: optimistic-lock-conflict
+when:
+  uow:
+    concurrency: optimistic
+    maxRetries: 0
+  boundary:
+    - action: read
+      note: observe the versioned row (records the observed version)
+    - action: amend
+      note: the gated UPDATE conflicts once, and a bound of zero leaves it unreplayed
+then:
+  outcome: optimistic-lock-conflict
+  databaseCalls: 2

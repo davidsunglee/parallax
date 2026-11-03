@@ -18,6 +18,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import PreparedEffectiveChange
@@ -27,7 +28,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     AdmittedWrite,
-    Concurrency,
     KeyedWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
@@ -77,14 +77,14 @@ def _plan(
     model: Metamodel,
     *,
     observations: dict[ObjectKey, StateObservation] | None = None,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
     return build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=observed_buffer(buffer, model, observations),
         )
     )

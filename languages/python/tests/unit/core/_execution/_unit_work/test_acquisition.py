@@ -16,7 +16,7 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import inheritance, opt_lock
+from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -38,12 +38,12 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.uow import FlushScope
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
-    Concurrency,
     FlushTrigger,
     PredicateMutation,
     PredicateSelection,
@@ -99,7 +99,7 @@ def _uow(
     meta: Metamodel,
     rows: _Logged | HeldRows | None = None,
     *,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
     log: list[str] | None = None,
 ) -> tuple[UnitOfWork, _Flushes]:
     planner = build_write_planner(meta)
@@ -108,7 +108,7 @@ def _uow(
     )
     uow = UnitOfWork(
         lifetime=TxnAttemptLifetime(),
-        settings=TransactionSettings(concurrency=concurrency),
+        settings=TransactionSettings(preference=concurrency),
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=meta,
         execute_write_steps=flushes.simulated,
@@ -116,7 +116,6 @@ def _uow(
         acquire_rows=NO_ROW_READS if rows is None else rows,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(meta).required_key,
         flush_opening=flushes,
     )
     return uow, flushes

@@ -48,13 +48,13 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
-    Concurrency,
     FlushTrigger,
     TransactionSettings,
     UnitOfWork,
 )
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.dialect import LockMode
 from parallax.core.entity._layout import CatalogedModel
@@ -508,7 +508,7 @@ class TxnAttempt(_TxnAttemptBase):
         self._flush: FlushActivity = INERT
         self._uow = UnitOfWork(
             settings=TransactionSettings(
-                concurrency=options.concurrency,
+                preference=options.concurrency,
                 counts_unchanged_rows=connection.dialect.counts_unchanged_rows,
             ),
             lifetime=lifetime,
@@ -523,10 +523,9 @@ class TxnAttempt(_TxnAttemptBase):
             # re-adopted.
             planner=write.planner,
             actor_identity=actor,
-            evidence_policy_for=write.evidence_policy_for,
         )
         self._inputs = ReadInputs(
-            connection, self._uow.settings.concurrency, self._uow.source_authority
+            connection, self._uow.settings.preference, self._uow.source_authority
         )
 
     @property
@@ -800,8 +799,8 @@ class TxnAttempt(_TxnAttemptBase):
         )
 
     @property
-    def _preference(self) -> Concurrency:
-        return self._uow.settings.concurrency
+    def _preference(self) -> ConcurrencyPreference:
+        return self._uow.settings.preference
 
     # Flush execution.
 

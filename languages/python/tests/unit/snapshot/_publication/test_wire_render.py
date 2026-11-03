@@ -7,7 +7,6 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.core._execution import _planning as planning_module
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import DATE, STRING
 from parallax.core.document_codec import _occurrence as occurrence_codec
 from parallax.core.entity._layout import CatalogedModel
@@ -81,7 +80,7 @@ def _published(
     fixture: PageFixture, includes: IncludeTree, facts: WireModelFacts, *roots: int
 ) -> tuple[Any, ...]:
     page = fixture.page(*roots)
-    publisher = WireRootPublisher(fixture.model, facts, CONCURRENCY, includes)
+    publisher = WireRootPublisher(fixture.model, facts, includes)
     return tuple(publish_roots(page, publisher, fixture.model))
 
 

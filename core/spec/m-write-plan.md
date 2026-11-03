@@ -253,7 +253,7 @@ Planned Close carries `TemporalGate | Ungated` directly, because every close
 requires a temporal observation and so has no unversioned case. The effective
 Locking strategy records an **explicit** `Ungated` decision rather than a null gate, which is what
 makes gate applicability structural. The gate rule itself is uniform across
-update, delete, and close and belongs to `m-opt-lock`.
+update, delete, and close and belongs to `m-concurrency`.
 
 A Version Gate requires a **singleton** Key Target, because each observed version
 belongs to exactly one row.

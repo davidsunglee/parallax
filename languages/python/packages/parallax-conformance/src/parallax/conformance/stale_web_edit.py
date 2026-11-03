@@ -7,7 +7,7 @@ from typing import Any
 from parallax.conformance.read_models import Balance
 from parallax.conformance.vo_models import Branch
 from parallax.core import LATEST, Edge
-from parallax.core.unit_work import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.snapshot import ScopedDatabase, TxnContext, edge_of
 
 __all__ = [
@@ -42,7 +42,7 @@ def submit_balance_edit(
     id: int,
     edge: Edge,
     fields: Mapping[str, Any],
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
 ) -> None:
     """SUBMIT time (Transaction-Time-Only): read the CURRENT milestone, refuse
     the submit when its edge is not the transported one (a writer chained a
@@ -82,7 +82,7 @@ def submit_branch_edit(
     edge: Edge,
     fields: Mapping[str, Any],
     valid_from: dt.datetime,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
 ) -> None:
     """SUBMIT time (bitemporal): read the object where the correction takes
     effect — Valid Time pinned at ``valid_from``, the mutation's own instant `B`

@@ -1,4 +1,4 @@
-# Vehicle: a VERSIONED TABLE-PER-HIERARCHY inheritance model (m-inheritance x m-opt-lock).
+# Vehicle: a VERSIONED TABLE-PER-HIERARCHY inheritance model (m-inheritance x m-concurrency).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is a small
 # dedicated family for the ONE Phase-7 witness where optimistic locking composes with a
@@ -12,7 +12,7 @@
 # It is a DEDICATED model rather than the existing `animal` family because adding a
 # version column to `Animal` would force every abstract animal read (m-inheritance-011..
 # 017 / -060..067) to project the version column in its concrete superset, rippling the
-# Phase 4 / 6 goldens — which this slice keeps untouched. The m-sql / m-opt-lock canonical
+# Phase 4 / 6 goldens — which this slice keeps untouched. The m-sql / m-concurrency canonical
 # example keeps the `animal` / `kind` illustration (design Q9); this model mirrors that
 # shape (tag column `kind`, a `name` string, a `version`) on its own `vehicle` table.
 #

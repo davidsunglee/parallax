@@ -90,11 +90,6 @@ def _confirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
-def _no_version(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-    del entity, advanced_from
-    return None
-
-
 def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
@@ -115,7 +110,7 @@ def _stored(
 ) -> tuple[WriteAdmission, WriteOwnership, InsertionIdentity]:
     """A drained insertion of the object from ``start``, beside the buffer and
     the source authority's live helper it was planned into."""
-    authority = source_authority(_POSITION, inserted_version=_no_version)
+    authority = source_authority(_POSITION)
     admission = WriteAdmission(_POSITION, authority=authority)
     identity = admission.admit_insert(_insert(start, until), insertion_advice=None)
     assert identity is not None
@@ -184,7 +179,7 @@ def test_a_row_a_settled_write_removes_and_reopens_at_one_address_stays_owned() 
     # Removals are retired before openings register, so the row a settled write
     # reopened at the address it removed is still the attempt's to revise.
     endpoint = TemporalRowCoordinates(_KEY.entity, (1,), (Finite(instant=_JUN), PLANNED_INFINITY))
-    ownership = WriteOwnership(_POSITION, version_after=_no_version, observations={})
+    ownership = WriteOwnership(_POSITION, observations={})
     ownership.complete((), Openings(fresh=(endpoint,)))
     ownership.complete((endpoint,), Openings(fresh=(endpoint,)))
     assert ownership.owns(endpoint)
@@ -330,7 +325,7 @@ def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> No
 # An insertion's lifecycle moves only through its named transitions.          #
 # --------------------------------------------------------------------------- #
 def test_a_repeat_of_a_standing_insertion_is_refused_with_its_openers_advice() -> None:
-    ownership = WriteOwnership(_POSITION, version_after=_no_version, observations={})
+    ownership = WriteOwnership(_POSITION, observations={})
     identity, follows = ownership.open_insertion(
         _insert(_FEB), pending_removal=None, removes_object=False, insertion_advice=_OPENER
     )
@@ -379,7 +374,7 @@ def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() ->
 
 
 def test_an_ended_opening_retires_its_identity_and_its_reinsertion_follows_it() -> None:
-    ownership = WriteOwnership(_POSITION, version_after=_no_version, observations={})
+    ownership = WriteOwnership(_POSITION, observations={})
     insert = _insert(_FEB, _JUN)
     identity, _follows = ownership.open_insertion(
         insert, pending_removal=None, removes_object=False, insertion_advice=_OPENER
@@ -429,7 +424,7 @@ def _observing(*observations: RetainedObservation) -> tuple[WriteOwnership, _Ind
     index: _Index = WeakValueDictionary()
     for observation in observations:
         index[observation.key] = observation
-    return WriteOwnership(_POSITION, version_after=_no_version, observations=index), index
+    return WriteOwnership(_POSITION, observations=index), index
 
 
 def _parts(

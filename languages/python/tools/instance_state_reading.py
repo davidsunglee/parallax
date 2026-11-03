@@ -38,7 +38,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Final, cast
 
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, RowKey, ViewSchema
 from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
@@ -355,7 +354,6 @@ def direct_wire_result(
                 WireRootPublisher(
                     cast("Any", model),
                     cast("Any", wire),
-                    CONCURRENCY,
                     cast("Any", includes),
                     encoder,
                 ),

@@ -103,12 +103,12 @@ def test_a_doomed_group_rolls_back_and_the_post_abort_find_leaves_it(corpus_case
 
 
 def test_interleaved_groups_hold_two_independent_sessions(corpus_case) -> None:
-    # m-opt-lock-012's optimistic-lock race: `ours` owns steps {0, 3} and
+    # m-concurrency-012's optimistic-lock race: `ours` owns steps {0, 3} and
     # `concurrent` steps {1, 2}, genuinely interleaved. Two sessions open, in the
     # order their labels are first seen; the concurrent group's session is used and
     # committed entirely BETWEEN the first group's two steps, while that group's own
     # session stays open across the whole span and closes only at ITS last step.
-    case = corpus_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = corpus_case("m-concurrency-012-conflict-aborts-uow.yaml")
     ours, concurrent, after = _observed(case)
     script = [ours, concurrent, Affected(1), Affected(1), Affected(0), after]
     with ScriptedProvider(script=script) as db:
@@ -222,12 +222,12 @@ def test_an_unresolved_list_step_issues_nothing(corpus_case) -> None:
 #
 # A rolled-back unit of work must be the CONSEQUENCE of a detected optimistic-lock
 # conflict, not a vacuous abort. Each degradation below moves exactly one term of
-# that proof on the real m-opt-lock-012 case, so `concurrency`, `then.affectedRows`,
+# that proof on the real m-concurrency-012 case, so `concurrency`, `then.affectedRows`,
 # the root entity, and the version column all resolve authentically.
 
 
 def _conflict_abort_script(case: Case, gated_affected: int) -> list[Any]:
-    """m-opt-lock-012's own chronology, with the doomed group's gated write
+    """m-concurrency-012's own chronology, with the doomed group's gated write
     reporting *gated_affected* rows."""
     ours, concurrent, after = _observed(case)
     return [ours, concurrent, Affected(1), Affected(1), Affected(gated_affected), after]
@@ -237,20 +237,20 @@ def test_a_doomed_group_accepts_the_authored_conflict(corpus_case) -> None:
     # The genuine conflict: the stale-version gate matched nothing, which is the
     # flush failure `then.units` states. The rejections below therefore bite the
     # corruptions rather than everything.
-    case = corpus_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = corpus_case("m-concurrency-012-conflict-aborts-uow.yaml")
     with ScriptedProvider(script=_conflict_abort_script(case, 0)) as db:
         assert_unit_work_scenario(case, db)
     assert RolledBack(0) in db.chronology
 
 
 def test_a_flush_failure_with_no_statement_falling_short_is_refused(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     with pytest.raises(CaseFailure, match="MUST have affected no row; found 0"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 1)))
 
 
 def test_a_flush_failure_naming_another_object_is_refused(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     case.then["units"]["ours"]["flushFailure"]["key"] = {"id": 9}
     with pytest.raises(CaseFailure, match="MUST have affected no row; found 0"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
@@ -259,7 +259,7 @@ def test_a_flush_failure_naming_another_object_is_refused(damaged_case) -> None:
 def test_an_optimistic_conflict_the_failing_statement_does_not_gate_is_refused(
     damaged_case,
 ) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     gated = case.when["scenario"][3]["statements"][1]
     gated["sql"]["postgres"] = "update account set balance = ?, version = ? where id = ?"
     gated["binds"] = ["300.00", 2, 2]
@@ -270,14 +270,14 @@ def test_an_optimistic_conflict_the_failing_statement_does_not_gate_is_refused(
 def test_a_gate_shortfall_needs_the_optimistic_strategy_the_unit_of_work_declares(
     damaged_case,
 ) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     case.when["uow"]["concurrency"] = "locking"
     with pytest.raises(CaseFailure, match="under `concurrency: locking`"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
 
 def test_an_ungated_shortfall_the_failing_statement_gates_is_refused(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     case.then["units"]["ours"]["flushFailure"]["shortfall"] = "staleWrite"
     with pytest.raises(CaseFailure, match="an ungated shortfall"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
@@ -286,7 +286,7 @@ def test_an_ungated_shortfall_the_failing_statement_gates_is_refused(damaged_cas
 def test_a_temporal_conflict_whose_flush_executed_a_statement_on_its_object_is_refused(
     damaged_case,
 ) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     failure = case.then["units"]["ours"]["flushFailure"]
     del failure["shortfall"]
     failure["error"] = "temporalConflict"
@@ -300,7 +300,7 @@ _GATED_UPDATE = "update account set balance = ?, version = ? where id = ? and ve
 def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> None:
     # The conflicting update now flushes at a re-read the group goes on past, so
     # the commit that `then.units` says failed runs only a later, successful write.
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     steps = case.when["scenario"]
     reread = {
         **steps[0],
@@ -327,14 +327,14 @@ def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> Non
 
 
 def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     case.then["units"]["ours"]["flushFailure"]["at"] = 3
     with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
         assert_judged(case)
 
 
 def test_a_list_constructed_after_pending_writes_leaves_them_to_commit(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     steps = case.when["scenario"]
     steps.insert(4, {"uow": "ours", "objectQuery": steps[0]["objectQuery"], "databaseCalls": 0})
     assert_judged(case)

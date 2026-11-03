@@ -2,7 +2,7 @@
 # included (m-read-lock; m-unit-work *Strategy selection*; m-execution
 # *Read-only transactions*): an unversioned Non-Temporal Entity read in a
 # writable transaction under the default preference takes the shared row lock
-# (`m-opt-lock-023`), while the same read in a read-only invocation renders none.
+# (`m-concurrency-023`), while the same read in a read-only invocation renders none.
 model: models/wallet.yaml
 tags: [m-read-lock, m-execution, m-dialect, slice-snapshot-1]
 shape: read

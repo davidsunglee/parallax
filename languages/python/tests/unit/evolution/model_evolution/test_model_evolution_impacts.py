@@ -307,7 +307,7 @@ def _two_families(*, moved: bool, extra: bool = False) -> Metamodel:
 
 def test_moving_a_position_between_families_moves_every_fact_that_family_fixes() -> None:
     # One operation, three impacts: the moved Entity answers a new family's
-    # optimistic key, and BOTH roots denote a different concrete set. Every one
+    # version source, and BOTH roots denote a different concrete set. Every one
     # names that operation as its cause, and the Entity added beside it — which
     # moves nothing about any of these scopes — is named by none of them.
     evolution = evolve(_two_families(moved=False), _two_families(moved=True, extra=True))

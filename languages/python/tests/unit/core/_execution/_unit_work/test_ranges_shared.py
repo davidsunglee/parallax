@@ -28,10 +28,10 @@ from parallax.core._execution._unit_work.acquisition import (
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.write_items import AdmittedWrite
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
-    Concurrency,
     KeyedWriteInstruction,
     admitted_write,
 )
@@ -193,7 +193,10 @@ def _span(written: WritePlan) -> WritePlan:
 
 
 def _fragmented(
-    entity: type[Bitemporal], parts: Sequence[int], *, concurrency: Concurrency = "optimistic"
+    entity: type[Bitemporal],
+    parts: Sequence[int],
+    *,
+    concurrency: ConcurrencyPreference = "optimistic",
 ) -> tuple[WritePlan, list[PredecessorRow]]:
     """One span of ``frag(k, parts[k - 1])`` for each object ``k``, beside every
     row the objects store."""

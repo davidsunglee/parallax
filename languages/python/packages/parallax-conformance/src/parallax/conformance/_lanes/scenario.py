@@ -62,7 +62,6 @@ from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import (
     batch_write,
     inheritance,
-    opt_lock,
     storage_layout,
     temporal_read,
 )
@@ -79,6 +78,8 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core.base import (
     normalize_instant,
 )
+from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference
+from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
@@ -92,6 +93,7 @@ from parallax.core.execution import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
+    AttributeIdentity,
     AttributeMetadata,
     EntityMetadata,
     MemberIdentity,
@@ -110,7 +112,6 @@ from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     CardinalityCorruptionError,
-    Concurrency,
     InsertionIdentity,
     KeyedWriteInstruction,
     MissingTargetError,
@@ -124,11 +125,13 @@ from parallax.core.unit_work import (
     TemporalConflictError,
     TransactionSettings,
     UnitOfWork,
+    UnobservedVersionError,
     WriteEffectError,
     WriteEvidenceError,
     WritePreconditionError,
     admitted_write,
     object_key,
+    settled_evidence,
 )
 from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import (
@@ -200,8 +203,8 @@ __all__ = [
 # The failures the write lanes convert to a neutral :class:`EngineError`, so
 # the adapter reports a ``*-failed`` diagnostic rather than leaking a
 # lower-layer exception type across the conformance seam.
-# `opt_lock.UnobservedVersionError` / `.CallerAuthoredVersionError` are
-# m-opt-lock's own forward-error posture;
+# `UnobservedVersionError` is Unit of Work's own refusal of a versioned write
+# that observed nothing;
 # `simulated_temporal_store.SimulatedStoreError` is the refusal of a
 # composition the simulated rows cannot name. A deferred witness (the
 # auto-retry boundary forms) that reaches this engine-local write path without
@@ -211,8 +214,7 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     instructions.WriteInstructionError,
     WritePlanningError,
     inheritance.InheritanceError,
-    opt_lock.UnobservedVersionError,
-    opt_lock.CallerAuthoredVersionError,
+    UnobservedVersionError,
     simulated_temporal_store.SimulatedStoreError,
     CanonicalDocumentError,
     SqlGenError,
@@ -277,22 +279,11 @@ class _ResolvedWrite:
     supplied_observation: StateObservation | None
 
 
-def _versioned_non_temporal_version_attribute(
-    model: AcceptedMetamodel, entity_name: str
-) -> AttributeMetadata | None:
-    """``entity_name``'s own optimistic-lock version ATTRIBUTE, when it is a
-    VERSIONED, NON-TEMPORAL entity (`m-opt-lock`) — ``None`` otherwise, because a
-    temporal entity observes a whole MILESTONE rather than a version, which is a
-    different observation shape and not this attribute's
-    (:func:`_milestone_observation`; `_build_temporal_instruction`). Resolved
-    through the FAMILY-declaring entity
-    (:func:`~parallax.conformance._mechanism.model_facts.family_declarer`): the
-    version column is family-wide metadata declared only on the root
-    (`m-opt-lock` "The version column")."""
-    declaring = family_declarer(model, case_entity(model, entity_name))
-    if declaring.declared_as_of_axes:
-        return None
-    return next((attr for attr in declaring.declared_attributes if attr.optimistic_locking), None)
+def _version_attribute(model: AcceptedMetamodel, entity_name: str) -> AttributeIdentity | None:
+    """``entity_name``'s explicit version Attribute, or ``None`` for an
+    unversioned or temporal family, whose temporal observation names a
+    milestone rather than a version."""
+    return concurrency_view(model).version_attribute(case_entity(model, entity_name).identity)
 
 
 def _refuse_unaccounted_document_milestone(
@@ -479,7 +470,7 @@ def _binds_row_observations(
       collapses (the initial version is a derived constant, never observed);
     - `batch_write.update_collapses` — a VERSIONED target's update always
       decomposes (the gate/advance binds a per-row observed version,
-      `m-opt-lock`, ADR 0014); an unversioned target decomposes per distinct
+      `m-batch-write`, ADR 0014); an unversioned target decomposes per distinct
       key only when its rows assign NON-uniform values (``m-batch-write-002``),
       collapsing into one key-membership statement when uniform
       (``m-batch-write-001``'s own update entry);
@@ -506,7 +497,7 @@ def _check_statement_count_consistency(
     (:func:`lower_writes`), or what the run lane's flush delivered, so the
     assertion sees every stage the planner applies — coalescing, physical-shape
     collapse, and the ELISION that drops a keyed update whose effective change
-    set is empty (`m-opt-lock`'s no-op write) — rather than a second,
+    set is empty (`m-unit-work`'s no-op write) — rather than a second,
     drift-prone reconstruction of them.
 
     Only a writeSequence entry authors ``statements`` (a buffered scenario write
@@ -537,10 +528,10 @@ def _seed_insert_version(
     """Seed the derived version only for compile's prepared insert validation."""
     if mutation != "insert":
         return dict(row)
-    version_attr = _versioned_non_temporal_version_attribute(model, entity_name)
-    if version_attr is None or version_attr.identity.name in row:
+    version_attr = _version_attribute(model, entity_name)
+    if version_attr is None or version_attr.name in row:
         return dict(row)
-    return {**row, version_attr.identity.name: opt_lock.INITIAL_VERSION}
+    return {**row, version_attr.name: INITIAL_VERSION}
 
 
 def _build_instructions(
@@ -758,12 +749,15 @@ class _SimulatedUnit:
         key: ObjectKey | None,
         observation: RetainedObservation | None,
     ) -> None:
-        optimistic = opt_lock.optimistic_key(self._model, instruction.target.identity)
-        evidence = opt_lock.settled_evidence(
-            optimistic, instruction.mutation, object_key=key, observation=observation
+        evidence = settled_evidence(
+            concurrency_view(self._model),
+            instruction.target.identity,
+            instruction.mutation,
+            object_key=key,
+            observation=observation,
         )
         if evidence is None:
-            raise _unlicensed(instruction, optimistic, self._model)
+            raise _unlicensed(instruction, self._model)
         source = (
             ReadEvidence(instruction.target.identity, evidence, self._participation, None)
             if isinstance(evidence, ObjectKey)
@@ -793,22 +787,18 @@ def _composition_refusal() -> Generator[None]:
         ) from refusal
 
 
-def _unlicensed(
-    instruction: PreparedKeyedInstruction, key: opt_lock.OptimisticKey, model: AcceptedMetamodel
-) -> Exception:
+def _unlicensed(instruction: PreparedKeyedInstruction, model: AcceptedMetamodel) -> Exception:
     """The refusal of a simulated write against existing state that carries
-    neither an insertion's authority nor the evidence ``key`` requires of it.
+    neither an insertion's authority nor the evidence its family requires of it.
 
     An unversioned row's evidence is its object, so only a row naming none
     reaches here, and it is refused for the key it omits."""
     entity = instruction.target.identity
     mutation = instruction.mutation
-    if isinstance(key, opt_lock.ExplicitVersion):
-        return opt_lock.UnobservedVersionError(
-            f"{entity.name}: a keyed {mutation!r} of a versioned row requires the version its "
-            "source observed, which the case states none of (m-opt-lock)"
-        )
-    if not isinstance(key, opt_lock.TransactionTimeDerived):
+    versioning = concurrency_view(model)
+    if versioning.version_attribute(entity) is not None:
+        return UnobservedVersionError(entity)
+    if versioning.settles_against(entity) == "object":
         position = inheritance.view(model).entity(entity)
         assert position is not None  # the facet covers every accepted Entity
         return WritePlanningError(
@@ -819,7 +809,7 @@ def _unlicensed(
         f"{entity.name!r}: a keyed {mutation!r} writes existing state the case state holds "
         "neither an insertion's authority nor the evidence of — a temporal close requires the "
         "Temporal Observation it addresses, gates on, and carries state forward from "
-        "(m-unit-work; m-opt-lock)"
+        "(m-unit-work)"
     )
 
 
@@ -827,7 +817,7 @@ def _unlicensed(
 def _simulated_unit(
     model: AcceptedMetamodel,
     dialect: Dialect,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     tx_instant: str,
     store: SimulatedTemporalStore | None,
     *,
@@ -856,7 +846,7 @@ def _simulated_unit(
     lifetime = TxnAttemptLifetime()
     uow = UnitOfWork(
         settings=TransactionSettings(
-            concurrency=concurrency, counts_unchanged_rows=dialect.counts_unchanged_rows
+            preference=concurrency, counts_unchanged_rows=dialect.counts_unchanged_rows
         ),
         lifetime=lifetime,
         clock=_pinned_clock(tx_instant),
@@ -866,7 +856,6 @@ def _simulated_unit(
         acquire_rows=_refuse_marker_rows if store is None else store.acquisition(model),
         planner=planner,
         actor_identity=_PLANNING_ACTOR,
-        evidence_policy_for=opt_lock.view(model).required_key,
     )
     try:
         yield _SimulatedUnit(model, uow, steps)
@@ -889,7 +878,7 @@ def _lower_marker_unit(
     model: AcceptedMetamodel,
     prepare: WirePreparer,
     dialect: Dialect,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     tx_instant: str,
 ) -> tuple[LoweredStatement, ...]:
     prepared = prepare(instruction)
@@ -905,7 +894,7 @@ def lower_writes(
     model: AcceptedMetamodel,
     prepare: WirePreparer,
     dialect: Dialect,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     store: SimulatedTemporalStore,
     tx_instant: str,
     group_observations: GroupRetainedObservations,
@@ -957,7 +946,7 @@ def _lower_predicate_write_step(
     prepared: PreparedPredicateInstruction,
     model: AcceptedMetamodel,
     dialect: Dialect,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     store: SimulatedTemporalStore,
     *,
     rollback: bool,
@@ -1791,7 +1780,7 @@ class CaseContext:
 
     serving: ServingModel
     model: AcceptedMetamodel
-    concurrency: Concurrency
+    concurrency: ConcurrencyPreference
     requests: case_format.TransactionKeywords
     options: TxnOptions
     prepare: WirePreparer = field(init=False, repr=False, compare=False)
@@ -2461,7 +2450,7 @@ def _landed_conflict_rows(
 
 def _implied_shortfall_error(
     observation_requiring: bool,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     model: AcceptedMetamodel,
     target: str,
 ) -> type[WriteEffectError]:
@@ -2478,8 +2467,8 @@ def _implied_shortfall_error(
     """
     if not observation_requiring:
         return MissingTargetError
-    strategy = opt_lock.effective_strategy(
-        concurrency, opt_lock.view(model).key(case_entity(model, target).identity)
+    strategy = concurrency_view(model).effective_strategy(
+        case_entity(model, target).identity, concurrency
     )
     return OptimisticLockConflictError if strategy == "optimistic" else StaleWriteError
 
@@ -2540,7 +2529,7 @@ def _run_conflict_attempts(
     model: AcceptedMetamodel,
     options: TxnOptions,
     target: str,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     requests: case_format.TransactionKeywords,
     attempts: Sequence[Sequence[Mapping[str, object]]],
     mutation: Literal["amend", "delete"],
@@ -2585,7 +2574,7 @@ def _run_conflict_attempts(
         for rows in attempts
     ]
     _refuse_a_locking_conflict_target(model, target, concurrency)
-    observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
+    observation_requiring = _version_attribute(model, target) is not None
     if observation_requiring and any(
         submission.declared_observation is None
         for attempt in parsed_attempts
@@ -2645,7 +2634,7 @@ def _run_conflict_attempts(
 
 
 def _refuse_a_locking_conflict_target(
-    model: AcceptedMetamodel, target: str, concurrency: Concurrency
+    model: AcceptedMetamodel, target: str, concurrency: ConcurrencyPreference
 ) -> None:
     """Refuse a conflict case whose target's Effective Concurrency Strategy is
     Locking, before any read.
@@ -2654,8 +2643,8 @@ def _refuse_a_locking_conflict_target(
     case stages could not commit between that read and the write: the case
     describes interference no client can meet (`m-case-format` "Conflict cases").
     """
-    key = opt_lock.view(model).key(case_entity(model, target).identity)
-    if opt_lock.effective_strategy(concurrency, key) == "locking":
+    entity = case_entity(model, target).identity
+    if concurrency_view(model).effective_strategy(entity, concurrency) == "locking":
         raise EngineError(
             f"{target!r}: a conflict case stages a writer that commits between the attempt's "
             "source read and its write, which only the Optimistic strategy leaves room for — "
@@ -2704,7 +2693,7 @@ def run_conflict_case(
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], int, dict[str, list[MappingRow]] | None, int]:
-    """Run a `conflict` case (`m-opt-lock`): the single-attempt form
+    """Run a `conflict` case (`m-case-format`): the single-attempt form
     (`when.write`), or the `when.attempts` sequence production's own bounded
     retry loop replays — every attempt one physical attempt of ONE
     `db.transact` invocation, in order, each with its own statements (the

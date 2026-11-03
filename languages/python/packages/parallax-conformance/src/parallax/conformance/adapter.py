@@ -216,7 +216,7 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
     The scenario and writeSequence lanes emit the keyed unit-of-work DML (and, for a
     scenario, the read-lock reads); an error case has no compile artifact (a
     lane-honest ``EngineError`` names the run lane that grades it); every reachable
-    conflict case declares ``compileEligibility: run-only`` (m-opt-lock's own
+    conflict case declares ``compileEligibility: run-only`` (m-concurrency's own
     single-connection concurrency intent — `compile_case` already answers the
     defined ``run-only`` envelope before ever reaching here), so a conflict case
     reaching this dispatch is mis-declared, named loudly rather than silently
@@ -241,7 +241,7 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
     if case.shape == "conflict":
         raise engine.EngineError(
             f"{case.path.name}: a conflict case's single-connection concurrency intent "
-            "(m-opt-lock) is always declared `compileEligibility: run-only`; a reachable "
+            "(m-concurrency) is always declared `compileEligibility: run-only`; a reachable "
             "conflict case missing that declaration is mis-declared, not compilable"
         )
     return engine.compile_read_case(case, dialect)
@@ -339,7 +339,7 @@ def _run(
     A read run records its observed ``rows`` / ``graph`` / ``graphs``
     (:func:`_read_observations`); a writeSequence run records the committed
     ``tableState`` read back from the model tables (the `m-conformance-adapter`
-    write-sequence observation); a conflict run (m-opt-lock) records the FINAL
+    write-sequence observation); a conflict run (m-concurrency) records the FINAL
     ``affectedRows`` (single-attempt, or the last of a ``when.attempts`` retry
     sequence) and, when the case authors it, the resulting ``tableState``; an
     error run records the raised failure's classification (``errorClass`` /

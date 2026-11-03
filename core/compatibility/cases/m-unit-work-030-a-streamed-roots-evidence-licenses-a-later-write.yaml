@@ -3,7 +3,7 @@
 # observed states for one Entity and primary key"; m-case-format *Streamed read
 # steps* / *Settling against a grouped find*).
 model: models/account.yaml
-tags: [m-unit-work, m-opt-lock, m-snapshot-read, m-sql, observed-state, stream, streamed-delivery, scenario, slice-snapshot-1]
+tags: [m-unit-work, m-concurrency, m-snapshot-read, m-sql, observed-state, stream, streamed-delivery, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

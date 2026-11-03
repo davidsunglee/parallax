@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core._execution._unit_work.strategy import concurrency_preference
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import IsolationLevel, isolation_level
 
 __all__ = [
@@ -68,7 +67,7 @@ class TxnOptions:
     """
 
     max_retries: int = 10
-    concurrency: Concurrency = "optimistic"
+    concurrency: ConcurrencyPreference = "optimistic"
     isolation: IsolationLevel = "read_committed"
 
     def __post_init__(self) -> None:
@@ -99,7 +98,7 @@ def patch_options(
     options: TxnOptions,
     *,
     max_retries: int | Omitted = OMITTED,
-    concurrency: Concurrency | Omitted = OMITTED,
+    concurrency: ConcurrencyPreference | Omitted = OMITTED,
     isolation: IsolationLevel | Omitted = OMITTED,
 ) -> TxnOptions:
     """Apply one partial option patch, reusing ``options`` when unchanged."""

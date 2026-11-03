@@ -127,7 +127,7 @@ def _plan(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-            concurrency=concurrency,  # type: ignore[arg-type]
+            preference=concurrency,  # type: ignore[arg-type]
             composed_writes=admitted_writes(POSITION, list(writes)),
             ownership=ownership,
             counts_unchanged_rows=guards,

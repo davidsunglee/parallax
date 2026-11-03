@@ -364,7 +364,7 @@ def _position_opening() -> ComposedBitemporalOpening:
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
-    admission = write_admission(POSITION, inserted_version=_no_version)
+    admission = write_admission(POSITION)
     identity = admission.admit_insert(
         admitted_write(insertion, None, OBJECT), insertion_advice=None
     )
@@ -400,10 +400,6 @@ def _post_removal_insert() -> _Row:
 
 def _target(write: AdmittedWrite | InsertBatch | ObjectLockedBatch) -> EntityMetadata:
     return write.instruction.target
-
-
-def _no_version(*_: object) -> int | None:
-    return None
 
 
 def _confirmed(write: TargetWrite) -> TargetWrite:

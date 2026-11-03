@@ -1,4 +1,4 @@
-"""Unit tests for the m-opt-lock machinery (no database).
+"""Unit tests for the m-concurrency machinery (no database).
 
 These pin the DB-free invariants of optimistic-lock conflict cases: a conflict
 case is discovered and self-describes (carries `then.affectedRows`, an optional
@@ -44,7 +44,7 @@ def _versioned_conflict_cases():
 
 def test_conflict_cases_are_discovered_and_self_describe() -> None:
     cases = _conflict_cases()
-    assert cases, "no conflict (m-opt-lock) cases discovered"
+    assert cases, "no conflict (m-concurrency) cases discovered"
     for case in cases:
         # A conflict case carries then.affectedRows and no query/scenario.
         assert "objectQuery" not in case.when
@@ -64,7 +64,7 @@ def test_conflict_cases_are_discovered_and_self_describe() -> None:
 
 def test_retry_conflict_sequence_self_describes() -> None:
     cases = [c for c in _conflict_cases() if c.attempts]
-    assert cases, "no m-opt-lock retry-conflict (attempts) case discovered"
+    assert cases, "no m-concurrency retry-conflict (attempts) case discovered"
     for case in cases:
         # The retry contract: a stale-version attempt affects 0, then a fresh-
         # version retry affects 1. Both outcomes must appear, in that order.
@@ -108,7 +108,7 @@ def test_conflict_write_rows_normalizes_both_authored_forms() -> None:
 
 def test_conflict_input_holds_for_authored_versioned_cases() -> None:
     cases = _versioned_conflict_cases()
-    assert cases, "no versioned conflict (m-opt-lock) case discovered"
+    assert cases, "no versioned conflict (m-concurrency) case discovered"
     for case in cases:
         # Must not raise: each authored ① `write` (single form) / per-attempt `write`
         # (retry form) classifies against the model to the golden's SET column list
@@ -139,7 +139,7 @@ def test_conflict_input_gate_presence_follows_the_declared_mode() -> None:
     # conflict attempt settles against a value a read published, and a Locking
     # target's write is licensed only by a read of its own transaction, which no
     # concurrent writer can be interposed after. The Locking arm of gate presence
-    # is graded by the writeSequence cases that render it (`m-opt-lock-002`) and
+    # is graded by the writeSequence cases that render it (`m-concurrency-002`) and
     # by the Python interface's own planner suites.
     assert {c.concurrency_mode for c in cases} == {"optimistic"}
     for case in cases:
@@ -153,7 +153,7 @@ def test_conflict_input_gate_presence_follows_the_declared_mode() -> None:
             _assert_conflict_input(flipped, "postgres")
 
 
-# --- gate detection (m-opt-lock "the gate binds last") ---------------------------
+# --- gate detection (m-sql "the version gate binds last") ---------------------------
 #
 # Whether a statement gates is a decision about its OUTER predicate alone. Three
 # other places name the version column and are not a gate — an `UPDATE`'s own SET
@@ -211,7 +211,7 @@ def test_an_unparsable_statement_carries_no_gate() -> None:
 
 def test_every_authored_conflict_case_targets_a_non_temporal_entity() -> None:
     cases = _conflict_cases()
-    assert cases, "no conflict (m-opt-lock) case discovered"
+    assert cases, "no conflict (m-concurrency) case discovered"
     for case in cases:
         # Must not raise: the conflict shape is non-temporal, so every authored
         # case's write targets an entity with no as-of axis.

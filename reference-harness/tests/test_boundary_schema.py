@@ -1,6 +1,6 @@
 """DB-free schema tests for the boundary-case api-conformance-lane invariant.
 
-A boundary case (`m-auto-retry` / `m-opt-lock` bounded automatic retry) is a
+A boundary case (`m-auto-retry` / `m-concurrency` bounded automatic retry) is a
 runtime-loop observable the single-connection harness cannot provoke, so it lives
 on the `api-conformance` lane and is satisfied by each language's API Conformance
 Suite. The

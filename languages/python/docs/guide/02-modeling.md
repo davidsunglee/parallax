@@ -501,8 +501,8 @@ data migration that you run yourself.
   axes, milestones and how a write composes over existing history.
 - [Temporal reads](../../../../core/spec/m-temporal-read.md) and
   [temporal writes](../../../../core/spec/m-temporal-write.md) define the two time axes.
-- [Optimistic locking](../../../../core/spec/m-opt-lock.md) and
-  [read locks](../../../../core/spec/m-read-lock.md) define the two concurrency
-  strategies.
+- [Concurrency policy](../../../../core/spec/m-concurrency.md) defines the two concurrency
+  strategies, and [read locks](../../../../core/spec/m-read-lock.md) the shared lock a
+  Locking read takes.
 - [Storage layout](../../../../core/spec/m-storage-layout.md) defines both layouts and
   why callers can't tell them apart.

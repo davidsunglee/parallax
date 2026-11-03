@@ -11,8 +11,8 @@
 #   - the batched-write case     (a multi-row INSERT and a batched UPDATE).
 #
 # `version` is an optimistic-locking version column (used as a normal column here;
-# the optimistic-lock conflict contract is m-opt-lock / Phase 7). It is present so the m-unit-work
-# model already carries the column m-opt-lock will check, without changing m-unit-work behavior.
+# the optimistic-lock conflict contract is m-concurrency / Phase 7). It is present so the m-unit-work
+# model already carries the column m-concurrency will check, without changing m-unit-work behavior.
 #
 # Row data lives in the sibling fixtures/account.yaml (used by the read cases and
 # the read-in-cache scenarios). The batched-write case loads those fixtures and

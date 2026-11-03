@@ -115,14 +115,14 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
             "end-to-end by the error run lane (test_run_sweep.test_error_run_sweep)"
         )
     if case.shape == "boundary":
-        # Every boundary case (m-auto-retry / m-opt-lock bounded automatic
+        # Every boundary case (m-auto-retry / m-concurrency bounded automatic
         # retry — an injected-fault or loop-configuration loop-mechanics
         # branch) is a
         # declared `api-conformance`-lane assertion the wire golden SQL
         # cannot see (it carries no golden DML at all, m-case-format); the
         # API Conformance Suite verifies it, not `run`.
         return (
-            "boundary loop-mechanics case (m-auto-retry/m-opt-lock, api-conformance lane): "
+            "boundary loop-mechanics case (m-auto-retry/m-concurrency, api-conformance lane): "
             "verified by the API Conformance Suite's case-driven boundary runner, not by `run`"
         )
     if case.shape in ("scenario", "writeSequence"):
@@ -339,7 +339,7 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     assert {"m-batch-write-005", "m-batch-write-006"} <= WRITE_EXERCISED
     # A query-result-dependent run-only scenario is classified BEFORE the shape
     # fallback — never the stale generic scheduling promise.
-    run_only_text = _skip_text("m-opt-lock-001")
+    run_only_text = _skip_text("m-concurrency-001")
     assert run_only_text.startswith("declared compile-run-only"), run_only_text
     assert "graded by run instead" in run_only_text, run_only_text
     assert "land with a later write increment" not in run_only_text, run_only_text
@@ -351,15 +351,15 @@ def test_displayed_skip_text_stays_honest_for_a_representative_set() -> None:
     assert "land with a later write increment" not in bucket_text, bucket_text
 
 
-def test_m_opt_lock_001_is_query_result_dependent_run_only() -> None:
-    """`m-opt-lock-001` is a query-result-dependent run-only scenario.
+def test_m_concurrency_001_is_query_result_dependent_run_only() -> None:
+    """`m-concurrency-001` is a query-result-dependent run-only scenario.
 
     Its observing find, no-op versioned update, and dependent find share one
     unit of work and lock lifetime. The update's license comes from the query
     result, so compile returns the declared run-only envelope and the run lane
     grades the scenario.
     """
-    (case,) = [c for c in _REACHABLE if c.case_id == "m-opt-lock-001"]
+    (case,) = [c for c in _REACHABLE if c.case_id == "m-concurrency-001"]
     assert case.case_id not in WRITE_EXERCISED
     assert engine.eligibility(case) is not None
     envelope = adapter.compile_case(case.path, "postgres")

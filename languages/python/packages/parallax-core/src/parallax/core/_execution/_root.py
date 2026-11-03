@@ -11,7 +11,7 @@ from parallax.core._execution._routing import resolved_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.clock import Clock, SystemClock
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.execution_authority._authority import (
     ExecutionAuthority,
@@ -160,7 +160,7 @@ class DatabaseRoot[Authorization, Scope]:
         self,
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> Self:
         return self._alias(

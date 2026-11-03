@@ -23,8 +23,8 @@ from parallax.conformance.read_models import (
 from parallax.conformance.read_models import Balance as _Balance
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
 from parallax.core import ObjectQuery
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.object_query import LATEST
-from parallax.core.unit_work import Concurrency
 
 __all__ = ["READ_STORIES", "ReadStory", "read_story_snippet"]
 
@@ -61,7 +61,7 @@ class ReadStory:
     model: str
     build: Callable[[], ObjectQuery[Any, Any]]
     snippet: str
-    concurrency: Concurrency | None = None
+    concurrency: ConcurrencyPreference | None = None
 
 
 def read_story_snippet(story: ReadStory) -> str:

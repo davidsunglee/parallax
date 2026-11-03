@@ -7,7 +7,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned update's version bind is the framework-owned advance of the version its own observing find returned, and the versioned delete requires that find's observation to run at all — a query result (m-opt-lock)"
+  note: "the versioned update's version bind is the framework-owned advance of the version its own observing find returned, and the versioned delete requires that find's observation to run at all — a query result (m-concurrency)"
 given:
   fixtures: true
 when:

@@ -2,7 +2,7 @@
 
 Every accepted Entity, a standalone one being its own family, reads four
 family-wide facts from formation: its root's Metadata, the family primary key,
-the temporal shape, and the optimistic key. What a write addresses and what a
+the temporal shape, and the version source. What a write addresses and what a
 read retains rest on every position answering exactly its root's facts, so this
 suite grades the owners over the whole corpus rather than through one fixture:
 each position answers its root's objects by identity, and the family key is the
@@ -22,7 +22,7 @@ from typing import Final
 
 import pytest
 
-from parallax.core import inheritance, opt_lock, temporal_read
+from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -115,7 +115,7 @@ _EVERY_FAMILY_SHAPE: Final[frozenset[str]] = frozenset(
     }
 )
 
-# Every temporal shape and optimistic key a family can carry, each witnessed at
+# Every temporal shape and version source a family can carry, each witnessed at
 # a position below its root, where sharing the root's object is the claim.
 _EVERY_INHERITED_FACT: Final[frozenset[str]] = frozenset(
     {
@@ -124,7 +124,7 @@ _EVERY_INHERITED_FACT: Final[frozenset[str]] = frozenset(
         "Bitemporal",
         "Unversioned",
         "ExplicitVersion",
-        "TransactionTimeDerived",
+        "TransactionTimeVersion",
     }
 )
 
@@ -163,7 +163,7 @@ def _divergent_owners(model: Metamodel, entity: EntityMetadata) -> list[str]:
     """Each family fact ``entity`` does not answer with its root's own object."""
     families = inheritance.view(model)
     temporal = temporal_read.view(model)
-    keys = opt_lock.view(model)
+    versioning = concurrency.view(model)
     view = families.entity(entity.identity)
     assert view is not None
     root_view = families.entity(view.root)
@@ -178,8 +178,8 @@ def _divergent_owners(model: Metamodel, entity: EntityMetadata) -> list[str]:
         divergent.append("key")
     if temporal.shape(entity.identity) is not temporal.shape(view.root):
         divergent.append("temporal shape")
-    if keys.key(entity.identity) is not keys.key(view.root):
-        divergent.append("optimistic key")
+    if versioning.version_source(entity.identity) is not versioning.version_source(view.root):
+        divergent.append("version source")
     return divergent
 
 
@@ -202,7 +202,7 @@ def test_the_measured_families_span_both_strategies_every_position_and_every_fac
     corpus they walk really does declare both strategies at every position, an
     ancestry deep enough for a key to be inherited across an intermediate
     abstract position rather than straight from a parent, and every temporal
-    shape and optimistic key at a position that inherits it.
+    shape and version source at a position that inherits it.
     """
     declared = tuple(
         stem for stem in _CORPUS if any(e.inheritance is not None for e in corpus()[stem].entities)
@@ -214,7 +214,7 @@ def test_the_measured_families_span_both_strategies_every_position_and_every_fac
         model = corpus()[stem]
         facet = inheritance.view(model)
         temporal = temporal_read.view(model)
-        keys = opt_lock.view(model)
+        versioning = concurrency.view(model)
         for entity in model.entities:
             position = entity.inheritance
             if position is None:
@@ -225,7 +225,7 @@ def test_the_measured_families_span_both_strategies_every_position_and_every_fac
             ancestries.add(len(view.ancestry))
             if view.root != entity.identity:
                 inherited.add(type(temporal.shape(entity.identity)).__name__)
-                inherited.add(type(keys.key(entity.identity)).__name__)
+                inherited.add(type(versioning.version_source(entity.identity)).__name__)
     assert declared == _FAMILIES
     assert shapes == _EVERY_FAMILY_SHAPE
     assert max(ancestries) == _DEEPEST_ANCESTRY

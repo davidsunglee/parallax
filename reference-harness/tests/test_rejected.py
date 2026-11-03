@@ -819,10 +819,10 @@ def test_keyed_assignment_judges_every_non_temporal_row() -> None:
 
 def test_rejected_keyed_assignment_refuses_earlier_owned_name_before_later_unknown_name() -> None:
     case = Case(
-        path=Path("m-opt-lock-999-row-order.yaml"),
+        path=Path("m-concurrency-999-row-order.yaml"),
         raw={
             "model": "models/account.yaml",
-            "tags": ["m-opt-lock"],
+            "tags": ["m-concurrency"],
             "shape": "rejected",
             "when": {
                 "write": {
@@ -2394,10 +2394,10 @@ def test_rejected_keyed_rows_finish_values_before_a_later_owned_assignment(
     mutation: str, first_row: dict[str, Any], earlier_rule: str
 ) -> None:
     case = Case(
-        path=Path("m-opt-lock-999-earlier-row-values.yaml"),
+        path=Path("m-concurrency-999-earlier-row-values.yaml"),
         raw={
             "model": "models/account.yaml",
-            "tags": ["m-opt-lock"],
+            "tags": ["m-concurrency"],
             "shape": "rejected",
             "when": {
                 "write": {
@@ -2416,10 +2416,10 @@ def test_rejected_keyed_rows_finish_values_before_a_later_owned_assignment(
 
 def test_rejected_keyed_window_cannot_pass_as_an_assignment_refusal() -> None:
     case = Case(
-        path=Path("m-opt-lock-999-inapplicable-window.yaml"),
+        path=Path("m-concurrency-999-inapplicable-window.yaml"),
         raw={
             "model": "models/account.yaml",
-            "tags": ["m-opt-lock"],
+            "tags": ["m-concurrency"],
             "shape": "rejected",
             "when": {
                 "write": {

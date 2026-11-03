@@ -837,7 +837,7 @@ class Case:
         configured default, else the Database Root's built-in `m-case-format`
         states for the block (:meth:`resolved_option`).
 
-        A preference is not a strategy: the target Entity's Optimistic Lock Facet
+        A preference is not a strategy: the target Entity's Concurrency Facet
         decides whether it yields Optimistic or the mandatory Locking fallback
         (`m-unit-work` strategy selection). Gate assertions read the resolved
         preference where a versioned or temporal target makes it coincide with the
@@ -969,7 +969,7 @@ class Case:
 
     @property
     def is_conflict(self) -> bool:
-        """True for an m-opt-lock optimistic-lock conflict or success case.
+        """True for an m-concurrency optimistic-lock conflict or success case.
 
         A single-attempt conflict carries ``when.write`` + ``then.affectedRows`` (the
         affected-row count the golden write leaves behind) and an OPTIONAL out-of-band
@@ -1054,7 +1054,7 @@ class Case:
 
     @property
     def is_boundary(self) -> bool:
-        """True for an m-auto-retry/m-opt-lock bounded-retry boundary case.
+        """True for an m-auto-retry/m-concurrency bounded-retry boundary case.
 
         A boundary case carries ``when.boundary`` (the portable unit-of-work actions)
         and a ``then.outcome`` (the portable outcome) instead of an Object Query /

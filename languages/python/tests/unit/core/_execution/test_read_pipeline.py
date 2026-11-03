@@ -42,6 +42,7 @@ from parallax.core._execution._read_pipeline import (
 )
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
@@ -55,7 +56,6 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
 from parallax.core.unit_work import (
-    Concurrency,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -86,7 +86,7 @@ def _participating(
     adapter: ScriptedAdapter,
     *,
     provider: RecordingLifecycleProvider | None = None,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
 ) -> None:
     """Run ``run`` over the actual Attempt one committed transaction constructs."""
     _scope(adapter, provider=provider).transact(run, itself, concurrency=concurrency)

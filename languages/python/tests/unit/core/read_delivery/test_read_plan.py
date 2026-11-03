@@ -22,6 +22,7 @@ from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, read_planning
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INFINITY, INT64, TemporalBound
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
@@ -50,7 +51,6 @@ from parallax.core.sql_gen._compile import (
 )
 from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._inheritance import ReadResultContract
-from parallax.core.unit_work import Concurrency
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database
@@ -127,7 +127,7 @@ def _plan(
     model: CatalogedModel = _MODEL,
     dialect: Dialect = POSTGRES,
     result_form: Literal["row", "instance"] = "instance",
-    preference: Concurrency | None = None,
+    preference: ConcurrencyPreference | None = None,
 ) -> _read_plan.ReadPlan:
     return planner.plan(
         edition=edition,

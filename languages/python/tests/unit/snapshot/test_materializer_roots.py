@@ -11,7 +11,7 @@ from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core.base import SQL_NULL
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
+from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import (
     ABSENT,
@@ -21,7 +21,6 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     entity_state,
     page_rows,
-    page_schedule,
     reach_into,
     release_finished_rows,
 )
@@ -31,7 +30,7 @@ from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells, uncarried
-from tests.unit._root_publication_support import each_root, observed_roots
+from tests.unit._root_publication_support import deferring_schedule, each_root, observed_roots
 from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
@@ -44,10 +43,6 @@ from tests.unit.snapshot._snapshot_page_support import (
 
 _ENCODED = model_of(ENCODED_ORDERS)
 _ANIMAL = corpus_model("animal")
-
-
-def _every_family_versioned(_entity: EntityIdentity) -> bool:
-    return True
 
 
 def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
@@ -170,7 +165,7 @@ def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> Non
     assert len(rows.issues) == 2
     assert len(rows.decoders) == 2
     assert len(rows.overwritten_edges) == 2
-    last_uses = page_schedule(page, _every_family_versioned, atomic=True).last_uses
+    last_uses = deferring_schedule(page).last_uses
     assert last_uses is not None
     projection_last, logical_last = last_uses
     assert tuple(projection_last) == (0, 0)
@@ -180,7 +175,7 @@ def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> Non
 def test_releasing_a_finished_root_twice_is_idempotent() -> None:
     page, (root,) = _page(((ROOT_LEVEL, _encoded_order("01")),))
     rows = page_rows(cast("Any", page))
-    schedule = page_schedule(cast("Any", page), _every_family_versioned, atomic=True)
+    schedule = deferring_schedule(cast("Any", page))
     reached: list[int] = []
     reach_into(rows, root, reached)
     entity_state(rows, root)

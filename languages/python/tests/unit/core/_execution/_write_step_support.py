@@ -14,7 +14,6 @@ import pytest
 
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
@@ -290,7 +289,6 @@ def run_plan(
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(meta).required_key,
     )
     if units is not None:
         units.append(uow)

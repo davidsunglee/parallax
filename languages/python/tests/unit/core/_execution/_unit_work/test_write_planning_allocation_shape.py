@@ -149,7 +149,7 @@ def _flush_of(entities: int, writes: int) -> Seam:
     request = WritePlanningRequest(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=INSTANT,
-        concurrency="optimistic",
+        preference="optimistic",
         composed_writes=tuple(_prepared_writes(model, writes)),
     )
 
@@ -190,7 +190,7 @@ def _source_free_inserts(writes: int) -> WritePlanningRequest:
     return WritePlanningRequest(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=SOURCE_FREE_INSTANT,
-        concurrency="optimistic",
+        preference="optimistic",
         composed_writes=tuple(
             observed_buffer(
                 [

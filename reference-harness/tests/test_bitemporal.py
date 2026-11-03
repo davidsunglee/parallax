@@ -537,7 +537,7 @@ def test_has_temporal_gate_reads_the_close_under_each_dialects_own_quoting() -> 
 
 
 def test_has_temporal_gate_requires_the_gate_predicate_to_be_TRAILING() -> None:
-    # The gate binds LAST, no exception (`m-opt-lock`), so a close that renders
+    # The gate binds LAST, no exception (`m-concurrency`), so a close that renders
     # `in_z = ?` anywhere but at the end is malformed — the observed start woven into
     # the address rather than appended after it. A detector that searched the whole
     # statement would accept that shape as a well-formed gated close and grade its five

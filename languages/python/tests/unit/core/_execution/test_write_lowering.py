@@ -3,10 +3,10 @@
 ``parallax.core._execution._write_lowering.lowered`` is the single
 write-lowering seam each Planned Step lowers through alone, whichever path
 reaches it. These tests pin its byte-exact non-temporal keyed emissions against
-the corpus goldens (``m-unit-work-001/003/005``, ``m-opt-lock-002/005/006/013``,
+the corpus goldens (``m-unit-work-001/003/005``, ``m-concurrency-002/005/006/013``,
 ``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
 Write Planner for the coalescing / mixed-flush / cancellation cases
-(``-008/-009/-010``), pin the ``m-opt-lock`` version gate/advance/shortfall
+(``-008/-009/-010``), pin the ``m-concurrency`` version gate/advance/shortfall
 policy (observation-required for BOTH update and delete, gate-optimistic-only, a
 row-carried version value refused outright, the derived initial version), the
 inheritance tag derivation/guard/opt-lock composition, and the pk-gen
@@ -52,8 +52,8 @@ from parallax.core import (
     TxTemporal,
     ValueObject,
     attr,
+    concurrency,
     inheritance,
-    opt_lock,
     storage_layout,
     temporal_read,
 )
@@ -74,6 +74,7 @@ from parallax.core._execution._write_lowering import (
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, FrozenMap
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
@@ -100,7 +101,6 @@ from parallax.core.sql_gen._context import (
 from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
 from parallax.core.temporal_read import TransactionTimeOnly
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
@@ -187,7 +187,7 @@ def _lower(
     *,
     observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> list[LoweredStatement]:
     return lower_instruction(instruction, model, dialect, concurrency, observation=observation)
 
@@ -202,7 +202,7 @@ def _flush_and_lower(
     buffer: list[KeyedWriteInstruction],
     model: Metamodel,
     *,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
     observations: Mapping[ObjectKey, StateObservation] | None = None,
 ) -> list[LoweredStatement]:
     instant = inert_instant()
@@ -210,7 +210,7 @@ def _flush_and_lower(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=observed_buffer(buffer, model, observations),
         )
     )
@@ -301,7 +301,7 @@ def test_insert_orders_columns_by_column_order_not_row_order() -> None:
 
 def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
     # m-unit-work-005 step 1: the version advances from this unit of work's own
-    # recorded observation (`m-opt-lock`), never a row-carried value.
+    # recorded observation (`m-concurrency`), never a row-carried value.
     statement = _lower(
         KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
         ACCOUNT,
@@ -473,7 +473,7 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
 
 
 # --------------------------------------------------------------------------- #
-# m-opt-lock: the version gate / advance / conflict policy.                    #
+# m-concurrency: the version gate / advance / conflict policy.                    #
 # --------------------------------------------------------------------------- #
 def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
     # locking mode: version = observed + 1 in the SET, no gate.
@@ -503,7 +503,7 @@ def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> Non
 
 def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     # A row that still authors the version attribute is refused outright
-    # (`m-opt-lock` "Version values are framework-owned") — the framework-owned
+    # (`m-unit-work` "Version values are framework-owned") — the framework-owned
     # field is never caller data, so it is never silently double-assigned
     # against the derived advance, EVEN when an observation is also available.
     update = KeyedWriteInstruction(
@@ -573,13 +573,13 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
     )
     statement = _lower(insert, ACCOUNT)[0]
     assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
-    assert statement.binds == (9, "Noether", 5.00, opt_lock.INITIAL_VERSION)
-    assert opt_lock.INITIAL_VERSION == 1
+    assert statement.binds == (9, "Noether", 5.00, concurrency.INITIAL_VERSION)
+    assert concurrency.INITIAL_VERSION == 1
 
 
 # --------------------------------------------------------------------------- #
 # Inheritance-family keyed writes — tag derivation, tag guard, opt-lock        #
-# composition (m-inheritance x m-sql x m-opt-lock).                            #
+# composition (m-inheritance x m-sql x m-concurrency).                            #
 # --------------------------------------------------------------------------- #
 def test_tph_insert_derives_the_tag_at_its_columnorder_position() -> None:
     # m-inheritance-007.
@@ -772,7 +772,7 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
 
 def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
     # m-unit-work-009's canonical combined order: three objects, one flush. BOTH
-    # the update's and the delete's version (m-opt-lock's own prior-observation
+    # the update's and the delete's version (m-concurrency's own prior-observation
     # requirement) come from the observation each write carries — never a
     # row-carried value. `_flush_and_lower`'s own `locking` preference
     # resolves Account to the Locking strategy, under which neither renders a
@@ -910,7 +910,7 @@ def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None
 
 def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
     # the multi-entry insert's versioned-entity behavior mirrors the single-row
-    # insert's: every collapsed row derives the SAME `opt_lock.INITIAL_VERSION` at
+    # insert's: every collapsed row derives the SAME `concurrency.INITIAL_VERSION` at
     # the version column's own Table Layout slot position, ignoring any row-carried value — a
     # batched insert is exactly as safe as a single-row one because the initial
     # version is a constant, never observed. No corpus witness collapses a
@@ -934,7 +934,7 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
         [20, 21],
         ["Curie", "Bohr"],
         [10.00, 20.00],
-        [opt_lock.INITIAL_VERSION, opt_lock.INITIAL_VERSION],
+        [concurrency.INITIAL_VERSION, concurrency.INITIAL_VERSION],
     )
 
 
@@ -1219,7 +1219,7 @@ def _finalize(
     model: Metamodel,
     *,
     observation: StateObservation | None = None,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
         instruction,
@@ -1333,7 +1333,7 @@ def test_finalization_derives_the_initial_version_the_row_never_authors() -> Non
     (step,) = steps
     assert isinstance(step, PlannedInsert)
     row = step.entries[0].row
-    assert row.attributes[_attribute(ACCOUNT, "Account", "version")] == opt_lock.INITIAL_VERSION
+    assert row.attributes[_attribute(ACCOUNT, "Account", "version")] == concurrency.INITIAL_VERSION
 
 
 def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> None:

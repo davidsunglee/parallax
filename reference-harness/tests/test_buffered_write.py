@@ -191,7 +191,7 @@ def test_buffer_over_different_entities_is_accepted() -> None:
 
 
 def test_buffer_over_different_primary_keys_is_accepted() -> None:
-    # Same entity, two different keys (the m-opt-lock-012 abort pair: insert account 9 +
+    # Same entity, two different keys (the m-concurrency-012 abort pair: insert account 9 +
     # gated update account 2) — no same-primary-key constraint.
     probe = [
         {

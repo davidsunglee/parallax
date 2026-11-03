@@ -4,10 +4,10 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Final, cast
 
-from parallax.core import temporal_read
+from parallax.core import concurrency, temporal_read
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
+from parallax.core.read_delivery._page import ABSENT, InvalidData
 from parallax.core.temporal_read import Bitemporal, NonTemporal, Pin, TransactionTimeOnly
 from parallax.snapshot._inspection import (
     NodeProvenance,
@@ -35,8 +35,7 @@ class TypedRootPublisher:
     conformance are one root's, set when its call begins and released when it
     ends.
 
-    ``versions`` names the explicit version Attribute a classified record
-    publishes. Provenance and the states of nodes nothing distinguishes are
+    Provenance and the states of nodes nothing distinguishes are
     shared across the Page's roots and released with the publisher.
     """
 
@@ -48,19 +47,18 @@ class TypedRootPublisher:
         "_root",
         "_shared_states",
         "_temporal",
-        "_versions",
+        "_versioning",
     )
 
     def __init__(
         self,
         model: Metamodel,
         construction: EntityGraphConstruction,
-        versions: VersionAttributes,
     ) -> None:
         self._model = model
         self._construction = construction
-        self._versions = versions
         self._temporal = temporal_read.view(model)
+        self._versioning = concurrency.view(model)
         self._root: RootView | None = None
         self._conformance = RootConformance.CONFORMING
         self._provenance = PageProvenance()
@@ -74,7 +72,7 @@ class TypedRootPublisher:
         # keeping the Root View and its Page rows alive past the pass.
         self._root = root
         try:
-            verdict = classify_root(root, self._model, self._versions, ordinal=ordinal)
+            verdict = classify_root(root, self._model, self._versioning, ordinal=ordinal)
             if isinstance(verdict, ConformingRoot):
                 self._conformance = RootConformance.CONFORMING
                 return (self._construction.publish(root, self._lifecycle_states),)

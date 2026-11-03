@@ -68,7 +68,7 @@ _PROFILE = profile_for("pg-full")
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
-_RUN_ONLY_CASE = case_format.default_cases_dir() / "m-opt-lock-005-conflict.yaml"
+_RUN_ONLY_CASE = case_format.default_cases_dir() / "m-concurrency-005-conflict.yaml"
 # A predicate-write scenario; against `_FakePort` — a wrong-shaped canned row and
 # a write path that always raises — it still surfaces a loud `run-failed` error,
 # exercising this lane's own error-reporting contract.
@@ -768,11 +768,11 @@ def test_compile_case_run_only_for_a_declared_run_only_case() -> None:
 
 def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declaration() -> None:
     # Every reachable conflict case declares `compileEligibility: run-only`
-    # (m-opt-lock's single-connection intent), so `compile_case` short-
+    # (m-concurrency's single-connection intent), so `compile_case` short-
     # circuits before `_compile` ever runs; a hypothetically mis-declared one
     # reaching the internal dispatch is refused loudly by its own conflict
     # branch, never silently falling through to the read compiler.
-    case = _case(shape="conflict", tags=("m-opt-lock", "slice-snapshot-1"))
+    case = _case(shape="conflict", tags=("m-concurrency", "slice-snapshot-1"))
     with pytest.raises(engine.EngineError, match="always declared"):
         adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private compile helper
 
@@ -840,11 +840,11 @@ class _AccountWritePort(_WritePort):
 
 
 def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
-    # m-opt-lock's run-only conflict shape: the
+    # m-concurrency's run-only conflict shape: the
     # adapter's own `run` dispatch wraps `engine.run_conflict_case`'s tuple
     # into the schema's one `affectedRows` observation slot, plus
     # `tableState` when the case authors it.
-    case_path = case_format.default_cases_dir() / "m-opt-lock-006-success.yaml"
+    case_path = case_format.default_cases_dir() / "m-concurrency-006-success.yaml"
     envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountWritePort()))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope

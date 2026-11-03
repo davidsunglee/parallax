@@ -7,7 +7,9 @@ and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
 Step algebra it produces and the State Observations it carries, on
-`m-temporal-write` for the temporal expansion it drives, and on `m-edit`, which distinguishes authored assignments from state carried by
+`m-temporal-write` for the temporal expansion it drives, on `m-concurrency` for
+each Entity's Effective Concurrency Strategy, version source, and evidence kind,
+and on `m-edit`, which distinguishes authored assignments from state carried by
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by `m-sql` and run by the execution runtime
@@ -24,11 +26,11 @@ identity map (`m-identity-map`), and the process-wide identity + query caches
 `m-unit-work` also owns **write finalization**: the Write Planner and its stage
 order, which settle buffered writes into `m-write-plan`'s Planned Step algebra;
 the authoritative affected-row enforcer; and the Write Effect Error family that
-enforcer raises (ADR 0041, ADR 0048). Sibling policy modules
-(`m-batch-write`, `m-opt-lock`, `m-read-lock`) keep their own policies and
-reach planning and write admission only through strategy ports this module
-declares, which model preparation (`m-execution`) wires in once per accepted
-model.
+enforcer raises (ADR 0041, ADR 0048). `m-batch-write` keeps its own batching
+policy and reaches planning only through the strategy port this module declares,
+which model preparation (`m-execution`) wires in once per accepted model.
+Concurrency policy is a fact of the accepted model, which this module reads from
+the model's Concurrency Facet and applies to its own attempt state.
 
 ## The unit of work
 
@@ -207,7 +209,7 @@ Three structural rules keep the instruction framework-honest:
   so no caller-facing shape can smuggle one in. Compatibility-case `at` is harness
   clock context, not an alias or an instruction member.
 - **The transaction observation is not an instruction field.** The framework-owned
-  optimistic version / observed `in_z` a gated write binds (`m-opt-lock`) is attached
+  optimistic version / observed `in_z` a gated write binds (`m-concurrency`) is attached
   **per materialized row at flush**, never carried on the durable instruction: the
   reserved `observedVersion` control key and both halves of an observed milestone's own
   coordinate (`observedTxStart` / `observedValidStart`) are explicitly **forbidden**
@@ -548,10 +550,11 @@ write-evidence failure tagged **`write-evidence-unavailable`**, before anything
 is buffered and before any database access, whatever key or revision it shares
 with the stored row: it participated in nothing the writing attempt can stand
 on. The strategy then decides what the participating read must also prove —
-under Locking, the shared lock it holds; under Optimistic, the observation the
-gate binds (`m-opt-lock`) — and evidence that reaches no state this attempt
-still protects is refused, as a write-evidence failure tagged
-**`write-evidence-consumed`**, as *Observation ownership and lifetime* states.
+under Locking, the shared lock it holds (*What licenses a Locking write*); under
+Optimistic, the observation the gate binds (`m-concurrency` *What each strategy
+promises*) — and evidence that reaches no state this attempt still protects is
+refused, as a write-evidence failure tagged **`write-evidence-consumed`**, as
+*Observation ownership and lifetime* states.
 
 Admission precedes the empty amendment's elimination: an amendment that assigns
 nothing is dropped only once its source is admitted, so stating nothing never
@@ -560,6 +563,46 @@ refreshing a captured value, so a value an earlier attempt published licenses
 nothing in the attempt that replays it. A caller holding an earlier observation
 states the revision it observed through a target write instead
 (*Target writes*).
+
+### Version values are framework-owned
+
+The version a gate binds **MUST** be one this attempt authentically observed for
+that row, under either strategy; under Locking that read is also what acquired
+the shared lock, and under Optimistic the database gate remains the concurrency
+authority. An implementation **MUST NOT** accept a caller-authored or
+reconstructed version value as the gate or as the new version: the new version
+is always computed from the observed one (`m-concurrency` *Version
+arithmetic*). "Caller-driven" refers to conflict *handling* only, never to the
+version *value*; a target write's stated revision is a precondition argument,
+not a version value in a row (*Target writes*).
+
+A keyed `UPDATE` or `DELETE` of a versioned row with no authentic observation is
+a **read-before-write** error under either strategy, refused at settlement before
+any DML: there is nothing from which to advance the version and, under
+Optimistic, nothing to gate on. A `DELETE` writes no version, but still requires
+the same evidence: current lock participation under Locking, or observed-version
+evidence a read of the current attempt retained under Optimistic.
+
+### What licenses a Locking write
+
+An observation is mandatory for a gated *and* an ungated observation-requiring
+write, and both strategies accept the same observation. The Locking strategy's
+ungated write is licensed by the **shared read lock** the observing read took,
+and it holds that lock on exactly the row it closes, because the two derive from
+one value: the write's address is the milestone its own written value came
+from, and the observation the address comes from is the record of the read that
+locked that milestone (`m-write-plan` *State Observation*). There is no separate
+license to check. A write whose value names a milestone this attempt never
+observed is already refused under both strategies (*Current-attempt source
+admission*), and a write over a view pinned at a finite Transaction-Time instant
+is refused by the pin rule (`m-identity-map`) before any planning.
+
+The invariant is therefore a property of how the close is constructed rather
+than a precondition validated on the input side. Nothing about the *read* that
+produced an observation survives into it: two reads at different as-of
+coordinates that resolve to one milestone produce one indistinguishable piece
+of evidence, so no observation of a milestone can be less licensing than
+another observation of that same milestone.
 
 ### Source-authorized replacement
 
@@ -1324,7 +1367,7 @@ Absence is **structural**:
 A required observation that is missing is a **planning error**. An implementation
 **MUST NOT** define a `NoObservation` value, a nullable observation that flows
 downstream, or a mode in which an observation-requiring write proceeds unobserved
-— the requirement holds under **both** Effective Concurrency Strategies (`m-opt-lock`).
+— the requirement holds under **both** Effective Concurrency Strategies (`m-concurrency`).
 
 Structural absence extends to the buffer. A buffered write that has an
 observation is buffered **paired** with it — one keyed instruction and the one
@@ -1358,6 +1401,14 @@ holds. An amendment of it expressing no member is empty as well, and so is a
 replacement of an Entity whose only writable member is its key, since the
 key is never written; each answers zero once judged, running nothing
 (`m-batch-write`).
+
+### Empty updates issue no DML
+
+An empty write issues **no DML** — zero Database Calls — under both strategies,
+while a nonempty keyed amendment issues its `UPDATE` and advances the version
+even when every value it writes equals the observed one. Neither an empty write
+nor a temporal milestone kept unchanged needs to advance a version: a concurrent
+editor that races it advances the version itself, so nothing slips through.
 
 ## Buffered, batched, ordered writes
 
@@ -1464,8 +1515,8 @@ rule below combines writes against an object that already existed, at the **clai
 scope** each of them takes.
 
 Claim scope is a **total derivation over the write kind**, from two declared
-facts: the target Entity's Optimistic Key (`m-opt-lock`) and the write's own
-mutation. It answers for a write addressing **one** object, which is every write
+facts: what the target Entity's family settles against (`m-concurrency`) and the
+write's own mutation. It answers for a write addressing **one** object, which is every write
 a keyed verb authors. It has exactly three arms, and an implementation **MUST
 NOT** reach one of them because something was absent — an insert observes no
 state either, so a default taken on a missing observation would sweep it in:
@@ -1594,7 +1645,7 @@ binding it to coverage substitutes each current row's own unassigned values and
 never revives a value a later write overwrote. Two writes of one observed state
 over one window are an ordinary pair of the table above. Stale and current
 observations of one object compose without a refusal of their own; their
-conditions are validated when the composition executes (`m-opt-lock`).
+conditions are validated when the composition executes (`m-temporal-write`).
 
 An incompatible intent is refused **synchronously at the verb**, before buffering
 and before any database access, and the refusal is a write-evidence failure naming
@@ -1780,8 +1831,18 @@ Each error carries the same semantic payload — the Entity Identity, the Write
 Target (retained by reference), the expected count, and the actual count — and
 **nothing else**: no SQL, statement index, driver exception, whole Planned Step,
 assignments, or observation. That keeps the diagnostic stable across dialects and
-lets `m-auto-retry` recognize the canonical Optimistic Lock Conflict Error
-without depending on an optional concurrency module.
+lets `m-auto-retry` recognize the canonical Optimistic Lock Conflict Error over
+its own edge to this module.
+
+Classification follows the step's **gate**, never its verb. A **gated** shortfall
+is the retriable Optimistic Lock Conflict Error. An **ungated** shortfall on a
+write that still required a prior observation — a versioned keyed `UPDATE`, a
+versioned keyed `DELETE`, or a milestone close — is the non-retriable Stale Write
+Error: no gate could have caused it, so it is no detected lost update a re-read
+could resolve. An implementation **MUST NOT** classify by verb: an
+effective-Locking `UPDATE` whose shortfall surfaced as the retriable conflict
+would be retried against an unchanged cause, since re-reading cannot supply a
+gate the strategy never rendered.
 
 A `FailedPrecondition` shortfall raises the **Write Precondition Error**
 instead, carrying the Entity Identity, the object's key, and the revision the
@@ -1825,51 +1886,26 @@ and a failure or interruption propagates as itself (`m-execution`).
 
 An outer unit of work resolves one **Concurrency Preference**, `locking` or
 `optimistic`, from its boundary options; an omitted preference, and a joining
-boundary's, resolve as `m-execution` *Option resolution* states.
-The preference is not itself the correctness mechanism: the Unit Work combines it
-with the target Entity's Optimistic Lock Facet to derive an **Effective
-Concurrency Strategy** for each participating Entity:
+boundary's, resolve as `m-execution` *Option resolution* states. The unit of
+work reads each Entity's **Effective Concurrency Strategy** for that preference
+from the accepted model's Concurrency Facet (`m-concurrency` *Strategy
+derivation*), and applies it to its own state; it re-derives the strategy
+nowhere.
 
-| Concurrency Preference | Optimistic Key | Effective Concurrency Strategy |
-|---|---|---|
-| `locking` | any | **Locking** — participating object reads take the `m-read-lock` shared lock; observation-requiring writes are `Ungated` |
-| `optimistic` | `ExplicitVersion` | **Optimistic** — reads omit the shared lock; writes gate on the observed version |
-| `optimistic` | `TransactionTimeDerived` | **Optimistic** — reads omit the shared lock; temporal closes gate on observed `txStart` |
-| `optimistic` | `Unversioned` | **Locking** — participating object reads take the shared lock; writes are ungated |
+An object read resolves the strategy of the Entity it materializes, and each
+deep-fetch level resolves its own. The strategy also decides write evidence.
+Both strategies require a read of the current attempt (*Current-attempt source
+admission*): under Locking that read's participation proves the lock is held
+(*What licenses a Locking write*), while under Optimistic the version or
+milestone evidence it retained becomes the gate.
 
-Thus `optimistic` means **use optimistic concurrency wherever the model supplies
-a gate, with a locking fallback where it does not**. It never means that a
-heterogeneous transaction is universally lock-free. An explicit `locking`
-preference remains the workflow-level override for making every lockable Entity
-participate pessimistically. The same versioned or temporal Entity can therefore
-use its optimistic key in one workflow and a shared lock in another.
-
-An object read resolves the strategy of the Entity it materializes. Separate
-deep-fetch levels resolve independently, so one transaction may read a versioned
-root optimistically and an unversioned included Entity under a shared lock. The
-Effective Concurrency Strategy also determines write evidence. Both strategies
-require a read of the current attempt (*Current-attempt source admission*):
-under Locking that read's participation proves the lock is held, while under
-Optimistic the version or milestone evidence it retained becomes the gate that
-lets the database detect an intervening write (`m-opt-lock`).
-
-Reladomo is prior art for mixed participation, but exposes the choice per
-transaction and object portal/class. Parallax deliberately keeps one ergonomic
-Unit Work preference and derives the safe per-Entity result instead of exposing
-per-Entity overrides.
-
-The Write Planner consumes the Concurrency Preference and the model's Optimistic
-Lock Facet, settles each Planned Step's gate or explicit `Ungated` decision, and
-retains neither the preference nor the Effective Concurrency Strategy in the
-Write Plan.
-
-Write admission resolves the same strategy through the connected model's
-injected write-evidence policy (`m-opt-lock` "The Optimistic Lock Facet"), which
-also names what each keyed write settles against. The unit of work applies that
-answer to its own state — the participation its reads stamp, what its
-completed writes left of the states its sources observed, and the claims its
-buffer holds — and buffering is the one operation that admits a write's claim
-and buffers the write, all or nothing.
+Write admission asks the same Facet what each keyed write settles against and
+applies that answer to its own state — the participation its reads stamp, what
+its completed writes left of the states its sources observed, and the claims
+its buffer holds — and buffering is the one operation that admits a write's
+claim and buffers the write, all or nothing. The Write Planner settles each
+Planned Step's gate or explicit `Ungated` decision from the same strategy, and
+retains neither the preference nor the strategy in the Write Plan.
 
 ### The Isolation Level beside it — what the transaction READS
 
@@ -1877,9 +1913,9 @@ A unit of work resolves a second, independent boundary option: the **Isolation
 Level** (`m-db-port`), which the port carries and each adapter maps. The two are
 not alternatives and neither substitutes for the other. The Concurrency
 Preference decides what a participating read LOCKS and what a write GATES on —
-mechanisms this module owns, applied per Entity. The level decides what a read
-SEES, uniformly for the whole boundary, and is graded by the anomalies it
-forbids:
+mechanisms `m-concurrency` defines and this module applies, per Entity. The
+level decides what a read SEES, uniformly for the whole boundary, and is graded
+by the anomalies it forbids:
 
 | Level | Forbidden | Still permitted |
 |---|---|---|

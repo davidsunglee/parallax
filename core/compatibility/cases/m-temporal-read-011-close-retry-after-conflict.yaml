@@ -1,5 +1,5 @@
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-auto-retry, m-temporal-write, m-api-conformance, temporal, audit-only, conflict, success, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-concurrency, m-auto-retry, m-temporal-write, m-api-conformance, temporal, audit-only, conflict, success, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

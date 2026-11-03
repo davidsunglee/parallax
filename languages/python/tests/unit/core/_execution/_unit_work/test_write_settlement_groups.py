@@ -22,10 +22,10 @@ from parallax.core._execution._unit_work.write_items import (
     target_write,
 )
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedWriteInstruction,
     TargetWriteInstruction,
     TransactionInstant,
@@ -104,14 +104,14 @@ def _finalize(
     buffered: Sequence[ComposedWrite],
     model: Metamodel,
     *,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
     instant: TransactionInstant = _INSTANT,
 ) -> WritePlan:
     return build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=buffered,
         )
     )
@@ -122,7 +122,7 @@ def _plan(
     model: Metamodel,
     observations: Mapping[ObjectKey, StateObservation] | None = None,
     *,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
     instant: TransactionInstant = _INSTANT,
 ) -> WritePlan:
     return _finalize(

@@ -3,12 +3,12 @@
 # (m-unit-work "The ledger admits multiple observed states for one Entity and
 # primary key"; m-case-format *Settling against a grouped find*).
 model: models/account.yaml
-tags: [m-unit-work, m-opt-lock, m-sql, observed-state, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-concurrency, m-sql, observed-state, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "each write's gate binds the observed version the find it names returned — a query result (m-opt-lock)"
+  note: "each write's gate binds the observed version the find it names returned — a query result (m-concurrency)"
 when:
   scenario:
     - uow: two-generations

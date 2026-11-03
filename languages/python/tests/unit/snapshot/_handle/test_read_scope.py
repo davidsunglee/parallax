@@ -41,6 +41,7 @@ from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_pipeline import ReadInputs
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._scope import ExecutionScope
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._layout import CatalogedModel
@@ -66,7 +67,6 @@ from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery import _delivery as delivery
 from parallax.core.read_delivery import _row_lane as row_lane
-from parallax.core.read_delivery._page import VersionAttributes
 from parallax.core.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageRequest,
@@ -76,7 +76,6 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanCache, ReadPlanner
 from parallax.core.unit_work import (
-    Concurrency,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -291,7 +290,7 @@ class _Executed:
 
     executor: str
     port: DatabaseConnection
-    preference: Concurrency | None
+    preference: ConcurrencyPreference | None
     evidence_context: ReadEvidenceContext | None
 
 
@@ -336,7 +335,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         publication: Publication[Any, Any],
         read: ReadActivity,
         edition: str,
-        preference: Concurrency | None,
+        preference: ConcurrencyPreference | None,
         planner: ReadPlanner,
     ) -> Any:
         executed.append(_Executed("find_history", port, None, None))
@@ -357,8 +356,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         port: DatabaseConnection,
         *,
         edition: str,
-        versions: VersionAttributes,
-        preference: Concurrency | None = None,
+        preference: ConcurrencyPreference | None = None,
         read: ReadActivity = INERT,
         planner: ReadPlanner,
     ) -> RowsResult:
@@ -368,7 +366,6 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
             model,
             port,
             edition=edition,
-            versions=versions,
             preference=preference,
             read=read,
             planner=planner,
@@ -386,7 +383,7 @@ class _PageRead:
 
     model: CatalogedModel
     port: DatabaseConnection
-    preference: Concurrency | None
+    preference: ConcurrencyPreference | None
     evidence_context: ReadEvidenceContext | None
 
 
@@ -455,7 +452,7 @@ def _scope(
     *,
     selected: SelectedReadModel | None = None,
     lifecycle: InstalledLifecycle | None = None,
-    preference: Concurrency | None = None,
+    preference: ConcurrencyPreference | None = None,
     evidence_context: ReadEvidenceContext | None = None,
 ) -> tuple[ExecutionScope, _Recording]:
     resolved = selected if selected is not None else _selection()

@@ -39,6 +39,7 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
@@ -46,7 +47,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.unit_work import Concurrency
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
@@ -195,7 +195,7 @@ class _CountingDatabase(ScopedDatabase):
         fn: Callable[[TxnContext], T],
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._counted(
@@ -1327,7 +1327,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # declared Concurrency Preference, still graded against the SAME `then.rows`  #
 # oracle, PLUS the statements this story's own find actually executed         #
 # (`_StatementCapturePort` below) — the runtime proof that the preference and #
-# the read target's own Optimistic Lock Facet together drive whether the      #
+# the read target's own Concurrency Facet together drive whether the          #
 # emitted SQL carries the shared read-lock suffix (unobservable from          #
 # `then.rows` alone: two stories can return identical rows while one holds a  #
 # lock and the other does not).                                               #

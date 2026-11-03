@@ -5,7 +5,6 @@ from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Final
 
-from parallax.core import opt_lock
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery._page import (
@@ -78,13 +77,14 @@ def publish_roots[T](
     ``milestones`` read stands at its own milestone's edge. An ``atomic``
     publication publishes nothing until every root has been, and defers judging
     a root's states past its stored-values comparison when every root's family
-    carries write evidence, which ``model``'s Optimistic Lock Facet answers; a
+    settles a write against its observation, which ``model``'s Concurrency
+    Facet answers; a
     proved level's states were judged as its rows were recorded and are not
     deferred.
     """
     rows = page_rows(page)
     observer = page_cadence(page)
-    schedule = page_schedule(page, opt_lock.write_evidence(model), atomic=atomic)
+    schedule = page_schedule(page, model, atomic=atomic)
     root = RootView(rows, schedule, read_evidence=read_evidence)
     resolve = root._resolve_root  # pyright: ignore[reportPrivateUsage] - the pass owns re-pointing
     edges = page_edges(page, milestones)

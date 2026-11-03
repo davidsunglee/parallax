@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 import yaml
 
+from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import AccessMode, IsolationLevel
 from parallax.core.execution import TxnOptions
-from parallax.core.unit_work import Concurrency, concurrency_preference
 from parallax.core.wire._json import authored_number
 
 __all__ = [
@@ -425,7 +425,7 @@ class TransactionKeywords(TypedDict, total=False):
     """
 
     max_retries: int
-    concurrency: Concurrency
+    concurrency: ConcurrencyPreference
     isolation: IsolationLevel
 
 

@@ -1,7 +1,7 @@
 # Boundary case (m-auto-retry): `maxRetries: 0` DISABLES the loop — even a transient failure
 # surfaces to the caller — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-auto-retry, m-opt-lock, m-api-conformance, transient, slice-snapshot-1, slice-managed-1]
+tags: [m-auto-retry, m-concurrency, m-api-conformance, transient, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

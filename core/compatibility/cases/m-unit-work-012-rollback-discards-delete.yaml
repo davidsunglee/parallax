@@ -6,7 +6,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned delete's required observation is the one the unit of work's own observing find recorded — a query result the compile lane cannot derive (m-opt-lock)"
+  note: "the versioned delete's required observation is the one the unit of work's own observing find recorded — a query result the compile lane cannot derive (m-concurrency)"
 when:
   scenario:
     - uow: doomed-delete

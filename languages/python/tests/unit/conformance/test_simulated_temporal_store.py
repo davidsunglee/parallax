@@ -227,7 +227,7 @@ def _planned(
             WritePlanningRequest(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
-                concurrency="locking",
+                preference="locking",
                 composed_writes=[admitted_write(prepared, None, object_key(prepared, POSITION))],
             )
         )
@@ -280,7 +280,7 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
                 transaction_instant=TransactionInstant(
                     FixedClock(dt.datetime(2024, 9, 1, tzinfo=dt.UTC))
                 ),
-                concurrency="locking",
+                preference="locking",
                 composed_writes=admitted_writes(POSITION, [_observed_write(prepared, observed)]),
             )
         )
@@ -341,7 +341,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
             transaction_instant=TransactionInstant(
                 FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
             ),
-            concurrency="locking",
+            preference="locking",
             composed_writes=[admitted_write(prepared, None, object_key(prepared, account))],
         )
     )
@@ -386,7 +386,7 @@ def _rectangles(
                 transaction_instant=TransactionInstant(
                     FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
                 ),
-                concurrency="locking",
+                preference="locking",
                 composed_writes=entries,
             )
         )

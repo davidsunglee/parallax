@@ -34,7 +34,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
 | `m-object-query` | `object-query` |
 | `m-predicate` | `predicate` |
 | `m-op-list` | `lists` |
-| `m-opt-lock` | `opt-lock` |
+| `m-concurrency` | `concurrency` |
 | `m-pk-gen` | `pk-gen` |
 | `m-read-lock` | `read-lock` |
 | `m-sql` | `sql` |

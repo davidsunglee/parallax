@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from parallax.core._execution._adoption import AdoptedExecution
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._connection_lifecycle import enter_connection, exit_connection
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._publication import SelectedReadModel
@@ -13,7 +12,7 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._routing import OperationRouting
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
@@ -92,7 +91,7 @@ class ReadInputs:
     """
 
     connection: DatabaseConnection
-    preference: Concurrency | None
+    preference: ConcurrencyPreference | None
     evidence_context: ReadEvidenceContext | None
 
 
@@ -193,7 +192,6 @@ def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> R
             selected.model,
             inputs.connection,
             edition=selected.edition,
-            versions=CONCURRENCY,
             preference=inputs.preference,
             read=activity,
             planner=planner,

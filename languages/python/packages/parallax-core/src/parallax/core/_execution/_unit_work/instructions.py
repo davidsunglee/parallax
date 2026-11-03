@@ -1976,7 +1976,7 @@ def _judge_target_expectation(
     instruction: TargetWriteInstruction,
 ) -> TargetExpectation:
     """The starting condition a target write states, judged against the
-    family's own revision kind (`m-opt-lock`): a versioned family takes
+    family's own revision kind (`m-concurrency`): a versioned family takes
     ``version`` and a temporal one ``tx_start``.
 
     An unversioned Non-Temporal family has no revision a caller could state,

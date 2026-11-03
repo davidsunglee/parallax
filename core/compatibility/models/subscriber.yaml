@@ -1,5 +1,5 @@
 # Subscriber: a VERSIONED value-object owner — an `optimisticLocking` version
-# column PLUS a top-level `valueObjects` block on the SAME entity (m-opt-lock +
+# column PLUS a top-level `valueObjects` block on the SAME entity (m-concurrency +
 # m-value-object). This composition is net-new: no existing model combines an
 # optimistic-lock version with a value object, so a versioned document write under
 # an optimistic gate had no witness before m-value-object-046.
@@ -9,7 +9,7 @@
 # `version` is the framework-owned optimistic-lock counter (int32). A versioned
 # UPDATE that assigns the whole `address` document advances + gates `version`
 # exactly once — the domain SET column (address) lists ahead of the derived
-# `version = observed + 1`, gated on the observed version (m-opt-lock ADR 0014).
+# `version = observed + 1`, gated on the observed version (m-concurrency ADR 0014).
 #
 # optimisticLocking MUST NOT coexist with a temporal profile on one entity (metamodel
 # invariant), so Subscriber is non-temporal. Row data lives in

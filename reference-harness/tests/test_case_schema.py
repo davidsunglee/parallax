@@ -368,7 +368,7 @@ def _write_value_scenario_case() -> dict[str, Any]:
 def _conflict_case() -> dict[str, Any]:
     return {
         "model": "models/account.yaml",
-        "tags": ["m-opt-lock"],
+        "tags": ["m-concurrency"],
         "shape": "conflict",
         "given": {"apply": [{"sql": "update account set version = 2 where id = 2"}]},
         "when": {"uow": {"concurrency": "optimistic"}, "write": {"id": 2, "observedVersion": 1}},
@@ -505,7 +505,7 @@ def _conflict_retry_case() -> dict[str, Any]:
     """
     return {
         "model": "models/account.yaml",
-        "tags": ["m-opt-lock"],
+        "tags": ["m-concurrency"],
         "shape": "conflict",
         "given": {"apply": [{"sql": "update account set version = 2 where id = 2"}]},
         "when": {

@@ -38,7 +38,6 @@ from parallax.core import (
     DomainModel,
     TxTemporal,
     attr,
-    opt_lock,
     storage_layout,
     temporal_read,
 )
@@ -46,6 +45,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY as OPEN_BOUND
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
@@ -54,7 +54,6 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, TransactionTimeOnly
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedMutation,
     KeyedWriteInstruction,
     TemporalConflictError,
@@ -171,7 +170,7 @@ def _lower_full(
     *,
     observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> list[LoweredStatement]:
     return lower_instruction(
         instruction,
@@ -190,7 +189,7 @@ def _lower_steps(
     *,
     observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same statements, paired with the settled step each came from."""
     return lower_instruction_steps(
@@ -209,7 +208,7 @@ def _finalize(
     tx_instant: str,
     *,
     observation: StateObservation | None = None,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
         instruction,
@@ -229,7 +228,7 @@ def _lower(
     *,
     observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> list[tuple[str, tuple[object, ...]]]:
     return [
         (statement.sql, statement.binds)
@@ -719,7 +718,7 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
     ids=["locking", "optimistic"],
 )
 def test_bitemporal_close_addresses_a_finite_observed_valid_end(
-    concurrency: Concurrency, gate_sql: str, gate_binds: tuple[object, ...]
+    concurrency: ConcurrencyPreference, gate_sql: str, gate_binds: tuple[object, ...]
 ) -> None:
     # The observed rectangle is bounded on BOTH Valid-Time sides, which is the
     # shape the Valid-Time component of the address exists for: `out_z = infinity`
@@ -925,7 +924,6 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
             acquire_rows=NO_ROW_READS,
             planner=build_write_planner(model),
             actor_identity=TEST_ACTOR_IDENTITY,
-            evidence_policy_for=opt_lock.view(model).required_key,
         )
     )
     assert isinstance(observation, TemporalObservation)
@@ -969,7 +967,6 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
             acquire_rows=NO_ROW_READS,
             planner=build_write_planner(model),
             actor_identity=TEST_ACTOR_IDENTITY,
-            evidence_policy_for=opt_lock.view(model).required_key,
         )
     )
     assert isinstance(observation, TemporalObservation)
@@ -1317,7 +1314,7 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
 
 
 # --------------------------------------------------------------------------- #
-# Zero-row close: the two distinct outcomes (m-opt-lock / m-temporal-write).      #
+# Zero-row close: the two distinct outcomes (m-concurrency / m-temporal-write).      #
 # --------------------------------------------------------------------------- #
 def test_multi_row_temporal_write_is_refused() -> None:
     # A temporal keyed write lowers ONE row at a time: each row opens its own
@@ -1483,7 +1480,7 @@ def _owned_lowering(
     observation: StateObservation,
     ownership: OpenedRows,
     *,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
 ) -> list[tuple[PlannedStep, tuple[str, tuple[object, ...]]]]:
     return [
         (step, (statement.sql, statement.binds))

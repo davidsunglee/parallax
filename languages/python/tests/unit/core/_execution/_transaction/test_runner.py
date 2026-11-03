@@ -985,7 +985,7 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
 
 
 # --------------------------------------------------------------------------- #
-# Recoverable-conflict replay (m-auto-retry; m-opt-lock "Retry contract"): an  #
+# Recoverable-conflict replay (m-auto-retry): an                           #
 # internal optimistic conflict replays like a transient database failure, the  #
 # caller sees the failure the attempt raised with its own chain, and anything  #
 # a later cleanup step raises ends the invocation instead.                     #

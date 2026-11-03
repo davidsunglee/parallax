@@ -220,7 +220,7 @@ ancestor through its ancestry chain (`m-inheritance`).
 | `nullable` | bool, default `false` |
 | `maxLength` | for `string` (⇒ `varchar(n)`) |
 | `readOnly` | bool, default `false` — immutable after insert |
-| `optimisticLocking` | bool, default `false` — marks the version attribute (`m-opt-lock`) |
+| `optimisticLocking` | bool, default `false` — marks the version attribute (`m-concurrency`) |
 | `pkGeneration` | optional `application-assigned` \| `max` \| Sequence object; legal only when `primaryKey: true`, omission on a primary key means application-assigned |
 | `multiplicity` | `one` (default) \| `many` — `many` declares a scalar collection whose elements are `type` (`m-metamodel`); it admits no `nullable: true`, `primaryKey: true`, `maxLength`, `optimisticLocking: true`, or `pkGeneration` |
 
@@ -244,24 +244,24 @@ The `readOnly` and `optimisticLocking` flags are the metamodel surface two
 modules build on. `readOnly` marks an attribute that is immutable after insert
 (an implementation **MUST NOT** emit it in an `UPDATE` `set`).
 `optimisticLocking: true` **names** the entity's **version attribute**
-(`m-opt-lock`): at most one per entity, an integer that **every** issued `UPDATE`
+(`m-concurrency`): at most one per entity, an integer that **every** issued `UPDATE`
 **advances**, and that a write **gates on** only when that entity's Effective
-Concurrency Strategy is Optimistic (`m-unit-work` strategy selection) — turning a
+Concurrency Strategy is Optimistic (`m-concurrency` *Strategy derivation*) — turning a
 stale-version write into a detectable conflict. The flag names the column; it
 does not by itself decide the strategy — the unit of work's one Concurrency
-Preference and the Optimistic Lock Facet this flag feeds derive that strategy per
+Preference and the Concurrency Facet this flag feeds derive that strategy per
 entity. The flag
-is purely metamodel here; its conflict-detection semantics are `m-opt-lock`, and
+is purely metamodel here; its conflict-detection semantics are `m-concurrency`, and
 the unit of work decides when an accepted assignment becomes durable
 (`m-unit-work`).
 
 **Composition with `temporality` (temporal entities).** A Transaction-Time Entity
-**derives** its optimistic key from the Transaction-Time start Attribute (by
+**derives** its version from the Transaction-Time start Attribute (by
 convention `txStart`, physically `in_z`) and therefore declares **no** version
 Attribute. Combining an explicit `optimisticLocking` Attribute with a
 Transaction-Time axis is invalid. Transaction-Time-Only and Bitemporal are the
 supported temporal shapes, so every writable temporal Entity has that derived
-key. The composition contract is `m-opt-lock` over the temporal write shapes
+version. The composition contract is `m-concurrency` over the temporal write shapes
 (`m-temporal-write`).
 
 **Composition with inheritance (declaration site).** For an inheritance

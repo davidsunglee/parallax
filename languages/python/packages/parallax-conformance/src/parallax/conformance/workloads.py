@@ -13,8 +13,8 @@ from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance.budget import BudgetContract
 from parallax.core import (
     ObjectQuery,
+    concurrency,
     inheritance,
-    opt_lock,
     relationship,
     storage_layout,
     temporal_read,
@@ -372,14 +372,14 @@ class Workload:
             relationship.view(class_model),
             storage_layout.view(class_model),
             temporal_read.view(class_model),
-            opt_lock.view(class_model),
+            concurrency.view(class_model),
         )
         descriptor_facets = (
             inheritance.view(descriptor_model),
             relationship.view(descriptor_model),
             storage_layout.view(descriptor_model),
             temporal_read.view(descriptor_model),
-            opt_lock.view(descriptor_model),
+            concurrency.view(descriptor_model),
         )
         for entity in descriptor_model.entities:
             identity = entity.identity
@@ -388,14 +388,14 @@ class Workload:
                 class_facets[1].relationships(identity),
                 class_facets[2].entity(identity),
                 class_facets[3].shape(identity),
-                class_facets[4].key(identity),
+                class_facets[4].version_source(identity),
             )
             descriptor_values = (
                 descriptor_facets[0].entity(identity),
                 descriptor_facets[1].relationships(identity),
                 descriptor_facets[2].entity(identity),
                 descriptor_facets[3].shape(identity),
-                descriptor_facets[4].key(identity),
+                descriptor_facets[4].version_source(identity),
             )
             if class_values != descriptor_values:
                 raise ValueError(

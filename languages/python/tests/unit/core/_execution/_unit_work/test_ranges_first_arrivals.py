@@ -121,11 +121,6 @@ def _instant() -> TransactionInstant:
     return instant_at(_AT)
 
 
-def _no_version(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-    del entity, advanced_from
-    return None
-
-
 def _unconfirmed(item: TargetWrite) -> TargetWrite:
     return item
 
@@ -139,7 +134,7 @@ def _plan(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_instant(),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admission.composed_writes(),
             ownership=ownership,
         )
@@ -147,7 +142,7 @@ def _plan(
 
 
 def _planned(meta: Metamodel, *writes: AdmittedWrite) -> WritePlan:
-    admission = write_admission(meta, inserted_version=_no_version)
+    admission = write_admission(meta)
     for write in writes:
         admit(admission, write)
     return _plan(admission, meta)
@@ -400,7 +395,7 @@ def _stored_insertion(
     """An admission whose insertion of ``key`` flushed and opened ``opened``,
     the ownership that left, and the identity buffering that insertion
     issued."""
-    authority = source_authority(meta, inserted_version=_no_version)
+    authority = source_authority(meta)
     admission = WriteAdmission(meta, authority=authority)
     identity = admission.admit_insert(admitted_write(insert, None, key), insertion_advice=None)
     assert identity is not None

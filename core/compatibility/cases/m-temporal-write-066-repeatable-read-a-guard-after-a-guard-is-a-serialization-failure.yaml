@@ -3,7 +3,7 @@
 # waits on it and resumes on A's commit. At Repeatable Read B is refused because the
 # row changed after its snapshot, although no semantic milestone changed.
 model: models/balance.yaml
-tags: [m-temporal-write, m-opt-lock, m-unit-work, m-db-error, isolation, concurrency, temporal, audit-only, unchanged-milestone, repeatable-read, slice-snapshot-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-db-error, isolation, concurrency, temporal, audit-only, unchanged-milestone, repeatable-read, slice-snapshot-1]
 shape: error
 compileEligibility:
   mode: run-only

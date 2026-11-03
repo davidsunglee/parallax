@@ -97,7 +97,7 @@ an Entity with no version and no history accepts one
 A transaction resolves one **Concurrency Preference**, `optimistic` or `locking`.
 Parallax combines it with each Entity's model to derive the **Effective Concurrency
 Strategy** that Entity actually uses
-([strategy selection](../../core/spec/m-unit-work.md#strategy-selection--one-preference-an-effective-strategy-per-entity),
+([strategy derivation](../../core/spec/m-concurrency.md#strategy-derivation),
 [ADR 0059](../adr/0059-concurrency-preference-defaults-optimistic-and-resolves-per-entity.md)):
 
 ```text
@@ -117,7 +117,7 @@ So `optimistic` means "gate a write wherever the model supplies a revision, and 
 where it doesn't". One transaction can read one Entity optimistically and another under
 a shared lock. The two strategies trade differently. Optimistic costs nothing until two
 writers meet, and then one of them conflicts and replays
-([conflict detection](../../core/spec/m-opt-lock.md#conflict-detection)). Locking makes
+([conflict detection](../../core/spec/m-unit-work.md#affected-row-enforcement)). Locking makes
 the second writer wait instead
 ([read locks](../../core/spec/m-read-lock.md#automatic-read-lock-correctness)), which
 suits rows many transactions write at once, at the cost of waiting and of deadlocks
@@ -208,7 +208,7 @@ deadlock ends its first attempt. The deadlock is transient and not the caller's,
 transaction retries. The re-run states the same revision again. If the row moved in the
 meantime, the precondition fails, and that failure surfaces without a further retry
 ([target writes](../../core/spec/m-unit-work.md#target-writes),
-[retry contract](../../core/spec/m-opt-lock.md#retry-contract)). A retry may re-take
+[retry contract](../../core/spec/m-auto-retry.md)). A retry may re-take
 what the framework observed; it must never override what the caller asserted.
 
 ## Joining and rollback-only

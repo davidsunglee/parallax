@@ -3,6 +3,13 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
+from parallax.core.concurrency import (
+    ConcurrencyFacet,
+    ExplicitVersion,
+    TransactionTimeVersion,
+    VersionSource,
+)
+from parallax.core.concurrency import view as concurrency_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -27,13 +34,6 @@ from parallax.core.metamodel import (
     ValueObjectLocation,
     canonical_location_key,
 )
-from parallax.core.opt_lock import (
-    ExplicitVersion,
-    OptimisticKey,
-    OptimisticLockFacet,
-    TransactionTimeDerived,
-)
-from parallax.core.opt_lock import view as opt_lock_view
 from parallax.core.temporal_read import Bitemporal, TemporalFacet, TransactionTimeOnly
 from parallax.core.temporal_read import view as temporal_view
 from parallax.evolution.model_evolution._matching import (
@@ -110,7 +110,7 @@ class _Endpoint:
     """
 
     temporal: TemporalFacet
-    locks: OptimisticLockFacet
+    versioning: ConcurrencyFacet
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,8 +132,8 @@ def impacts(
     analysis = _Analysis(
         matching=matching,
         operations=described,
-        earlier=_Endpoint(temporal_view(earlier), opt_lock_view(earlier)),
-        later=_Endpoint(temporal_view(matching.later), opt_lock_view(matching.later)),
+        earlier=_Endpoint(temporal_view(earlier), concurrency_view(earlier)),
+        later=_Endpoint(temporal_view(matching.later), concurrency_view(matching.later)),
         altered_attributes={
             operation.attribute: operation
             for operation in described
@@ -364,13 +364,13 @@ def _concurrency_control(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving Entity whose behavior under the ``optimistic``
     Concurrency Preference differs.
 
-    The grain stays per Entity even though the Optimistic Lock Facet is
+    The grain stays per Entity even though the Concurrency Facet is
     family-uniform, because an inheritance change can move a surviving Entity
     between effective families.
     """
     for identity, (earlier, later) in analysis.matching.entities.surviving.items():
-        before = _control(analysis.earlier.locks.key(identity))
-        after = _control(analysis.later.locks.key(identity))
+        before = _control(analysis.earlier.versioning.version_source(identity))
+        after = _control(analysis.later.versioning.version_source(identity))
         if before == after:
             continue
         yield (
@@ -384,11 +384,11 @@ def _concurrency_control(analysis: _Analysis) -> Iterator[_Located]:
         )
 
 
-def _control(key: OptimisticKey | None) -> ConcurrencyControl:
-    match key:
+def _control(source: VersionSource | None) -> ConcurrencyControl:
+    match source:
         case ExplicitVersion(attribute):
             return VersionGated(attribute)
-        case TransactionTimeDerived(start_attribute):
+        case TransactionTimeVersion(start_attribute):
             return TransactionTimeGated(start_attribute)
         case _:
             return LOCKING_FALLBACK
@@ -401,11 +401,11 @@ def _version_causes(
     return tuple(
         operation
         for operation in analysis.operations
-        if _moves_the_optimistic_key(analysis, operation, family)
+        if _moves_the_version_source(analysis, operation, family)
     )
 
 
-def _moves_the_optimistic_key(
+def _moves_the_version_source(
     analysis: _Analysis,
     operation: EvolutionOperation,
     family: frozenset[EntityIdentity],

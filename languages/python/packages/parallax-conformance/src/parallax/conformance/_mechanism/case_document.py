@@ -6,7 +6,7 @@ from typing import cast
 
 from parallax.conformance import case_format
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core.unit_work import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 
 __all__ = [
     "RunOnly",
@@ -74,7 +74,7 @@ def write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]]
     return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", entries)]
 
 
-def concurrency(case: case_format.Case) -> Concurrency:
+def concurrency(case: case_format.Case) -> ConcurrencyPreference:
     """The Concurrency Preference a case's writes are PLANNED under
     (`m-unit-work` "Strategy selection"): the preference the outer invocation
     resolves to — the declared `when.uow.concurrency`, else the root's
@@ -90,7 +90,7 @@ def concurrency(case: case_format.Case) -> Concurrency:
     case had asked for it.
 
     A preference is not a strategy: what each step's own Entity participates
-    under is derived from this value and that Entity's Optimistic Lock Facet, so
+    under is derived from this value and that Entity's Concurrency Facet, so
     an unversioned Non-Temporal target still locks and still writes ungated
     under the default. A case whose golden SQL depends on that choice declares
     the preference explicitly (`m-case-format`); `when.uow` is schema-legal on

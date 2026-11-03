@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any, Final, cast
 
-from parallax.core import temporal_read
+from parallax.core import concurrency, temporal_read
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
+from parallax.core.read_delivery._page import ABSENT, InvalidData
 from parallax.core.read_planning import IncludeTree, PositionId, RelationshipViewKey, RenderToken
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.core.wire._facts import (
@@ -400,8 +400,7 @@ class WireRootPublisher:
     and one renderer serve the Page, bound to the pass's Root View at the first
     root; the renderer's memo is cleared as each root's call ends, so two roots
     never share a rendered node, while the reader's provenance is shared across
-    the Page's roots and released with the publisher. ``versions`` names the
-    explicit version Attribute a record publishes, ``wire`` is the prepared
+    the Page's roots and released with the publisher. ``wire`` is the prepared
     model's Wire facts, and ``encode`` is the delivery's scalar encoder.
     """
 
@@ -412,7 +411,7 @@ class WireRootPublisher:
         "_reader",
         "_renderer",
         "_temporal",
-        "_versions",
+        "_versioning",
         "_wire",
     )
 
@@ -420,16 +419,15 @@ class WireRootPublisher:
         self,
         model: Metamodel,
         wire: WireModelFacts,
-        versions: VersionAttributes,
         includes: IncludeTree,
         encode: _Encoder = encode_managed_wire,
     ) -> None:
         self._model = model
         self._wire = wire
-        self._versions = versions
         self._includes = includes
         self._encode = encode
         self._temporal = temporal_read.view(model)
+        self._versioning = concurrency.view(model)
         self._reader: RootViewReader | None = None
         self._renderer: WireRenderer[int] | None = None
 
@@ -444,7 +442,7 @@ class WireRootPublisher:
             )
         reader.begin_root(RootConformance.CONFORMING)
         try:
-            verdict = classify_root(root, self._model, self._versions, ordinal=ordinal)
+            verdict = classify_root(root, self._model, self._versioning, ordinal=ordinal)
             if isinstance(verdict, ConformingRoot):
                 return (renderer.render_at(0, self._includes.root),)
             reader.begin_root(RootConformance.NONCONFORMING)

@@ -1,7 +1,7 @@
-# Read-lock matrix (m-read-lock / m-opt-lock): an object find inside an OPTIMISTIC unit of work
+# Read-lock matrix (m-read-lock / m-concurrency): an object find inside an OPTIMISTIC unit of work
 # emits NO lock — the locking/optimistic contrast — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-concurrency, m-dialect, m-api-conformance, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: read
 when:

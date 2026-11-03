@@ -146,7 +146,7 @@ def _plan(*writes: StateObservedWrite) -> WritePlan:
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admitted_writes(_BALANCE, writes),
         )
     )
@@ -275,7 +275,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-                concurrency="optimistic",
+                preference="optimistic",
                 composed_writes=admitted_writes(model, [write]),
             )
         )
@@ -329,7 +329,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=writes,
         )
     )
@@ -368,7 +368,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     # pending, corrected March to May through the read and August to September
     # through the insertion. The opening opens its own two pieces; the
     # correction closes the stored rectangle it observed and keeps its source.
-    authority = source_authority(POSITION, inserted_version=_unversioned)
+    authority = source_authority(POSITION)
     admission = WriteAdmission(POSITION, authority=authority)
     confirm = _unconditioned
     identity = admission.admit_insert(
@@ -398,7 +398,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admission.composed_writes(),
             ownership=authority.planning_ownership(concluding=False),
         )
@@ -485,13 +485,8 @@ def _unconfirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
-def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-    del entity, advanced_from
-    return None
-
-
 def _admission() -> tuple[WriteAdmission, SourceAuthority]:
-    authority = source_authority(_BALANCE, inserted_version=_unversioned)
+    authority = source_authority(_BALANCE)
     return WriteAdmission(_BALANCE, authority=authority), authority
 
 
@@ -500,7 +495,7 @@ def _admitted_plan(admission: WriteAdmission, authority: SourceAuthority) -> Wri
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admission.composed_writes(),
             ownership=authority.planning_ownership(concluding=False),
         )

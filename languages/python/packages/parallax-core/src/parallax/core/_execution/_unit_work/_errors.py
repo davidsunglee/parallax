@@ -10,6 +10,7 @@ __all__ = [
     "WRITE_EVIDENCE_CODES",
     "KeyedWriteValueError",
     "UnitOfWorkError",
+    "UnobservedVersionError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
 ]
@@ -17,6 +18,24 @@ __all__ = [
 
 class UnitOfWorkError(RuntimeError):
     """A unit of work was driven into an illegal state."""
+
+
+class UnobservedVersionError(RuntimeError):
+    """A keyed update or delete of an explicitly versioned row reached
+    settlement carrying no observed version, raised before any DML runs under
+    either Effective Concurrency Strategy.
+
+    The new version is computed from the observed one, and the framework never
+    issues an implicit resolving read on behalf of a keyed write, so this is a
+    read-before-write programming error.
+    """
+
+    def __init__(self, entity: EntityIdentity) -> None:
+        super().__init__(
+            f"{entity.name}: a keyed update/delete of a versioned row requires the version its "
+            "source observed (a prior find) — the framework never issues an implicit "
+            "resolving read on behalf of a keyed write"
+        )
 
 
 type WriteEvidenceErrorCode = Literal[

@@ -87,7 +87,7 @@ _INFINITY: Final[TemporalBound] = INFINITY
 # fixed row set per model, keyed by `story.model` (the temporal stories'
 # own observing finds need model-shaped seed data too,
 # not just Account's). Id 2 (Linus, balance 250.00) joins ids 1/3 here for
-# `m-opt-lock-002` (the versioned, locking-mode keyed update) — the SAME triple
+# `m-concurrency-002` (the versioned, locking-mode keyed update) — the SAME triple
 # `core/compatibility/fixtures/account.yaml` seeds.
 _ACCOUNT_SEED_ROWS: Final[list[MappingRow]] = [
     {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},

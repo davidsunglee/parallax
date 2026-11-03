@@ -176,7 +176,7 @@ _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
 )
 _GROUPED_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})
 _WRITE_GROUP_SCENARIOS: Final[frozenset[str]] = frozenset({"m-unit-work-058"})
-_LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-opt-lock-023"})
+_LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-concurrency-023"})
 _NULL_VALUE_OBJECT_SCENARIOS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (76, 77, 78)
 )
@@ -185,13 +185,13 @@ _OBJECT_CLAIM_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
 )
 _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
-        "m-opt-lock-002",
-        "m-opt-lock-026",
-        "m-opt-lock-027",
-        "m-opt-lock-028",
-        "m-opt-lock-029",
-        "m-opt-lock-039",
-        "m-opt-lock-040",
+        "m-concurrency-002",
+        "m-concurrency-026",
+        "m-concurrency-027",
+        "m-concurrency-028",
+        "m-concurrency-029",
+        "m-concurrency-039",
+        "m-concurrency-040",
         "m-unit-work-043",
         "m-unit-work-044",
         "m-inheritance-007",
@@ -231,13 +231,13 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-value-object-067",
         "m-document-codec-001",
         "m-document-codec-002",
-        "m-opt-lock-018",
+        "m-concurrency-018",
         "m-inheritance-125",
         "m-inheritance-128",
     }
 )
 _SCALAR_COLLECTION_LIFECYCLE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
-    {"m-opt-lock-032", "m-opt-lock-033", "m-opt-lock-042", "m-opt-lock-043"}
+    {"m-concurrency-032", "m-concurrency-033", "m-concurrency-042", "m-concurrency-043"}
     | {"m-inheritance-143", "m-inheritance-144"}
 )
 _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(

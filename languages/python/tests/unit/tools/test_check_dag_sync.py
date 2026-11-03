@@ -1402,11 +1402,11 @@ def test_the_table_spells_a_zero_grant_scope_with_none() -> None:
 # A child scope as a GRANT: the narrow part of a wide package.
 # --------------------------------------------------------------------------
 def test_the_read_query_seam_grants_the_query_module_not_the_frontend() -> None:
-    # The whole point of the narrowing: the frontend PACKAGE reaches the port
-    # (`_formation_profile -> opt_lock -> unit_work -> db_port`), and a forbidden
-    # row is the complement of a closure, so granting the package would put the
-    # port permanently out of the row's reach. The Object Query module does not
-    # reach it, so the ordinary row forbids it.
+    # The whole point of the narrowing: the frontend PACKAGE reaches model
+    # formation through `_formation_profile`, and a forbidden row is the
+    # complement of a closure, so granting the package would put formation
+    # permanently out of the row's reach. The Object Query module does not reach
+    # it, so the ordinary row forbids the frontend, formation, and the port.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     scope = "parallax.core._execution._read_query"
     assert dag.PYTHON_FIRST_PARTY_GRANTS[scope] == frozenset(
@@ -1416,13 +1416,16 @@ def test_the_read_query_seam_grants_the_query_module_not_the_frontend() -> None:
             "parallax.core.object_query",
         }
     )
-    assert "parallax.core.db_port" in dag.transitive_closure(adjacency, "parallax.core.entity")
-    assert "parallax.core.db_port" not in dag.transitive_closure(adjacency, scope)
+    frontend = dag.transitive_closure(adjacency, "parallax.core.entity")
+    assert "parallax.core._formation_profile" in frontend
+    assert "parallax.core._formation_profile" not in dag.transitive_closure(adjacency, scope)
     blocked = dag.compute_forbidden(adjacency)[scope]
-    assert "parallax.core.db_port" in blocked
-    # And every hop of the chain the frontend would have carried in with it.
-    assert "parallax.core._formation_profile" in blocked
-    assert "parallax.core.opt_lock" in blocked
+    assert {
+        "parallax.core.entity",
+        "parallax.core._formation_profile",
+        "parallax.core.concurrency",
+        "parallax.core.db_port",
+    } <= set(blocked)
     # The unit of work is a sibling child, which the row cannot name; every
     # module of it reaches the port, so the chain reports an import of one.
     assert "parallax.core._execution._unit_work" in dag.scope_siblings(scope)
@@ -1520,6 +1523,83 @@ def test_published_values_carry_evidence_without_a_unit_of_work_grant() -> None:
     assert "parallax.core.db_port" in narrow
     assert "parallax.core.db_port" not in wide
     assert not narrow & dag.scope_ancestors(_EVIDENCE)
+
+
+# --------------------------------------------------------------------------
+# The concurrency policy sits beneath the unit of work.
+# --------------------------------------------------------------------------
+_CONCURRENCY = "parallax.core.concurrency"
+
+
+def test_the_concurrency_policy_reaches_no_attempt_write_plan_or_sql_scope() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    assert adjacency[_CONCURRENCY] == frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.model_formation",
+            "parallax.core.inheritance",
+            "parallax.core.temporal_read",
+        }
+    )
+    reached = dag.transitive_closure(adjacency, _CONCURRENCY)
+    assert (
+        not {
+            _UNIT_WORK,
+            "parallax.core._execution",
+            "parallax.core.db_port",
+            "parallax.core.write_plan",
+            "parallax.core.dialect",
+            "parallax.core.sql_gen",
+        }
+        & reached
+    )
+    assert _CONCURRENCY in adjacency[_UNIT_WORK]
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "parallax.core._formation_profile",
+        "parallax.core.entity",
+        "parallax.descriptor._hub",
+        "parallax.evolution.model_evolution",
+        "parallax.evolution.schema_delta",
+    ],
+)
+def test_model_formation_and_its_consumers_reach_the_policy_but_no_unit_of_work(
+    scope: str,
+) -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    reached = dag.transitive_closure(adjacency, scope)
+    assert _CONCURRENCY in reached
+    assert not {_UNIT_WORK, "parallax.core.db_port"} & reached
+    assert {"parallax.core._execution", "parallax.core.db_port"} <= set(
+        dag.compute_forbidden(adjacency)[scope]
+    )
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "parallax.core.read_lock",
+        "parallax.core.read_delivery._page",
+        "parallax.snapshot._publication",
+    ],
+)
+def test_existing_policy_consumers_reach_the_facet_through_the_unit_of_work_alone(
+    scope: str,
+) -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    assert _CONCURRENCY in dag.transitive_closure(adjacency, scope)
+    assert _CONCURRENCY not in dag.PYTHON_FIRST_PARTY_GRANTS.get(scope, frozenset())
+    assert _CONCURRENCY not in dag.compute_forbidden(adjacency)[scope]
+
+
+def test_node_inspection_reaches_no_database_port_once_formation_stops_reaching_one() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    scope = "parallax.snapshot._inspection"
+    assert "parallax.core.db_port" not in dag.transitive_closure(adjacency, scope)
+    assert "parallax.core.db_port" in dag.compute_forbidden(adjacency)[scope]
 
 
 # --------------------------------------------------------------------------

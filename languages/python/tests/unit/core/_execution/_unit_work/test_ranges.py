@@ -174,7 +174,7 @@ def _plan(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admitted_writes(_SPANS, list(writes)),
             ownership=ownership,
         )

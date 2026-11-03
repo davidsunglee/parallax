@@ -26,9 +26,8 @@ from parallax.core._execution._routing import OperationRouting, read_only_policy
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core._execution._unit_work.strategy import concurrency_preference
-from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.auto_retry import RetryCandidate, retry_eligible, run_with_retry
+from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import (
     AccessMode,
     BeginFailed,
@@ -210,7 +209,7 @@ class TransactionRunner:
         authority: ExecutionAuthority,
         defaults: TxnOptions,
         max_retries: int | Omitted,
-        concurrency: Concurrency | Omitted,
+        concurrency: ConcurrencyPreference | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
         """Run ``fn`` in a writable transaction under ``authority``, returning its
@@ -655,7 +654,7 @@ def _resolved(
     defaults: TxnOptions,
     *,
     max_retries: int | Omitted,
-    concurrency: Concurrency | Omitted,
+    concurrency: ConcurrencyPreference | Omitted,
     isolation: IsolationLevel | Omitted,
 ) -> TxnOptions:
     """The options an outer invocation runs under: each explicit value, else
@@ -683,7 +682,7 @@ def _check_join_options(
     active: TxnOptions,
     *,
     max_retries: int | Omitted,
-    concurrency: Concurrency | Omitted,
+    concurrency: ConcurrencyPreference | Omitted,
     isolation: IsolationLevel | Omitted,
 ) -> None:
     """Refuse a joining call's explicit option that conflicts with the active

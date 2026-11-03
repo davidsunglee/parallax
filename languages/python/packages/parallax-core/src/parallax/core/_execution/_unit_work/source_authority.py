@@ -7,6 +7,7 @@ from enum import Enum
 from typing import cast, final
 from weakref import WeakValueDictionary
 
+from parallax.core import concurrency
 from parallax.core._execution._unit_work._errors import WriteEvidenceError
 from parallax.core._execution._unit_work._write_ownership import (
     InsertionComposition,
@@ -14,7 +15,7 @@ from parallax.core._execution._unit_work._write_ownership import (
     NoInsertionAuthority,
     WriteOwnership,
 )
-from parallax.core._execution._unit_work.claims import SettledEvidence
+from parallax.core._execution._unit_work.claims import SettledEvidence, settled_evidence
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
     ParticipationToken,
@@ -23,14 +24,14 @@ from parallax.core._execution._unit_work.evidence import (
 )
 from parallax.core._execution._unit_work.instructions import KeyedMutation
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
-from parallax.core._execution._unit_work.strategy import Concurrency, EvidencePolicyLookup
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     InsertionAuthorizedWrite,
     KeyedInsert,
     ReadAuthorizedWrite,
 )
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.concurrency import ConcurrencyPreference
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import (
@@ -141,27 +142,24 @@ class SourceAuthority:
     everything it did through one :meth:`complete_write`.
 
     Only facts and weak references are held: no source value, pending write,
-    or the unit of work that executes them. ``version_after`` answers the
-    version a row of an Entity holds once a completed update advanced it from
-    a version, or, from none, the version an insert stores.
+    or the unit of work that executes them.
     """
 
     __slots__ = (
         "__weakref__",
         "_changed",
         "_concluding",
-        "_concurrency",
         "_current_versions",
         "_destroyed",
-        "_evidence_policy_for",
         "_freshness",
         "_lifetime",
         "_observations",
         "_ownership",
         "_participation",
+        "_preference",
         "_read_registrations",
         "_release",
-        "_version_after",
+        "_versioning",
     )
 
     def __init__(
@@ -169,16 +167,11 @@ class SourceAuthority:
         meta: Metamodel,
         *,
         lifetime: AttemptLifetime,
-        concurrency: Concurrency,
-        evidence_policy_for: EvidencePolicyLookup,
-        version_after: Callable[[EntityIdentity, int | None], int | None],
+        preference: ConcurrencyPreference,
     ) -> None:
         self._lifetime = lifetime
-        self._concurrency: Concurrency = concurrency
-        # The connected model's write-evidence policy, bound once per accepted
-        # model by model preparation, which alone may reach `m-opt-lock`.
-        self._evidence_policy_for = evidence_policy_for
-        self._version_after = version_after
+        self._preference: ConcurrencyPreference = preference
+        self._versioning = concurrency.view(meta)
         # This scope's participation identity: what a read of THIS attempt
         # stamps on the values it produces, and what a keyed write tests its
         # source against.
@@ -211,9 +204,7 @@ class SourceAuthority:
         self._current_versions: dict[ObjectKey, tuple[int, int]] = {}
         self._destroyed: dict[ObjectKey, int] = {}
         self._release = _ReleaseRegistration(self)
-        self._ownership = WriteOwnership(
-            meta, version_after=version_after, observations=self._observations
-        )
+        self._ownership = WriteOwnership(meta, observations=self._observations)
         self._concluding: _ConcludingOwnership | None = None
 
     @property
@@ -306,7 +297,7 @@ class SourceAuthority:
 
         One resolution serves the address, the gate, the version advance, and
         the claim, so they cannot disagree. Under either Effective Concurrency
-        Strategy (`m-opt-lock`) the source must have been read in THIS attempt:
+        Strategy (`m-concurrency`) the source must have been read in THIS attempt:
         a standalone read, a read-only transaction's read, and an earlier
         attempt's read participated in nothing this attempt can stand on,
         whatever key or revision they share with it. The strategy then decides
@@ -344,10 +335,18 @@ class SourceAuthority:
                 ),
                 object_key=object_key,
             )
-        policy = self._evidence_policy_for(target.identity)
         observation = read_evidence.observation
-        settled = policy.settled_evidence(mutation, object_key=object_key, observation=observation)
-        if policy.effective_strategy(self._concurrency) == "optimistic" and (observation is None):
+        settled = settled_evidence(
+            self._versioning,
+            target.identity,
+            mutation,
+            object_key=object_key,
+            observation=observation,
+        )
+        if (
+            self._versioning.effective_strategy(target.identity, self._preference) == "optimistic"
+            and observation is None
+        ):
             raise WriteEvidenceError(
                 code="write-evidence-unavailable",
                 message=(
@@ -582,8 +581,7 @@ class SourceAuthority:
         versions = self._current_versions
         for state in advanced:
             target = state.object
-            produced = self._version_after(target.entity, state.version)
-            assert produced is not None  # only a versioned row advances
+            produced = concurrency.next_version(state.version)
             held = versions.get(target)
             first = held[0] if held is not None and held[1] == state.version else state.version
             versions[target] = (first, produced)

@@ -30,15 +30,15 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
+from parallax.core.concurrency import ConcurrencyFacet
+from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
-    Metamodel,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
@@ -106,7 +106,9 @@ def _classify(
     model = model_of(ENCODED_ORDERS)
 
     def classified(root: RootView, ordinal: int) -> tuple[ConformingRoot | NonConformingRoot, int]:
-        return classify_root(root, model, CONCURRENCY, ordinal=offset + ordinal), len(root)
+        return classify_root(root, model, concurrency_view(model), ordinal=offset + ordinal), len(
+            root
+        )
 
     return each_root(fixture.page(*cast("Any", roots)), model, classified)
 
@@ -206,7 +208,7 @@ def test_a_root_whose_key_never_decoded_locates_itself_by_ordinal_alone() -> Non
         cast("Any", page),
         ENCODED_IDENTITY,
         lambda root, ordinal: classify_root(
-            root, ENCODED_IDENTITY, CONCURRENCY, ordinal=3 + ordinal
+            root, ENCODED_IDENTITY, concurrency_view(ENCODED_IDENTITY), ordinal=3 + ordinal
         ),
     )
     root = _classified(classified)
@@ -356,14 +358,14 @@ def test_a_versioned_root_whose_version_was_not_carried_locates_no_version() -> 
 
 
 class _NamedVersions:
-    """A version seam naming one Attribute for every Entity, recording each ask."""
+    """A Concurrency Facet naming one version Attribute for every Entity,
+    recording each ask; classification asks it nothing else."""
 
     def __init__(self, attribute: AttributeIdentity) -> None:
         self._attribute = attribute
         self.asked: list[EntityIdentity] = []
 
-    def version_attribute(self, model: Metamodel, entity: EntityIdentity) -> AttributeIdentity:
-        del model
+    def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity:
         self.asked.append(entity)
         return self._attribute
 
@@ -398,7 +400,7 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
 
     def classified(view: RootView, ordinal: int) -> ConformingRoot | NonConformingRoot:
         monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
-        return classify_root(view, model, versions, ordinal=ordinal)
+        return classify_root(view, model, cast("ConcurrencyFacet", versions), ordinal=ordinal)
 
     (verdict,) = each_root(fixture.page(root), model, classified)
 
@@ -470,7 +472,9 @@ def test_classification_locates_a_root_without_reading_its_axis_ends(
     model = model_of(read_models.RATE_MODEL)
 
     (verdict,) = each_root(
-        page, model, lambda root, ordinal: classify_root(root, model, CONCURRENCY, ordinal=ordinal)
+        page,
+        model,
+        lambda root, ordinal: classify_root(root, model, concurrency_view(model), ordinal=ordinal),
     )
 
     assert _classified(verdict).edge == Edge(

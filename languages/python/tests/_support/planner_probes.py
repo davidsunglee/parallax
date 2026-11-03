@@ -5,10 +5,10 @@ write-lowering seam, or the Write Planner directly, without a full
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core import opt_lock, temporal_read
+from parallax.core import concurrency, temporal_read
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work._write_ownership import NoInsertionAuthority
 from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
@@ -25,7 +25,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
-from parallax.core._execution._unit_work.strategy import ActorIdentity, Concurrency
+from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
@@ -35,13 +35,15 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
 )
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.concurrency import ConcurrencyPreference
+from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     SubjectActor,
     admitted_write,
     object_key,
+    settled_evidence,
 )
 from parallax.core.write_plan import ObjectKey, StateObservation, WritePlan
 from parallax.core.write_plan.keys import object_state_key_from_observation
@@ -133,7 +135,7 @@ def observed_buffer(
     write through the inserted value is, and is otherwise admitted as
     :func:`unobserved_write` admits it.
     """
-    authority = source_authority(model, inserted_version=_no_insertion_authorizes)
+    authority = source_authority(model)
     admission = WriteAdmission(model, authority=authority)
     retained: dict[ObjectKey, RetainedObservation] = {}
     handles: dict[ObjectKey, InsertionIdentity] = {}
@@ -195,8 +197,9 @@ def unobserved_write(instruction: PreparedKeyedInstruction, model: Metamodel) ->
     row admitted through :func:`object_source` evidence. Any other write needs
     an observation, so a suite admitting one without it is refused."""
     key = object_key(instruction, model)
-    evidence = opt_lock.settled_evidence(
-        opt_lock.optimistic_key(model, instruction.target.identity),
+    evidence = settled_evidence(
+        concurrency.view(model),
+        instruction.target.identity,
         instruction.mutation,
         object_key=key,
         observation=None,
@@ -229,40 +232,23 @@ def admit(admission: WriteAdmission, item: AdmittedWrite) -> InsertionIdentity |
 
 
 def source_authority(
-    model: Metamodel,
-    *,
-    inserted_version: Callable[[EntityIdentity, int | None], int | None] | None = None,
-    concurrency: Concurrency = "optimistic",
+    model: Metamodel, *, concurrency: ConcurrencyPreference = "optimistic"
 ) -> SourceAuthority:
-    """A source authority over ``model`` for an attempt that stays open,
-    answering ``inserted_version`` for the version a write produces, by default
-    failing the suite where one is asked for."""
+    """A source authority over ``model`` for an attempt that stays open."""
     return SourceAuthority(
         model,
         lifetime=TxnAttemptLifetime(),
-        concurrency=concurrency,
-        evidence_policy_for=opt_lock.view(model).required_key,
-        version_after=_no_insertion_authorizes if inserted_version is None else inserted_version,
+        preference=concurrency,
     )
 
 
-def write_admission(
-    model: Metamodel,
-    *,
-    inserted_version: Callable[[EntityIdentity, int | None], int | None] | None = None,
-) -> WriteAdmission:
+def write_admission(model: Metamodel) -> WriteAdmission:
     """An empty buffer over its own :func:`source_authority`."""
-    return WriteAdmission(
-        model, authority=source_authority(model, inserted_version=inserted_version)
-    )
+    return WriteAdmission(model, authority=source_authority(model))
 
 
 def _optimistic(item: TargetWrite) -> TargetWrite:
     return item
-
-
-def _no_insertion_authorizes(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-    raise AssertionError(f"no write an insertion of {entity.canonical!r} authorized is admitted")
 
 
 def retained_observation(

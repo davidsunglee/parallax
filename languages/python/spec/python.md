@@ -323,6 +323,7 @@ tree fails the sync check.
 | `m-auto-retry` | `parallax.core.auto_retry` |
 | `m-batch-write` | `parallax.core.batch_write` |
 | `m-case-format` | `parallax.conformance.case_format` |
+| `m-concurrency` | `parallax.core.concurrency` |
 | `m-conformance-adapter` | `parallax.conformance.cli` |
 | `m-core` | `parallax.core.base` |
 | `m-db-error` | `parallax.core.db_error` |
@@ -341,7 +342,6 @@ tree fails the sync check.
 | `m-model-formation` | `parallax.core.model_formation` |
 | `m-navigate` | `parallax.core.navigate` |
 | `m-object-query` | `parallax.core.object_query` |
-| `m-opt-lock` | `parallax.core.opt_lock` |
 | `m-pk-gen` | `parallax.core.pk_gen` |
 | `m-predicate` | `parallax.core.predicate` |
 | `m-read-delivery` | `parallax.core.read_delivery` |
@@ -390,14 +390,14 @@ come from `core/spec/modules.md`.
 | `parallax.aws` | `m-db-port` |
 | `parallax.aws.postgres` | `m-db-port`, `parallax.postgres` |
 | `parallax.core._execution` | `parallax.core.entity` |
-| `parallax.core._execution._family`, `parallax.core._execution._keyed_sql`, `parallax.core._execution._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan`, `m-opt-lock` |
+| `parallax.core._execution._family`, `parallax.core._execution._keyed_sql`, `parallax.core._execution._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan` |
 | `parallax.core._execution._keyed_writes` | `parallax.core.entity`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-execution-lifecycle` |
 | `parallax.core._execution._publication` | `parallax.core.entity`, `m-unit-work` |
 | `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-read-delivery`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-execution-authority`, `m-execution-lifecycle` |
 | `parallax.core._execution._read_query` | `m-metamodel`, `m-predicate`, `m-object-query` |
-| `parallax.core._execution._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-opt-lock` |
+| `parallax.core._execution._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan` |
 | `parallax.core._execution._unit_work.evidence` | `m-metamodel`, `m-temporal-read`, `m-write-plan` |
-| `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` |
+| `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-concurrency` |
 | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
 | `parallax.core.db_port` | `parallax.core.diagnostics` |
 | `parallax.core.diagnostics` | (none) |
@@ -783,15 +783,14 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   granted narrowly enough that the boundary falls **outside** its closure; there
   is no exception mechanism that puts a reachable target back into a row.
   `parallax.core._execution._read_query` is the case in point: the seam resolves
-  a target and validates a query before any I/O, so it must reach no
-  Database Port, and the `parallax.core.entity` package reaches one through
-  `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
-  `m-db-port`. Its grants are therefore `m-metamodel`, `m-predicate` and
-  `m-object-query` — the canonical query value plus what resolves and validates
-  it — none of which reaches the Entity frontend, and the ordinary generated row
-  forbids `parallax.core.entity` outright along with `m-db-port`, `m-opt-lock`,
-  `m-unit-work` and `parallax.core._formation_profile`, with indirect chains
-  reported. `_read_query` naming `parallax.core.entity._model` therefore breaks
+  a target and validates a query before any I/O, so it must reach neither the
+  Database Port nor the Entity frontend, which reaches model formation through
+  `parallax.core._formation_profile`. Its grants are therefore `m-metamodel`,
+  `m-predicate` and `m-object-query` — the canonical query value plus what
+  resolves and validates it — none of which reaches the Entity frontend, and the
+  ordinary generated row forbids `parallax.core.entity` outright along with
+  `m-db-port`, `m-concurrency`, `m-unit-work` and
+  `parallax.core._formation_profile`, with indirect chains reported. `_read_query` naming `parallax.core.entity._model` therefore breaks
   the gate twice over: on the frontend package it may not name at all, and on
   `_model`'s own edge to `parallax.core._formation_profile`.
   Granting a child scope instead omits that child's ancestors from the row,

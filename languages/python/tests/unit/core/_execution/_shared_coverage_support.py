@@ -30,11 +30,11 @@ from parallax.core._execution._unit_work.write_items import (
     target_write,
 )
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
     RetainedObservation,
@@ -218,7 +218,7 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, Pre
 def plan(
     writes: Sequence[AdmittedWrite],
     *,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
     instant: TransactionInstant | None = None,
 ) -> WritePlan:
     """``writes`` admitted in order and planned as one flush."""
@@ -226,7 +226,7 @@ def plan(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(AT.isoformat()),
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=admitted_writes(MODEL, list(writes)),
         )
     )

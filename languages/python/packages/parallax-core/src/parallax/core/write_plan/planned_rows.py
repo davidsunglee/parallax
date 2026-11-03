@@ -42,7 +42,7 @@ def planned_row(
     """One write row as its finalized semantic contents.
 
     A versioned Entity's row derives the INITIAL version at its own Attribute
-    (`m-opt-lock`), ignoring any value the row carries — the version is
+    (`m-concurrency`), ignoring any value the row carries — the version is
     framework-owned end to end, and the initial value the caller
     already resolved is a constant rather than an observation. ``version`` is
     absent for a temporal successor row, which carries no version column.

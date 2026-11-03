@@ -9,9 +9,10 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.story_models import Account, Wallet
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
-from parallax.core.unit_work import Concurrency, WritePreconditionError
+from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -106,7 +107,7 @@ def test_writes_of_one_state_after_a_predicate_write_still_coalesce() -> None:
     ("concurrency", "find"), [("optimistic", FIND_SQL_UNLOCKED), ("locking", FIND_SQL_LOCKED)]
 )
 def test_a_versioned_source_after_a_predicate_write_continues_from_the_version_it_left(
-    concurrency: Concurrency, find: str
+    concurrency: ConcurrencyPreference, find: str
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT]), Write(times=3)))
     gated = concurrency == "optimistic"

@@ -203,7 +203,7 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     no prepared product names one. A
     no-op for a non-participant ``entity`` (every entity outside an
     inheritance family accepts a predicate-selected write, subject to every
-    OTHER m-batch-write / m-opt-lock rule).
+    OTHER m-batch-write / m-concurrency rule).
     """
     if entity.inheritance is None:
         return

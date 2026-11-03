@@ -9,7 +9,7 @@ description is a pure function of two accepted models.
 
 It depends on `m-metamodel` for the accepted declarations, structured
 identities, and canonical Model Location order it reuses, and on
-`m-inheritance`, `m-relationship`, `m-temporal-read`, and `m-opt-lock` for the
+`m-inheritance`, `m-relationship`, `m-temporal-read`, and `m-concurrency` for the
 **effective** facts classification and Behavioral Impacts compare. Each of those
 is read through its owner's compiled facet and re-derived nowhere. Physical
 statements are not this module's: a relational consumer lowers a Unilateral
@@ -462,7 +462,7 @@ capability changes receives its own impact.
 
 An explicit `locking` Concurrency Preference always resolves to Locking and is
 therefore unaffected by evolution. `ConcurrencyControlChanged`'s per-Entity grain
-stays explicit even though the Optimistic Lock Facet is family-uniform, because a
+stays explicit even though the Concurrency Facet is family-uniform, because a
 coordinated hierarchy change can move a surviving Entity between effective
 families — and a Coordinated Evolution retains its Behavioral Impacts alongside
 its requirements.

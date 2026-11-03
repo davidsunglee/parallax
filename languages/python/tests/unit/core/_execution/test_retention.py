@@ -28,7 +28,7 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import inheritance, opt_lock, temporal_read
+from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._retention import (
@@ -145,7 +145,6 @@ def _unit_of_work(model: AcceptedMetamodel) -> UnitOfWork:
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(model).required_key,
     )
 
 
@@ -303,12 +302,12 @@ def test_deferred_sources_release_the_family_owners_once_every_origin_resolves()
         ),
     )
     assert sources._families is inheritance.view(model)
-    assert sources._keys is opt_lock.view(model)
+    assert sources._versioning is concurrency.view(model)
     assert sources._temporal is temporal_read.view(model)
     sources[0]
     assert sources._temporal is temporal_read.view(model)
     sources[1]
-    assert (sources._families, sources._keys, sources._temporal) == (None, None, None)
+    assert (sources._families, sources._versioning, sources._temporal) == (None, None, None)
 
 
 # --------------------------------------------------------------------------- #

@@ -4,6 +4,7 @@ from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from parallax.core._execution._unit_work._errors import UnobservedVersionError
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -13,7 +14,6 @@ from parallax.core._execution._unit_work.non_temporal_settlement import (
     AddressedFacts,
     NonTemporalFacts,
     Revision,
-    VersionOverlay,
     non_temporal_step,
 )
 from parallax.core._execution._unit_work.ranges import (
@@ -25,8 +25,6 @@ from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
     AuditStrategy,
-    Concurrency,
-    ConcurrencyStrategy,
 )
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
@@ -43,6 +41,7 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     TemporalCoverageWrite,
 )
+from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
@@ -62,7 +61,11 @@ from parallax.core.write_plan.keys import (
     VersionedObjectStateKey,
 )
 from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.observe import StateObservation, TemporalObservation
+from parallax.core.write_plan.observe import (
+    StateObservation,
+    TemporalObservation,
+    VersionObservation,
+)
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -96,7 +99,7 @@ from parallax.core.write_plan.steps import (
     shortfall_classification,
 )
 
-__all__ = ["WritePlanCompiler"]
+__all__ = ["WritePlanCompiler", "require_observed_version"]
 
 
 _GROUP_WRITES: Final = 1024
@@ -152,8 +155,8 @@ class WritePlanCompiler:
     claims, and proposed effects.
 
     Constructed once per accepted Metamodel by the planner that owns it, with
-    that model, the Inheritance and Temporal facets it compiled, the
-    concurrency and audit strategies the composition layer wired, and the
+    that model, the Inheritance, Temporal, and Concurrency facets it read, the
+    audit strategy the composition layer wired, and the
     model's write payload preparer, which judges whether produced temporal
     rows merge.
     :meth:`compile` is its entire surface: no caller settles one item, packs a
@@ -162,12 +165,12 @@ class WritePlanCompiler:
 
     __slots__ = (
         "_audit",
-        "_concurrency",
         "_families",
         "_model",
         "_payloads",
         "_settled",
         "_temporal_facet",
+        "_versioning",
     )
 
     def __init__(
@@ -175,8 +178,8 @@ class WritePlanCompiler:
         model: Metamodel,
         families: InheritanceFacet,
         temporal_facet: TemporalFacet,
+        versioning: ConcurrencyFacet,
         *,
-        concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
         settled: Container[object],
         payloads: WritePayloadPreparer,
@@ -184,7 +187,7 @@ class WritePlanCompiler:
         self._model = model
         self._families = families
         self._temporal_facet = temporal_facet
-        self._concurrency = concurrency
+        self._versioning = versioning
         self._audit = audit
         self._settled = settled
         self._payloads = payloads
@@ -193,7 +196,7 @@ class WritePlanCompiler:
         self,
         phases: Sequence[MutationPhase],
         *,
-        concurrency: Concurrency,
+        preference: ConcurrencyPreference,
         actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
         ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -258,7 +261,7 @@ class WritePlanCompiler:
             run: _AcquisitionRun | None = None
             for item in phase:
                 write, steps = self._settled_write(
-                    item, concurrency, transaction_instant, ownership, audit, counts_unchanged_rows
+                    item, preference, transaction_instant, ownership, audit, counts_unchanged_rows
                 )
                 if write.deferred is not None:
                     _close_group(entries, members, held, shape)
@@ -283,7 +286,7 @@ class WritePlanCompiler:
     def _settled_write(
         self,
         item: OrderedWrite,
-        concurrency: Concurrency,
+        preference: ConcurrencyPreference,
         transaction_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
@@ -293,17 +296,17 @@ class WritePlanCompiler:
         if isinstance(item, ComposedBitemporalOpening):
             assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
             return self._opening(
-                item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
+                item, shape, preference, transaction_instant, ownership, audit, guards=guards
             )
         if isinstance(
             item,
             ComposedTemporalWrite | StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
         ) and isinstance(shape, TransactionTimeOnly | Bitemporal):
             return self._range(
-                item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
+                item, shape, preference, transaction_instant, ownership, audit, guards=guards
             )
         assert not isinstance(item, ComposedTemporalWrite)  # only temporal objects compose
-        settled = self._settle_keyed(item, concurrency, transaction_instant, shape, audit)
+        settled = self._settle_keyed(item, preference, transaction_instant, shape, audit)
         write = SettledWrite(
             source_evidence=item.source_evidence,
             changed=settled.changed,
@@ -325,7 +328,7 @@ class WritePlanCompiler:
             | InsertionAuthorizedWrite
             | TargetWrite
         ),
-        concurrency: Concurrency,
+        preference: ConcurrencyPreference,
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
         audit: AuditDecoration,
@@ -344,13 +347,13 @@ class WritePlanCompiler:
         # an unversioned Non-Temporal row is locked by its object.
         assert not isinstance(shape, TransactionTimeOnly | Bitemporal)
         if isinstance(item, ObjectLockedBatch):
-            return self._settle(instruction, item.object_keys, None, concurrency, audit)
+            return self._settle(instruction, item.object_keys, None, preference, audit)
         scope = item.claim_scope
         return self._settle(
             instruction,
             (item.object_key,),
             item.observation if isinstance(item, StateObservedWrite) else None,
-            concurrency,
+            preference,
             audit,
             own_version=scope.version if isinstance(scope, VersionedObjectStateKey) else None,
             conditioned=isinstance(item, TargetWrite),
@@ -363,7 +366,7 @@ class WritePlanCompiler:
         instruction: PreparedKeyedInstruction,
         objects: tuple[ObjectKey, ...],
         observation: StateObservation | None,
-        concurrency: Concurrency,
+        preference: ConcurrencyPreference,
         audit: AuditDecoration,
         *,
         own_version: int | None = None,
@@ -382,7 +385,7 @@ class WritePlanCompiler:
         object it addresses without advancing anything."""
         entity = instruction.target
         facts = self._non_temporal_facts(entity)
-        addressed = self._addressed_facts(facts, concurrency, conditioned=conditioned)
+        addressed = self._addressed_facts(facts, preference, conditioned=conditioned)
         observed_version = (
             self._observed_version(entity, instruction, facts.version_attribute, observation)
             if observation is not None or own_version is None
@@ -400,7 +403,7 @@ class WritePlanCompiler:
                     if instruction.mutation == "delete"
                     else Revision(
                         _addressed_assignments(facts, addressed, instruction.rows[0]),
-                        self._version_overlay(facts.version_attribute),
+                        facts.version_attribute,
                     )
                 ),
                 key_rows=instruction.rows,
@@ -429,7 +432,7 @@ class WritePlanCompiler:
         self,
         item: TemporalCoverageWrite,
         shape: TransactionTimeOnly | Bitemporal,
-        concurrency: Concurrency,
+        preference: ConcurrencyPreference,
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
@@ -460,7 +463,7 @@ class WritePlanCompiler:
             intents,
             view=entity_view(self._families, entity),
             shape=shape,
-            gated=self._concurrency.gates(concurrency, self._model, entity.identity),
+            gated=self._gates(entity, preference),
             # Reaching a surviving temporal write is what makes the attempt
             # capture its instant.
             instant=tx_instant.value(),
@@ -493,9 +496,7 @@ class WritePlanCompiler:
         version, so it asks the strategy for no arithmetic either.
         """
         version = (
-            None
-            if facts.version_attribute is None
-            else (facts.version_attribute, self._concurrency.version_arithmetic().initial)
+            None if facts.version_attribute is None else (facts.version_attribute, INITIAL_VERSION)
         )
         entries = tuple(
             audit.finalize_row(WriteRow(row=planned_row(row, version), origin=NEW_LINEAGE))
@@ -516,11 +517,15 @@ class WritePlanCompiler:
         return NonTemporalFacts(
             entity=entity,
             view=entity_view(self._families, entity),
-            version_attribute=self._concurrency.version_attribute(self._model, entity.identity),
+            version_attribute=self._versioning.version_attribute(entity.identity),
         )
 
     def _addressed_facts(
-        self, facts: NonTemporalFacts, concurrency: Concurrency, *, conditioned: bool = False
+        self,
+        facts: NonTemporalFacts,
+        preference: ConcurrencyPreference,
+        *,
+        conditioned: bool = False,
     ) -> AddressedFacts:
         """What one non-temporal mutation against EXISTING rows settles before
         a row is in hand.
@@ -532,7 +537,7 @@ class WritePlanCompiler:
         A gate binding a caller's ``conditioned`` revision classifies its
         shortfall as that condition failing.
         """
-        gated = self._concurrency.gates(concurrency, self._model, facts.entity.identity)
+        gated = self._gates(facts.entity, preference)
         return AddressedFacts(
             key_attributes=(facts.view.primary_key.identity,),
             gated=gated,
@@ -543,18 +548,6 @@ class WritePlanCompiler:
                     observing=facts.version_attribute is not None, gated=gated
                 )
             ),
-        )
-
-    def _version_overlay(
-        self, version_attribute: AttributeIdentity | None
-    ) -> VersionOverlay | None:
-        """The version overlay a settled update carries, or absence for an
-        unversioned target — which has no version to advance and therefore asks
-        the strategy for no arithmetic."""
-        if version_attribute is None:
-            return None
-        return VersionOverlay(
-            attribute=version_attribute, arithmetic=self._concurrency.version_arithmetic()
         )
 
     def _settle_temporal_insert(
@@ -606,7 +599,7 @@ class WritePlanCompiler:
         self,
         opening: ComposedBitemporalOpening,
         shape: Bitemporal,
-        concurrency: Concurrency,
+        preference: ConcurrencyPreference,
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
@@ -625,8 +618,7 @@ class WritePlanCompiler:
             shape=shape,
             # Only a replacement reaching past the opening reaches stored rows,
             # whose closes the strategy gates.
-            gated=opening.beyond is not None
-            and self._concurrency.gates(concurrency, self._model, entity.identity),
+            gated=opening.beyond is not None and self._gates(entity, preference),
             # Reaching a surviving temporal insert is what makes the attempt
             # capture its instant; every part's fresh start derives from that value.
             instant=tx_instant.value(),
@@ -648,6 +640,11 @@ class WritePlanCompiler:
         )
         return write, ranged.steps
 
+    def _gates(self, entity: EntityMetadata, preference: ConcurrencyPreference) -> bool:
+        """Whether a write of ``entity`` against existing rows gates: exactly
+        when its Effective Concurrency Strategy is Optimistic."""
+        return self._versioning.effective_strategy(entity.identity, preference) == "optimistic"
+
     def _observed_version(
         self,
         entity: EntityMetadata,
@@ -658,7 +655,7 @@ class WritePlanCompiler:
         """The version an addressed write against a versioned row advances
         from, or ``None`` for an unversioned target.
 
-        The observation is required in both concurrency modes, because the
+        The observation is required under both strategies, because the
         framework never issues a resolving read on behalf of a keyed write.
 
         A returned version therefore came off an observed write, which
@@ -679,7 +676,7 @@ class WritePlanCompiler:
         if version_attr is None:
             _require_unobserved(entity, instruction.mutation, observation)
             return None
-        return self._concurrency.require_version(entity.identity, observation)
+        return require_observed_version(entity.identity, observation)
 
 
 def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...] | None:
@@ -781,7 +778,7 @@ def _unobserved_close(entity: EntityMetadata) -> WritePlanningError:
     return WritePlanningError(
         f"{entity.identity.name!r}: a temporal write of existing coverage closes the "
         "current milestone, and every close requires the Temporal Observation it "
-        "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
+        "addresses, gates on, and carries state forward from (m-unit-work)"
     )
 
 
@@ -831,6 +828,15 @@ def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:
     """An addressed Non-Temporal step as audit leaves it: an update decorated
     once, a delete as it is."""
     return audit.decorate_update(step) if isinstance(step, PlannedUpdate) else step
+
+
+def require_observed_version(entity: EntityIdentity, observation: StateObservation | None) -> int:
+    """The version a keyed update or delete of an explicitly versioned row of
+    ``entity`` advances from, or :class:`UnobservedVersionError` where the
+    write reached settlement observing none."""
+    if not isinstance(observation, VersionObservation):
+        raise UnobservedVersionError(entity)
+    return observation.observed_version
 
 
 def _require_unobserved(

@@ -40,7 +40,7 @@ A fourth combination, Valid Time without Transaction Time, is deferred
 ([`m-validtime-only`](../../core/spec/m-validtime-only.md)). The supported profiles all
 include Transaction Time, which is also what makes a temporal Entity's optimistic
 version: the Transaction-Time start of the milestone a read observed
-([temporal versions](../../core/spec/m-opt-lock.md#temporal-entities-derive-the-version-from-transaction-time)).
+([version sources](../../core/spec/m-concurrency.md#version-sources)).
 
 ## Milestones
 

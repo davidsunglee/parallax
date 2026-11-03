@@ -271,7 +271,7 @@ and `caseShape` and carrying at least one diagnostic whose `code` is
   "command": "compile",
   "status": "run-only",
   "adapter": { "language": "python", "name": "parallax-conformance", "version": "0.1.0" },
-  "case": "core/compatibility/cases/m-opt-lock-005-conflict.yaml",
+  "case": "core/compatibility/cases/m-concurrency-005-conflict.yaml",
   "dialect": "postgres",
   "caseShape": "conflict",
   "diagnostics": [

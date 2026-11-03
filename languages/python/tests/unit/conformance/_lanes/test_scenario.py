@@ -32,7 +32,6 @@ from parallax.conformance.simulated_temporal_store import (
     SimulatedStoreError,
     SimulatedTemporalStore,
 )
-from parallax.core import opt_lock
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.instructions import (
@@ -52,6 +51,7 @@ from parallax.core.base import (
     String,
     TemporalBound,
 )
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ArrayBind,
@@ -73,7 +73,6 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     AdmittedWrite,
-    Concurrency,
     InsertionIdentity,
     KeyedMutation,
     KeyedWriteInstruction,
@@ -83,6 +82,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     StaleWriteError,
     UnitOfWork,
+    UnobservedVersionError,
     WriteEffectError,
     WriteEvidenceError,
     WriteRejectedError,
@@ -1022,19 +1022,6 @@ def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> N
     assert scenario.group_tx_instant(steps, range(2)) == scenario.INERT_CLOCK_INSTANT
 
 
-def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity() -> None:
-    # A temporal entity observes a whole milestone rather than a version, so it has
-    # no version attribute to resolve — `m-opt-lock`'s version column is a
-    # non-temporal-only concept.
-    meta = model_facts.load_case_metamodel(_load_case("m-navigate-012"))
-    assert (
-        scenario._versioned_non_temporal_version_attribute(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            meta, "Policy"
-        )
-        is None
-    )
-
-
 _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
@@ -1546,10 +1533,10 @@ def _counting_case_state_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int
 @pytest.mark.parametrize(
     ("case_id", "reads"),
     [
-        pytest.param("m-opt-lock-027", {"target": 0, "coverage": 0}, id="optimistic-version"),
+        pytest.param("m-concurrency-027", {"target": 0, "coverage": 0}, id="optimistic-version"),
         pytest.param("m-temporal-write-042", {"target": 0, "coverage": 1}, id="optimistic-window"),
-        pytest.param("m-opt-lock-029", {"target": 1, "coverage": 0}, id="locking-amend"),
-        pytest.param("m-opt-lock-040", {"target": 1, "coverage": 0}, id="locking-delete"),
+        pytest.param("m-concurrency-029", {"target": 1, "coverage": 0}, id="locking-amend"),
+        pytest.param("m-concurrency-040", {"target": 1, "coverage": 0}, id="locking-delete"),
         pytest.param("m-temporal-write-043", {"target": 1, "coverage": 0}, id="locking-replace"),
     ],
 )
@@ -2325,7 +2312,7 @@ def test_pk_gen_managed_insert_rows_stay_their_own_steps_in_one_grouped_insert()
 def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
     # A versioned UPDATE row that assigns nothing but its own primary key has an
     # EMPTY effective change set, so the planner's elision stage drops it
-    # (m-opt-lock: a versioned update that changes no attribute issues no DML).
+    # (m-concurrency: a versioned update that changes no attribute issues no DML).
     # The authored count grades the statements the flush actually emits, so this
     # entry is ONE statement — the surviving `balance` update — not two.
     case = _synthetic_write(
@@ -2595,7 +2582,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock):                        #
+# Conflict — the optimistic-lock run lane (m-concurrency):                        #
 # single-attempt, given.apply, and when.attempts forms, each                   #
 # driven against the fake in-memory port (no Docker; the real conflict/retry   #
 # semantics against a reset database are the Docker-gated pg-full proof,       #
@@ -2616,7 +2603,7 @@ _ACCOUNT_ROW_2: Final[MappingRow] = {
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, table_state, _database_calls = scenario.run_conflict_case(
-        _load_case("m-opt-lock-006"), port
+        _load_case("m-concurrency-006"), port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert affected == 1
@@ -2627,9 +2614,9 @@ def test_run_conflict_case_single_attempt() -> None:
 @pytest.mark.parametrize(
     ("case_id", "mutation", "attempt"),
     [
-        ("m-opt-lock-006", "amend", None),
-        ("m-opt-lock-006", "delete", None),
-        ("m-opt-lock-009", "amend", 1),
+        ("m-concurrency-006", "amend", None),
+        ("m-concurrency-006", "delete", None),
+        ("m-concurrency-009", "amend", 1),
     ],
     ids=["amend", "delete", "later-retry"],
 )
@@ -2651,7 +2638,7 @@ def test_a_versioned_conflict_attempt_requires_its_declared_version(
 def test_every_row_of_a_versioned_conflict_attempt_requires_its_declared_version(
     mutation: str,
 ) -> None:
-    case = _own_copy(_load_case("m-opt-lock-006"))
+    case = _own_copy(_load_case("m-concurrency-006"))
     when = cast("dict[str, Any]", case.document["when"])
     when["mutation"] = mutation
     when["write"] = [when["write"], {"id": 3, "balance": "20.00"}]
@@ -2671,7 +2658,7 @@ def test_conflict_submissions_never_prepare_or_simulate_a_peer_write(
     monkeypatch.setattr(_case_ingress, "prepare_case_write", refuse)
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, _table_state, database_calls = scenario.run_conflict_case(
-        _load_case("m-opt-lock-006"), port
+        _load_case("m-concurrency-006"), port
     )
     assert affected == 1 and database_calls == 2
     assert len(port.reads) == 2 and len(port.writes) == 1
@@ -2706,7 +2693,7 @@ def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> Non
     # the stale gate the case grades would never be reachable.
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, table_state, _database_calls = scenario.run_conflict_case(
-        _load_case("m-opt-lock-005"), port
+        _load_case("m-concurrency-005"), port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert port.reads[0][0].startswith("select")  # the source read ran first
@@ -2731,7 +2718,7 @@ _ACCOUNT_WRITE_SHORTFALL: Final[tuple[str, ...]] = (
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL)
     _emissions, affected, _table_state, _database_calls = scenario.run_conflict_case(
-        _load_case("m-opt-lock-005"), port
+        _load_case("m-concurrency-005"), port
     )
     assert affected == 0
 
@@ -2742,7 +2729,7 @@ def test_a_conflict_attempt_whose_source_read_finds_no_row_is_refused() -> None:
     # verbs rather than merely unpleasant.
     port = FakeWritePort(find_rows=[])
     with pytest.raises(EngineError, match="which no read of its own choreography unit published"):
-        scenario.run_conflict_case(_load_case("m-opt-lock-006"), port)
+        scenario.run_conflict_case(_load_case("m-concurrency-006"), port)
 
 
 def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refused() -> None:
@@ -2751,7 +2738,7 @@ def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refu
     # state or the case grades a statement no read of this lane produced.
     port = FakeWritePort(find_rows=[{**_ACCOUNT_ROW_2, "version": 7}])
     with pytest.raises(EngineError, match="its resolved source observed 7"):
-        scenario.run_conflict_case(_load_case("m-opt-lock-005"), port)
+        scenario.run_conflict_case(_load_case("m-concurrency-005"), port)
     assert len(port.reads) == 1 and port.writes == []
 
 
@@ -2830,13 +2817,13 @@ def test_a_locking_conflict_target_is_refused_before_any_read(case: case_format.
 
 def _always_implying(
     error_cls: type[WriteEffectError],
-) -> Callable[[bool, Concurrency, AcceptedMetamodel, str], type[WriteEffectError]]:
+) -> Callable[[bool, ConcurrencyPreference, AcceptedMetamodel, str], type[WriteEffectError]]:
     """An ``_implied_shortfall_error`` stand-in that ignores the case's own
     declared facts — a lane admitting the wrong shortfall class."""
 
     def implied(
         _observation_requiring: bool,
-        _concurrency: Concurrency,
+        _concurrency: ConcurrencyPreference,
         _model: AcceptedMetamodel,
         _target: str,
     ) -> type[WriteEffectError]:
@@ -2855,7 +2842,7 @@ class TestConflictShortfallClassification:
     Every member of the Write Effect Error family carries the same ``actual``
     count, so a lane catching the whole family would render `then.affectedRows: 0`
     identically whichever class the write raised, and a zero-row case would assert
-    nothing about the classification (`m-opt-lock` "Classification follows the
+    nothing about the classification (`m-concurrency` "Classification follows the
     gate").
     """
 
@@ -2881,7 +2868,7 @@ class TestConflictShortfallClassification:
 
     @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
     def test_an_observation_free_write_implies_a_missing_target_under_either_preference(
-        self, concurrency: Concurrency
+        self, concurrency: ConcurrencyPreference
     ) -> None:
         # A write that observed nothing has no gate to classify by, so its
         # shortfall says only that the addressed rows are not there.
@@ -2900,7 +2887,7 @@ class TestConflictShortfallClassification:
         monkeypatch.setattr(scenario, "_implied_shortfall_error", _always_implying(StaleWriteError))
         with pytest.raises(OptimisticLockConflictError):
             scenario.run_conflict_case(
-                _load_case("m-opt-lock-005"),
+                _load_case("m-concurrency-005"),
                 FakeWritePort([_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL),
             )
 
@@ -2941,7 +2928,7 @@ def test_run_conflict_case_attempts_form_is_productions_own_replay() -> None:
         read_script=[[_ACCOUNT_ROW_2], [_ACCOUNT_ROW_2_REVISED]], affected_script=[0, 1]
     )
     emissions, affected, table_state, database_calls = scenario.run_conflict_case(
-        _load_case("m-opt-lock-009"), port
+        _load_case("m-concurrency-009"), port
     )
     assert [e.case_pointer for e in emissions] == [
         "/when/attempts/0/write",
@@ -2962,7 +2949,7 @@ def test_a_conflict_case_production_replays_past_its_last_attempt_is_refused() -
     # Under a positive bound production replays the single authored attempt's
     # conflict, which the case never described: the replay is refused inside
     # the callback rather than graded against the first attempt's statements.
-    case = _rooted(_load_case("m-opt-lock-005"), uow={"concurrency": "optimistic"}, root={})
+    case = _rooted(_load_case("m-concurrency-005"), uow={"concurrency": "optimistic"}, root={})
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL)
     with pytest.raises(EngineError, match="replayed the conflict case's last authored attempt"):
         scenario.run_conflict_case(case, port)
@@ -2972,7 +2959,7 @@ def test_a_conflict_case_production_replays_past_its_last_attempt_is_refused() -
 def test_a_conflict_case_whose_invocation_ends_before_its_last_attempt_is_refused() -> None:
     port = FakeWritePort(read_script=[[_ACCOUNT_ROW_2]], affected_script=[1])
     with pytest.raises(EngineError, match=r"after 1 attempt\(s\), and the case authors 2"):
-        scenario.run_conflict_case(_load_case("m-opt-lock-009"), port)
+        scenario.run_conflict_case(_load_case("m-concurrency-009"), port)
 
 
 @pytest.mark.parametrize(
@@ -2986,7 +2973,7 @@ def test_a_conflict_case_whose_invocation_ends_before_its_last_attempt_is_refuse
 def test_a_conflict_case_whose_bound_admits_fewer_attempts_than_it_authors_is_refused(
     uow: dict[str, object], root: dict[str, object]
 ) -> None:
-    case = _rooted(_load_case("m-opt-lock-009"), uow=uow, root=root)
+    case = _rooted(_load_case("m-concurrency-009"), uow=uow, root=root)
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     with pytest.raises(EngineError, match=r"authors 2 attempts and its transaction resolves"):
         scenario.run_conflict_case(case, port)
@@ -3869,7 +3856,7 @@ def test_a_conflict_attempt_opens_at_the_roots_level_and_runs_under_its_bound() 
     # level and bound govern the attempts exactly as authored ones do: one
     # production attempt at the root's level under the optimistic preference
     # the request authors.
-    case = _rooted(_load_case("m-opt-lock-006"), uow={"concurrency": "optimistic"})
+    case = _rooted(_load_case("m-concurrency-006"), uow={"concurrency": "optimistic"})
     assert case_format.database_options(case) == TxnOptions(
         max_retries=0,
         concurrency="locking",
@@ -3895,7 +3882,7 @@ def test_a_staged_writer_under_a_snapshot_level_is_refused_before_any_read(
     # Above Read Committed the attempt's source read fixes its snapshot, so the
     # `given.apply` writer committing after it turns the write into a
     # serialization failure, never the zero-row shortfall the case grades.
-    case = _rooted(_load_case("m-opt-lock-005"), uow=uow, root=root)
+    case = _rooted(_load_case("m-concurrency-005"), uow=uow, root=root)
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     with pytest.raises(EngineError, match=f"at `{level}` that read fixes the snapshot"):
         scenario.run_conflict_case(case, port)
@@ -3906,7 +3893,7 @@ def test_a_staged_writer_under_a_snapshot_level_is_refused_before_any_read(
 
 def test_a_staged_writer_runs_at_a_requested_read_committed_over_a_snapshot_root() -> None:
     case = _rooted(
-        _load_case("m-opt-lock-005"),
+        _load_case("m-concurrency-005"),
         uow={"concurrency": "optimistic", "isolation": "read-committed"},
         root={"isolation": "serializable"},
     )
@@ -3962,7 +3949,7 @@ def _compiled(case: case_format.Case) -> list[str]:
         pytest.param(
             "m-batch-write-004", [StateObservedWrite, StateObservedWrite], id="versioned-deletes"
         ),
-        pytest.param("m-opt-lock-026", [StateObservedWrite], id="restated-amendment"),
+        pytest.param("m-concurrency-026", [StateObservedWrite], id="restated-amendment"),
         pytest.param("m-temporal-write-005", [StateObservedWrite], id="fixture-history"),
         pytest.param(
             "m-temporal-write-002",
@@ -4093,7 +4080,7 @@ def test_a_compiled_versioned_write_no_evidence_licenses_is_refused_when_submitt
     case = _synthetic_write("writeSequence", {"when": {"writeSequence": writes}})
     with pytest.raises(EngineError, match="requires the version its source observed") as raised:
         scenario.compile_write_sequence_case(case, "postgres")
-    assert isinstance(raised.value.__cause__, opt_lock.UnobservedVersionError)
+    assert isinstance(raised.value.__cause__, UnobservedVersionError)
     assert [named_members(instruction.rows[0])["id"] for instruction in submitted] == [1]
     assert admitted == []
 
@@ -4216,7 +4203,7 @@ def test_each_compiled_write_of_a_group_carries_evidence_of_its_own(
 def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read() -> None:
     port = FakeWritePort()
     emissions, _table_state, database_calls = scenario.run_write_sequence_case(
-        _load_case("m-opt-lock-028"), port
+        _load_case("m-concurrency-028"), port
     )
     assert database_calls == 1
     assert not any(" where " in sql for sql, _ in port.reads)
@@ -4231,7 +4218,7 @@ def test_a_target_step_is_written_from_its_callers_revision_with_no_source_read(
 def test_a_target_deletion_step_is_written_through_its_target_verb() -> None:
     port = FakeWritePort()
     _emissions, _table_state, database_calls = scenario.run_write_sequence_case(
-        _load_case("m-opt-lock-039"), port
+        _load_case("m-concurrency-039"), port
     )
     assert database_calls == 1
     assert port.writes == [
@@ -4288,8 +4275,8 @@ def test_a_target_replacement_step_completes_what_its_row_omits() -> None:
 @pytest.mark.parametrize(
     ("case_id", "written"),
     [
-        ("m-opt-lock-029", "update account set balance = ?, version = ? where id = ?"),
-        ("m-opt-lock-040", "delete from account where id = ?"),
+        ("m-concurrency-029", "update account set balance = ?, version = ? where id = ?"),
+        ("m-concurrency-040", "delete from account where id = ?"),
     ],
 )
 def test_a_locking_target_step_acquires_its_row_before_it_writes(

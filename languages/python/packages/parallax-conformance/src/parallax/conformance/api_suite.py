@@ -1207,7 +1207,7 @@ EXAMPLES: Final[list[Example]] = [
     # `delete_if` in later transactions, one of them outdated by another writer.
     # Executed against real Postgres by `tests/api/test_target_write_stories.py`.
     Example(
-        "m-opt-lock-041",
+        "m-concurrency-041",
         "Accounts reviewed earlier are deleted under the versions the review saw",
         target_write_stories.reviewed_deletion_snippet(),
     ),
@@ -1217,7 +1217,7 @@ EXAMPLES: Final[list[Example]] = [
     # golden statements render. Executed against real Postgres by
     # `tests/api/test_target_write_stories.py`.
     Example(
-        "m-opt-lock-023",
+        "m-concurrency-023",
         "A row with no revision is written through a read of the writing transaction",
         target_write_stories.unversioned_write_snippet(),
     ),
@@ -1228,7 +1228,7 @@ EXAMPLES: Final[list[Example]] = [
     # no retry option to set. Executed against real Postgres by
     # `tests/api/test_conflict_replay.py`.
     Example(
-        "m-opt-lock-009",
+        "m-concurrency-009",
         "A write another writer overtook is replayed from a fresh read",
         conflict_replay_stories.conflict_replay_snippet(),
     ),
@@ -1311,13 +1311,13 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "single-callback idiomatic developer spelling distinct from what the boundary "
         "runner already exercises directly"
     ),
-    "m-opt-lock": (
+    "m-concurrency": (
         "the versioned keyed LOCKING-mode advance has an "
-        "idiomatic story (`m-opt-lock-002`); the OPTIMISTIC-mode forms have none, for "
+        "idiomatic story (`m-concurrency-002`); the OPTIMISTIC-mode forms have none, for "
         "two DIFFERENT reasons: `-005` is a stale-gate case whose competing writer is "
         "applied out of band (`given.apply`), which no single-session story can stage, "
         "while `-006` and `-013` are single-session SUCCESSES needing no "
-        "second writer at all — their developer spelling is the exercised `m-opt-lock-002` "
+        "second writer at all — their developer spelling is the exercised `m-concurrency-002` "
         "story's observe-edit-update, taken under optimistic concurrency, and what they add "
         "is framework-emitted SQL no caller spells (the `and version = ?` gate optimistic "
         "mode renders, and the multi-column SET ordering ahead of ONE version advance). The "
@@ -1593,7 +1593,7 @@ _INHERITANCE_BITEMPORAL_TERMINATE_REASON: Final[str] = (
 # a spelling an exercised story already shows.
 _INHERITANCE_COMPOSED_CONFLICT_REASON: Final[str] = (
     "a table-per-hierarchy audit-only close GATED on a STALE observed Transaction-Time "
-    "start (m-inheritance x m-temporal-write x m-opt-lock composed): graded end-to-end by "
+    "start (m-inheritance x m-temporal-write x m-concurrency composed): graded end-to-end by "
     "the run sweep's interleaved-group runner; no idiomatic story covers it because the "
     "staleness it grades is produced by a concurrent unit of work committing first over a "
     "session of its own, which one single-session callback cannot stage (the SAME posture "
@@ -1649,7 +1649,7 @@ _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON: Final[str] = (
     "a non-temporal optimistic-lock keyed write whose version gate MATCHES — a "
     "single-session success needing no concurrent writer: graded end-to-end by the run "
     "lane; no idiomatic story covers it because its developer spelling is the exercised "
-    "locking-mode advance's (`m-opt-lock-002`: observe, edit, update) taken under "
+    "locking-mode advance's (`m-concurrency-002`: observe, edit, update) taken under "
     "optimistic concurrency, and everything it adds is framework-emitted SQL no "
     "caller spells — the `and version = ?` gate optimistic mode renders, and the "
     "multi-column SET ordering ahead of ONE version advance"
@@ -1665,8 +1665,8 @@ _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON: Final[str] = (
     "than a developer spelling"
 )
 # The optimistic-conflict boundary witnesses cover a conflict surfacing after
-# one attempt under a zero bound (`m-opt-lock-010`) and replayed to success by
-# default (`m-opt-lock-011`, and `m-temporal-read-011` over a
+# one attempt under a zero bound (`m-concurrency-010`) and replayed to success by
+# default (`m-concurrency-011`, and `m-temporal-read-011` over a
 # Transaction-Time-Only milestone) — graded by the SAME case-driven boundary
 # runner the `m-auto-retry` module bucket names.
 _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
@@ -1679,7 +1679,7 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
     "single-callback idiomatic developer spelling distinct from what the boundary "
     "runner already exercises directly"
 )
-# The interleaved two-session optimistic-lock races (`m-opt-lock-012` over a
+# The interleaved two-session optimistic-lock races (`m-concurrency-012` over a
 # versioned row, `m-temporal-read-010` over a Transaction-Time-Only milestone,
 # `m-temporal-write-021` over a bitemporal rectangle; `m-case-format` unit-of-work
 # grouping) hold two concurrent
@@ -2108,9 +2108,9 @@ _VO_SQL_NULL_STORAGE_REASON: Final[str] = (
 )
 _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "a versioned write under an optimistic-lock gate over a value-object-bearing "
-    "entity: the m-opt-lock keyed-write machinery is graded end-to-end by the "
+    "entity: the m-concurrency keyed-write machinery is graded end-to-end by the "
     "compile/run conformance lanes; no idiomatic story was authored for this VO-bearing "
-    "optimistic-conflict shape, matching this registry's own m-opt-lock bucket reason"
+    "optimistic-conflict shape, matching this registry's own m-concurrency bucket reason"
 )
 # The finite-pin mutation contrast pair (a finite Valid-Time pin stays writable;
 # a finite Transaction-Time pin is read-only) is graded end-to-end by the run
@@ -2261,7 +2261,7 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
 # The root-configured boundary witnesses (m-case-format *Root configuration*):
 # what each proves is what the loop DOES under a configured root — an
 # invocation naming no option resolving all three from the root, a zero root
-# bound (over a transient, and over a conflict, `m-opt-lock-024`), a root level
+# bound (over a transient, and over a conflict, `m-concurrency-024`), a root level
 # over every attempt, and each one's explicit override, plus the three-field
 # join rule under a configured root — graded by the SAME case-driven boundary
 # runner, which connects the case's root record and forwards only the authored
@@ -2467,8 +2467,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-temporal-write-047",
             "m-temporal-write-048",
             "m-temporal-write-049",
-            "m-opt-lock-030",
-            "m-opt-lock-031",
+            "m-concurrency-030",
+            "m-concurrency-031",
             "m-temporal-write-070",
             "m-temporal-write-071",
             "m-temporal-write-072",
@@ -2483,14 +2483,14 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         _UNCHANGED_MILESTONE_REASON,
     ),
     **dict.fromkeys(("m-temporal-write-076", "m-temporal-write-077"), _TEMPORAL_CONFLICT_REASON),
-    # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
-    "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
-    "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
-    "m-opt-lock-013": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
-    # -- m-opt-lock / m-read-lock concurrency cases -------------------------- #
-    "m-opt-lock-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
-    "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
-    "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
+    # -- m-concurrency: non-temporal write family, conformance-lane covered ----- #
+    "m-concurrency-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
+    "m-concurrency-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
+    "m-concurrency-013": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
+    # -- m-concurrency / m-read-lock concurrency cases -------------------------- #
+    "m-concurrency-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
+    "m-concurrency-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
+    "m-concurrency-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-temporal-read-010": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-temporal-write-021": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
@@ -2519,11 +2519,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-unit-work-052",
             "m-unit-work-053",
             "m-unit-work-054",
-            "m-opt-lock-034",
-            "m-opt-lock-035",
-            "m-opt-lock-036",
-            "m-opt-lock-037",
-            "m-opt-lock-038",
+            "m-concurrency-034",
+            "m-concurrency-035",
+            "m-concurrency-036",
+            "m-concurrency-037",
+            "m-concurrency-038",
             "m-batch-write-020",
             "m-batch-write-022",
             "m-batch-write-024",
@@ -2569,8 +2569,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-auto-retry-008": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-009": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-010": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
-    "m-opt-lock-024": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
-    "m-opt-lock-025": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-concurrency-024": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-concurrency-025": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-temporal-read-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-unit-work-037": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-unit-work-038": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,

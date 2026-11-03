@@ -25,11 +25,11 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._write_lowering import lowered
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
@@ -64,7 +64,7 @@ def lower_instruction(
     instruction: WriteInstruction,
     model: Metamodel,
     dialect: Dialect = POSTGRES,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
     tx_instant: TransactionInstant | None = None,
     *,
     observation: StateObservation | None = None,
@@ -84,7 +84,7 @@ def lower_instruction_steps(
     instruction: WriteInstruction,
     model: Metamodel,
     dialect: Dialect = POSTGRES,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
     tx_instant: TransactionInstant | None = None,
     *,
     observation: StateObservation | None = None,
@@ -100,7 +100,7 @@ def _stream(
     instruction: WriteInstruction,
     model: Metamodel,
     dialect: Dialect,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     tx_instant: TransactionInstant | None,
     observation: StateObservation | None,
     ownership: TemporalWriteOwnership,
@@ -128,7 +128,7 @@ def _stream(
                 WritePlanningRequest(
                     actor_identity=TEST_ACTOR_IDENTITY,
                     transaction_instant=instant,
-                    concurrency=concurrency,
+                    preference=concurrency,
                     composed_writes=writes,
                     ownership=ownership,
                     counts_unchanged_rows=dialect.counts_unchanged_rows,

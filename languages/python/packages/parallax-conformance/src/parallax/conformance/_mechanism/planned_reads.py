@@ -77,7 +77,7 @@ def planned_read(
     row form, ``wire.find`` for the graph form — inside a transaction with
     ``transaction``'s keywords when given, opened through the entrypoint
     ``access_mode`` selects, so the lock suffix is the one that transaction's
-    resolved preference and the target's Optimistic Lock Facet produce, or none
+    resolved preference and the target's Concurrency Facet produce, or none
     at all in a read-only one.
     """
     observation = LifecycleObservation()

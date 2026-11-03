@@ -277,7 +277,9 @@ def test_formation_manifest_checks_compiler_facet_declarations_and_required_face
         "formation manifest facet m-inheritance is declared by both m-inheritance and "
         "m-temporal-read" in errors
     )
-    assert "formation manifest owner m-opt-lock requires undeclared facet m-temporal-read" in errors
+    assert (
+        "formation manifest owner m-concurrency requires undeclared facet m-temporal-read" in errors
+    )
 
 
 def test_formation_manifest_rejects_malformed_required_module_and_facet_cells() -> None:
@@ -303,7 +305,7 @@ def test_formation_manifest_rejects_malformed_required_module_and_facet_cells() 
         "'m-metamodel'" in errors
     )
     assert (
-        "formation manifest owner m-opt-lock has invalid required facet declaration "
+        "formation manifest owner m-concurrency has invalid required facet declaration "
         "'FacetKey(m-inheritance)'" in errors
     )
 

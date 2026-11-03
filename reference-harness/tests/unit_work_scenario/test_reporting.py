@@ -23,7 +23,7 @@ from .conftest import Affected, RefusingProvider, Rows, ScriptedProvider
 
 _SETTLED = "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
 _RYOW = "m-unit-work-005-ryow-update.yaml"
-_ABORT = "m-opt-lock-012-conflict-aborts-uow.yaml"
+_ABORT = "m-concurrency-012-conflict-aborts-uow.yaml"
 _IDENTITY = "m-identity-map-001-same-transaction-identity.yaml"
 
 

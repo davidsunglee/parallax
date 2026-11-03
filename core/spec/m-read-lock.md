@@ -4,10 +4,11 @@
 in-transaction **object find** that intends to write acquires a **shared row lock**
 so a concurrent transaction cannot mutate the row out from under a
 read-then-write. Per the dependency graph, `m-read-lock` depends on `m-unit-work`
-(whose Concurrency Preference and Optimistic Lock Facet select it per Entity) and
+(whose Concurrency Preference selects it per Entity through the Concurrency
+Facet, `m-concurrency`) and
 `m-dialect` (which owns the lock
 spelling and application). The optimistic alternative — an object find that
-takes no lock and a version-gated write — is `m-opt-lock`.
+takes no lock and a version-gated write — is defined beside it by `m-concurrency`.
 
 ## Automatic read-lock correctness
 
@@ -71,7 +72,8 @@ on both:
 
 - A mutation that can change **several** current rectangles of one key must
   resolve and observe **every** rectangle it can change, materializing per row
-  (`m-opt-lock`). Observing one rectangle licenses closing that rectangle alone.
+  (`m-unit-work` *What licenses a Locking write*). Observing one rectangle
+  licenses closing that rectangle alone.
   An observed keyed write whose requested extent reaches rectangles no read of
   it observed therefore reads them inside the flush before changing them
   (`m-temporal-write` *Observed writes span their requested extent*), and under
@@ -117,7 +119,7 @@ is proven by the two-connection concurrency cases: it **excludes a writer**
 
 Both halves are proven again for the strategy the caller never asked for: the
 unversioned Non-Temporal fallback renders the suffix under the default
-`optimistic` preference (`m-opt-lock-023`) and that derived lock excludes a
+`optimistic` preference (`m-concurrency-023`) and that derived lock excludes a
 writer too (`m-read-lock-012`).
 
 The preference a transaction resolves may come from its Database Root rather

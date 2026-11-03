@@ -39,6 +39,7 @@ from parallax.core import (
 from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
@@ -49,7 +50,6 @@ from parallax.core.execution import (
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
-    Concurrency,
     ReadEvidence,
     StaleWriteError,
 )
@@ -242,7 +242,7 @@ def test_find_force_flushes_pending_writes_first() -> None:
 # --------------------------------------------------------------------------- #
 # The Effective Concurrency Strategy is derived per Entity, so the lock follows #
 # the level's own target rather than the transaction (m-unit-work "Strategy    #
-# selection"; m-opt-lock).                                                     #
+# selection"; m-concurrency).                                                     #
 # --------------------------------------------------------------------------- #
 def test_an_explicit_optimistic_preference_reads_a_versioned_entity_lock_free() -> None:
     # Explicit and omitted resolve identically, so this pins the same statement
@@ -419,7 +419,7 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
 
 @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
 def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
 ) -> None:
     # The choreography an as-of read makes available at all: read a superseded
     # milestone, derive a copy, update. It is refused in BOTH modes, at the verb,

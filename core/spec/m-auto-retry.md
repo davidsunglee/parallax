@@ -88,7 +88,7 @@ reacquisition loop, or a broadened retriable set to accommodate an acquisition
 failure.
 
 Because each re-execution opens a fresh atomic scope and re-reads through the
-freshness rule, the retry re-observes the version(s) a subsequent `m-opt-lock` gate
+freshness rule, the retry re-observes the version(s) a subsequent optimistic gate
 binds — so an auto-retried conflict re-reads the current version and succeeds, with
 no caller-authored retry code. A re-execution re-runs the whole closure: reads and
 the work built from them are reconstructed inside it, a value captured outside it
@@ -133,10 +133,9 @@ owned by **`m-unit-work`** — the module that owns the affected-row enforcer th
 raises it. This module therefore recognizes the canonical conflict **directly**,
 over its existing `m-auto-retry --> m-unit-work` edge.
 
-That ownership is what keeps the retry loop free of a dependency on an optional
-concurrency module. An implementation **MUST NOT** require the composition root
-to inject the conflict type into the retry classifier, and **MUST NOT** take a
-`m-auto-retry --> m-opt-lock` edge to name it.
+Retry therefore needs no injected conflict type and names no `m-concurrency`
+type: an implementation **MUST NOT** require the composition root to inject the
+conflict type into the retry classifier.
 
 The Temporal Conflict Error is owned by **`m-temporal-write`**, whose expansion
 raises it, and `m-unit-work` exposes it beside the Write Effect Error family.

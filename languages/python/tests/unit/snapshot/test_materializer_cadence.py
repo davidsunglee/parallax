@@ -8,7 +8,6 @@ import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core import DomainModel, read_planning
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -107,7 +106,6 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
             _published_rows(
                 stage,
                 meta,
-                CONCURRENCY,
                 bind(
                     model, compiled.result_contract, compiled.projection, row_operations=True
                 ).row_publisher(),
@@ -153,7 +151,6 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
         _published_rows(
             stage,
             meta,
-            CONCURRENCY,
             bind(
                 model, compiled.result_contract, compiled.projection, row_operations=True
             ).row_publisher(),

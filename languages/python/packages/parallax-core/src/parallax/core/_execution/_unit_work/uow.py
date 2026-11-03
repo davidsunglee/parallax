@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Literal, Protocol, cast
 
-from parallax.core import inheritance, temporal_read
+from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._unit_work._errors import (
     WRITE_EVIDENCE_CODES,
     UnitOfWorkError,
@@ -37,12 +37,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
-from parallax.core._execution._unit_work.strategy import (
-    ActorIdentity,
-    AuditDecoration,
-    Concurrency,
-    EvidencePolicyLookup,
-)
+from parallax.core._execution._unit_work.strategy import ActorIdentity, AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
     KeyedInsert,
@@ -57,6 +52,7 @@ from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
 )
 from parallax.core.base import normalize_instant
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
@@ -80,7 +76,6 @@ __all__ = [
     "WRITE_EVIDENCE_CODES",
     "AttemptLifetime",
     "BufferOutcome",
-    "Concurrency",
     "FlushTrigger",
     "OpenFlush",
     "RollbackOnlyError",
@@ -175,15 +170,15 @@ class TransactionSettings:
     """A unit of work's fixed Concurrency Preference, and what its database's
     write counts report.
 
-    The default is `optimistic` (`m-unit-work` "Strategy selection"): a
-    preference, not a uniform strategy — each Entity's own Optimistic Lock Facet
-    decides whether it yields Optimistic or the mandatory Locking fallback
-    (`m-opt-lock`). ``counts_unchanged_rows`` is the connection's dialect fact
+    The default is `optimistic`: a preference, not a uniform strategy — each
+    Entity's own family decides whether it yields Optimistic or the mandatory
+    Locking fallback (`m-concurrency`). ``counts_unchanged_rows`` is the
+    connection's dialect fact
     every flush plans with
     (:class:`~parallax.core._execution._unit_work.write_planner.WritePlanningRequest`).
     """
 
-    concurrency: Concurrency = "optimistic"
+    preference: ConcurrencyPreference = "optimistic"
     counts_unchanged_rows: bool = False
 
 
@@ -208,10 +203,10 @@ class UnitOfWork:
     __slots__ = (
         "_actor_identity",
         "_admission",
-        "_evidence_policy_for",
         "_lifetime",
         "_planner",
         "_transaction_instant",
+        "_versioning",
         "acquire_rows",
         "clock",
         "execute_counted_step",
@@ -234,7 +229,6 @@ class UnitOfWork:
         acquire_rows: AcquireRows,
         planner: WritePlanner,
         actor_identity: ActorIdentity,
-        evidence_policy_for: EvidencePolicyLookup,
         flush_opening: OpenFlush | None = None,
     ) -> None:
         self.settings = settings
@@ -248,7 +242,7 @@ class UnitOfWork:
         # The injected Write Planner (`m-unit-work`'s single finalization
         # authority) — constructed once per accepted Metamodel by the
         # execution's model preparation (`parallax.core.execution.prepare_model`),
-        # which alone may wire the optional policy modules the planner reaches
+        # which alone wires the batching and audit policies the planner reaches
         # only through its strategy ports. Production and the conformance
         # engine both drive writes through this SAME shell.
         self._planner = planner
@@ -256,18 +250,14 @@ class UnitOfWork:
         # this attempt plans. A forced flush reuses it unchanged; a retry attempt
         # receives its own new `UnitOfWork` and therefore its own copy.
         self._actor_identity = actor_identity
-        # The connected model's write-evidence policy, bound once per accepted
-        # model by model preparation, which alone may reach `m-opt-lock`.
-        self._evidence_policy_for = evidence_policy_for
+        self._versioning = concurrency.view(meta)
         # The attempt's one authority over what its sources and insertions
         # still authorize, which its reads, keyed ingress, buffering, and
         # completion all consult. It holds nothing of this shell.
         self.source_authority = SourceAuthority(
             meta,
             lifetime=lifetime,
-            concurrency=settings.concurrency,
-            evidence_policy_for=evidence_policy_for,
-            version_after=planner.inserted_version,
+            preference=settings.preference,
         )
         # The accepted writes, composed as each is admitted, each carrying the
         # claims its verbs resolved for it and the evidence of the sources it
@@ -436,8 +426,9 @@ class UnitOfWork:
         Optimistic strategy reads nothing.
         """
         target = item.instruction.target
-        policy = self._evidence_policy_for(target.identity)
-        if policy.effective_strategy(self.settings.concurrency) != "locking":
+        if self._versioning.effective_strategy(target.identity, self.settings.preference) != (
+            "locking"
+        ):
             return item
         expectation = item.expectation
         scope = item.claim_scope
@@ -519,7 +510,7 @@ class UnitOfWork:
             start = row[selection.position(shape.transaction_time.start_attribute)]
             stored = StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
             return stored, row, document
-        version = self._planner.version_attribute(target.identity)
+        version = self._versioning.version_attribute(target.identity)
         assert version is not None  # preparation refuses a target with no revision
         return StoredTarget(cast("int", row[selection.position(version)])), row, document
 
@@ -599,7 +590,7 @@ class UnitOfWork:
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
                 transaction_instant=self._transaction_instant,
-                concurrency=self.settings.concurrency,
+                preference=self.settings.preference,
                 composed_writes=admission.composed_writes(),
                 ownership=ownership,
                 counts_unchanged_rows=self.settings.counts_unchanged_rows,

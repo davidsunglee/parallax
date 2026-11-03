@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from parallax.core import opt_lock, temporal_read
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core import concurrency, temporal_read
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
@@ -21,7 +21,6 @@ from parallax.core.read_delivery._page import (
     Page,
     PageRows,
     PageSchedule,
-    VersionAttributes,
     attribute_state,
     diagnosis,
     entity_state,
@@ -85,8 +84,7 @@ def find_rows(
     port: DatabaseConnection,
     *,
     edition: str,
-    versions: VersionAttributes,
-    preference: Concurrency | None = None,
+    preference: ConcurrencyPreference | None = None,
     read: DatabaseCallScope = INERT,
     observer: MaterializationObserver = INERT_OBSERVER,
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
@@ -97,9 +95,8 @@ def find_rows(
     no object graph. It does build a Page, whose judged states are what each
     row is classified by: a row whose own stored state contradicted the model
     publishes its :class:`InvalidData` record in place of itself, carrying the
-    transformed row wherever its identity decoded. ``versions`` names the
-    explicit version Attribute such a record publishes its observed version
-    from, and ``edition`` is the Model Edition ``model`` was selected under,
+    transformed row wherever its identity decoded, beside the explicit version
+    it observed. ``edition`` is the Model Edition ``model`` was selected under,
     which the result retains.
 
     A row-form read materializes no relationships; the read gate refuses a
@@ -121,15 +118,12 @@ def find_rows(
     root = plan.root_read()
     if isinstance(root, EmptyRead):
         return RowsResult(rows=(), edition=edition)
-    return RowsResult(
-        rows=_published_rows(stage, meta, versions, root[1].row_publisher()), edition=edition
-    )
+    return RowsResult(rows=_published_rows(stage, meta, root[1].row_publisher()), edition=edition)
 
 
 def _published_rows(
     stage: FlatPageResult,
     meta: Metamodel,
-    versions: VersionAttributes,
     publisher: RowPublisher,
 ) -> tuple[PublishedRow, ...]:
     """One published element per flat root, in result order, published atomically.
@@ -143,8 +137,9 @@ def _published_rows(
     page = stage.page
     rows = page_rows(page)
     observer = page_cadence(page)
-    schedule = page_schedule(page, opt_lock.write_evidence(meta), atomic=True)
+    schedule = page_schedule(page, meta, atomic=True)
     temporal = temporal_read.view(meta)
+    versioning = concurrency.view(meta)
     published: list[PublishedRow] = []
     reached: list[int] = []
     for position, root in enumerate(rows.roots):
@@ -183,7 +178,7 @@ def _published_rows(
         published.append(
             cast(
                 "InvalidData[Mapping[str, object]]",
-                _invalid_root(meta, versions, temporal, layout, state, position, detached),
+                _invalid_root(versioning, temporal, layout, state, position, detached),
             )
         )
     release_page_rows(page)
@@ -252,8 +247,7 @@ def completed_member_rows(
 
 
 def _invalid_root(
-    meta: Metamodel,
-    versions: VersionAttributes,
+    versioning: concurrency.ConcurrencyFacet,
     temporal: temporal_read.TemporalFacet,
     layout: EntityLayout,
     state: EntityState,
@@ -267,7 +261,7 @@ def _invalid_root(
         issues=frozenset(diagnosis(issue, key) for issue in state.findings),
         data=detached,
         object_key=key,
-        version=observed_version(meta, versions, layout, state.member_row),
+        version=observed_version(versioning, layout, state.member_row),
         edge=observed_edge(temporal, layout, state.member_row),
         ordinal=position,
     )
