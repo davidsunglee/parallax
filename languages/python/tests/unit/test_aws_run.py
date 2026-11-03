@@ -581,13 +581,14 @@ def test_drop_of_an_already_absent_database_does_not_mutate_anything() -> None:
 
 
 def test_blocker_diagnostic_failure_does_not_replace_drop_failure() -> None:
-    from tests._support.aws_run import _DROP_BLOCKERS
-
     cluster = _Cluster(owned=[])
     run, _ = _started(cluster)
     failure = PermissionError("drop refused")
     cluster.failing['drop database if exists "ci_7_2"'] = failure
-    cluster.failing[_DROP_BLOCKERS] = ConnectionError("connection lost")
+    cluster.failing[
+        "select pid, usename, backend_type, application_name, state from pg_stat_activity "
+        "where datname = %s order by pid"
+    ] = ConnectionError("connection lost")
     with pytest.raises(PermissionError) as refused:
         run.close()
     assert refused.value is failure
@@ -595,11 +596,11 @@ def test_blocker_diagnostic_failure_does_not_replace_drop_failure() -> None:
 
 
 def test_failure_restoring_timeout_is_raised_beside_the_drop_failure() -> None:
-    from tests._support.aws_run import _SET_TIMEOUT
-
     cluster = _Cluster(owned=[])
     run, _ = _started(cluster)
-    cluster.failing[_SET_TIMEOUT] = ConnectionError("cannot set timeout")
+    cluster.failing["select set_config('statement_timeout', %s, false)"] = ConnectionError(
+        "cannot set timeout"
+    )
     with pytest.raises(ExceptionGroup) as failures:
         run.close()
     assert len(failures.value.exceptions) == 2
