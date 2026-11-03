@@ -966,7 +966,19 @@ from position a join position b
 
 On a Transaction-Time-only table leave out the `from_z` and `thru_z` conditions.
 Correct or remove each row they find; which is right is a decision about your history,
-not one Parallax can make. Then rename the primary key, which PostgreSQL named
+not one Parallax can make. Commit the corrections, note the time with
+`select clock_timestamp()`, and wait until no transaction older than that is still open:
+
+```sql
+select pid, xact_start, state from pg_stat_activity
+where datname = current_database() and pid <> pg_backend_pid()
+  and backend_xmin is not null and xact_start < '...';  -- the time you noted
+```
+
+Until then, the exclusion's index build still reads the version of each row from
+before your corrections, because an older transaction might see it, and fails with
+`22000` on an inverted one although the queries above find nothing. Then rename the
+primary key, which PostgreSQL named
 `position_pkey` when an earlier release created the table, add the checks, install the
 prerequisite, and add the exclusion:
 
