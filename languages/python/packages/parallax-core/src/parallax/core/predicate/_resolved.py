@@ -52,16 +52,17 @@ CURRENT: Final = CurrentObject()
 class ResolvedRelationship:
     """One relationship direction reached from an object position.
 
-    ``source`` and ``related`` are its join endpoints at the source position
-    and at ``target``. ``temporal_visibility`` is the perspective its
-    candidates are visible under: absent until temporal resolution reaches the
-    relationship, and a perspective with no axis for a non-temporal target.
+    ``source_attribute`` and ``target_attribute`` are its join attributes at
+    the source position and at ``target``. ``temporal_visibility`` is the
+    perspective its candidates are visible under: absent until temporal
+    resolution reaches the relationship, and a perspective with no axis for a
+    non-temporal target.
     """
 
     identity: RelationshipIdentity
     target: EntityMetadata
-    source: AttributeMetadata
-    related: AttributeMetadata
+    source_attribute: AttributeMetadata
+    target_attribute: AttributeMetadata
     temporal_visibility: TemporalPerspective | None = None
 
 

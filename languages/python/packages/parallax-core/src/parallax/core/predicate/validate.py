@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import assert_never, cast
 
-from parallax.core import inheritance
+from parallax.core import inheritance, relationship
 from parallax.core.base import ManagedValue, NeutralType, String
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -16,7 +16,6 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
     RelationshipDeclaration,
     RelationshipIdentity,
-    RelationshipJoin,
     ReverseRelationshipDeclaration,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
@@ -83,6 +82,7 @@ from parallax.core.predicate._resolved import (
     ScalarCollection,
     SubjectPosition,
 )
+from parallax.core.relationship import RelationshipMetadata
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 
 __all__ = [
@@ -310,9 +310,9 @@ def resolve_quantifier(
         ):
             collection = occurrence
             inner = ObjectElementFrame(occurrence)
-        case _RelationshipTerminal(relationship=relationship, many=True):
-            collection = relationship
-            inner = _related_frame(model, relationship.target)
+        case _RelationshipTerminal(relationship=resolved, to_many=True):
+            collection = resolved
+            inner = _related_frame(model, resolved.target)
         case _:
             raise ModelRejectedError(
                 "path-target-kind-mismatch",
@@ -337,12 +337,12 @@ def resolve_presence(
     frame of that target."""
     terminal = _resolve_path(path, frame, model)
     match terminal:
-        case _RelationshipTerminal(relationship=relationship, many=False):
+        case _RelationshipTerminal(relationship=resolved, to_many=False):
             return ResolvedPresence(
                 negated,
-                relationship,
+                resolved,
                 terminal.position,
-                None if where is None else where(_related_frame(model, relationship.target)),
+                None if where is None else where(_related_frame(model, resolved.target)),
             )
         case _OccurrenceTerminal(occurrence=occurrence) if (
             occurrence.multiplicity is Multiplicity.ONE
@@ -393,14 +393,14 @@ def resolve_narrow(
             _position_identities(model, scope), None if operand is None else operand(inner)
         )
     terminal = _resolve_path(path, frame, model)
-    if not isinstance(terminal, _RelationshipTerminal) or terminal.many:
+    if not isinstance(terminal, _RelationshipTerminal) or terminal.to_many:
         raise ModelRejectedError(
             "path-target-kind-mismatch",
             f"{path!r} names {terminal.kind}; a path-targeted narrow reaches a single "
             "related Entity",
         )
-    relationship = terminal.relationship
-    target = relationship.target
+    resolved = terminal.relationship
+    target = resolved.target
     scope = validate_narrow(
         tuple(to),
         PositionScope(
@@ -411,7 +411,7 @@ def resolve_narrow(
     return ResolvedNarrow(
         _position_identities(model, scope),
         None if operand is None else operand(EntityFrame(target, scope, bound=True)),
-        RelatedObject(terminal.position, relationship),
+        RelatedObject(terminal.position, resolved),
     )
 
 
@@ -574,12 +574,12 @@ class _OccurrenceTerminal:
 @dataclass(frozen=True, slots=True)
 class _RelationshipTerminal:
     relationship: ResolvedRelationship
-    many: bool
+    to_many: bool
     position: ObjectPosition
 
     @property
     def kind(self) -> str:
-        return "a to-many relationship" if self.many else "a to-one relationship"
+        return "a to-many relationship" if self.to_many else "a to-one relationship"
 
 
 type _Terminal = _ScalarTerminal | _OccurrenceTerminal | _RelationshipTerminal
@@ -638,7 +638,7 @@ def _walk_entity(
     for index, segment in enumerate(segments):
         last = index == len(segments) - 1
         member = (
-            _applicable_member(model, entity, segment)
+            _entity_member(model, entity, segment)
             if position is None
             else _member_at(model, entity, position, segment)
         )
@@ -654,14 +654,15 @@ def _walk_entity(
                     f"{path!r}: {segment!r} is a scalar attribute but the path continues",
                 )
             return _ScalarTerminal(member, reached)
-        if isinstance(member, _Relationship):
-            relationship, many = member.resolved, member.many
+        if isinstance(member, RelationshipMetadata):
+            resolved = _resolve_relationship(model, member)
+            to_many = member.cardinality.target is Multiplicity.MANY
             if last:
-                return _RelationshipTerminal(relationship, many, reached)
-            if many:
+                return _RelationshipTerminal(resolved, to_many, reached)
+            if to_many:
                 raise _crosses_many(path, segment)
-            reached = RelatedObject(reached, relationship)
-            entity = relationship.target
+            reached = RelatedObject(reached, resolved)
+            entity = resolved.target
             position = PositionScope(effective=effective_set(model, entity))
             continue
         if last:
@@ -710,16 +711,10 @@ def _crosses_many(path: str, segment: str) -> ModelRejectedError:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _Relationship:
-    resolved: ResolvedRelationship
-    many: bool
+type _Member = AttributeMetadata | ValueObjectMetadata | RelationshipMetadata
 
 
-type _Member = AttributeMetadata | ValueObjectMetadata | _Relationship
-
-
-def _applicable_member(model: Metamodel, entity: EntityMetadata, name: str) -> _Member | None:
+def _entity_member(model: Metamodel, entity: EntityMetadata, name: str) -> _Member | None:
     """The member ``name`` declares on ``entity`` or an ancestor."""
     view = inheritance.view(model).entity(entity.identity)
     attribute = (None if view is None else view.applicable_attribute(name)) or entity.attribute(
@@ -732,7 +727,7 @@ def _applicable_member(model: Metamodel, entity: EntityMetadata, name: str) -> _
         return vo
     declarations = entity.declared_relationships if view is None else view.applicable_relationships
     declaration = next((d for d in declarations if d.identity.name == name), None)
-    return None if declaration is None else _relationship(model, declaration)
+    return None if declaration is None else _relationship_metadata(model, declaration.identity)
 
 
 def _member_at(
@@ -741,7 +736,7 @@ def _member_at(
     """The member ``name`` declared by the Entity of ``entity``'s family that is
     applicable at ``position``; disjoint siblings may each declare it, so a
     declaration elsewhere in the family is refused only when none applies."""
-    applicable = _applicable_ancestor_member(model, position, name)
+    applicable = _ancestry_member_at(model, position, name)
     if applicable is not None:
         return applicable
     families = inheritance.view(model)
@@ -766,16 +761,14 @@ def _member_at(
             refusal = refusal or inapplicable
             continue
         if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
-            return _relationship(model, local)
+            return _relationship_metadata(model, local.identity)
         return local
     if refusal is not None:
         raise refusal
     return None
 
 
-def _applicable_ancestor_member(
-    model: Metamodel, position: PositionScope, name: str
-) -> _Member | None:
+def _ancestry_member_at(model: Metamodel, position: PositionScope, name: str) -> _Member | None:
     """The member ``name`` declared by an Entity applicable at ``position``,
     read from one concrete's precomputed applicable members; ``None`` sends the
     caller to its family-wide scan, which owns refusals.
@@ -805,7 +798,7 @@ def _applicable_ancestor_member(
     if not position.effective <= {identity.canonical for identity in owner_effective}:
         return None
     if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
-        return _relationship(model, local)
+        return _relationship_metadata(model, local.identity)
     return local
 
 
@@ -814,48 +807,34 @@ def _identity_of(canonical: str) -> EntityIdentity:
     return EntityIdentity(namespace if separator else None, name)
 
 
-def _relationship(model: Metamodel, declaration: RelationshipDeclaration) -> _Relationship:
-    """``declaration``'s direction resolved to its target and join endpoints."""
-    direction = declaration.identity
-    join = _direction_join(direction, model)
+def _relationship_metadata(
+    model: Metamodel, identity: RelationshipIdentity
+) -> RelationshipMetadata:
+    metadata = relationship.view(model).relationship(identity)
+    if metadata is None:  # pragma: no cover - formation compiles every accepted declaration
+        raise ValueError(f"{identity!r} names no resolved relationship direction")
+    return metadata
+
+
+def _resolve_relationship(model: Metamodel, metadata: RelationshipMetadata) -> ResolvedRelationship:
+    """``metadata`` bound to its target Entity and its join attributes as they
+    apply at each side's Entity."""
     families = inheritance.view(model)
+    join = metadata.join
     source_view = families.entity(join.source.entity)
     target_view = families.entity(join.target.entity)
-    source = None if source_view is None else source_view.applicable_attribute(join.source.name)
-    related = None if target_view is None else target_view.applicable_attribute(join.target.name)
-    target = model.entity(_declaration_target(declaration))
-    if source is None or related is None or target is None:  # pragma: no cover - formation
-        raise ValueError(f"{direction!r} has unresolved relationship join members")
-    return _Relationship(
-        ResolvedRelationship(direction, target, source, related),
-        _target_multiplicity(declaration, model) is Multiplicity.MANY,
+    source_attribute = (
+        None if source_view is None else source_view.applicable_attribute(join.source.name)
     )
-
-
-def _target_multiplicity(declaration: RelationshipDeclaration, model: Metamodel) -> Multiplicity:
-    if isinstance(declaration, DefiningRelationshipDeclaration):
-        return declaration.cardinality.target
-    peer_owner = model.entity(declaration.reverse_of.source_entity)
-    peer = None if peer_owner is None else peer_owner.relationship(declaration.reverse_of.name)
-    if isinstance(peer, DefiningRelationshipDeclaration):
-        return peer.cardinality.source
-    raise ValueError(  # pragma: no cover - formation pairs every reverse with its peer
-        f"{declaration.identity!r} names no resolved relationship direction"
+    target_attribute = (
+        None if target_view is None else target_view.applicable_attribute(join.target.name)
     )
-
-
-def _direction_join(direction: RelationshipIdentity, model: Metamodel) -> RelationshipJoin:
-    """The exact source-to-target join for one identity-resolved direction."""
-    declaring = model.entity(direction.source_entity)
-    declaration = None if declaring is None else declaring.relationship(direction.name)
-    if isinstance(declaration, DefiningRelationshipDeclaration):
-        return declaration.join
-    if isinstance(declaration, ReverseRelationshipDeclaration):
-        peer_owner = model.entity(declaration.reverse_of.source_entity)
-        peer = None if peer_owner is None else peer_owner.relationship(declaration.reverse_of.name)
-        if isinstance(peer, DefiningRelationshipDeclaration):
-            return RelationshipJoin(source=peer.join.target, target=peer.join.source)
-    raise ValueError(f"{direction!r} names no resolved relationship direction")
+    target = model.entity(join.target.entity)
+    if (
+        source_attribute is None or target_attribute is None or target is None
+    ):  # pragma: no cover - formation
+        raise ValueError(f"{metadata.identity!r} has unresolved relationship join members")
+    return ResolvedRelationship(metadata.identity, target, source_attribute, target_attribute)
 
 
 def _position_identities(model: Metamodel, position: PositionScope) -> tuple[EntityIdentity, ...]:
@@ -1089,34 +1068,28 @@ def _check_attribute_position(
     )
 
 
-def _declaration_target(declaration: RelationshipDeclaration) -> EntityIdentity:
-    """The Entity a declared relationship navigates to: a defining declaration's
-    join target, or a reverse declaration's peer source (the reverse direction
-    points back at the Entity the peer was declared on)."""
-    if isinstance(declaration, DefiningRelationshipDeclaration):
-        return declaration.join.target.entity
-    return declaration.reverse_of.source_entity
-
-
-def relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str) -> EntityMetadata:
-    class_name, _, member_name = rel_ref.rpartition(".")
+def relationship_target(
+    reference: str, model: Metamodel, *, wrong_kind_rule: str
+) -> EntityMetadata:
+    class_name, _, member_name = reference.rpartition(".")
     entity = _lookup_entity(model, class_name)
     if entity is None:
-        raise _unresolved_reference(model, rel_ref, class_name)
+        raise _unresolved_reference(model, reference, class_name)
     declaration = entity.relationship(member_name)
     if declaration is not None:
-        target = model.entity(_declaration_target(declaration))
+        metadata = _relationship_metadata(model, declaration.identity)
+        target = model.entity(metadata.join.target.entity)
         if target is None:  # pragma: no cover - a resolved declaration names a declared Entity
-            raise ValueError(f"{rel_ref!r} names a relationship whose target is undeclared")
+            raise ValueError(f"{reference!r} names a relationship whose target is undeclared")
         return target
     if entity.value_object(member_name) is not None:
         raise ModelRejectedError(
             wrong_kind_rule,
-            f"{rel_ref!r} names the value object {member_name!r}, not a relationship; a "
+            f"{reference!r} names the value object {member_name!r}, not a relationship; a "
             "value object has no identity to correlate and materializes with its owner, "
             "never via a fetch level or semi-join (m-value-object contract 4)",
         )
-    raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.identity.name}")
+    raise ValueError(f"{reference!r} names no declared relationship on {entity.identity.name}")
 
 
 def _is_value_object_name_anywhere(model: Metamodel, name: str) -> bool:

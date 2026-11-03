@@ -185,6 +185,7 @@ m-relationship --> m-metamodel
 m-relationship --> m-model-formation
 m-predicate --> m-metamodel
 m-predicate --> m-inheritance
+m-predicate --> m-relationship
 m-predicate --> m-wire
 m-object-query --> m-predicate
 m-object-query --> m-metamodel
@@ -340,9 +341,12 @@ construction it may reference any behavioral module it harnesses.
 ### Notable directions (and why they may surprise)
 
 - **`m-predicate --> m-metamodel`.** Resolved predicate nodes carry canonical
-  model Identities, not descriptor records or authoring strings. Relationship
-  execution remains owned by `m-navigate`, which consumes the compiled
-  `m-relationship` facet; Predicate does not rebuild that facet.
+  model Identities, not descriptor records or authoring strings.
+- **`m-predicate --> m-relationship`.** Elaboration resolves each relationship
+  segment to its compiled direction — oriented join, target, and multiplicity —
+  because the Relationship Facet is the one place a reverse direction's swapped
+  join and inverted cardinality exist. Relationship execution remains
+  `m-navigate`'s.
 - **`m-predicate --> m-wire`; `m-object-query --> m-predicate`, `--> m-wire`,
   `--> m-metamodel`, `--> m-inheritance`.** A
   query CARRIES a predicate as one clause; it never extends the selection grammar.

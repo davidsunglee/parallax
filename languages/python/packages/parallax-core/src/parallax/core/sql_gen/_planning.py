@@ -66,8 +66,8 @@ class RelationshipCandidateBranch:
 
     entity: EntityMetadata
     table: str
-    source: AttributeMetadata
-    related: AttributeMetadata
+    source_attribute: AttributeMetadata
+    target_attribute: AttributeMetadata
     family_guard: _TagPredicate | None
 
 
@@ -127,8 +127,8 @@ def _branch(
     return RelationshipCandidateBranch(
         entity=entity,
         table=_table_layout(storage, facet, entity.identity).table.name,
-        source=relationship.source,
-        related=relationship.related,
+        source_attribute=relationship.source_attribute,
+        target_attribute=relationship.target_attribute,
         family_guard=family_guard,
     )
 
@@ -169,12 +169,12 @@ def shared_relationship_is_eligible(
     if guard is not None and not guard.position:  # pragma: no cover - an empty family is unplanned
         return False
     visibility = temporal_visibility(relationship)
-    related = branch.related.identity
+    target_attribute = branch.target_attribute.identity
     layout = _table_layout(storage, facet, branch.entity.identity)
     if any(
         key.columns
         and all(
-            slot.contributor == related
+            slot.contributor == target_attribute
             or (
                 isinstance(slot.contributor, AttributeIdentity)
                 and visibility.is_latest_end(slot.contributor)
@@ -185,7 +185,7 @@ def shared_relationship_is_eligible(
     ):
         return True
     logical_key = _entity_view(facet, relationship.target.identity).primary_key
-    return visibility.is_temporal and related == logical_key.identity
+    return visibility.is_temporal and target_attribute == logical_key.identity
 
 
 # --------------------------------------------------------------------------- #
@@ -1445,11 +1445,11 @@ def _hops(position: RelatedObject) -> tuple[ResolvedRelationship, ...]:
 
 
 def _same_occurrence(first: ResolvedRelationship, second: ResolvedRelationship) -> bool:
-    """One direction, endpoints, target family, and temporal visibility."""
+    """One direction, join attributes, target family, and temporal visibility."""
     return (
         first.identity == second.identity
-        and first.source.identity == second.source.identity
-        and first.related.identity == second.related.identity
+        and first.source_attribute.identity == second.source_attribute.identity
+        and first.target_attribute.identity == second.target_attribute.identity
         and first.target.identity == second.target.identity
         and first.temporal_visibility == second.temporal_visibility
     )
