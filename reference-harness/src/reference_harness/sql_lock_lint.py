@@ -1,4 +1,4 @@
-"""Lock consistency for authored Object Query reads in scenario/coherence steps."""
+"""Lock consistency for authored Object Query reads, top-level and per step."""
 
 from __future__ import annotations
 
@@ -65,31 +65,58 @@ class _ModelReads:
 
 
 class LockConsistency:
-    """Per-traversal metadata indices for scenario/coherence read validation."""
+    """Per-traversal metadata indices for authored Object Query read validation."""
 
     def __init__(self, compatibility_root: Path) -> None:
         self.root = compatibility_root
         self.models: dict[Path, _ModelReads] = {}
 
     def read(self, raw: dict[str, Any], step: dict[str, Any], sequence: str) -> ReadLocks | None:
+        """The lock expectation of one scenario/coherence step's read, if it emits SQL."""
         if sequence not in ("scenario", "coherence") or "objectQuery" not in step:
             return None
         # A cache hit or a refused read emits nothing for this rule to grade.
         if not step.get("statements"):
             return None
+        metadata = self._metadata(raw)
+        preference = None
+        if sequence == "scenario" and isinstance(step.get("uow"), str):
+            preference = Case(Path(""), raw, metadata.model).concurrency_mode
+        return _read_locks(metadata, step["objectQuery"], preference)
+
+    def top_level_read(self, raw: dict[str, Any]) -> ReadLocks | None:
+        """The lock expectation of a case's ``when.objectQuery`` graded by ``then.statements``.
+
+        The ``when.uow`` block's presence opens the outer invocation, so an empty
+        block participates under the resolved preference; its absence is a
+        standalone read, and a read-only invocation resolves no preference.
+        """
+        when = raw.get("when")
+        then = raw.get("then")
+        if not isinstance(when, dict) or "objectQuery" not in when:
+            return None
+        if not isinstance(then, dict) or not then.get("statements"):
+            return None
+        metadata = self._metadata(raw)
+        uow = when.get("uow")
+        preference = None
+        if isinstance(uow, dict) and uow.get("accessMode") != "read-only":
+            preference = Case(Path(""), raw, metadata.model).concurrency_mode
+        return _read_locks(metadata, when["objectQuery"], preference)
+
+    def _metadata(self, raw: dict[str, Any]) -> _ModelReads:
         model_rel = raw["model"]
         model_path = (self.root / model_rel).resolve()
         if model_path not in self.models:
             self.models[model_path] = _ModelReads(load_model_metadata(self.root, model_rel))
-        metadata = self.models[model_path]
-        preference = None
-        if sequence == "scenario" and isinstance(step.get("uow"), str):
-            preference = Case(Path(""), raw, metadata.model).concurrency_mode
-        try:
-            candidates = metadata.candidates(step["objectQuery"])
-            return ReadLocks(metadata, candidates, preference)
-        except (KeyError, ValueError) as exc:
-            return ReadLocks(metadata, {}, preference, str(exc))
+        return self.models[model_path]
+
+
+def _read_locks(metadata: _ModelReads, query: dict[str, Any], preference: str | None) -> ReadLocks:
+    try:
+        return ReadLocks(metadata, metadata.candidates(query), preference)
+    except (KeyError, ValueError) as exc:
+        return ReadLocks(metadata, {}, preference, str(exc))
 
 
 @dataclass(frozen=True)
@@ -170,17 +197,24 @@ def _direct_tables(select: exp.Select) -> list[exp.Table]:
     return [node for node in nodes if isinstance(node, exp.Table)]
 
 
-def _read_tables(tree: Expr) -> set[str]:
+def _read_tables(tree: Expr, *, branch: bool = False) -> set[str]:
+    """The physical tables one emitted read selects from.
+
+    A ``union all`` branch may read its variant's tag-filtered partition of a
+    shared table through a derived table, as a table-per-hierarchy document read does.
+    """
     if isinstance(tree, exp.Subquery):
-        return _read_tables(tree.this)
+        return _read_tables(tree.this, branch=branch)
     if isinstance(tree, exp.Union) and not tree.args.get("distinct"):
-        return _read_tables(tree.this) | _read_tables(tree.expression)
+        return _read_tables(tree.this, branch=True) | _read_tables(tree.expression, branch=True)
     if isinstance(tree, exp.Select):
         source = tree.args.get("from_")
         if source is not None and isinstance(source.this, exp.Table):
             return {source.this.name}
         if source is not None and isinstance(source.this, exp.Subquery):
             inner = source.this.this
+            if branch and isinstance(inner, exp.Select) and not tree.args.get("joins"):
+                return _read_tables(inner)
             if isinstance(inner, exp.Union):
                 tables = _read_tables(inner)
                 joined = {table.name for table in _direct_tables(tree)}

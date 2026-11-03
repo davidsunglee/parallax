@@ -89,7 +89,13 @@ def lint_tree(compatibility_root: Path) -> list[str]:
         then = raw_then if isinstance(raw_then, dict) else {}
 
         # The golden SQL an implementation is expected to emit.
-        _lint_golden(then.get("statements"), "then.statements", name, errors)
+        _lint_golden(
+            then.get("statements"),
+            "then.statements",
+            name,
+            errors,
+            read_locks=locks.top_level_read(case),
+        )
 
         # A conflict case's out-of-band setup: dialect-agnostic naive statement
         # entries (plain-string sql). Like referenceSql they are NOT required to be

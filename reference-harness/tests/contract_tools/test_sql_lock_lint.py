@@ -70,6 +70,54 @@ def _step(
     return step
 
 
+def _store(root: Path, case: dict[str, Any], model: dict[str, Any] | None = None) -> Path:
+    (root / "models").mkdir(parents=True)
+    (root / "cases").mkdir()
+    descriptor = model or _MODEL
+    assert validation_error(descriptor, _SCHEMAS["metamodel.schema.json"], _REGISTRY) is None
+    (root / "models" / "model.yaml").write_text(yaml.safe_dump(descriptor))
+    assert validation_error(case, _SCHEMAS["compatibility-case.schema.json"], _REGISTRY) is None
+    (root / "cases" / "lock.yaml").write_text(yaml.safe_dump(case, sort_keys=False))
+    return root
+
+
+def _borrow(root: Path, name: str) -> dict[str, Any]:
+    """A shipped case's raw document, its model copied beside it under *root*."""
+    source = _REPO / "core" / "compatibility"
+    raw: dict[str, Any] = yaml.safe_load((source / "cases" / name).read_text())
+    (root / "models").mkdir(parents=True)
+    (root / "cases").mkdir()
+    (root / raw["model"]).write_text((source / raw["model"]).read_text())
+    return raw
+
+
+def _read_corpus(
+    root: Path,
+    statements: list[dict[str, Any]],
+    *,
+    target: str = "Account",
+    uow: dict[str, Any] | None = None,
+    default: str | None = None,
+    include: str | None = None,
+) -> Path:
+    query: dict[str, Any] = {"target": target, "predicate": {"true": {}}}
+    if include is not None:
+        query["includes"] = [{"segments": [{"rel": include}]}]
+    when: dict[str, Any] = {"objectQuery": query}
+    if uow is not None:
+        when["uow"] = uow
+    case: dict[str, Any] = {
+        "model": "models/model.yaml",
+        "shape": "read",
+        "tags": ["m-dialect"],
+        "when": when,
+        "then": {"statements": statements, "rows": [], "databaseCalls": len(statements)},
+    }
+    if default is not None:
+        case["given"] = {"databaseOptions": {"concurrency": default}}
+    return _store(root, case)
+
+
 def _corpus(
     tmp_path: Path,
     steps: list[dict[str, Any]],
@@ -79,11 +127,6 @@ def _corpus(
     coherence: bool = False,
     model: dict[str, Any] | None = None,
 ) -> Path:
-    (tmp_path / "models").mkdir()
-    (tmp_path / "cases").mkdir()
-    descriptor = model or _MODEL
-    assert validation_error(descriptor, _SCHEMAS["metamodel.schema.json"], _REGISTRY) is None
-    (tmp_path / "models" / "model.yaml").write_text(yaml.safe_dump(descriptor))
     sequence = "coherence" if coherence else "scenario"
     case: dict[str, Any] = {
         "model": "models/model.yaml",
@@ -98,9 +141,7 @@ def _corpus(
         case["given"] = {"databaseOptions": {"concurrency": default}}
     if coherence:
         case.pop("then")
-    assert validation_error(case, _SCHEMAS["compatibility-case.schema.json"], _REGISTRY) is None
-    (tmp_path / "cases" / "lock.yaml").write_text(yaml.safe_dump(case, sort_keys=False))
-    return tmp_path
+    return _store(tmp_path, case, model)
 
 
 def _lock_errors(root: Path) -> list[str]:
@@ -254,15 +295,7 @@ def test_exists_predicate_table_is_not_a_materialized_entity(tmp_path: Path) -> 
 def test_wrapped_stream_continuation_grades_only_outer_physical_lock(
     tmp_path: Path, mutation: str
 ) -> None:
-    source = _REPO / "core" / "compatibility"
-    raw = yaml.safe_load(
-        (source / "cases" / "m-read-lock-016-locking-stream-two-arm-continuation.yaml").read_text()
-    )
-    (tmp_path / "models").mkdir()
-    (tmp_path / "cases").mkdir()
-    (tmp_path / "models" / "account.yaml").write_text(
-        (source / "models" / "account.yaml").read_text()
-    )
+    raw = _borrow(tmp_path, "m-read-lock-016-locking-stream-two-arm-continuation.yaml")
     sql = raw["when"]["scenario"][0]["statements"][1]["sql"]["postgres"]
     if mutation == "missing-outer":
         sql = sql.removesuffix(" for share of t0")
@@ -416,3 +449,150 @@ def test_shared_lock_targets_only_root_rows(tmp_path: Path, dialect: str) -> Non
         assert lint_tree(root) == []
     else:
         assert "MariaDB shared lock must cover only the physical root" in _lock_errors(root)[0]
+
+
+# --- top-level reads: `when.objectQuery` graded against `then.statements` -------
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+@pytest.mark.parametrize(
+    ("uow", "default", "target", "required"),
+    [
+        pytest.param(None, "locking", "Account", False, id="standalone-under-locking-root"),
+        pytest.param(None, None, "Wallet", False, id="standalone-unversioned"),
+        pytest.param({}, "locking", "Account", True, id="empty-block-inherits-locking-root"),
+        pytest.param({}, None, "Account", False, id="empty-block-default-optimistic"),
+        pytest.param({}, None, "Wallet", True, id="writable-unversioned-fallback"),
+        pytest.param(
+            {"concurrency": "optimistic"}, "locking", "Account", False, id="explicit-override"
+        ),
+        pytest.param({"concurrency": "locking"}, None, "Account", True, id="explicit-locking"),
+        pytest.param(
+            {"accessMode": "read-write"}, "locking", "Account", True, id="explicit-read-write"
+        ),
+        pytest.param(
+            {"accessMode": "read-only"}, "locking", "Account", False, id="read-only-versioned"
+        ),
+        pytest.param(
+            {"accessMode": "read-only"}, None, "Wallet", False, id="read-only-unversioned"
+        ),
+    ],
+)
+def test_top_level_read_participation_decides_the_lock(
+    tmp_path: Path,
+    dialect: str,
+    uow: dict[str, Any] | None,
+    default: str | None,
+    target: str,
+    required: bool,
+) -> None:
+    sql = _ACCOUNT if target == "Account" else _WALLET
+    locked = _entry(f"{sql} {_SHARED[dialect]}", dialect)
+    unlocked = _entry(sql, dialect)
+    expected, wrong = (locked, unlocked) if required else (unlocked, locked)
+    kwargs: dict[str, Any] = {"target": target, "uow": uow, "default": default}
+
+    failure = (
+        f"missing required {_SHARED[dialect]!r}"
+        if required
+        else "forbidden lock on nonparticipating/optimistic read"
+    )
+
+    assert lint_tree(_read_corpus(tmp_path / "authored", [expected], **kwargs)) == []
+    assert _lock_errors(_read_corpus(tmp_path / "mutated", [wrong], **kwargs)) == [
+        f"case lock.yaml: then.statements[0].{dialect} lock consistency: {failure}"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("uow", "root_locked", "include_locked"),
+    [
+        pytest.param({}, False, True, id="versioned-root-unversioned-include"),
+        pytest.param({"concurrency": "locking"}, True, True, id="locking-every-level"),
+        pytest.param(None, False, False, id="standalone-no-level"),
+    ],
+)
+def test_top_level_include_levels_resolve_their_own_strategy(
+    tmp_path: Path, uow: dict[str, Any] | None, root_locked: bool, include_locked: bool
+) -> None:
+    def statements(root: bool, include: bool) -> list[dict[str, Any]]:
+        return [
+            _entry(_ACCOUNT + (" for share of t0" if root else "")),
+            _entry(_WALLET + (" for share of t0" if include else "")),
+        ]
+
+    authored = statements(root_locked, include_locked)
+    assert (
+        lint_tree(_read_corpus(tmp_path / "a", authored, uow=uow, include="Account.wallets")) == []
+    )
+    flipped_root = statements(not root_locked, include_locked)
+    flipped_include = statements(root_locked, not include_locked)
+    root_errors = _lock_errors(
+        _read_corpus(tmp_path / "r", flipped_root, uow=uow, include="Account.wallets")
+    )
+    include_errors = _lock_errors(
+        _read_corpus(tmp_path / "i", flipped_include, uow=uow, include="Account.wallets")
+    )
+    assert [error.split(" lock consistency:")[0] for error in root_errors] == [
+        "case lock.yaml: then.statements[0].postgres"
+    ]
+    assert [error.split(" lock consistency:")[0] for error in include_errors] == [
+        "case lock.yaml: then.statements[1].postgres"
+    ]
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+@pytest.mark.parametrize(
+    "suffix", ["for share of t1", "for update of t0", "for share", "for share of t0 nowait"]
+)
+def test_top_level_malformed_lock_is_rejected(tmp_path: Path, dialect: str, suffix: str) -> None:
+    root = _read_corpus(
+        tmp_path, [_entry(f"{_ACCOUNT} {suffix}", dialect)], uow={"concurrency": "locking"}
+    )
+    errors = _lock_errors(root)
+    assert len(errors) == 1
+    assert "expected only outer suffix" in errors[0]
+
+
+_TPH_LOCKED = "m-read-lock-010-document-layout-tph-partitioned.yaml"
+_TPH_UNLOCKED = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+@pytest.mark.parametrize(
+    "mutation", ["none", "missing-outer", "inner-branch", "wrong-alias", "forbidden"]
+)
+def test_tph_document_partition_lock_is_graded_on_its_outer_base_select(
+    tmp_path: Path, dialect: str, mutation: str
+) -> None:
+    raw = _borrow(tmp_path, _TPH_UNLOCKED if mutation == "forbidden" else _TPH_LOCKED)
+    entry = raw["then"]["statements"][0]
+    sql = entry["sql"][dialect]
+    suffix = _SHARED[dialect]
+    if mutation == "missing-outer":
+        sql = sql.removesuffix(" " + suffix)
+    elif mutation == "inner-branch":
+        sql = sql.replace(") u on", f" {suffix}) u on", 1)
+    elif mutation == "wrong-alias":
+        sql = sql.removesuffix(" " + suffix) + " for share of u"
+    elif mutation == "forbidden":
+        sql = f"{sql} {suffix}"
+    entry["sql"][dialect] = sql
+    (tmp_path / "cases" / "tph.yaml").write_text(yaml.safe_dump(raw))
+    errors = _lock_errors(tmp_path)
+    if mutation == "none":
+        assert errors == []
+    else:
+        assert any(
+            error.startswith(f"case tph.yaml: then.statements[0].{dialect} lock consistency:")
+            for error in errors
+        ), errors
+
+
+def test_a_wrapped_single_select_stays_unmappable_outside_a_union_branch(
+    tmp_path: Path,
+) -> None:
+    sql = "select u.id from (select t0.id from account t0) u"
+    errors = _lock_errors(_read_corpus(tmp_path, [_entry(sql)], uow={}))
+    assert len(errors) == 1
+    assert "cannot map emitted read unambiguously" in errors[0]

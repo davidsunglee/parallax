@@ -10,6 +10,7 @@ derives the second from the first rather than passing the first through.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
@@ -30,6 +31,7 @@ _TPH_ABSTRACT_ROOT = "m-inheritance-003-tph-abstract-root-read.yaml"
 _TPCS_ABSTRACT_ROOT = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
 _PARTIAL_TPH_ROOT = "m-inheritance-147-partial-tph-root-read-unknown-tag.yaml"
+_LOCKED_TPH_DOCUMENT = "m-read-lock-010-document-layout-tph-partitioned.yaml"
 
 _BEASTS: list[dict[str, Any]] = [
     {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},
@@ -349,6 +351,39 @@ def test_a_partitioned_document_read_is_observed_on_both_dialects(
 
     assert reads.calls[0][1] == tuple(case.statement_binds(0, dialect))
     assert reads.calls[1] == (case.reference_sql_for(dialect), ())
+
+
+def _renamed(case: Case) -> Case:
+    """The same case under a file name that names no locking family."""
+    return dataclasses.replace(case, path=case.path.with_name("m-sql-999-renamed.yaml"))
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_locked_partitioned_document_read_joins_its_outer_base_table(
+    corpus_case: CaseLoader, dialect: str
+) -> None:
+    case = _renamed(corpus_case(_LOCKED_TPH_DOCUMENT))
+    reads = ScriptedReads(dialect, results=[_PAYMENT_DOCUMENT_ROWS, _PAYMENT_DOCUMENT_ROWS])
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[0][1] == tuple(case.statement_binds(0, dialect))
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_locked_partitioned_document_read_without_its_outer_base_join_fails(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = _renamed(damaged_case(_LOCKED_TPH_DOCUMENT))
+    entry = case.then["statements"][0]
+    entry["sql"][dialect] = (
+        entry["sql"][dialect]
+        .replace("from payment_document t0 join (", "from (", 1)
+        .replace(") u on u.id = t0.id", ") t0", 1)
+    )
+
+    with pytest.raises(CaseFailure, match="locking TPH partition must join one outer base Table"):
+        assert_case_read(case, ScriptedReads(dialect))
 
 
 # --- what a read must state before its rows can be materialized ---------------
