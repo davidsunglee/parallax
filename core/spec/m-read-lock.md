@@ -20,6 +20,17 @@ under the default `optimistic` preference. A read-only transaction intends no
 write, resolves no preference, and takes no shared row lock for any Entity, the
 fallback included (`m-execution` *Read-only transactions*).
 
+Every returned observation **MUST** describe the physical row state protected
+by its lock: payload, revision evidence, and continuation coordinates remain
+coherent even when the locking read waits behind an updater. This requirement
+also holds at Read Committed; safe observed writes do not require a stable
+transaction snapshot. Read Committed may change result membership between
+statements or streaming batches. A row that ceases to qualify may be excluded,
+including a temporal milestone whose concurrent close changes its physical
+key, without discovering its successor in the same statement. Repeatable Read
+provides a stable transaction snapshot; a conflicting modification follows the
+serialization-failure and whole-attempt retry rules (`m-auto-retry`).
+
 **Whether and where to attach the lock is a `m-dialect` decision**, not
 `m-unit-work`'s: the unit of work asks the dialect to apply the Entity's effective
 read strategy to a compiled read, and the dialect returns an object find with its

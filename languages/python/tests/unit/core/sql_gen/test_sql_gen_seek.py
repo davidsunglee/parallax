@@ -377,7 +377,7 @@ def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() 
     # A participating ordinary stream that reaches page two keeps one SQL statement
     # and one pessimistic authority boundary: neither union branch carries an illegal
     # lock, while the outer query joins the complete one-column physical identity
-    # back to the base row, orders and caps the derived payload, then locks that row.
+    # back to the base row, whose protected state supplies the returned payload.
     statement = _lowered(
         ORDERS,
         _planned(ORDERS, "Order").after(ContinuationCoordinate((1,)), limit=2),
@@ -386,7 +386,7 @@ def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() 
 
     assert statement.sql.count("for share") == 1
     assert (
-        ")) u join orders t0 on u.id = t0.id order by u.parallax_seek_0 asc limit ? for share of t0"
+        ")) u join orders t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
     ) in statement.sql
     assert statement.binds == (1, 1, 2, 2, 2)
 
@@ -403,8 +403,16 @@ def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity
     )
 
     assert statement.sql.count("for share") == 1
-    assert ")) u join payment t0 on u.id = t0.id order by u.parallax_seek_0 asc" in statement.sql
+    assert ")) u join payment t0 on u.id = t0.id order by t0.id asc" in statement.sql
     assert statement.binds == (1, 1, "card", 2, "card", 2, 2)
+
+
+def test_a_postgres_locking_continuation_refuses_multiple_concrete_tables() -> None:
+    page = _planned(
+        TRAVERSAL, "Vehicle", OrderKey(attr="parallax.compatibility.Vehicle.dealerId")
+    ).after(ContinuationCoordinate((3, 1)), limit=2)
+    with pytest.raises(SqlGenError, match="2\\+ effective concretes"):
+        _lowered(TRAVERSAL, page, lock="locking")
 
 
 @pytest.mark.parametrize("target", ["Vehicle", "Car"])
@@ -431,13 +439,14 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
         "t0.dealer_id parallax_seek_0, t0.id parallax_seek_1 from traversal_car t0 where "
     )
     assert statement.sql == (
-        "select u.id, u.maker, u.dealer_id, u.seats, u.parallax_seek_0, u.parallax_seek_1 "
+        "select t0.id, t0.maker, t0.dealer_id, t0.seats, "
+        "t0.dealer_id parallax_seek_0, t0.id parallax_seek_1 "
         f"from (({branch}t0.dealer_id >= ? and (t0.dealer_id > ? or t0.dealer_id is null "
         "or (t0.dealer_id = ? and (t0.id > ? or t0.id is null))) "
         "order by t0.dealer_id asc, t0.id asc limit ?) union all ("
         f"{branch}t0.dealer_id is null order by t0.dealer_id asc, t0.id asc limit ?)) "
         "u join traversal_car t0 on u.id = t0.id "
-        "order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ? for share of t0"
+        "order by t0.dealer_id asc, t0.id asc limit ? for share of t0"
     )
     assert statement.sql.count("for share") == 1
     assert statement.binds == (3, 3, 3, 1, 2, 2, 2)
@@ -475,8 +484,8 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
     assert statement.sql.count("for share") == 1
     assert (
         ")) u join position t0 on u.pos_id = t0.pos_id and u.thru_z = t0.thru_z "
-        "and u.out_z = t0.out_z order by u.parallax_seek_0 asc, "
-        "u.parallax_seek_1 asc limit ? for share of t0"
+        "and u.out_z = t0.out_z order by t0.thru_z asc, "
+        "t0.pos_id asc limit ? for share of t0"
     ) in statement.sql
     assert statement.binds == (
         INFINITY,
@@ -593,11 +602,6 @@ def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
 def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock(
     lock: LockMode | None, instance: bool
 ) -> None:
-    # The NULL-tail wrapper reselects each branch's cells through `u`, re-expanding
-    # document pairs at the ordinary branch's ordinals; the PostgreSQL locking form
-    # adds only a join back to the base row. Either way the rows deliver their
-    # encoded Bytes cell, own-Column collection and occurrences, an unclaimed
-    # tag, and no capture cell.
     plan = continuation.plan(
         validate_object_query(
             _MATRIX_ROOT,
@@ -619,28 +623,54 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
         lock=lock,
         result_form="instance" if instance else "row",
     )
+    alias = "t0" if lock else "u"
     occurrences = (
-        ", not u.origin is null, u.origin, not u.home is null, u.home, "
-        "not u.right_home is null, u.right_home"
+        f", not {alias}.origin is null, {alias}.origin, not {alias}.home is null, {alias}.home, "
+        f"not {alias}.right_home is null, {alias}.right_home"
         if instance
         else ""
     )
+    digest = "encode(t0.digest, ?) digest_hex" if lock else "u.digest_hex"
+    coordinates = (
+        "t0.holder_id parallax_seek_0, t0.id parallax_seek_1"
+        if lock
+        else "u.parallax_seek_0, u.parallax_seek_1"
+    )
     assert compiled.statement.sql.startswith(
-        "select u.id, u.kind, u.holder_id, u.digest_hex, u.note, not u.tags is null, u.tags"
-        f"{occurrences}, u.parallax_seek_0, u.parallax_seek_1 from ((select "
+        f"select {alias}.id, {alias}.kind, {alias}.holder_id, {digest}, {alias}.note, "
+        f"not {alias}.tags is null, {alias}.tags{occurrences}, {coordinates} from ((select "
     )
     assert compiled.statement.sql.endswith(
         (") u join mx_tph_columns t0 on u.id = t0.id" if lock else ") u")
-        + " order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?"
+        + (
+            " order by t0.holder_id asc, t0.id asc limit ?"
+            if lock
+            else " order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?"
+        )
         + (" for share of t0" if lock else "")
     )
-    assert compiled.statement.binds == ("hex", 10, 10, 10, 1, 3, "hex", 3, 3)
+    assert compiled.statement.binds == (
+        *(("hex",) if lock else ()),
+        "hex",
+        10,
+        10,
+        10,
+        1,
+        3,
+        "hex",
+        3,
+        3,
+    )
     assert compiled.document_reads == (
         ((5, 6), (7, 8), (9, 10), (11, 12)) if instance else ((5, 6),)
     )
 
     rows = [
-        {key: value for key, value in row.items() if f"u.{key}" in compiled.statement.sql}
+        {
+            key: value
+            for key, value in row.items()
+            if instance or key not in {"origin", "home", "right_home"}
+        }
         for row in _NULL_TAIL_ROWS
     ]
     delivered = deliver(projection_support.MATRIX_META, compiled, rows)
@@ -818,7 +848,7 @@ def test_each_continuing_branch_joins_its_own_shared_sources_beneath_the_root_lo
     assert f"{joined}t0.shipped_on is null order by" in statement.sql
     assert statement.sql.endswith(
         ") u join order_item t0 on u.id = t0.id "
-        "order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ? for share of t0"
+        "order by t0.shipped_on asc, t0.id asc limit ? for share of t0"
     )
     february = dt.date(2024, 2, 15)
     assert statement.binds == ("Ada", february, february, february, 11, 2, "Ada", 2, 2)

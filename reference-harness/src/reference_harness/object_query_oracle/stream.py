@@ -149,8 +149,9 @@ def _continuing_page_binds(
 
     The seek's binds sit where the range arm diverges from the first page's
     statement, between the carried query binds, and the requested size follows.
-    A NULL-tail arm repeats the carried binds and size, then the locking read's
-    identity binds and the size again.
+    A NULL-tail arm repeats the carried binds and size. A locking wrapper also
+    repeats the physical projection before both arms, then binds its identity
+    join, physical ordering, and cap after them.
     """
     spliced_at, _spliced_to = seek.seek_splice(first_root_sql, range_arm)
     seek_bind_position = range_arm[:spliced_at].count("?")
@@ -167,8 +168,28 @@ def _continuing_page_binds(
     ]
     if null_tail:
         identity_binds = () if locking is None else locking.identity_binds
-        expected_binds.extend([*carried_binds, requested, *identity_binds, requested])
-        expected_bind_types.extend([None] * (len(carried_binds) + len(identity_binds) + 2))
+        projection_binds: list[Any] = []
+        ordering_binds: list[Any] = []
+        if locking is not None:
+            projection_width = first_root_sql.split(" from ", 1)[0].count("?")
+            order = first_root_sql.rsplit(" order by ", 1)[-1].split(" limit ", 1)[0]
+            ordering_width = order.count("?")
+            projection_binds = carried_binds[:projection_width]
+            ordering_binds = carried_binds[-ordering_width:] if ordering_width else []
+        expected_binds = [
+            *projection_binds,
+            *expected_binds,
+            *carried_binds,
+            requested,
+            *identity_binds,
+            *ordering_binds,
+            requested,
+        ]
+        expected_bind_types = [
+            *([None] * len(projection_binds)),
+            *expected_bind_types,
+            *([None] * (len(carried_binds) + len(identity_binds) + len(ordering_binds) + 2)),
+        ]
     return expected_binds, expected_bind_types
 
 

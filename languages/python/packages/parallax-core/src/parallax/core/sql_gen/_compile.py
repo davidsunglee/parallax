@@ -389,7 +389,7 @@ def _compile_read(
     )
     outer_lock = two_branches and lock == "locking" and dialect.name == "postgres"
     branch_lock = None if outer_lock else lock
-    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", branch_lock)
+    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", lock)
     statement_plan = _plan_statement(
         query.predicate,
         evaluation_context=_EvaluationContext.SHARING_ALLOWED,
@@ -473,11 +473,11 @@ def _union_null_tail(
     deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """The ordered, capped `union all` of a continuing page's ordinary and
-    NULL-tail branches, selected through the cells both branches emit; a ``locking``
-    union joins back to the planned physical Table and locks that row instead."""
-    statement_ctx = StatementBuilder(model, facet, storage, dialect)
-    statement_ctx.append_fragment(ordinary)
-    statement_ctx.append_fragment(null_tail)
+    NULL-tail branches. A ``locking`` union selects payload and coordinates
+    from the physical row it locks, which can have changed while it waited."""
+    statement_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
+        model, facet, storage, dialect
+    )
     outer_alias = "u"
     outer_list = select_list.select_through(outer_alias)
     ordering = ", ".join(
@@ -490,17 +490,27 @@ def _union_null_tail(
     )
     source = f"(({ordinary.sql}) union all ({null_tail.sql})) {outer_alias}"
     lock_suffix = ""
+    scope: _EntityRowScope | None = None
     if locking:
+        if not isinstance(read_shape, _SingleTableReadPlan):  # pragma: no cover
+            raise SqlGenError("a locking continuation requires a single physical table")
+        layout = read_shape.layout.branches[0].layout
+        scope = _EntityRowScope(statement_ctx, query.entity, layout)
+        outer_list = _select_list(read_shape, dialect, scope.alias)
+        statement_ctx.bind_structural_all(outer_list.binds)
+        _emit_coordinates(outer_list, terms, scope.subject_for, query.paging)
+    statement_ctx.append_fragment(ordinary)
+    statement_ctx.append_fragment(null_tail)
+    if scope is not None:
         base_join, lock_suffix = _locking_base_join(
             statement_ctx,
             select_list,
-            read_shape.layout.branches[0].layout
-            if isinstance(read_shape, _SingleTableReadPlan)
-            else _table_layout(storage, facet, query.entity.identity),
+            scope.layout,
             dialect,
             outer_alias,
         )
         source += base_join
+        ordering = _order_clause(terms, scope.subject_for, dialect).removeprefix("order by ")
     _bind_limit(statement_ctx, query.limit, deferred=deferred)
     statement = statement_ctx.finish(
         f"select {outer_list.sql} from {source} order by {ordering} "
@@ -525,8 +535,8 @@ def _needs_null_tail(seek: ResolvedSeek, storage: _StorageLayoutFacet, dialect: 
     return _emits_null_tail(seek, dialect, leading_resident=leading_resident)
 
 
-def _locking_base_join(
-    ctx: StatementBuilder,
+def _locking_base_join[RowScope](
+    ctx: StatementBuilder[RowScope],
     select_list: _SelectListBuilder,
     layout: _TableLayout,
     dialect: Dialect,
