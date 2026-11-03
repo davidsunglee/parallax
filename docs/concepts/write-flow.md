@@ -89,7 +89,7 @@ the write is buffered
 An insert needs no licence: it opens a row rather than writing over one.
 
 The Entity's effective strategy decides what protects an observed write
-([strategy selection](../../core/spec/m-unit-work.md#strategy-selection--one-preference-an-effective-strategy-per-entity)).
+([strategy derivation](../../core/spec/m-concurrency.md#what-each-strategy-promises)).
 Under Optimistic, the statement is gated on the observed revision, so a concurrent
 change makes it match no row. Under Locking, the shared lock the read took keeps the
 row as it was read, and the statement is ungated. An unversioned Non-Temporal Entity
@@ -98,7 +98,7 @@ always locks.
 **Why a blind write is refused.** A write with no licence would overwrite whatever is
 stored, including a change another transaction made after you looked. There would also
 be no revision to gate on or to advance from
-([framework-owned versions](../../core/spec/m-opt-lock.md#version-values-are-framework-owned)).
+([framework-owned versions](../../core/spec/m-unit-work.md#version-values-are-framework-owned)).
 The licence must also come from the writing attempt itself. A value from a standalone
 read, a read-only transaction or an earlier attempt is refused at the verb, whatever key
 or revision it carries: its read took part in nothing the writing attempt can stand on,

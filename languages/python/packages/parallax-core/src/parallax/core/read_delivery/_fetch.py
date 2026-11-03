@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import cast
 
-from parallax.core import inheritance, opt_lock, read_lock, read_planning
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core import concurrency, inheritance, read_lock, read_planning
 from parallax.core.base import ManagedValue
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection, Row
 from parallax.core.dialect import LockMode
 from parallax.core.execution_lifecycle._activity import DatabaseCallScope
@@ -29,14 +29,14 @@ __all__ = [
 
 
 def entity_read_lock(
-    meta: Metamodel, entity: EntityIdentity, preference: Concurrency | None
+    meta: Metamodel, entity: EntityIdentity, preference: ConcurrencyPreference | None
 ) -> LockMode | None:
     """The read-lock mode a participating read of ``entity`` carries, composed
     from the two policies read planning names at once.
 
-    The lock follows the ENTITY, not the query: `m-opt-lock` derives that
+    The lock follows the ENTITY, not the query: `m-concurrency` derives that
     Entity's Effective Concurrency Strategy from the unit of work's one
-    Concurrency Preference and the Entity's own Optimistic Lock Facet, and
+    Concurrency Preference and the Entity's own family, and
     `m-read-lock` maps the derived strategy to the `m-dialect` lock parameter.
     So one transaction's deep fetch locks its unversioned levels while leaving
     its versioned and temporal ones lock-free, and the same level locks or not
@@ -48,9 +48,7 @@ def entity_read_lock(
     """
     if preference is None:
         return None
-    return read_lock.mode_for(
-        opt_lock.effective_strategy(preference, opt_lock.view(meta).key(entity))
-    )
+    return read_lock.mode_for(concurrency.view(meta).effective_strategy(entity, preference))
 
 
 def correlation_table(

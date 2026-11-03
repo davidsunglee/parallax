@@ -43,7 +43,6 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.entity import GraphConstructionError, IncludePath
@@ -362,7 +361,7 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
     meta = ENCODED_IDENTITY
     prepared = encoded_identity_read()
 
-    (published,) = _published_rows(stage, meta, CONCURRENCY, prepared.row_publisher())
+    (published,) = _published_rows(stage, meta, prepared.row_publisher())
 
     assert invalid_record(published).data is None
 
@@ -386,7 +385,7 @@ def _published_page(converter: ReadRowConverter, rows: tuple[Row, ...]) -> list[
     roots = tuple(converter.record_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
     stage = FlatPageResult((None,) * len(rows), (None,) * len(rows), builder.finish(roots, Pin()))
     published: list[tuple[str, object]] = []
-    for row in _published_rows(stage, ENCODED_IDENTITY, CONCURRENCY, converter.row_publisher()):
+    for row in _published_rows(stage, ENCODED_IDENTITY, converter.row_publisher()):
         if isinstance(row, InvalidData):
             record = invalid_record(row)
             published.append(("invalid", (record.issues, record.ordinal, record.data)))
@@ -837,9 +836,7 @@ def test_an_invalid_encoded_key_publishes_no_logical_identity() -> None:
     page = encoded_identity_page((None, None, SQL_NULL))
     assert page_rows(page).keys[0] is None
     stage = FlatPageResult((None,), (None,), page)
-    (record,) = _published_rows(
-        stage, ENCODED_IDENTITY, CONCURRENCY, encoded_identity_read().row_publisher()
-    )
+    (record,) = _published_rows(stage, ENCODED_IDENTITY, encoded_identity_read().row_publisher())
     published = invalid_record(record)
     assert published.data is None
     assert [issue.code for issue in published.issues] == ["stored-data-primary-key-null"]

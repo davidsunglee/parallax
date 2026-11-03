@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import pytest
 
@@ -13,21 +13,21 @@ from parallax.core import (
     Entity,
     Rel,
     attr,
-    opt_lock,
     read_planning,
     rel,
 )
 from parallax.core.entity import model_of
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import validate_object_query
 from parallax.core.object_query.serde import deserialize
 from parallax.core.read_delivery._fetch import attach_children
-from parallax.core.read_delivery._page import page_rows, page_schedule
+from parallax.core.read_delivery._page import Page, PageSchedule, page_rows
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotConsistencyError
+from parallax.snapshot._publication import _root_publication
 from parallax.snapshot._publication._root import RootView
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW, PARENT_ROWS
-from tests.unit._root_publication_support import each_root
+from tests.unit._root_publication_support import deferring_schedule, each_root
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 
 
@@ -78,20 +78,16 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     assert conflict.value.fetched_rows == ((0, 1), (0, 2))
 
 
-def _every_family_versioned(_entity: EntityIdentity) -> bool:
-    return True
-
-
 @pytest.fixture
 def releasing_at_last_use(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Atomic publication schedules every root family as carrying write
-    evidence, which defers its states and releases each projection at its last
-    use."""
+    """Atomic publication schedules every root family as settling against its
+    observation, which defers its states and releases each projection at its
+    last use."""
 
-    def every_family_versioned(_model: Metamodel) -> Callable[[EntityIdentity], bool]:
-        return _every_family_versioned
+    def deferring(page: Page, _model: Metamodel, *, atomic: bool) -> PageSchedule:
+        return deferring_schedule(page) if atomic else PageSchedule(None, False)
 
-    monkeypatch.setattr(opt_lock, "write_evidence", every_family_versioned)
+    monkeypatch.setattr(_root_publication, "page_schedule", deferring)
 
 
 _PARENT_KEY = "InverseLink.parentId"
@@ -131,7 +127,7 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
     page = fixture.page(alpha, beta)
     rows = page_rows(page)
-    schedule = page_schedule(page, _every_family_versioned, atomic=True)
+    schedule = deferring_schedule(page)
     assert schedule.last_uses is not None
     assert tuple(schedule.last_uses[0]) == (1, 1, 1)
     slot = rows.schema.root_view_layout(fixture.layout_for("InverseLink")).index_of[

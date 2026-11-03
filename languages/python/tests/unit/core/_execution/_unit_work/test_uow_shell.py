@@ -28,7 +28,7 @@ from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, attr, inheritance, opt_lock, temporal_read
+from parallax.core import Attr, DomainModel, Entity, attr, inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
@@ -184,7 +184,6 @@ def _run[T](
         acquire_rows=rows or HeldRows(resolved_meta),
         planner=build_write_planner(resolved_meta),
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(resolved_meta).required_key,
         flush_opening=opening,
     )
     try:
@@ -307,9 +306,9 @@ def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -
 
 def test_settings_are_carried_on_the_unit_of_work() -> None:
     def body(tx: UnitOfWork) -> str:
-        return tx.settings.concurrency
+        return tx.settings.preference
 
-    assert _run(body, settings=TransactionSettings(concurrency="optimistic")) == "optimistic"
+    assert _run(body, settings=TransactionSettings(preference="optimistic")) == "optimistic"
 
 
 # --------------------------------------------------------------------------- #
@@ -435,7 +434,7 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
 
 def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> None:
     # `m-unit-work`: each observed version belongs to exactly one row, and
-    # `m-opt-lock` binds the version the unit of work observed FOR THAT ROW.
+    # `m-concurrency` binds the version the unit of work observed FOR THAT ROW.
     # Accepted, one observation would license every row the instruction
     # addresses: the planner unwraps it once, builds a multi-key target, and
     # advances every key from `observed + 1`, so a version observed for `id 1`
@@ -555,7 +554,7 @@ def test_two_writes_of_one_claim_merge_and_advance_it_once() -> None:
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
-            concurrency="locking",
+            preference="locking",
             composed_writes=admitted_writes(_ACCOUNT, observed),
         )
     )
@@ -1348,7 +1347,7 @@ def test_each_settled_write_names_its_sources_state_itself() -> None:
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admitted_writes(
                 _ACCOUNT, [_account_amend(1, first), _account_amend(2, second)]
             ),
@@ -1430,7 +1429,7 @@ def test_a_settled_write_with_no_step_changes_nothing() -> None:
         body,
         meta=_BALANCE,
         steps=simulated,
-        settings=TransactionSettings(concurrency="locking"),
+        settings=TransactionSettings(preference="locking"),
     )
     assert simulated.statements == ()
 
@@ -1648,7 +1647,7 @@ def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> 
     stored = PredecessorRow(
         members={"id": 1, "owner": "Ada", "balance": Decimal("5.00"), "version": 2}
     )
-    locking = TransactionSettings(concurrency="locking")
+    locking = TransactionSettings(preference="locking")
 
     def buffering(uow: UnitOfWork, version: int) -> None:
         prepared = _account_target(version)
@@ -2006,7 +2005,7 @@ def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_le
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=observed_buffer([insert, edit, destroy], _PREDICATED, None),
         )
     )

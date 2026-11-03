@@ -23,7 +23,7 @@ from parallax.core._execution._routing import OperationRouting, resolved_read_po
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
 from parallax.core.execution_authority._authority import ExecutionAuthority
 from parallax.core.execution_lifecycle._activity import (
@@ -119,7 +119,7 @@ class ExecutionScope:
         self,
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ExecutionScope:
         """This scope's authority, routing, and resources under patched option
@@ -232,7 +232,7 @@ class ExecutionScope:
         /,
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         """Run ``fn`` in a transaction under this scope's authority, joining the

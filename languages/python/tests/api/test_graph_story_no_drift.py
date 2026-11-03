@@ -52,6 +52,7 @@ from parallax.core._execution._options import (
     Omitted,
 )
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
     Bind,
@@ -69,7 +70,7 @@ from parallax.core.execution import (
     TransactionTimePinReadOnlyError,
     prepare_model,
 )
-from parallax.core.unit_work import Clock, Concurrency
+from parallax.core.unit_work import Clock
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, is_view_loaded
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
@@ -801,7 +802,7 @@ class _RecordingDatabase(ScopedDatabase):
         fn: Callable[[TxnContext], T],
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         def recording(tx: TxnContext) -> T:

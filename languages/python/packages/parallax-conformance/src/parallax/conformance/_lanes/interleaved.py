@@ -91,7 +91,7 @@ def _run_interleaved_group(
     generalized to an explicit index list and gated by ``turnstile`` at every
     step. A write step reports the DML its group's own flush delivered for it,
     so a step whose flush CONFLICTS still reports the well-formed statement that
-    reached the database (`m-opt-lock` "Conflict detection" — the SQL is
+    reached the database (`m-unit-work` "Affected-row enforcement" — the SQL is
     correct, the row count is not).
 
     The group's own boundary flushes what its last step buffered, and that
@@ -256,7 +256,7 @@ def run_interleaved_scenario_case(
     execution_factory: InterleavedExecutionFactory,
 ) -> ScenarioRun:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
-    race (`m-opt-lock-012`) and the Isolation Level scenarios alike, whose ONE
+    race (`m-concurrency-012`) and the Isolation Level scenarios alike, whose ONE
     admission guard is on ORACLE SHAPE (a step stating `expectGraph` is REFUSED
     here: this entry point fills no `stepGraphs` channel, so that oracle would
     go unasserted — read oracles are row-valued only, and a write step, stating

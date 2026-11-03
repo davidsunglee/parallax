@@ -778,7 +778,7 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
 
 
 # --------------------------------------------------------------------------- #
-# expected_attempts: derived from m-auto-retry.md / m-opt-lock.md's own       #
+# expected_attempts: derived from m-auto-retry.md / m-concurrency.md's own       #
 # retriability rules, never a per-case hand table — exercised over the real   #
 # corpus's own 8 combinations plus the branches they don't cover.             #
 # --------------------------------------------------------------------------- #
@@ -802,9 +802,9 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
     _AttemptsCase("serialization-failure", "committed", 1, 2),
     # m-auto-retry-005: persistent, bound exhausted.
     _AttemptsCase("serialization-failure", "serialization-failure", 2, 3),
-    # m-opt-lock-010 / -024: a conflict under a zero bound surfaces after one attempt.
+    # m-concurrency-010 / -024: a conflict under a zero bound surfaces after one attempt.
     _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", 0, 1),
-    # m-opt-lock-011 / -025: a conflict is replayed to success.
+    # m-concurrency-011 / -025: a conflict is replayed to success.
     _AttemptsCase("optimistic-lock-conflict", "committed", 10, 2),
     _AttemptsCase("optimistic-lock-conflict", "committed", 1, 2),
     # A conflict that persists exhausts the bound like a transient does.
@@ -847,8 +847,8 @@ _ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, str, str, int]] = {
     "m-auto-retry-009": (10, "optimistic", "repeatable_read", 2),
     "m-auto-retry-010": (10, "optimistic", "repeatable_read", 2),
     "m-execution-001": (2, "locking", "repeatable_read", 1),
-    "m-opt-lock-024": (0, "optimistic", "read_committed", 1),
-    "m-opt-lock-025": (1, "optimistic", "read_committed", 2),
+    "m-concurrency-024": (0, "optimistic", "read_committed", 1),
+    "m-concurrency-025": (1, "optimistic", "read_committed", 2),
     "m-unit-work-037": (2, "locking", "repeatable_read", 1),
     "m-unit-work-038": (10, "optimistic", "read_committed", 1),
     "m-unit-work-040": (5, "optimistic", "read_committed", 1),

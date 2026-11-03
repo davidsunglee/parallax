@@ -89,7 +89,7 @@ def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWri
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
-            concurrency=concurrency,  # type: ignore[arg-type]
+            preference=concurrency,  # type: ignore[arg-type]
             composed_writes=tuple(buffered),
         )
     )

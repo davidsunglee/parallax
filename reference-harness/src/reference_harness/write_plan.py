@@ -489,7 +489,7 @@ def version_column(entity: Entity) -> str | None:
     """The physical column of an entity's explicit optimistic-lock version, or None.
 
     A VERSIONED entity carries an attribute-level ``optimisticLocking: true`` version
-    (m-opt-lock); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
+    (m-concurrency); the value advance (``initial 1`` / ``observed + 1``) and gate are DERIVED,
     so the column never appears in the neutral write input (①). A temporal entity
     locks via its Transaction-Time ``in_z`` timestamp and declares no such attribute.
     """
@@ -1198,7 +1198,7 @@ def statement_object(statement: str, binds: list[Any], dialect: str) -> ObjectAd
     Every existing-row write renders one address shape: the DML names the target
     table and the predicate LEADS with the primary-key equality, which the
     table-per-hierarchy tag guard, the temporal bounds, and the optimistic gate
-    then follow in that order (`m-sql`, `m-inheritance`, `m-opt-lock`). The key's
+    then follow in that order (`m-sql`, `m-inheritance`, `m-concurrency`). The key's
     bind is therefore the predicate's first placeholder, and every placeholder
     before it belongs to the `set` clause.
     """
@@ -1217,7 +1217,7 @@ def has_version_gate(statement: str, version_col: str, dialect: str) -> bool:
     """True when a versioned write's OUTER predicate gates on the optimistic version.
 
     The optimistic golden write appends ``and <version> = ?`` to its keyed predicate
-    (m-opt-lock). Two other places name the same column and are NOT that gate: an
+    (m-concurrency). Two other places name the same column and are NOT that gate: an
     ``UPDATE``'s own ``SET`` clause, which carries the framework-derived advance in
     BOTH modes, and any nested ``SELECT``'s own ``WHERE`` — which is why the gate is
     projected out of the parsed statement (:func:`_existing_row_write`) rather than

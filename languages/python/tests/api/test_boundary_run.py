@@ -1,8 +1,8 @@
-"""Case-driven API-suite boundary runner (m-auto-retry / m-opt-lock,
+"""Case-driven API-suite boundary runner (m-auto-retry / m-concurrency,
 m-api-conformance).
 
 ONE parametrized test over EVERY reachable `boundary`-shape corpus case (the
-`m-auto-retry`/`m-opt-lock`/`m-unit-work` bounded-retry loop-mechanics
+`m-auto-retry`/`m-concurrency`/`m-unit-work` bounded-retry loop-mechanics
 branches a single-connection harness cannot provoke, `m-case-format`
 "Boundary cases"): drives the REAL `db.transact` against the provisioned
 database through `parallax.conformance.boundary_runner`'s fault-injecting adapter
@@ -292,7 +292,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
 
 def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # Grep-verified complete set (the corpus's complete boundary
-    # population): `m-auto-retry-001` and `-004..010`, `m-opt-lock-010/011/024/025`, its
+    # population): `m-auto-retry-001` and `-004..010`, `m-concurrency-010/011/024/025`, its
     # Transaction-Time-Only analogue `m-temporal-read-011`,
     # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the four
     # root-configured join cases `m-unit-work-037/038/040/041`, the root-default
@@ -327,10 +327,10 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-execution-authority-003",
         "m-execution-authority-004",
         "m-execution-authority-005",
-        "m-opt-lock-010",
-        "m-opt-lock-011",
-        "m-opt-lock-024",
-        "m-opt-lock-025",
+        "m-concurrency-010",
+        "m-concurrency-011",
+        "m-concurrency-024",
+        "m-concurrency-025",
         "m-temporal-read-011",
         "m-unit-work-004",
         "m-unit-work-035",

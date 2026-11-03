@@ -7,8 +7,11 @@ from typing import Final, Literal
 from parallax.core._execution._unit_work.evidence import RetainedObservation
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
+    KeyedMutation,
     PreparedKeyedInstruction,
 )
+from parallax.core.concurrency import ConcurrencyFacet
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
 
@@ -22,6 +25,7 @@ __all__ = [
     "claim_scope",
     "claimed_object",
     "keyed_intent",
+    "settled_evidence",
 ]
 
 type WriteIntentKind = Literal["assignment", "destructive"]
@@ -78,8 +82,8 @@ developer verb writes the one row the value it was handed names — and every
 admitted write is single-row, so such an instruction is refused before it takes
 any claim, whatever evidence its caller supplies.
 
-Which arm a write takes is derived from declared facts — the target Entity's
-Optimistic Key and the write's own mutation — never from an absent observation:
+Which arm a write takes is derived from declared facts — what the target
+Entity's family settles against and the write's own mutation — never from an absent observation:
 an insert observes no state either, so an absence-triggered object claim would
 sweep it in.
 """
@@ -108,6 +112,28 @@ evidence to be about. A caller can still hold one of the two and supply it with
 such a write, and the admitted write it would travel in refuses that pairing;
 without either, no admitted write licenses it at all.
 """
+
+
+def settled_evidence(
+    versioning: ConcurrencyFacet,
+    entity: EntityIdentity,
+    mutation: KeyedMutation,
+    *,
+    object_key: ObjectKey | None,
+    observation: RetainedObservation | None,
+) -> SettledEvidence | None:
+    """What a keyed write of ``entity`` settles against, and therefore claims:
+    nothing for an insert, and otherwise ``observation`` or ``object_key``, as
+    ``entity``'s family declares (`m-concurrency`).
+
+    Either may be absent for a write that has nothing for a claim to be about,
+    which then settles against nothing. Raises ``KeyError`` for an Entity
+    ``versioning`` does not contain.
+    """
+    kind = versioning.settles_against(entity)
+    if mutation in INSERT_MUTATIONS:
+        return None
+    return observation if kind == "observation" else object_key
 
 
 def claim_scope(evidence: SettledEvidence | None) -> ClaimScope | None:

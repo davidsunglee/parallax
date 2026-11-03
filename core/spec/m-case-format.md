@@ -173,7 +173,7 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
 - **`conflict`** — an observation-requiring keyed write against a non-temporal
   target (`when.mutation`: `amend`, the default, or `delete`) asserted by
   `then.affectedRows` for a single attempt, or an ordered `when.attempts` retry
-  sequence (`m-opt-lock`).
+  sequence (`m-concurrency`).
 - **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
 - **`error`** — asserts `then.errorClass` + `then.nativeCode` (`m-db-error`),
   triggered by top-level `then.statements` (single-connection `uniqueViolation`) or
@@ -1270,7 +1270,7 @@ A resolving or coverage read is counted and never authored: `then.statements` is
 the DML a case states, so neither appears in it, and neither names a statement
 index in `then.executionLifecycle` either (*The execution lifecycle oracle*).
 
-### Conflict cases (`m-opt-lock`)
+### Conflict cases (`m-concurrency`)
 
 A **conflict** case proves optimistic-lock conflict detection by the **affected-
 row count** a golden statement leaves behind. The harness loads the model's
@@ -1313,7 +1313,7 @@ to witness.
 
 The written verb is **`when.mutation`** — `amend` (the default) or `delete`.
 The verb does not decide whether the golden carries a gate: `when.uow.concurrency`
-does, uniformly across update and delete (`m-opt-lock`).
+does, uniformly across update and delete (`m-concurrency`).
 
 The write's target is **non-temporal**, and a case whose target is temporal is
 refused rather than run. A temporal write settles against a whole observed
@@ -1324,7 +1324,7 @@ two interleaved `uow` groups whose losing group's fate `then.units` states
 
 A conflict case MAY instead carry a **`when.attempts`** retry sequence — an ordered
 list of golden `UPDATE`s, each with its own `statements` + `affectedRows` + `write`
-— proving the **`m-opt-lock` retry contract** end-to-end. After `given.apply`, the
+— proving the **`m-auto-retry` retry contract** end-to-end. After `given.apply`, the
 harness applies each attempt in order and asserts its affected-row count: the first
 (stale-version) attempt affects `0` rows (the conflict signal), then a retry that
 re-reads the now-fresh version and re-applies affects `1`. The final
@@ -1358,7 +1358,7 @@ of the `m-unit-work` **abort contract**: a later find MUST re-resolve and observ
 the ORIGINAL rows, never the aborted write. A grouped step states no fate of its
 own: its group's is stated once, in `then.units` (*Unit fates*, below). A write step with **`databaseCalls: 0`** and
 no golden SQL is a **no-op** write — a versioned `UPDATE` whose `set` changes no
-attribute issues no DML (`m-opt-lock`) — and executes nothing, exactly like a
+attribute issues no DML (`m-unit-work` *Empty updates issue no DML*) — and executes nothing, exactly like a
 cache-hit read step. The rolled-back DML still executes, so it counts its
 statements as Database Calls exactly as a committed write does. The harness
 asserts per-step Database Call / golden-SQL count consistency, executes each step,
@@ -1386,7 +1386,7 @@ default boundary; a step carrying no `uow` key keeps **exactly** today's
 semantics (an ungrouped write step is its own commit/rollback boundary, an
 ungrouped find runs on the autocommit connection). This is what lets a story
 whose observing find, versioned write, and dependent find all belong to one
-unit of work (`m-opt-lock`'s prior-observation rule) be authored as the SAME
+unit of work (`m-unit-work`'s prior-observation rule) be authored as the SAME
 unit of work the story runs, rather than three separate ones. Grouping is
 opt-in: it changes the meaning of no existing (unlabeled) case.
 
@@ -1697,7 +1697,7 @@ executes the authored golden SQL either way — the block records which mode pro
 it, so an optimistic conflict case's gated `UPDATE` and a locking-strategy case's
 ungated version-advancing `UPDATE` are self-describing. Omitted, the preference is
 the Database Root's configured default (`given.databaseOptions.concurrency`, built-in
-`optimistic`); the target Entity's Optimistic Lock Facet then decides whether that
+`optimistic`); the target Entity's version source then decides whether that
 preference yields Optimistic or the mandatory Locking fallback. A case whose SQL
 depends on that effective choice SHOULD declare the preference that produces it —
 explicitly under `when.uow`, or as the root's default where the case is about the
@@ -2247,7 +2247,7 @@ goldens name only the dialect it describes.
 ### Boundary cases (`m-auto-retry`)
 
 A **boundary** case proves the unit-of-work **bounded automatic retry** contract
-(`m-auto-retry`, `m-opt-lock` *Retry contract*): a loop-mechanics branch
+(`m-auto-retry`): a loop-mechanics branch
 whose observable — a retriable failure auto-retried away, a conflict a zero
 bound leaves unreplayed, a disabled loop (`maxRetries: 0`), an exhausted bound, a callback
 value withheld on abort, a boundary option refused — a **single-connection**
@@ -2271,7 +2271,7 @@ loop then does: `maxRetries: 0` on the root disables the loop for an invocation
 that names no bound (`m-auto-retry-007`) and an explicit bound overrides it
 (`-008`); a root level is the level the outer invocation reports and every attempt
 opens at (`-009`), and an explicit level overrides it (`-010`); a zero root bound
-leaves a conflict unreplayed (`m-opt-lock-024`), and an explicit bound replays it
+leaves a conflict unreplayed (`m-concurrency-024`), and an explicit bound replays it
 (`-025`).
 
 The action list also spells the **joined** boundary (`m-unit-work`): a `join`
@@ -2671,7 +2671,7 @@ against any row's contents):
   Preparation refuses the member name before its value, using the derived
   framework-owned designation ([`m-metamodel`](m-metamodel.md)); assignment
   admissibility belongs to [`m-unit-work`](m-unit-work.md), version ownership to
-  [`m-opt-lock`](m-opt-lock.md#version-values-are-framework-owned), and interval
+  [`m-unit-work`](m-unit-work.md#version-values-are-framework-owned), and interval
   construction to [`m-temporal-write`](m-temporal-write.md). Internal framework
   markers and carried state are not caller assignments.
 

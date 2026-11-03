@@ -1,6 +1,6 @@
 """Managed-document authoring and the one effective-change rule.
 
-The opt-lock witnesses hold the outcomes a database can observe — `m-opt-lock-001`
+The opt-lock witnesses hold the outcomes a database can observe — `m-concurrency-001`
 that an empty effective change set emits no statement, `-014` that per-row
 elimination is scalar equality, `-020` that an undeclared key inside a stored
 occurrence takes no part. What stays here is what no case can reach: the rule

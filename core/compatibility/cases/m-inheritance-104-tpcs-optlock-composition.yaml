@@ -1,8 +1,8 @@
 # Optimistic locking composed with a table-per-concrete-subtype write: no tag guard,
-# own table, gate binds last (m-inheritance x m-opt-lock, m-sql — the TPCS analogue
+# own table, gate binds last (m-inheritance x m-concurrency, m-sql — the TPCS analogue
 # of m-inheritance-084).
 model: models/appliance.yaml
-tags: [m-inheritance, m-opt-lock, m-sql, table-per-concrete-subtype, write-sequence, update, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-concurrency, m-sql, table-per-concrete-subtype, write-sequence, update, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 given:
   fixtures: true

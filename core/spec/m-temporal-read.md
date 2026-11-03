@@ -36,7 +36,7 @@ writes, and physical storage:
 | Relationship propagation coordinate | source Valid-Time coordinate | source Transaction-Time coordinate |
 | Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the Database Root |
 | Bitemporal bounded-write upper bound | `until` (a Valid-Time bound) | not caller-authored |
-| Optimistic temporal observation | not an optimistic key | observed `txStart` / physical `in_z` |
+| Optimistic temporal observation | not a version | observed `txStart` / physical `in_z` |
 | Finite-pin mutation error | writable retroactive correction | `transaction-time-pin-read-only` |
 
 The retired business/processing vocabulary is not an alias. Physical column

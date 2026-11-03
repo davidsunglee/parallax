@@ -429,7 +429,7 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 def _assert_serde(case: Case) -> None:
     # Layer 4a: Object Query serde. A read case has one top-level query; a
     # scenario or coherence case has one per read step; a write-sequence case and a
-    # conflict case (m-opt-lock) have none. Layer 4b: metamodel (descriptor)
+    # conflict case (m-concurrency) have none. Layer 4b: metamodel (descriptor)
     # serde — always.
     shape = case.shape
     documents = _SERDE_DOCUMENTS.get(shape, _read_query) if isinstance(shape, str) else _read_query
@@ -1494,7 +1494,7 @@ def _assert_insert_statement(
             else:
                 expected.append(cols[column])
         if version_col is not None:
-            expected.append(1)  # derived initial version (m-opt-lock baseline), never authored
+            expected.append(1)  # derived initial version (m-concurrency baseline), never authored
     row_major = [cell for row in insert_value_rows(case, statement, binds) for cell in row]
     assert_write_values(case, expected, row_major, statement)
 
@@ -1515,7 +1515,7 @@ def _assert_versioned_update_input(
     The golden SET clause is the domain set columns + the framework-owned ``version``
     column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
     binds are ``[…set values…, newVersion, pk]`` under the Locking strategy a
-    declared ``locking`` preference imposes (``m-opt-lock-002`` — the m-read-lock
+    declared ``locking`` preference imposes (``m-concurrency-002`` — the m-read-lock
     shared read lock makes the write correct, so no
     ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` under
     the Optimistic strategy a versioned target takes by default. One golden
@@ -2434,7 +2434,7 @@ def _current_rectangles(
 def _conflict_versioned_entity(case: Case) -> Entity | None:
     """The versioned entity a conflict case targets, or None (an unversioned one).
 
-    A versioned conflict (``m-opt-lock-005`` through ``m-opt-lock-009``) gates on a
+    A versioned conflict (``m-concurrency-005`` through ``m-concurrency-009``) gates on a
     version column.
     """
     for entity in case.model.entities:
@@ -2527,7 +2527,7 @@ def _assert_versioned_conflict_input(
     that is shared: ① MUST carry ``observedVersion`` — a keyed write against a
     versioned row requires a prior observation in EITHER mode — and the CONCURRENCY
     MODE ALONE decides whether the golden appends the ``and <version> = ?`` gate and
-    the trailing observed bind behind it (`m-opt-lock`: the gate is uniform across
+    the trailing observed bind behind it (`m-concurrency`: the gate is uniform across
     the update, the delete, and the close, and the verb decides nothing). The derived
     binds are therefore ``[…set values…, pk]``, extended by ``observedVersion``
     when gated.
@@ -2645,7 +2645,7 @@ def _milestone_guard_indices(case: Case) -> Iterator[int]:
         index += step.get("statements", 1)
 
 
-# --- conflict cases (m-opt-lock optimistic locking) ----------------------------------
+# --- conflict cases (m-concurrency optimistic locking) ----------------------------------
 
 
 def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
@@ -2695,7 +2695,7 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     assert_table_state(case, db, after="the conflict case")
 
 
-# --- conflict RETRY cases (m-opt-lock retry contract) ------------------------------
+# --- conflict RETRY cases (m-concurrency retry contract) ------------------------------
 
 
 def _attempt_statements(attempt: dict[str, Any], dialect: str) -> list[str]:
@@ -2724,7 +2724,7 @@ def _assert_conflict_retry_normalization(case: Case, dialect: str) -> None:
 def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     """Run the given.apply + ordered retry attempts, asserting each affected count.
 
-    This is the observable form of the m-opt-lock RETRY contract. The model's
+    This is the observable form of the m-concurrency RETRY contract. The model's
     fixtures are loaded (the versioned row exists), an OPTIONAL out-of-band
     ``given.apply`` simulates a concurrent writer that advanced the version, then
     each attempt's golden ``UPDATE`` is applied in order. The first attempt gates
@@ -3677,7 +3677,7 @@ def _run_coherence(case: Case, db: DatabaseProvider, dialect: str) -> None:
 
 
 def _run_conflict_retry(case: Case, db: DatabaseProvider, dialect: str) -> None:
-    # Retry conflict (m-opt-lock): golden SQL lives PER ATTEMPT, so there is no
+    # Retry conflict (m-concurrency): golden SQL lives PER ATTEMPT, so there is no
     # top-level then.statements to key on, mirroring the scenario / coherence
     # per-step shapes.
     if not _conflict_retry_has_golden(case, dialect):

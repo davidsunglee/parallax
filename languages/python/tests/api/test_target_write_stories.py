@@ -29,7 +29,8 @@ def _reset(profile_run: Any, case_file: str) -> None:
 
 def test_the_reviewed_deletion_story_runs_against_a_real_database(profile_run: Any) -> None:
     _reset(
-        profile_run, "m-opt-lock-041-a-stale-or-missing-target-deletion-fails-its-precondition.yaml"
+        profile_run,
+        "m-concurrency-041-a-stale-or-missing-target-deletion-fails-its-precondition.yaml",
     )
     report = reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
         profile_run.port, MODELS["account"]
@@ -38,7 +39,7 @@ def test_the_reviewed_deletion_story_runs_against_a_real_database(profile_run: A
 
 
 def test_the_unversioned_write_story_runs_against_a_real_database(profile_run: Any) -> None:
-    _reset(profile_run, "m-opt-lock-023-unversioned-locking-fallback.yaml")
+    _reset(profile_run, "m-concurrency-023-unversioned-locking-fallback.yaml")
     balance = an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction(
         profile_run.port, MODELS["wallet"]
     )

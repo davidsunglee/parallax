@@ -8,7 +8,7 @@ shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the versioned write's version bind is the framework-owned advance of the version its own group's observing find returned — a query result (m-opt-lock)"
+  note: "the versioned write's version bind is the framework-owned advance of the version its own group's observing find returned — a query result (m-concurrency)"
 when:
   uow:
     isolation: repeatable-read

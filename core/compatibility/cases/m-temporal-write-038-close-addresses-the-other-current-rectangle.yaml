@@ -6,7 +6,7 @@
 # It carries the edge-selected coverage the conflict form pinned: the close derives R3's
 # open thru_z from the observation it was handed, and R2 stays current.
 model: models/position.yaml
-tags: [m-temporal-write, m-opt-lock, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -147,7 +147,7 @@ def _flush_and_lower_steps(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
-            concurrency="locking",
+            preference="locking",
             composed_writes=observed_buffer(buffer, model, None),
         )
     )

@@ -151,7 +151,7 @@ undeclared while carrying one of its own — inheritance is never selective here
 either **entirely non-versioned** (the root declares no `optimisticLocking`
 attribute, and no descendant may declare one) or **entirely versioned together**
 (the root declares exactly one, and every descendant advances — and, in optimistic
-mode, gates on — that same inherited column, `m-opt-lock`). Physically this needs
+mode, gates on — that same inherited column, `m-concurrency`). Physically this needs
 no new machinery: table-per-hierarchy already lands the root's version column in
 the one shared table every concrete subtype's rows occupy, and table-per-concrete-
 subtype Storage Layout includes the root's version Attribute slot in every
@@ -159,8 +159,8 @@ concrete subtype's own table — the same composition that places the primary ke
 and every ordinary inherited Attribute. Combining an explicit
 `optimisticLocking` Attribute with a temporal
 `temporality` profile on one Entity remains invalid (`m-descriptor`); a temporal family's
-root therefore derives its optimistic key from the Transaction-Time start
-Attribute (`m-opt-lock`) rather than declaring a version Attribute, so a temporal family
+root therefore derives its version from the Transaction-Time start
+Attribute (`m-concurrency`) rather than declaring a version Attribute, so a temporal family
 is never also an explicitly-versioned one. Unlike the temporal-axis narrowing
 above, this is not a simplification relative to a Reladomo feature Parallax
 declines to support as broadly: Reladomo has no considered design for optimistic
@@ -662,7 +662,7 @@ After validation, the `m-inheritance` Model Compiler produces the immutable
 `view(model) -> InheritanceFacet` function (`m-model-formation` "Facet
 ownership"). The facet owns ancestry, family identity, effective member
 applicability, strategy, table selection, and the effective root-owned
-Persistence Mode; the Temporal and Optimistic Lock facets derive their own
+Persistence Mode; the Temporal and Concurrency facets derive their own
 root-owned facts through this facet rather than this facet repeating them.
 Every Metadata value the facet returns is the accepted declaration value
 itself — declaring identities and provenance preserved, so an inherited member

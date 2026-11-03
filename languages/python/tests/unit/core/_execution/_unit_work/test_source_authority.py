@@ -31,8 +31,7 @@ from parallax.core._execution._unit_work.write_items import InsertionAuthorizedW
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
-from parallax.core.opt_lock import view as opt_lock_view
+from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.temporal_read import Pin, TimeInterval
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
@@ -81,16 +80,11 @@ def _authority(
     meta: Metamodel,
     *,
     lifetime: TxnAttemptLifetime | None = None,
-    version_after: Callable[[EntityIdentity, int | None], int | None] | None = None,
 ) -> SourceAuthority:
     return SourceAuthority(
         meta,
         lifetime=TxnAttemptLifetime() if lifetime is None else lifetime,
-        concurrency="optimistic",
-        evidence_policy_for=opt_lock_view(meta).required_key,
-        version_after=(lambda _entity, version: 1 if version is None else version + 1)
-        if version_after is None
-        else version_after,
+        preference="optimistic",
     )
 
 
@@ -218,21 +212,13 @@ def test_an_optimistic_source_without_an_observation_is_unavailable() -> None:
     assert _resolved(authority, _ACCOUNT, evidence, _account(1)) == "write-evidence-unavailable"
 
 
-def test_a_versioned_source_continues_from_the_version_completion_produced_once() -> None:
-    produced: list[int | None] = []
-
-    def version_after(entity: EntityIdentity, version: int | None) -> int | None:
-        del entity
-        produced.append(version)
-        return 1 if version is None else version + 1
-
-    authority = _authority(_ACCOUNT, version_after=version_after)
+def test_a_versioned_source_continues_from_the_version_completion_produced() -> None:
+    authority = _authority(_ACCOUNT)
     observation = authority.retain(_versioned(authority, _account(1), 4))
     source = ReadEvidence(_account(1).entity, _account(1), authority.participation, observation)
     assert _resolved(authority, _ACCOUNT, source, _account(1)) == observation.key
     state = VersionedObjectStateKey(_account(1), 4)
     authority.complete_write(WriteEffects(changed=(state,), advanced=(state,)), ())
-    assert produced == [4]
     assert _resolved(authority, _ACCOUNT, source, _account(1)) == VersionedObjectStateKey(
         _account(1), 5
     )
@@ -388,7 +374,6 @@ def test_a_unit_of_works_authority_holds_nothing_of_its_shell_or_execution() -> 
         acquire_rows=HeldRows(_ACCOUNT),
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock_view(_ACCOUNT).required_key,
     )
     authority = uow.source_authority
     authority.retain(_versioned(authority, _account(1), 1))

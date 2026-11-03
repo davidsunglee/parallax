@@ -68,11 +68,11 @@ __all__ = [
 ]
 
 # The key every boundary target reads: account.yaml's versioned row (Linus,
-# balance 250.00, version 1) — the SAME row every reachable m-opt-lock/m-read-lock
+# balance 250.00, version 1) — the SAME row every reachable m-concurrency/m-read-lock
 # case targets — and balance.yaml's current milestone (acct B, value 200.00).
 TARGET_ID: Final[int] = 2
 
-# A no-op update's effective change set would elide to zero DML (m-opt-lock
+# A no-op update's effective change set would elide to zero DML (m-concurrency
 # "No-op updates issue no DML") — every boundary `amend` action therefore
 # advances the target's amount by a fixed, non-zero step so it always issues real DML.
 _BUMP: Final[Decimal] = Decimal("1.00")
@@ -233,11 +233,11 @@ def run_boundary_actions[E: Entity](
     :class:`BoundaryTarget` its model declares.
 
     - ``read`` observes the target row (``target.find``) — licenses a later keyed
-      write's gate (`m-opt-lock`) and, read-your-own-writes, forces the flush of
+      write's gate (`m-concurrency`) and, read-your-own-writes, forces the flush of
       an ALREADY-buffered write (`m-unit-work-004`'s own "a dependent find
       observes the flushed write" step).
     - ``amend`` advances the last-read row's amount by :data:`_BUMP` (a real,
-      non-no-op change, `m-opt-lock` "No-op updates issue no DML") and
+      non-no-op change, `m-unit-work` "Empty updates issue no DML") and
       buffers it.
     - ``create`` inserts a synthetic new account (id 90, outside the fixture
       range 1-3) — no reachable corpus witness authors this action, but the
@@ -377,7 +377,7 @@ class _Fault:
     attempt no connection at all, which is the same terminal begin failure
     reached one step earlier; and a ``release`` fault is a connection that
     cannot be confirmed after the attempt settled, which changes no outcome
-    at all. ``retriable`` is `m-auto-retry` / `m-opt-lock`'s verdict on the
+    at all. ``retriable`` is `m-auto-retry` / `m-concurrency`'s verdict on the
     kind. ``error`` builds the
     translated :class:`DatabaseError` the real adapter's own classification would
     produce, and is ``None`` for the kinds that raise no database error at all:
@@ -848,7 +848,7 @@ def expected_attempts(
     outcome_kind: str,
     max_retries: int,
 ) -> int:
-    """The authored attempt count (`m-auto-retry.md` / `m-opt-lock.md`'s own
+    """The authored attempt count (`m-auto-retry.md` / `m-concurrency.md`'s own
     retriability rules, never a per-case hand table): no fault surfaces or
     commits after exactly one attempt; a NON-retriable fault (a
     `lock-wait-timeout`) surfaces after one; a retriable fault retried to `committed`

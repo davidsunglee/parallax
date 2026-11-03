@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import NoReturn
 
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core._execution._unit_work.strategy import EvidencePolicyLookup
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
@@ -76,17 +75,15 @@ class SelectedReadModel:
 class SelectedWriteModel:
     """The write projection of one Model Selection: the same edition and the
     exact same cataloged model as its read projection, with the Write
-    Preparation every write is admitted against, the Write Planner every
-    flush plans through, and the write-evidence policy every keyed write is
-    admitted under — all derived from that one model — and the same borrowed
-    class index as its read projection.
+    Preparation every write is admitted against and the Write Planner every
+    flush plans through — both derived from that one model — and the same
+    borrowed class index as its read projection.
     """
 
     edition: str
     model: CatalogedModel
     preparation: WritePreparation
     planner: WritePlanner
-    evidence_policy_for: EvidencePolicyLookup
     classes: ClassIndex | None
 
 
@@ -145,7 +142,6 @@ def select_model(
     wire: WireModelFacts,
     preparation: WritePreparation,
     planner: WritePlanner,
-    evidence_policy_for: EvidencePolicyLookup,
 ) -> ModelSelection:
     """The complete selection ``model`` prepares into under ``edition``.
 
@@ -169,7 +165,6 @@ def select_model(
         model=catalog,
         preparation=preparation,
         planner=planner,
-        evidence_policy_for=evidence_policy_for,
         classes=classes,
     )
     selection = object.__new__(ModelSelection)

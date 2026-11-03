@@ -1,5 +1,5 @@
 model: models/position.yaml
-tags: [m-temporal-write, m-opt-lock, m-unit-work, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
 when:
   uow:

@@ -1,5 +1,5 @@
 model: models/account.yaml
-tags: [m-execution-lifecycle, m-unit-work, m-opt-lock, m-sql, scenario, ordered-write-transport, slice-snapshot-1]
+tags: [m-execution-lifecycle, m-unit-work, m-concurrency, m-sql, scenario, ordered-write-transport, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

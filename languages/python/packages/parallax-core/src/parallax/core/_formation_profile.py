@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final
 
+from parallax.core.concurrency import CONCURRENCY_MODULE
+from parallax.core.concurrency import FACET_KEY as CONCURRENCY_FACET_KEY
+from parallax.core.concurrency import ISSUE_CODES as CONCURRENCY_ISSUE_CODES
+from parallax.core.concurrency import MODEL_COMPILER as CONCURRENCY_COMPILER
+from parallax.core.concurrency import RULE_SET as CONCURRENCY_RULE_SET
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
 from parallax.core.inheritance import ISSUE_CODES as INHERITANCE_ISSUE_CODES
@@ -29,11 +34,6 @@ from parallax.core.model_formation import (
     ModuleIdentity,
     form,
 )
-from parallax.core.opt_lock import FACET_KEY as OPT_LOCK_FACET_KEY
-from parallax.core.opt_lock import ISSUE_CODES as OPT_LOCK_ISSUE_CODES
-from parallax.core.opt_lock import MODEL_COMPILER as OPT_LOCK_COMPILER
-from parallax.core.opt_lock import OPT_LOCK_MODULE
-from parallax.core.opt_lock import RULE_SET as OPT_LOCK_RULE_SET
 from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
 from parallax.core.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
@@ -121,10 +121,10 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             required_facets=frozenset({INHERITANCE_FACET_KEY}),
         ),
         FormationManifestEntry(
-            owner=OPT_LOCK_MODULE,
+            owner=CONCURRENCY_MODULE,
             rule_set=REQUIRED_RULE_SET,
-            issue_codes=OPT_LOCK_ISSUE_CODES,
-            compiler=ModelCompilerRequirement(OPT_LOCK_FACET_KEY),
+            issue_codes=CONCURRENCY_ISSUE_CODES,
+            compiler=ModelCompilerRequirement(CONCURRENCY_FACET_KEY),
             required_modules=frozenset(
                 {
                     METAMODEL_MODULE,
@@ -155,7 +155,7 @@ BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
         STORAGE_LAYOUT_RULE_SET,
         VALUE_OBJECT_RULE_SET,
         RELATIONSHIP_RULE_SET,
-        OPT_LOCK_RULE_SET,
+        CONCURRENCY_RULE_SET,
     ),
     metadata_compiler=METADATA_COMPILER,
     model_compilers=(
@@ -163,7 +163,7 @@ BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
         RELATIONSHIP_COMPILER,
         STORAGE_LAYOUT_COMPILER,
         TEMPORAL_COMPILER,
-        OPT_LOCK_COMPILER,
+        CONCURRENCY_COMPILER,
     ),
 )
 """The implementations matching :data:`BUILTIN_MANIFEST` row for row."""

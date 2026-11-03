@@ -8,12 +8,12 @@ from typing import Any, Final, cast
 from parallax.conformance import _case_ingress
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance._mechanism.model_facts import case_entity, family_declarer
-from parallax.core import inheritance, read_delivery
+from parallax.core import concurrency, inheritance, read_delivery
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._unit_work import instructions
 from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.metamodel import (
-    AttributeMetadata,
+    AttributeIdentity,
     PrimaryKey,
     ScalarDefinition,
     TemporalDimension,
@@ -259,13 +259,8 @@ _LATEST_SELECTION: Final[Mapping[TemporalDimension, str]] = {
 }
 
 
-def _versioned_non_temporal_version_attribute(
-    model: AcceptedMetamodel, entity_name: str
-) -> AttributeMetadata | None:
-    declaring = family_declarer(model, case_entity(model, entity_name))
-    if declaring.declared_as_of_axes:
-        return None
-    return next((attr for attr in declaring.declared_attributes if attr.optimistic_locking), None)
+def _version_attribute(model: AcceptedMetamodel, entity_name: str) -> AttributeIdentity | None:
+    return concurrency.view(model).version_attribute(case_entity(model, entity_name).identity)
 
 
 def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
@@ -306,7 +301,7 @@ def _observation_refusal(
             f"an insert row authors no `{key}` (m-unit-work: inserts have no observation — an "
             "observed version names the milestone a write against an EXISTING row observed)"
         )
-    if _versioned_non_temporal_version_attribute(model, entity_name) is None:
+    if _version_attribute(model, entity_name) is None:
         return (
             f"an unversioned row authors no `{key}` (m-unit-work: unversioned Non-Temporal "
             "writes have no observation — there is no observed version for it to name)"
@@ -675,11 +670,11 @@ def _buffer_wire_insert(
 ) -> WireEntity:
     valid_from, until = instruction.valid_from, instruction.until
     entity = case_entity(model, instruction.entity)
-    version = _versioned_non_temporal_version_attribute(model, instruction.entity)
+    version = _version_attribute(model, instruction.entity)
     payload = {
         name: value
         for name, value in instruction.rows[0].items()
-        if version is None or name != version.identity.name
+        if version is None or name != version.name
     }
     opened = (
         tx.wire.insert(

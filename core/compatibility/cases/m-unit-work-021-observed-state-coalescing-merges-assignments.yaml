@@ -2,12 +2,12 @@
 # ONE observed state and one temporal region merge into a single write, and the
 # later authored value wins a member both of them name.
 model: models/account.yaml
-tags: [m-unit-work, m-opt-lock, m-sql, coalescing, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-concurrency, m-sql, coalescing, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the merged write's version bind is the framework-owned advance of the version the group's own observing find returned — a query result (m-opt-lock)"
+  note: "the merged write's version bind is the framework-owned advance of the version the group's own observing find returned — a query result (m-concurrency)"
 when:
   scenario:
     - uow: merged-assignments

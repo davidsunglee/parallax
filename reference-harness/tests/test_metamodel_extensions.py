@@ -527,7 +527,7 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     """A temporal (as-of) entity that ALSO declares an ``optimisticLocking``
     attribute MUST fail metamodel validation.
 
-    A Transaction-Time temporal entity DERIVES its optimistic key from the
+    A Transaction-Time temporal entity DERIVES its version source from the
     Transaction-Time start column (`in_z` is the version analogue), so it carries no
     version column; combining a transaction-time `temporality` profile with an
     explicit `optimisticLocking` attribute on one entity is invalid. Proven with
@@ -551,8 +551,8 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
 
 def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> None:
     """An entity's OWN `attributes` array may CONTAIN at most one item with
-    `optimisticLocking: true` (m-descriptor `attribute` / m-opt-lock "The version
-    column"; `metamodel.schema.json`'s 2020-12 `contains`/`minContains: 0`/
+    `optimisticLocking: true` (m-descriptor `attribute` / m-concurrency "Version
+    sources"; `metamodel.schema.json`'s 2020-12 `contains`/`minContains: 0`/
     `maxContains: 1`). A SCHEMA-level regression pin for that constraint itself:
     without `maxContains: 1`, this two-flag shape passes `just core-check-schemas` and
     only the language-level descriptor validator (`validate_entity`) would catch
@@ -563,7 +563,7 @@ def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> Non
     descriptor = copy.deepcopy(model.descriptor)
     # Wallet is plain (non-inheritance, non-temporal): inject TWO int64 attributes
     # each declaring `optimisticLocking: true`, so the ONLY violated rule is
-    # "at most one" — not the int32/int64 type restriction (m-opt-lock/DQ8b,
+    # "at most one" — not the int32/int64 type restriction (m-concurrency/DQ8b,
     # already satisfied) or the temporal-composition rule (Wallet declares no
     # `temporality`, covered separately above).
     descriptor["entity"]["attributes"].append(

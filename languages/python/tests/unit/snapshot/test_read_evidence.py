@@ -30,6 +30,7 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, ValueObject, attr
 from parallax.core.base import PresentDocument
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity import (
     EntityDefinitionError,
 )
@@ -40,7 +41,6 @@ from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
-    Concurrency,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -710,7 +710,7 @@ def test_a_successful_flush_leaves_its_sources_observation_literal() -> None:
     ],
 )
 def test_a_source_reused_after_its_flush_continues_from_the_version_its_write_produced(
-    concurrency: Concurrency, binds: tuple[object, ...]
+    concurrency: ConcurrencyPreference, binds: tuple[object, ...]
 ) -> None:
     # The dependent read in the middle forces the first write out. The source's
     # authority continues from the version that write produced, under the
@@ -1069,7 +1069,9 @@ def _refused_outside_the_attempt(port: ScriptedAdapter, transact: Callable[[], o
 
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
-def test_a_standalone_versioned_source_licenses_no_write(concurrency: Concurrency) -> None:
+def test_a_standalone_versioned_source_licenses_no_write(
+    concurrency: ConcurrencyPreference,
+) -> None:
     # Under Optimistic the gate would bind a version this attempt never read, and
     # under Locking a standalone `db.find` holds no shared row lock.
     port = ScriptedAdapter(_ACCOUNT_READ, Transact())

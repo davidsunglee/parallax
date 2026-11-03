@@ -7,7 +7,6 @@ from parallax.core.read_delivery._page._cadence import (
 )
 from parallax.core.read_delivery._page._judgement import (
     NON_HYDRATING_CODES,
-    VersionAttributes,
     diagnosis,
     hydrates,
     observed_edge,
@@ -87,7 +86,6 @@ __all__ = [
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
-    "VersionAttributes",
     "ViewSchema",
     "attribute_state",
     "dedupe_issues",

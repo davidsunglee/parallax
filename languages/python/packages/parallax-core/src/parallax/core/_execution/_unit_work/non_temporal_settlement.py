@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core._execution._unit_work.strategy import VersionArithmetic
+from parallax.core.concurrency import next_version
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.write_plan.managed_row import ManagedRow
@@ -31,7 +31,6 @@ __all__ = [
     "NonTemporalEmission",
     "NonTemporalFacts",
     "Revision",
-    "VersionOverlay",
     "non_temporal_step",
 ]
 
@@ -43,8 +42,8 @@ class NonTemporalFacts:
     Settlement alone.
 
     Everything here is a value some producer emitted for THIS mutation: the
-    facet's compiled view of the target and the Attribute the Optimistic Lock
-    Facet names as its version source. No producer is among them, so building a
+    facet's compiled view of the target and the Attribute the Concurrency
+    Facet names as its explicit version. No producer is among them, so building a
     step from these facts settles no further decision.
 
     What is deliberately absent is the row's own observed version: a keyed
@@ -72,20 +71,6 @@ class AddressedFacts:
 
 
 @dataclass(frozen=True, slots=True)
-class VersionOverlay:
-    """The version Attribute a settled update writes and the arithmetic it
-    advances the observed value by.
-
-    Carried by the emission rather than by the target's facts because only an
-    update overlays a version: a delete advances nothing, and an unversioned
-    update has nothing to advance, so neither obtains the arithmetic.
-    """
-
-    attribute: AttributeIdentity
-    arithmetic: VersionArithmetic
-
-
-@dataclass(frozen=True, slots=True)
 class Deletion:
     """What a settled non-temporal delete emits: nothing beyond its address.
 
@@ -97,11 +82,11 @@ class Deletion:
 @dataclass(frozen=True, slots=True)
 class Revision:
     """What a settled non-temporal update emits: the replacement values every
-    row of the mutation writes, and the version overlay an update against a
-    versioned target lays over them."""
+    row of the mutation writes, and the version Attribute an update against a
+    versioned target advances over them."""
 
     base_assignments: PlannedAssignments
-    version: VersionOverlay | None
+    version: AttributeIdentity | None
 
 
 type NonTemporalEmission = Deletion | Revision
@@ -158,7 +143,7 @@ def non_temporal_step(
 
 
 def _versioned_assignments(
-    base: PlannedAssignments, version: VersionOverlay | None, observed_version: int | None
+    base: PlannedAssignments, version: AttributeIdentity | None, observed_version: int | None
 ) -> PlannedAssignments:
     """``base`` with the advanced version at the target's own version Attribute.
 
@@ -172,7 +157,7 @@ def _versioned_assignments(
     return adopt_planned_assignments(
         {
             **base.attributes,
-            version.attribute: version.arithmetic.advance(observed_version),
+            version: next_version(observed_version),
         },
         base.value_objects,
     )

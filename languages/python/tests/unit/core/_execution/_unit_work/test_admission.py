@@ -128,19 +128,12 @@ def _confirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
-def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-    del entity, advanced_from
-    return None
-
-
 def _admitted(
     *writes: AdmittedWrite, meta: Metamodel = POSITION, authority: SourceAuthority | None = None
 ) -> WriteAdmission:
     admission = WriteAdmission(
         meta,
-        authority=source_authority(meta, inserted_version=_unversioned)
-        if authority is None
-        else authority,
+        authority=source_authority(meta) if authority is None else authority,
     )
     _admit(admission, *writes)
     return admission
@@ -338,7 +331,7 @@ def test_coalesced_object_locked_writes_keep_every_distinct_source_evidence() ->
 
 
 def test_discard_drops_the_buffer_and_leaves_the_authoritys_insertions_alone() -> None:
-    authority = source_authority(_PERSON, inserted_version=_unversioned)
+    authority = source_authority(_PERSON)
     admission = _admitted(
         _person_write(1, object_source(_person(1))), meta=_PERSON, authority=authority
     )
@@ -359,14 +352,7 @@ def test_discard_drops_the_buffer_and_leaves_the_authoritys_insertions_alone() -
 
 
 def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authorizes() -> None:
-    advanced: list[int | None] = []
-
-    def inserted_version(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-        del entity
-        advanced.append(advanced_from)
-        return 1 if advanced_from is None else advanced_from + 1
-
-    authority = source_authority(_ACCOUNT, inserted_version=inserted_version)
+    authority = source_authority(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, authority=authority)
     identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
     admission.drain_planned()
@@ -384,13 +370,10 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
         VersionedObjectStateKey(_account(9), 1),
         VersionedObjectStateKey(_account(9), 2),
     )
-    # The first write claims the version an insert stores; completion asks
-    # once for the version its update produced, which the later write reuses.
-    assert advanced == [None, 1]
 
 
 def _stored_insertion_across_two_rows() -> WriteAdmission:
-    authority = source_authority(POSITION, inserted_version=_unversioned)
+    authority = source_authority(POSITION)
     admission = _admitted(_position_insert(), authority=authority)
     admission.drain_planned()
     split = TemporalRowCoordinates(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
@@ -455,7 +438,7 @@ _POSITION_ROW = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
 def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothing(
     meta: Metamodel, insert: Callable[[], KeyedInsert], stored_rows: tuple[TemporalRowCoordinates]
 ) -> None:
-    authority = source_authority(meta, inserted_version=_unversioned)
+    authority = source_authority(meta)
     admission = _admitted(meta=meta, authority=authority)
     identity = admission.admit_insert(insert(), insertion_advice=_OPENER)
     assert identity is not None
@@ -505,7 +488,7 @@ def test_an_insert_after_a_pending_whole_removal_follows_it_as_a_first_opening(
     insert: Callable[[], KeyedInsert],
     removal: Callable[[InsertionIdentity], InsertionAuthorizedWrite],
 ) -> None:
-    authority = source_authority(meta, inserted_version=_unversioned)
+    authority = source_authority(meta)
     admission = _admitted(meta=meta, authority=authority)
     stored = admission.admit_insert(insert(), insertion_advice=_OPENER)
     assert stored is not None
@@ -524,11 +507,7 @@ def test_an_insert_after_a_pending_whole_removal_follows_it_as_a_first_opening(
 
 
 def test_a_pending_reinsertion_claims_from_the_version_an_insert_stores() -> None:
-    def inserted_version(entity: EntityIdentity, advanced_from: int | None) -> int | None:
-        del entity
-        return 1 if advanced_from is None else advanced_from + 1
-
-    authority = source_authority(_ACCOUNT, inserted_version=inserted_version)
+    authority = source_authority(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, authority=authority)
     stored = admission.admit_insert(_account_insert(9), insertion_advice=None)
     assert stored is not None
@@ -551,7 +530,7 @@ def test_a_pending_reinsertion_claims_from_the_version_an_insert_stores() -> Non
 def test_an_inserted_objects_target_stays_refused_once_its_insertion_retires(
     flushed: bool,
 ) -> None:
-    authority = source_authority(_ACCOUNT, inserted_version=lambda _entity, _from: 1)
+    authority = source_authority(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, authority=authority)
     identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
     assert identity is not None
@@ -598,7 +577,7 @@ def _pending_owners(admission: WriteAdmission) -> list[tuple[object, object]]:
 def test_each_pending_insert_folds_and_cancels_only_its_own_objects_writes(
     inserted: tuple[int, ...], cancelled: int
 ) -> None:
-    authority = source_authority(_ACCOUNT, inserted_version=_unversioned)
+    authority = source_authority(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, authority=authority)
     identities = dict(zip(inserted, _inserted_accounts(admission, *inserted), strict=True))
     for account_id, identity in identities.items():
@@ -615,7 +594,7 @@ def test_each_pending_insert_folds_and_cancels_only_its_own_objects_writes(
 
 
 def test_an_object_inserted_again_after_its_cancellation_takes_only_the_later_writes() -> None:
-    authority = source_authority(_ACCOUNT, inserted_version=_unversioned)
+    authority = source_authority(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, authority=authority)
     (cancelled,) = _inserted_accounts(admission, 9)
     outcome = admission.admit(_account_delete_through(cancelled), confirm_target=_confirmed)
@@ -648,7 +627,7 @@ def test_a_cancelled_pending_insert_takes_no_later_write_of_its_object(
 def test_an_unadvised_repeat_of_a_pending_insert_takes_the_writes_after_it(
     beside: tuple[int, ...],
 ) -> None:
-    authority = source_authority(_ACCOUNT, inserted_version=_unversioned)
+    authority = source_authority(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, authority=authority)
     _inserted_accounts(admission, *beside)
     (opener, repeat) = _inserted_accounts(admission, 9, 9)
@@ -784,7 +763,7 @@ def _pending_august_opening() -> tuple[
     insert = admitted_write(
         _position("insertUntil", AUG, DEC, acctNum="N", value="300.00"), None, OBJECT
     )
-    authority = source_authority(POSITION, inserted_version=_unversioned)
+    authority = source_authority(POSITION)
     admission = _admitted(authority=authority)
     identity = admission.admit_insert(insert, insertion_advice=None)
     assert identity is not None
@@ -1030,7 +1009,7 @@ def test_a_first_target_write_stays_alone_and_answers_its_caller_condition() -> 
 
 
 def test_a_first_write_a_flushed_insertion_authorized_stays_alone_with_its_anchor() -> None:
-    authority = source_authority(POSITION, inserted_version=_unversioned)
+    authority = source_authority(POSITION)
     admission = _admitted(authority=authority)
     identity = admission.admit_insert(
         admitted_write(_position("insert", FEB, None, acctNum="A", value="100.00"), None, OBJECT),

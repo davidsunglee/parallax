@@ -1,10 +1,10 @@
-# Optimistic gate on an audit-only chaining update's close (m-temporal-write + m-opt-lock).
+# Optimistic gate on an audit-only chaining update's close (m-temporal-write + m-concurrency).
 # It carries the gated close the conflict form pinned — addressed by the key and the open
 # out_z, gated on the in_z the find observed, affecting the one current milestone — now
 # produced by a public `update`, and additionally grades the successor milestone that
 # update chains at the same instant.
 model: models/balance.yaml
-tags: [m-temporal-write, m-opt-lock, m-unit-work, m-sql, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

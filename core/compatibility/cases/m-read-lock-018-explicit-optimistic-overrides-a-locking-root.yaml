@@ -9,7 +9,7 @@
 # alone; the two-arm PostgreSQL continuation and MariaDB's one-arm form are those
 # of any optimistic stream.
 model: models/account.yaml
-tags: [m-read-lock, m-opt-lock, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, database-options, slice-snapshot-1]
+tags: [m-read-lock, m-concurrency, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, database-options, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

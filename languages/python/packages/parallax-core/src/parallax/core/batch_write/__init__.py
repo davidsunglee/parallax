@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core import inheritance, opt_lock, temporal_read
+from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core.metamodel import (
     ApplicationAssigned,
     AttributeMetadata,
@@ -22,7 +22,7 @@ _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset(
 )
 
 # The ONE reserved observation control key a flush-time authored row may carry
-# (`m-opt-lock`; ADR 0013) — never legitimate batch-collapse input: a row
+# (`m-concurrency`; ADR 0013) — never legitimate batch-collapse input: a row
 # explicitly carrying its own observed version is an explicit
 # per-row-observation signal, so a run containing one never collapses. A
 # Transaction-Time gate is authored beside the write rather than in a row, so no
@@ -38,10 +38,7 @@ def _primary_key(model: Metamodel, entity: EntityMetadata) -> AttributeMetadata:
 
 
 def _is_versioned(model: Metamodel, entity: EntityMetadata) -> bool:
-    return isinstance(
-        opt_lock.view(model).key(entity.identity),
-        opt_lock.ExplicitVersion | opt_lock.TransactionTimeDerived,
-    )
+    return concurrency.view(model).settles_against(entity.identity) == "observation"
 
 
 def _is_temporal(model: Metamodel, entity: EntityMetadata) -> bool:
@@ -72,7 +69,7 @@ def insert_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     writes are `m-temporal-write` territory, never this
     module's decision) or a pk-gen-**managed** entity; ``True`` otherwise,
     versioned or not (the initial version is a derived constant, never an
-    observation, `m-opt-lock.INITIAL_VERSION`)."""
+    observation, `m-concurrency` `INITIAL_VERSION`)."""
     if _is_temporal(model, entity):
         return False
     return not _is_pk_gen_managed(model, entity)

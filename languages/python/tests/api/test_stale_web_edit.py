@@ -25,9 +25,9 @@ from parallax.conformance.stale_web_edit import (
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import LATEST
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._model import model_of
 from parallax.core.execution import TransactionTimePinReadOnlyError
-from parallax.core.unit_work import Concurrency
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
@@ -43,7 +43,7 @@ _I3 = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 # read and the flush differently -- `locking` holds a shared read lock on the
 # compared row, `optimistic` gates the close on the observed `in_z` -- and the
 # recipe depends on neither, so its outcome is the same under each.
-_MODES: tuple[Concurrency, ...] = ("optimistic", "locking")
+_MODES: tuple[ConcurrencyPreference, ...] = ("optimistic", "locking")
 
 
 def _seed_balance(db: ScopedDatabase, *, id: int = 1) -> None:
@@ -68,7 +68,7 @@ def _seed_branch(db: ScopedDatabase, *, id: int = 1) -> None:
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
-    profile_run: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
     profile_run.reset(model_of(_BALANCE), {})
     db = own_root(
@@ -90,7 +90,7 @@ def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
 
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
-    profile_run: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
     # A concurrent writer chains a replacement BETWEEN the render and the
     # submit, so the submit's own read of the CURRENT milestone answers an edge
@@ -129,7 +129,7 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
 
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_a_submit_that_pins_the_transported_edge_is_read_only(
-    profile_run: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
     # Why the recipe compares rather than pins, written out by hand because no
     # recipe does this: a submit that REPLAYS the transported edge as a pin reads
@@ -160,7 +160,7 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
-    profile_run: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
     profile_run.reset(model_of(_BRANCH), {})
     db = own_root(
@@ -190,7 +190,7 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
 
 @pytest.mark.parametrize("concurrency", _MODES)
 def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
-    profile_run: Any, concurrency: Concurrency
+    profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
     # A concurrent writer chains a replacement rectangle BETWEEN the render and
     # the submit. The submit's Valid-Time pin still selects the rectangle the

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.core._execution._unit_work._errors import UnobservedVersionError
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
     ClaimVerdict,
@@ -8,6 +9,7 @@ from parallax.core._execution._unit_work.claims import (
     claim_scope,
     claimed_object,
     keyed_intent,
+    settled_evidence,
 )
 from parallax.core._execution._unit_work.clock import (
     Clock,
@@ -55,16 +57,11 @@ from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.strategy import (
     NO_AUDIT,
     DatabaseLoginActor,
-    EvidencePolicyLookup,
     SubjectActor,
-    VersionArithmetic,
-    WriteEvidencePolicy,
-    concurrency_preference,
 )
 from parallax.core._execution._unit_work.uow import (
     WRITE_EVIDENCE_CODES,
     BufferOutcome,
-    Concurrency,
     FlushTrigger,
     RollbackOnlyError,
     TransactionSettings,
@@ -99,9 +96,7 @@ __all__ = [
     "ClaimScope",
     "ClaimVerdict",
     "Clock",
-    "Concurrency",
     "DatabaseLoginActor",
-    "EvidencePolicyLookup",
     "FlushTrigger",
     "InsertionIdentity",
     "InstructionRejectedError",
@@ -128,12 +123,11 @@ __all__ = [
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
-    "VersionArithmetic",
+    "UnobservedVersionError",
     "WriteAssignment",
     "WriteEffectError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
-    "WriteEvidencePolicy",
     "WriteInstructionError",
     "WriteIntent",
     "WritePlanner",
@@ -145,9 +139,9 @@ __all__ = [
     "allocated_keys",
     "claim_scope",
     "claimed_object",
-    "concurrency_preference",
     "enforce_affected_rows",
     "keyed_intent",
     "object_key",
     "returns_allocated_keys",
+    "settled_evidence",
 ]

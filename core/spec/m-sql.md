@@ -1222,9 +1222,9 @@ out_z = ?` / `infinity`), so only the open milestone is closed. The harness
 chaining contract is proven against real data, not merely asserted. The full
 milestone-write semantics are `m-temporal-write`.
 
-**Optimistic-mode close (`m-opt-lock` × `m-temporal-write`).** In optimistic mode the
+**Optimistic-mode close (`m-concurrency` × `m-temporal-write`).** In optimistic mode the
 close `update` gains an `and in_z = ?` gate on the observed `txStart` — the
-version analogue for a temporal entity (`m-opt-lock`, `m-opt-lock -->
+version analogue for a temporal entity (`m-concurrency`, `m-concurrency -->
 m-temporal-read`):
 
 | Mutation | Golden DML | Binds |
@@ -1234,7 +1234,7 @@ m-temporal-read`):
 The locking-mode close keeps the ungated form above (`… where bal_id = ? and
 out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a
 conflict (optimistic) or a stale/consistency error (locking), never silent
-(`m-temporal-write` / `m-opt-lock`). Each close, guard, revision, and removal
+(`m-temporal-write`; `m-unit-work` *Affected-row enforcement*). Each close, guard, revision, and removal
 stays its own step with that expectation; where a Write Group holds several of
 one shape, a dialect with array parameters applies them as one grouped effect
 (*Grouped effects*, below), each still enforced against its own source
@@ -1311,7 +1311,7 @@ no current-on-Transaction-Time row. The inactivate `update` for both addresses i
 rectangle exactly as the `*Until` inactivate above does, so the optimistic gate below
 applies to it verbatim.
 
-**Optimistic-mode inactivation (`m-opt-lock` × `m-temporal-write`).** The address above
+**Optimistic-mode inactivation (`m-concurrency` × `m-temporal-write`).** The address above
 is what the inactivate `update` renders in **both** modes; optimistic mode only
 **appends** the observed-`txStart` gate, and that gate binds last:
 
@@ -1651,12 +1651,12 @@ write-sequence machinery, `m-case-format`, reused for the non-temporal batched
 case) — so "buffered writes flush as set-based SQL" is verified by the rows it
 leaves behind, not merely asserted.
 
-## Optimistic-lock UPDATE
+## Versioned UPDATE and DELETE
 
 When an entity declares an `optimisticLocking` version attribute (`m-descriptor`),
 an `UPDATE` against it always **bumps the version in the `set`**, and — in
 **optimistic mode** — also **gates** on the version the unit of work observed. The
-golden form is therefore **mode-dependent** (`m-unit-work` strategy selection).
+golden form is therefore **mode-dependent** (`m-concurrency` *Strategy derivation*).
 
 **Optimistic mode** appends the version check to the primary-key predicate:
 
@@ -1668,14 +1668,15 @@ golden form is therefore **mode-dependent** (`m-unit-work` strategy selection).
 
 The `where id = ? and version = ?` predicate is the conflict gate: the
 **observed version** is the value the unit of work read before mutating (never a
-caller-authored number, `m-opt-lock`). If a concurrent transaction committed first
-(incrementing the row's version), the gate matches no row and the `UPDATE`
-affects **zero** rows — the conflict signal `updatedRows != 1` (`m-opt-lock`). On
+caller-authored number, `m-unit-work` *Version values are framework-owned*). If a
+concurrent transaction committed first (incrementing the row's version), the gate
+matches no row and the `UPDATE` affects **zero** rows — the conflict signal
+`updatedRows != 1` (`m-unit-work` *Affected-row enforcement*). On
 success exactly **one** row is affected and its version advances.
 
 **Locking mode** issues the same statement **without** the version gate — the
 shared read lock (`m-read-lock`), not the version, makes it correct — but still
-advances the version (the `m-opt-lock-002` locking-mode shape):
+advances the version (the `m-concurrency-002` locking-mode shape):
 
 ```yaml
 - sql:
@@ -1683,9 +1684,23 @@ advances the version (the `m-opt-lock-002` locking-mode shape):
   binds: [<new-balance>, <new-version>, <pk>]
 ```
 
+A keyed `DELETE` of a versioned row follows the same rule: it writes no version,
+and gates on the observed one only in optimistic mode, binding it last
+(`m-concurrency` *Effective Concurrency Strategy determines the gate
+uniformly*):
+
+```yaml
+- sql:
+    postgres: delete from account where id = ? and version = ?
+  binds: [<pk>, <observed-version>]
+- sql:
+    postgres: delete from account where id = ?
+  binds: [<pk>]
+```
+
 In either mode the new version is carried as a `?` bind like every other literal
 (rule 4). A versioned `UPDATE` whose `set` changes **no** attribute issues **no
-DML** at all (`m-opt-lock`). The harness proves the optimistic halves — conflict
+DML** at all (`m-unit-work` *Empty updates issue no DML*). The harness proves the optimistic halves — conflict
 (0 rows) and success (1 row) — by **applying** the golden `UPDATE` to a loaded
 table (after an optional out-of-band version mutation) and asserting the
 **affected-row count** (`m-case-format` conflict case), and proves the
@@ -2012,8 +2027,8 @@ pk (right after it). DML keeps its canonical DML shape (`m-sql` rule 1): an
 **unaliased** target table with **bare** columns, so the tag guard reads `kind`, not
 `t0.kind`.
 
-**Opt-lock composition (`m-inheritance` × `m-opt-lock`).** When the entity is
-versioned and the unit of work runs optimistic (`m-opt-lock`), a concrete-subtype
+**Version-gate composition (`m-inheritance` × `m-concurrency`).** When the entity is
+versioned and the unit of work runs optimistic (`m-concurrency`), a concrete-subtype
 `UPDATE` advances the version in the `set` and **gates** on the observed version —
 and the gate still **binds last**. The tag guard rides with the identity predicates
 (after the pk); the version gate follows it:
@@ -2026,7 +2041,7 @@ and the gate still **binds last**. The tag guard rides with the identity predica
 ```
 
 That is `[…set values…, pk, tagValue, observed-version]`: the tag guard binds with
-the identity predicates immediately after the pk, and `m-opt-lock`'s invariant —
+the identity predicates immediately after the pk, and this module's invariant —
 **the version gate binds last** — survives inheritance composition verbatim (there
 is no inheritance exception to it). The locking-mode form drops the version gate and
 keeps `… where id = ? and kind = ?` (tag guard still present, no gate).
@@ -2048,7 +2063,7 @@ payload (a nullable inherited slot the payload omits is simply absent from the
 list, defaulting to `NULL`); a sibling branch's write names *its* table, never a
 shared one (`memo` for a `Memo`, `invoice` for an `Invoice`). A concrete-subtype
 `UPDATE` under table-per-concrete-subtype is the ordinary single-table versioned /
-non-versioned form (`m-opt-lock`); no tag guard applies.
+non-versioned form (`m-concurrency`); no tag guard applies.
 
 ### Inheritance — temporal composition
 

@@ -136,7 +136,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
 | `m-temporal-write` | Temporal writes: coverage transforms and predecessor expansion | active | cases |
 | `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
-| `m-opt-lock` | Optimistic locking | active | cases |
+| `m-concurrency` | Concurrency policy: strategy derivation, version sources, version arithmetic | active | cases |
 | `m-model-evolution` | Model-altitude description of the difference between two accepted Metamodels | active | cases |
 | `m-schema-delta` | Ordered dialect schema statements for a Unilateral Evolution | active | cases |
 | `m-case-format` | Compatibility case format | active | cases |
@@ -219,6 +219,7 @@ m-unit-work --> m-document-codec
 m-unit-work --> m-relationship
 m-unit-work --> m-write-plan
 m-unit-work --> m-temporal-write
+m-unit-work --> m-concurrency
 m-temporal-write --> m-core
 m-temporal-write --> m-metamodel
 m-temporal-write --> m-inheritance
@@ -253,7 +254,7 @@ m-process-cache --> m-unit-work
 m-op-list --> m-object-query
 m-op-list --> m-unit-work
 m-batch-write --> m-unit-work
-m-batch-write --> m-opt-lock
+m-batch-write --> m-concurrency
 m-cascade-delete --> m-op-list
 m-cascade-delete --> m-unit-work
 m-navigate --> m-predicate
@@ -287,7 +288,7 @@ m-read-delivery --> m-db-port
 m-read-delivery --> m-temporal-read
 m-read-delivery --> m-execution-lifecycle
 m-read-delivery --> m-read-lock
-m-read-delivery --> m-opt-lock
+m-read-delivery --> m-concurrency
 m-execution --> m-unit-work
 m-execution --> m-read-delivery
 m-execution --> m-write-plan
@@ -307,16 +308,15 @@ m-temporal-read --> m-model-formation
 m-temporal-read --> m-inheritance
 m-validtime-only --> m-temporal-read
 m-validtime-only --> m-unit-work
-m-opt-lock --> m-unit-work
-m-opt-lock --> m-temporal-read
-m-opt-lock --> m-metamodel
-m-opt-lock --> m-model-formation
-m-opt-lock --> m-inheritance
+m-concurrency --> m-temporal-read
+m-concurrency --> m-metamodel
+m-concurrency --> m-model-formation
+m-concurrency --> m-inheritance
 m-model-evolution --> m-metamodel
 m-model-evolution --> m-inheritance
 m-model-evolution --> m-relationship
 m-model-evolution --> m-temporal-read
-m-model-evolution --> m-opt-lock
+m-model-evolution --> m-concurrency
 m-schema-delta --> m-model-evolution
 m-schema-delta --> m-metamodel
 m-schema-delta --> m-inheritance
@@ -604,11 +604,12 @@ construction it may reference any behavioral module it harnesses.
   Database Calls and Stream Batches it executes. It holds no transaction, model
   selection, or authority — those are the conditions `m-execution` establishes
   before delivery runs.
-- **`m-read-delivery --> m-read-lock`, `--> m-opt-lock`.** The lock a fetch takes
-  is derived where the fetch is planned: the effective read lock of each level
-  comes from the read-lock suffix rule and the target's optimistic facet, so
-  delivery's execution-plan preparation, not its caller, decides it. Neither lock module is reachable
-  through delivery's other edges.
+- **`m-read-delivery --> m-read-lock`, `--> m-concurrency`.** The lock a fetch
+  takes is derived where the fetch is planned: the effective read lock of each
+  level comes from the read-lock suffix rule and the level's Effective
+  Concurrency Strategy, so delivery's execution-plan preparation, not its
+  caller, decides it. Page judgement also reads which explicit version a root
+  publishes and whether its family's writes settle against what it observed.
 - **`m-execution --> m-unit-work`, `--> m-read-delivery`, `--> m-write-plan`,
   `--> m-sql`, `--> m-read-planning`, `--> m-execution-authority`, `--> m-auto-retry`,
   `--> m-read-lock`, `--> m-execution-lifecycle`, `--> m-db-port`.** The
@@ -625,19 +626,25 @@ construction it may reference any behavioral module it harnesses.
   is the preparation's, not a write path's: `m-batch-write --> m-unit-work`
   already runs the other way, so the unit of work cannot take it, and placing
   preparation in a lifecycle would make each lifecycle prepare models.
-- **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
-  optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
-  an optimistic close references the milestoning read model.
+- **`m-unit-work --> m-concurrency`.** The strategy, version source, and
+  evidence kind of each Entity are facts of the accepted model, so Unit of Work
+  reads them from the model's Concurrency Facet beside the Temporal Facet and
+  applies them to its own attempt state. `m-concurrency` holds no transaction
+  state and names no attempt, write-plan, or SQL construct, so the edge runs one
+  way.
+- **`m-concurrency --> m-temporal-read`.** For a Transaction-Time Entity the
+  version is derived from `txStart` / physical `in_z`, so the Concurrency Facet
+  reads the milestoning read model's Temporal Shape.
 - **`m-model-evolution --> m-metamodel` / `m-inheritance` / `m-relationship` /
-  `m-temporal-read` / `m-opt-lock`.** An Evolution is described in the model's own
+  `m-temporal-read` / `m-concurrency`.** An Evolution is described in the model's own
   terms, so it pairs declarations by the structured identities and canonical
   Model Location order `m-metamodel` owns. Classification and Behavioral Impacts
   compare EFFECTIVE facts, not raw declarations: family role, strategy, and the
   concrete set a position selects (`m-inheritance`), the symmetric relationship
   facet a preserved identity's target and result shape are read from
   (`m-relationship`), the Temporal Shape a selection and a write surface carry
-  (`m-temporal-read`), and the optimistic key an Entity resolves to
-  (`m-opt-lock`). Each is read through its owner's compiled facet and re-derived
+  (`m-temporal-read`), and the version source an Entity resolves to
+  (`m-concurrency`). Each is read through its owner's compiled facet and re-derived
   nowhere.
 - **`m-schema-delta --> m-model-evolution` / `m-metamodel` / `m-inheritance` /
   `m-storage-layout` / `m-dialect`.** The generator consumes a Unilateral Evolution

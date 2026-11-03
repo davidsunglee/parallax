@@ -7,7 +7,7 @@
 # where the same root's preference reaches a stream because a `uow` group put
 # that stream inside a transaction.
 model: models/account.yaml
-tags: [m-read-lock, m-opt-lock, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-concurrency, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
 shape: read
 given:
   databaseOptions:

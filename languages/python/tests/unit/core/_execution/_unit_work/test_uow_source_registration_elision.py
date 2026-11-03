@@ -24,7 +24,6 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._retention import ReadEvidenceByFetchedRow
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -143,7 +142,6 @@ class _Production:
             acquire_rows=HeldRows(meta),
             planner=build_write_planner(meta),
             actor_identity=TEST_ACTOR_IDENTITY,
-            evidence_policy_for=opt_lock.view(meta).required_key,
         )
         self.captured: dict[str, ReadEvidenceByFetchedRow] = {}
         self.published: dict[str, ReadEvidence] = {}

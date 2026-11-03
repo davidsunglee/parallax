@@ -32,7 +32,6 @@ import pytest
 
 from parallax.conformance import vo_models
 from parallax.core import predicate as oa
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -880,9 +879,7 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     ref, *_ = customers.record_row(customer, builder, source=ROOT_LEVEL)
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
-    publisher = TypedRootPublisher(
-        CUSTOMER, graph_construction_for(vo_models.CUSTOMER_MODEL), CONCURRENCY
-    )
+    publisher = TypedRootPublisher(CUSTOMER, graph_construction_for(vo_models.CUSTOMER_MODEL))
 
     def publish_root(view: RootView, ordinal: int) -> tuple[object, ...]:
         assert view.invalid_root is None

@@ -24,7 +24,6 @@ from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
     BatchingStrategy,
-    ConcurrencyStrategy,
 )
 from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core._execution._unit_work.write_settlement import (
@@ -39,7 +38,6 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     SystemClock,
     TransactionInstant,
-    VersionArithmetic,
     WritePlanner,
     WritePlanningRequest,
 )
@@ -78,7 +76,6 @@ _PRODUCER_CLASSES = (
     WritePlanCompiler,
     PredecessorExpander,
     BatchingStrategy,
-    ConcurrencyStrategy,
     AuditStrategy,
     type(_BALANCE),
 )
@@ -119,7 +116,6 @@ def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
     assert _is_producer(_BALANCE)
     entity = _BALANCE.entities[0]
     assert not _is_producer(inheritance.view(_BALANCE).entity(entity.identity))
-    assert not _is_producer(VersionArithmetic(initial=1, increment=1))
     instant = inert_instant()
     assert _is_producer(instant.clock)
     assert not _is_producer(instant.value())
@@ -149,7 +145,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(clock),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=admitted_writes(
                 _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
             ),
@@ -200,7 +196,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=observed_buffer(writes, _POSITION, None),
         )
     )

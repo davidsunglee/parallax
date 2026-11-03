@@ -175,7 +175,7 @@ class TxnContext:
         refused (:class:`~parallax.core.execution.KeyedWriteValueError`,
         ``write-value-not-stored``) unless THIS transaction admitted its insert.
         The version column, if any, is never authored here — it is
-        framework-owned end to end (`m-opt-lock`; ADR 0013): the write seam
+        framework-owned end to end (`m-concurrency`; ADR 0013): the write seam
         derives its advance from the observation the source itself retained.
 
         A Bitemporal amendment starts where its source was read — the source's
@@ -401,7 +401,7 @@ class TxnContext:
 
         Every materialized node of a VERSIONED entity — root and included
         (deep-fetch) alike — CARRIES the observed version it was read at
-        (`m-opt-lock`; ADR 0013), in EITHER concurrency mode: a later keyed
+        (`m-concurrency`; ADR 0013), in EITHER concurrency mode: a later keyed
         write of that SAME object derives its version advance (and,
         under optimistic concurrency, its gate) from THAT value's own retained
         observation, never from an implicit resolving read at write time. Every

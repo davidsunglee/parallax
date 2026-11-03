@@ -10,7 +10,8 @@ from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core import auto_retry
-from parallax.core._execution._unit_work.uow import Concurrency, FlushTrigger
+from parallax.core._execution._unit_work.uow import FlushTrigger
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
     AcquisitionReason,
@@ -2400,7 +2401,7 @@ def open_transaction_root(
     installed: InstalledLifecycle | None,
     *,
     access_mode: AccessMode | None,
-    concurrency: Concurrency | None,
+    concurrency: ConcurrencyPreference | None,
     retries: int,
     isolation: IsolationLevel | None,
 ) -> TransactionInvocationActivity:

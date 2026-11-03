@@ -1,5 +1,5 @@
 model: models/account.yaml
-tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize]
+tags: [m-batch-write, m-concurrency, m-sql, write-sequence, materialize]
 shape: writeSequence
 given:
   fixtures: true

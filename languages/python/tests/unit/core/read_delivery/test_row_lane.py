@@ -8,7 +8,6 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
@@ -90,7 +89,7 @@ def test_a_row_form_read_judges_its_rows_as_it_records_them(
 
     monkeypatch.setattr(_convert, "judge_positions", refuse)
     monkeypatch.setattr(_convert.EntityReadMapping, "decode_payload", refuse)
-    first, second = _published_rows(stage, _ENCODED, CONCURRENCY, converter.row_publisher())
+    first, second = _published_rows(stage, _ENCODED, converter.row_publisher())
 
     assert dict(cast("Any", first))["badge_hex"] == "0e"
     assert [issue.code for issue in cast("Any", second).issues] == ["stored-data-leaf-undecodable"]

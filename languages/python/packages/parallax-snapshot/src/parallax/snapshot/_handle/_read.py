@@ -24,7 +24,6 @@ from parallax.core.wire._facts import WireModelFacts
 if TYPE_CHECKING:
     from parallax.snapshot._publication._wire import InstanceReader
 
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotMaterializationError
 from parallax.snapshot._inspection import SnapshotInspectionError
@@ -594,7 +593,7 @@ def typed_publication(
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         del includes
-        publisher = TypedRootPublisher(model.meta, construction, CONCURRENCY)
+        publisher = TypedRootPublisher(model.meta, construction)
 
         def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
             # Stored state contradicting the model is no failure here: it was
@@ -664,7 +663,7 @@ def wire_publication(
         current.begin_page()
         yield from publish_roots(
             page,
-            WireRootPublisher(model.meta, wire, CONCURRENCY, includes, current),
+            WireRootPublisher(model.meta, wire, includes, current),
             model.meta,
             atomic=atomic,
             ordinal_offset=ordinal_offset,

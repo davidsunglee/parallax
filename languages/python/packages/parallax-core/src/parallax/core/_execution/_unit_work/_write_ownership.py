@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Final, Literal, final
 
-from parallax.core import temporal_read
+from parallax.core import concurrency, temporal_read
 from parallax.core._execution._unit_work._errors import KeyedWriteValueError, UnitOfWorkError
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
@@ -397,8 +397,7 @@ class WriteOwnership:
     execution captured. Both are released when that observation is collected,
     however its sources were judged.
 
-    A source holds nothing of its ownership. ``version_after`` answers, from
-    no version, the version an insert stores.
+    A source holds nothing of its ownership.
     """
 
     __slots__ = (
@@ -415,18 +414,17 @@ class WriteOwnership:
         "_tags",
         "_temporal_facet",
         "_updating",
-        "_version_after",
+        "_versioning",
     )
 
     def __init__(
         self,
         meta: Metamodel,
         *,
-        version_after: Callable[[EntityIdentity, int | None], int | None],
         observations: Mapping[ObjectStateKey, RetainedObservation],
     ) -> None:
         self._temporal_facet = temporal_read.view(meta)
-        self._version_after = version_after
+        self._versioning = concurrency.view(meta)
         self._observations = observations
         # Every changed observed state by its observation's identity; each
         # current row's contributions, the reverse view of the same facts; and
@@ -646,8 +644,8 @@ class WriteOwnership:
         if record.pending_state == "opening" or self._is_temporal(target):
             return write
         version = record.produced_version
-        if version is None:
-            version = self._version_after(target.identity, None)
+        if version is None and self._versioning.version_attribute(target.identity) is not None:
+            version = concurrency.INITIAL_VERSION
         key = write.object_key
         scope = key if version is None else VersionedObjectStateKey(key, version)
         return replace(write, claim_scope=scope)

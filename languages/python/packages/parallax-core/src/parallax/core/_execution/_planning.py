@@ -3,8 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from parallax.core import batch_write, opt_lock
-from parallax.core._execution._concurrency import CONCURRENCY
+from parallax.core import batch_write
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._publication import ModelSelection, check_edition, select_model
 from parallax.core._execution._unit_work.preparation import WritePreparation
@@ -60,7 +59,6 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         wire=wire_model_facts(catalog),
         preparation=build_write_preparation(catalog.meta, positional=positional),
         planner=build_write_planner(catalog.meta),
-        evidence_policy_for=opt_lock.view(catalog.meta).required_key,
     )
 
 
@@ -197,7 +195,6 @@ def build_write_planner(model: Metamodel) -> WritePlanner:
     return WritePlanner(
         model,
         batching=_BatchingAdapter(),
-        concurrency=CONCURRENCY,
         audit=NO_AUDIT,
         payloads=LayoutPayloadPreparer(model),
     )

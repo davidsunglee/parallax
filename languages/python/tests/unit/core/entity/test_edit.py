@@ -6,8 +6,8 @@ row, and the refusals of a value carrying none — is the Typed write source's, 
 is pinned in ``test_typed_write_source.py``. Here the record is read straight out of the
 private slot the edit surface owns, because what this suite proves is what
 ``edit`` wrote. The version column's own advance is framework-owned end to end at
-the write seam (`m-opt-lock`); see ``test_write_lowering.py`` /
-``test_opt_lock.py``.
+the write seam (`m-concurrency`); see ``test_write_lowering.py`` /
+``test_concurrency.py``.
 """
 
 from __future__ import annotations

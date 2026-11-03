@@ -46,6 +46,7 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -62,7 +63,6 @@ from parallax.core.metamodel import (
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.unit_work import (
     AdmittedWrite,
-    Concurrency,
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
@@ -148,14 +148,14 @@ def _plan(
     model: Metamodel,
     *,
     observations: dict[ObjectKey, StateObservation] | None = None,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
     return build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=observed_buffer(buffer, model, observations),
         )
     )
@@ -522,7 +522,7 @@ def _finalized(composed: Sequence[ComposedWrite], model: Metamodel) -> WritePlan
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=composed,
         )
     )
@@ -748,7 +748,7 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
     request = WritePlanningRequest(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=_INSTANT,
-        concurrency="locking",
+        preference="locking",
         composed_writes=observed_buffer(buffer, _ORDERS, None),
     )
     first = planner.finalize(request)
@@ -896,7 +896,7 @@ def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_elimin
 @pytest.mark.parametrize("repeats", [1, 2])
 @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
 def test_a_temporal_update_naming_only_its_key_is_still_eliminated(
-    concurrency: Concurrency, repeats: int
+    concurrency: ConcurrencyPreference, repeats: int
 ) -> None:
     # A temporal update assigning nothing opens no successor worth chaining, so
     # stage 2 removes it exactly as it removes a non-temporal one, however
@@ -1067,7 +1067,7 @@ def _row_values_from_assignments(step: PlannedUpdate) -> dict[str, object]:
 
 
 # --------------------------------------------------------------------------- #
-# Affected-rows policy and optimistic gates (m-opt-lock, ADR 0044/0047).      #
+# Affected-rows policy and optimistic gates (m-concurrency, ADR 0044/0047).      #
 # --------------------------------------------------------------------------- #
 def test_a_versioned_update_with_a_recorded_observation_carries_a_settled_gate() -> None:
     update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},))
@@ -1544,7 +1544,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=prepared,
         )
     )
@@ -1636,7 +1636,7 @@ def test_settlement_reads_each_temporal_mutations_family_shape_once(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=buffered,
         )
     )
@@ -1673,7 +1673,7 @@ def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
-            concurrency="locking",
+            preference="locking",
             composed_writes=observed_buffer(_wallet_update(), model, None),
         )
     )
@@ -1884,7 +1884,7 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
-            concurrency="locking",
+            preference="locking",
             composed_writes=buffer,
         )
     )

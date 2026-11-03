@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core import temporal_read
+from parallax.core.concurrency import ConcurrencyFacet
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery._page import (
     InvalidData,
     InvalidRootInput,
     StoredDataIssue,
-    VersionAttributes,
     diagnosis,
     hydrates,
     observed_edge,
@@ -69,16 +69,17 @@ CONFORMING_ROOT: Final = ConformingRoot(0)
 def classify_root(
     root: RootView,
     model: Metamodel,
-    versions: VersionAttributes,
+    versioning: ConcurrencyFacet,
     *,
     ordinal: int,
 ) -> ConformingRoot | NonConformingRoot:
     """``root``'s verdict, attributed over its finalized publication segment.
 
     A root publishing no finding answers :data:`CONFORMING_ROOT` without reading
-    a node. ``versions`` names the explicit version Attribute a record publishes
-    its observed version from, and ``ordinal`` is the root's position in the
-    ordered result a Snapshot publishes.
+    a node. ``versioning`` is ``model``'s Concurrency Facet, which names the
+    explicit version Attribute a record publishes its observed version from,
+    and ``ordinal`` is the root's position in the ordered result a Snapshot
+    publishes.
     """
     if not root.has_issues:
         return CONFORMING_ROOT
@@ -100,7 +101,7 @@ def classify_root(
         ordinal=ordinal,
         issues=frozenset(issues),
         object_key=observed_object_key(layout, member_values, root.issues(0)),
-        version=observed_version(model, versions, layout, member_values),
+        version=observed_version(versioning, layout, member_values),
         edge=observed_edge(temporal_read.view(model), layout, member_values),
         node=0 if hydrating else None,
     )

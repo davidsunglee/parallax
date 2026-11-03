@@ -197,7 +197,7 @@ window admissibility follows from, and the axis the fixed expectations are keyed
 by rather than by fixture name."""
 
 type Gate = Literal["version", "axis", "none"]
-"""What supplies a target's Optimistic Lock Facet key: a declared version
+"""What supplies a target's version source: a declared version
 column, a Transaction-Time axis, or nothing at all. A target with none has no
 gate for the Optimistic strategy to weigh, so its Effective Concurrency Strategy
 is Locking under either preference."""

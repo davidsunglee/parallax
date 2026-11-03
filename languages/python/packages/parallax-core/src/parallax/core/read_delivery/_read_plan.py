@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Final, Literal, NamedTuple, Protocol, assert_never
 
 from parallax.core import inheritance, read_planning
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, TablePerConcreteSubtype
@@ -171,7 +171,7 @@ class ReadPlanner(Protocol):
         dialect: Dialect,
         query: ResolvedObjectQuery,
         result_form: ResultForm,
-        preference: Concurrency | None,
+        preference: ConcurrencyPreference | None,
     ) -> ReadPlan: ...
 
 
@@ -227,7 +227,7 @@ class _ReadPlanKey(NamedTuple):
     dialect: _Identity
     query: _QueryKey
     result_form: ResultForm
-    concurrency: Concurrency | None
+    preference: ConcurrencyPreference | None
     delivery: object
 
     def same_family(self, other: _ReadPlanKey) -> bool:
@@ -236,7 +236,7 @@ class _ReadPlanKey(NamedTuple):
             and self.model == other.model
             and self.dialect == other.dialect
             and self.result_form == other.result_form
-            and self.concurrency == other.concurrency
+            and self.preference == other.preference
             and self.query == other.query
         )
 
@@ -255,7 +255,7 @@ def _read_plan_key(
     dialect: Dialect,
     query: ResolvedObjectQuery,
     result_form: ResultForm,
-    preference: Concurrency | None,
+    preference: ConcurrencyPreference | None,
 ) -> _ReadPlanKey:
     paging = query.paging
     delivery: tuple[object, ...]
@@ -471,7 +471,7 @@ def _plan_uncached(
     dialect: Dialect,
     query: ResolvedObjectQuery,
     result_form: ResultForm,
-    preference: Concurrency | None,
+    preference: ConcurrencyPreference | None,
     reusable: ReadPlan | None = None,
     templated: bool = False,
 ) -> _CachedDelivery:
@@ -602,7 +602,7 @@ def _fetch_work(
     model: CatalogedModel,
     dialect: Dialect,
     result_form: ResultForm,
-    preference: Concurrency | None,
+    preference: ConcurrencyPreference | None,
     *,
     empty_root: bool,
 ) -> tuple[_FetchWork, ...]:
@@ -663,7 +663,7 @@ class ReadPlanCache:
         dialect: Dialect,
         query: ResolvedObjectQuery,
         result_form: ResultForm,
-        preference: Concurrency | None,
+        preference: ConcurrencyPreference | None,
     ) -> ReadPlan:
         if self._capacity == 0:
             return _plan_uncached(

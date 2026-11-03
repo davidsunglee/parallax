@@ -27,7 +27,6 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.core import opt_lock
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._publication import (
     read_projection,
@@ -163,9 +162,6 @@ def test_a_class_backed_model_prepares_every_product_for_every_entity() -> None:
     assert set(write.preparation._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.construction._facts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.wire._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    facet = opt_lock.view(write.model.meta)
-    assert write.evidence_policy_for == facet.required_key
-    assert all(write.evidence_policy_for(entity) is facet.key(entity) for entity in expected)
 
 
 def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None:

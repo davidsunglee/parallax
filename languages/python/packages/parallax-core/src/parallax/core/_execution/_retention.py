@@ -4,16 +4,16 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from parallax.core import inheritance, opt_lock, temporal_read
+from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._unit_work.evidence import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
 )
+from parallax.core.concurrency import ExplicitVersion, TransactionTimeVersion
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.opt_lock import ExplicitVersion, TransactionTimeDerived
 from parallax.core.temporal_read import (
     NON_TEMPORAL,
     Bitemporal,
@@ -125,7 +125,7 @@ class ReadEvidenceContext(Protocol):
 
 type _Locator = ExplicitVersion | TransactionTimeOnly | Bitemporal
 """The owner object that says what evidence a row carries: its family's shared
-explicit version key, or its family's shared Temporal Shape."""
+explicit version, or its family's shared Temporal Shape."""
 
 
 def _released_callback(*_args: object) -> None:
@@ -150,7 +150,6 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         "_entity",
         "_evidence_context",
         "_families",
-        "_keys",
         "_observations",
         "_participation",
         "_pass_states",
@@ -160,6 +159,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         "_resolved",
         "_resolved_count",
         "_temporal",
+        "_versioning",
     )
 
     def __init__(
@@ -174,12 +174,12 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         pin: Pin,
     ) -> None:
         self._families = inheritance.view(meta)
-        self._keys = opt_lock.view(meta)
+        self._versioning = concurrency.view(meta)
         self._temporal = temporal_read.view(meta)
         retained: list[_PendingObservation] = [
             pending
             if not isinstance(pending, _ReadEvidenceFetchedRow)
-            or isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
+            or isinstance(self._versioning.version_source(pending.entity), TransactionTimeVersion)
             else pending.node
             for pending in observations._rows  # pyright: ignore[reportPrivateUsage] - same-module transfer
         ]
@@ -223,12 +223,12 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         entity = self._entity(key) if isinstance(pending, int) else pending.entity
         self._observations[key] = key
         locator: _Locator
-        match self._keys.key(entity):
+        match self._versioning.version_source(entity):
             case None:
                 return
             case ExplicitVersion() as version:
                 locator = version
-            case TransactionTimeDerived():
+            case TransactionTimeVersion():
                 locator = self._temporal_shape(entity)
             case _:
                 self._resolve_unversioned(key, entity)
@@ -292,7 +292,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         self._primary_key = cast("Callable[[int], object | None]", _released_callback)
         self._evidence_context = cast("ReadEvidenceContext", None)
         self._families = cast("inheritance.InheritanceFacet", None)
-        self._keys = cast("opt_lock.OptimisticLockFacet", None)
+        self._versioning = cast("concurrency.ConcurrencyFacet", None)
         self._temporal = cast("TemporalFacet", None)
 
 
@@ -307,7 +307,7 @@ def defer_read_evidence(
     pin: Pin,
 ) -> ReadEvidenceByFetchedRow:
     """A mapping that retains evidence as valid judged states become reachable
-    (`m-opt-lock`; ADR 0013; `m-unit-work` "Observation lifetime").
+    (`m-concurrency`; ADR 0013; `m-unit-work` "Observation lifetime").
 
     Each fetched row's Read Evidence resolves when first read. Versioned and
     temporal evidence comes from the Entity State the Page judged for that

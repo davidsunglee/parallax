@@ -9,8 +9,9 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import inheritance, opt_lock, relationship, temporal_read
+from parallax.core import concurrency, inheritance, relationship, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
+from parallax.core.concurrency import MODEL_COMPILER as CONCURRENCY_COMPILER
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
 from parallax.core.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
@@ -42,7 +43,6 @@ from parallax.core.model_formation._errors import (
     FORMATION_FACET_MISSING,
     FormationContractError,
 )
-from parallax.core.opt_lock import MODEL_COMPILER as OPT_LOCK_COMPILER
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
 from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
 from parallax.core.temporal_read import (
@@ -154,12 +154,12 @@ def test_the_builtin_manifest_declares_this_modules_compiler_and_no_rule_set() -
     assert temporal_read.MODEL_COMPILER.requires == frozenset({INHERITANCE_FACET_KEY})
 
 
-def test_the_temporal_row_follows_relationship_and_precedes_opt_lock() -> None:
+def test_the_temporal_row_follows_relationship_and_precedes_concurrency() -> None:
     # Manifest entry order is the spec table's order, and this file's row is its
     # sixth.
     owners = [entry.owner for entry in BUILTIN_MANIFEST.entries]
     assert owners.index("m-relationship") < owners.index(TEMPORAL_READ_MODULE)
-    assert owners.index(TEMPORAL_READ_MODULE) < owners.index("m-opt-lock")
+    assert owners.index(TEMPORAL_READ_MODULE) < owners.index("m-concurrency")
 
 
 def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
@@ -410,7 +410,7 @@ def test_a_profile_missing_the_required_inheritance_compiler_fails_before_execut
         RELATIONSHIP_COMPILER,
         STORAGE_LAYOUT_COMPILER,
         temporal_read.MODEL_COMPILER,
-        OPT_LOCK_COMPILER,
+        CONCURRENCY_COMPILER,
     )
     with pytest.raises(FormationContractError) as raised:
         form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
@@ -425,7 +425,7 @@ def test_a_profile_installing_one_facet_key_twice_fails_before_execution() -> No
         STORAGE_LAYOUT_COMPILER,
         temporal_read.MODEL_COMPILER,
         temporal_read.MODEL_COMPILER,
-        OPT_LOCK_COMPILER,
+        CONCURRENCY_COMPILER,
     )
     with pytest.raises(FormationContractError) as raised:
         form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
@@ -438,4 +438,4 @@ def test_an_accepted_model_installs_the_complete_facet_set_at_once() -> None:
     assert inheritance.view(model) is not None
     assert relationship.view(model) is not None
     assert temporal_read.view(model) is not None
-    assert opt_lock.view(model) is not None
+    assert concurrency.view(model) is not None

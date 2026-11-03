@@ -342,7 +342,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
     {
         "m-temporal-write-021",
         "m-inheritance-105",
-        "m-opt-lock-012",
+        "m-concurrency-012",
         "m-temporal-read-010",
         "m-unit-work-031",
         "m-unit-work-032",
@@ -354,7 +354,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 
 # The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
 # `engine.run_interleaved_scenario_case` over its own dedicated executions:
-# `m-opt-lock-012`'s optimistic-lock race; the races of two temporal closes, each
+# `m-concurrency-012`'s optimistic-lock race; the races of two temporal closes, each
 # group at its own instant — `m-temporal-read-010` over a Transaction-Time-Only
 # milestone, `m-temporal-write-021` over a Valid-Time-pinned bitemporal rectangle, and
 # `m-inheritance-105` over a table-per-hierarchy subtype's tag-guarded milestone;
@@ -382,7 +382,7 @@ _INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
     {
         "m-temporal-write-021",
         "m-inheritance-105",
-        "m-opt-lock-012",
+        "m-concurrency-012",
         "m-temporal-read-010",
         "m-unit-work-032",
         "m-unit-work-034",
@@ -931,7 +931,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     case states it, `then.tableState`.
 
     The `expectRows` grade is each case's own teeth, and what it catches
-    differs per case. For `m-opt-lock-012` a broken abort that left the doomed
+    differs per case. For `m-concurrency-012` a broken abort that left the doomed
     group's buffered insert durable would still emit well-formed DML and report
     the conflict, and its trailing verify find would observe account
     9. For the temporal races (`m-temporal-read-010`, `m-temporal-write-021`,
@@ -1061,13 +1061,13 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 
 
 # --------------------------------------------------------------------------- #
-# Conflict — the optimistic-lock run lane (m-opt-lock). Every reachable       #
+# Conflict — the optimistic-lock run lane (m-concurrency). Every reachable       #
 # conflict case declares `compileEligibility: run-only` (single-connection    #
 # concurrency intent), so `run` is the ONLY lane that ever grades it —        #
 # mirroring the pk-gen `sequence` run-only set below, neither joins           #
 # `WRITE_EXERCISED` (that set couples compile AND run grading; a run-only     #
 # case would fail `test_compile_sweep`'s `status == "ok"` assert). A          #
-# `when.attempts` sequence (`m-opt-lock-009`) is production's own replay of   #
+# `when.attempts` sequence (`m-concurrency-009`) is production's own replay of   #
 # one invocation, each authored attempt one physical attempt of it. Every     #
 # non-temporal conflict case here settles against a state a REAL read of this #
 # lane observed, so the concurrent writer commits between that read and the   #
@@ -1080,10 +1080,10 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
-        "m-opt-lock-005",
-        "m-opt-lock-006",
-        "m-opt-lock-009",
-        "m-opt-lock-013",
+        "m-concurrency-005",
+        "m-concurrency-006",
+        "m-concurrency-009",
+        "m-concurrency-013",
         "m-value-object-046",
     }
 )
@@ -1112,10 +1112,10 @@ def _conflict_golden_statements(
 def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     """Run each `conflict`-shape case against a reset real database.
 
-    The single-attempt form (`m-opt-lock-005/006/013`) grades the golden write's
+    The single-attempt form (`m-concurrency-005/006/013`) grades the golden write's
     emissions and `then.affectedRows` — the count the write's own target expects,
     or the count a refused write reached instead. The `when.attempts` replay form
-    (`m-opt-lock-009`) grades each attempt's own statements flattened in order
+    (`m-concurrency-009`) grades each attempt's own statements flattened in order
     (proving the `0`-then-`1` transition through each attempt's own distinct gate
     bind) and the FINAL affected-row count. A case authoring `then.databaseCalls`
     grades the calls that reached the database across every attempt — its

@@ -69,7 +69,6 @@ from parallax.core._execution._unit_work.instructions import PreparedPredicateIn
 from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
-    ConcurrencyStrategy,
 )
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.dialect import Dialect
@@ -226,13 +225,10 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         model: Metamodel,
         *,
         batching: BatchingStrategy,
-        concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
         payloads: WritePayloadPreparer,
     ) -> WritePlanner:
-        planner = WritePlanner(
-            model, batching=batching, concurrency=concurrency, audit=audit, payloads=payloads
-        )
+        planner = WritePlanner(model, batching=batching, audit=audit, payloads=payloads)
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 
@@ -451,7 +447,7 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _watch("conformance conflict", monkeypatch)
-    case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
+    case = case_format.load_case(_CASES / "m-concurrency-006-success.yaml")
     emissions, _affected, _state, _database_calls = engine.run_conflict_case(
         case,
         ScriptedAdapter(

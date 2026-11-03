@@ -7,7 +7,7 @@
 # `m-temporal-write-038`, closes R3 from the same two observations, so only the pair rules
 # out resolving by primary key and always picking the same rectangle.
 model: models/position.yaml
-tags: [m-temporal-write, m-unit-work, m-opt-lock, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-unit-work, m-concurrency, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

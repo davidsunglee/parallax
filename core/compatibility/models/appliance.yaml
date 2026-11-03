@@ -1,5 +1,5 @@
 # Appliance: a VERSIONED TABLE-PER-CONCRETE-SUBTYPE inheritance model
-# (m-inheritance x m-opt-lock — COR-3 Phase 8 DQ1, the TPCS versioned-write
+# (m-inheritance x m-concurrency — COR-3 Phase 8 DQ1, the TPCS versioned-write
 # positive witness).
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is a

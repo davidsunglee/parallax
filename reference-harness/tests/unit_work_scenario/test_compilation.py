@@ -50,7 +50,7 @@ def test_scenario_cases_are_discovered_and_self_describe(scenario_cases) -> None
             assert "databaseCalls" in step
             if "write" in step:
                 # A committed / rolled-back write lists golden DML; a NO-OP write
-                # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
+                # (a versioned UPDATE that changes no attribute, m-concurrency) issues no DML,
                 # so it declares databaseCalls 0 and lists none — like a cache hit.
                 if step["databaseCalls"] == 0:
                     assert not step.get("statements"), "a no-op write step lists no golden DML"
@@ -105,11 +105,11 @@ def test_rollback_scenario_step_is_discovered_and_self_describes(corpus_case) ->
 
 
 def test_no_op_write_scenario_step_is_discovered_and_self_describes(corpus_case) -> None:
-    case = corpus_case("m-opt-lock-001-no-op-update-no-dml.yaml")
+    case = corpus_case("m-concurrency-001-no-op-update-no-dml.yaml")
     no_ops = [step for step in case.scenario if "write" in step and step["databaseCalls"] == 0]
     assert no_ops, "no no-op-write scenario step discovered"
     for step in no_ops:
-        # A NO-OP write (a versioned UPDATE that changes no attribute, m-opt-lock) issues
+        # A NO-OP write (a versioned UPDATE that changes no attribute, m-concurrency) issues
         # NO DML: it lists no golden SQL and costs zero Database Calls, mirroring a
         # cache-hit read step.
         assert not step.get("statements"), "a no-op write step must list no golden DML"
@@ -120,7 +120,7 @@ def test_no_op_write_scenario_step_is_discovered_and_self_describes(corpus_case)
 def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corpus_case) -> None:
     # m-unit-work-005: an OBSERVING find, then a committed UPDATE that advances from
     # that observation, then a dependent find that MUST observe the new value
-    # (read-your-own-writes for UPDATE; `m-opt-lock`'s prior-observation rule).
+    # (read-your-own-writes for UPDATE; `m-concurrency`'s prior-observation rule).
     case = corpus_case("m-unit-work-005-ryow-update.yaml")
     observe, write, find = case.scenario
     assert observe["expectRows"] == [{"id": 1, "owner": "Ada", "balance": "100.00", "version": 1}]
@@ -141,7 +141,7 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corp
 def test_read_your_own_writes_delete_scenario_observes_absence(corpus_case) -> None:
     # m-unit-work-006: an OBSERVING find, then a committed DELETE of that observed
     # row, then a dependent find that MUST observe the row's ABSENCE
-    # (read-your-own-writes for DELETE; `m-opt-lock`'s prior-observation rule).
+    # (read-your-own-writes for DELETE; `m-concurrency`'s prior-observation rule).
     case = corpus_case("m-unit-work-006-ryow-delete.yaml")
     observe, write, find = case.scenario
     assert observe["expectRows"] == [{"id": 3, "owner": "Grace", "balance": "10.00", "version": 1}]
@@ -202,7 +202,7 @@ def test_a_case_level_database_call_mismatch_is_refused(damaged_case) -> None:
 
 
 def test_a_step_golden_must_be_canonical(damaged_case) -> None:
-    case = damaged_case("m-opt-lock-001-no-op-update-no-dml.yaml")
+    case = damaged_case("m-concurrency-001-no-op-update-no-dml.yaml")
     case.when["scenario"][0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM account t0"
     with pytest.raises(CaseFailure, match="not canonical"):
         assert_unit_work_scenario(case, RefusingProvider())

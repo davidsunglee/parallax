@@ -33,13 +33,13 @@ from parallax.core import (
     Entity,
     Int32,
     attr,
-    opt_lock,
     temporal_read,
 )
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.write_items import ComposedWrite
+from parallax.core.concurrency import ConcurrencyPreference
+from parallax.core.concurrency import view as concurrency_view
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -51,7 +51,6 @@ from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedWriteInstruction,
     TransactionSettings,
     UnitOfWork,
@@ -209,14 +208,14 @@ def _settled_versions(steps: list[PlannedStep]) -> list[tuple[EntityIdentity, ob
 
 
 def _owner_version(entity: EntityIdentity) -> object:
-    key = opt_lock.view(_MODEL).key(entity)
-    assert isinstance(key, opt_lock.ExplicitVersion)
-    return key.attribute
+    attribute = concurrency_view(_MODEL).version_attribute(entity)
+    assert attribute is not None
+    return attribute
 
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
-    monkeypatch: pytest.MonkeyPatch, concurrency: Concurrency
+    monkeypatch: pytest.MonkeyPatch, concurrency: ConcurrencyPreference
 ) -> None:
     prepared = _prepared_writes()
     planner = build_write_planner(_MODEL)
@@ -226,7 +225,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=prepared,
         )
     )
@@ -282,7 +281,7 @@ def _temporal_writes() -> list[ComposedWrite]:
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_family_shape(
-    monkeypatch: pytest.MonkeyPatch, concurrency: Concurrency
+    monkeypatch: pytest.MonkeyPatch, concurrency: ConcurrencyPreference
 ) -> None:
     planner = build_write_planner(_TEMPORAL_MODEL)
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
@@ -292,7 +291,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=_temporal_writes(),
         )
     )
@@ -439,7 +438,9 @@ class _PreparedPage:
                 each_root(
                     self.page,
                     meta,
-                    lambda root, ordinal: classify_root(root, meta, CONCURRENCY, ordinal=ordinal),
+                    lambda root, ordinal: classify_root(
+                        root, meta, concurrency_view(meta), ordinal=ordinal
+                    ),
                 )
             )
         selected = (
@@ -551,7 +552,6 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(meta).required_key,
     )
     retained = retained_sources(meta, judged, evidence_context=uow.source_authority)[0].observation
 

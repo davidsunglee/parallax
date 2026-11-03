@@ -171,7 +171,7 @@ class Session(Protocol):
         """Run DML inside the held transaction; return the affected-row count.
 
         The count is what makes an optimistic-lock conflict observable inside a
-        buffered unit of work (m-opt-lock): a stale-version gate matches 0 rows.
+        buffered unit of work (m-concurrency): a stale-version gate matches 0 rows.
         """
         ...
 

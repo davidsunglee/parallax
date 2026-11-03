@@ -178,7 +178,7 @@ def _grouped_case(prefix: str, binds: list[Any]) -> Case:
 
 
 @pytest.mark.parametrize(
-    "prefix", ["m-batch-write-002", "m-batch-write-004", "m-opt-lock-042", "m-opt-lock-043"]
+    "prefix", ["m-batch-write-002", "m-batch-write-004", "m-concurrency-042", "m-concurrency-043"]
 )
 def test_a_grouped_effect_is_graded_row_by_row(prefix: str) -> None:
     case = next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
@@ -206,7 +206,7 @@ def test_a_grouped_delete_must_remove_each_rows_own_key() -> None:
 
 
 def test_a_versioned_grouped_effect_must_gate_each_row_on_its_own_observation() -> None:
-    case = _grouped_case("m-opt-lock-042", [[1, 2], [4, 1], [2, 5], [["c", "c"], ["d"]]])
+    case = _grouped_case("m-concurrency-042", [[1, 2], [4, 1], [2, 5], [["c", "c"], ["d"]]])
     with pytest.raises(CaseFailure, match="!= golden bind"):
         _assert_write_input_columns(case, "postgres")
 
@@ -666,7 +666,7 @@ def test_plural_temporal_step_is_rejected() -> None:
     ("case_id", "entity_name", "mutation", "expected"),
     [
         ("m-batch-write-001", "Wallet", "amend", "unversioned row"),
-        ("m-opt-lock-002", "Account", "insert", "insert row"),
+        ("m-concurrency-002", "Account", "insert", "insert row"),
         ("m-temporal-write-001", "Balance", "amend", "temporal row"),
     ],
 )
@@ -691,7 +691,7 @@ def test_a_versioned_update_row_observation_is_entitled() -> None:
     # The one entitled pair: a versioned, non-temporal update against an existing
     # row requires the prior observation in either concurrency mode, so its
     # `observedVersion` is classified rather than refused.
-    case = _write_case_by_id("m-opt-lock-002")
+    case = _write_case_by_id("m-concurrency-002")
     entity = case.model.entity("Account")
     *_, observed = classify_write_row(
         case, entity, {"id": 1, "observedVersion": 3}, mutation="amend", opening=False

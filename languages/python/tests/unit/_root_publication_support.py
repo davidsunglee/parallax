@@ -23,8 +23,11 @@ from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import (
     InvalidRootInput,
     Page,
+    PageSchedule,
     RootViewLayout,
     StoredDataIssueInput,
+    _rows,
+    page_rows,
 )
 from parallax.core.temporal_read import Pin, TemporalShape
 from parallax.snapshot._publication._root import RootView
@@ -122,3 +125,10 @@ def observed_roots(
     return each_root(
         page, model, observed, atomic=atomic, milestones=milestones, read_evidence=read_evidence
     )
+
+
+def deferring_schedule(page: Page) -> PageSchedule:
+    """The schedule an atomic publication of ``page`` takes when every root's
+    family settles against its observation: states defer, and each projection
+    is released at its last use."""
+    return PageSchedule(_rows._last_uses(page_rows(page)), True)  # pyright: ignore[reportPrivateUsage] - a release suite needs the schedule, not the policy choosing it

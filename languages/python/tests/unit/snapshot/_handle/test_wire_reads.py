@@ -31,7 +31,6 @@ from parallax.conformance import class_models, models
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, PresentDocument
 from parallax.core.db_port import (
@@ -132,9 +131,7 @@ def _root_includes(identity: EntityIdentity) -> IncludeTree:
 
 def _published_directly(page: Page, model: Metamodel, includes: IncludeTree) -> tuple[object, ...]:
     """``page``'s roots published straight through the Wire root publisher."""
-    publisher = WireRootPublisher(
-        model, wire_facts_for(CatalogedModel(model)), CONCURRENCY, includes
-    )
+    publisher = WireRootPublisher(model, wire_facts_for(CatalogedModel(model)), includes)
     return tuple(publish_roots(page, publisher, model))
 
 

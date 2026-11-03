@@ -178,14 +178,14 @@ def _shortfalls(units: dict[str, dict[str, object]] | None) -> list[object]:
 
 
 def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
-    # `m-opt-lock-012` end to end over two SCRIPTED fake connections (never a
+    # `m-concurrency-012` end to end over two SCRIPTED fake connections (never a
     # real database): the `ours` group's own observing find (step 0) is stale
     # by the time it flushes (step 3) — the `concurrent` group (steps 1-2)
     # committed its own gated update first — so the doomed group's SECOND
     # write (the version-gated update) affects 0 rows, and the group's own
     # buffered insert (account 9) is discarded with it. The trailing
     # ungrouped verify find (step 4) observes no rows for it.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
@@ -249,7 +249,7 @@ def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
     # group's (step 3) through the caller's port. A shared dialect taken off the
     # main port would make the concurrent group report DML the peer never ran,
     # which its own plan-versus-delivery reconciliation refuses outright.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
@@ -276,7 +276,7 @@ def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the
     # executors do: applied on the caller's own port after the fixtures and before
     # either worker starts, so both groups race against the state it left. Its own
     # first write lands after it in `writes` order, which is what pins the ordering.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     with_apply = dataclasses.replace(
         case,
         document={
@@ -306,9 +306,9 @@ def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the
 def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_too() -> None:
     # The conflict-rendering fallback is symmetric: whichever group's own
     # last write conflicts, its `actual` affected-row count surfaces —
-    # `m-opt-lock-012`'s own corpus witness always dooms the FIRST-labeled
+    # `m-concurrency-012`'s own corpus witness always dooms the FIRST-labeled
     # (`ours`) group, but the engine's own logic does not assume that. A
-    # synthetic two-group scenario (never `m-opt-lock-012` itself: its own
+    # synthetic two-group scenario (never `m-concurrency-012` itself: its own
     # fixed step order makes the SECOND group's conflict turnstile-unsafe —
     # something downstream always waits on its final `advance()`) pins the
     # fallback: the SECOND group's own last step is also the scenario's
@@ -378,7 +378,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     # A group's own write step that is NOT its last step buffers without
     # forcing a flush (mirroring the keyed unit-of-work lane's own per-step
     # buffering for a contiguous span, `_run_interleaved_group`'s own
-    # generalization of the SAME machinery) — unwitnessed by `m-opt-lock-012`
+    # generalization of the SAME machinery) — unwitnessed by `m-concurrency-012`
     # itself (whose own two groups each carry exactly one write, always last).
     case = _synthetic_write(
         "scenario",
@@ -540,7 +540,7 @@ def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -
     # `_Turnstile.release_all` unsticks the partner thread (blocked on
     # `wait_for` a later step that now never arrives) so `thread.join()`
     # itself never hangs either.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     failure = RuntimeError("a worker thread's own unexpected defect")
     ours_port = ScriptedPort(raise_on_read=failure)
     peer_port = ScriptedPort(
@@ -571,7 +571,7 @@ def test_run_interleaved_scenario_case_refuses_an_execution_granting_no_terminat
     # named at once rather than first-failure-only, and the refusal must still
     # release both sessions it had already opened. Nothing ran: neither scripted
     # port ever saw a statement.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     healthy_row: MappingRow = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
     ours_port = ScriptedPort(read_rows=[[healthy_row]])
     peer_port = ScriptedPort(read_rows=[[healthy_row]])
@@ -592,7 +592,7 @@ def test_run_interleaved_scenario_case_releases_the_first_when_the_second_will_n
     # Incremental ownership: a second session that cannot be opened must not
     # leak the first. The failure surfaces as itself — never masked by the
     # release — and the session already opened is closed on the way out.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     ours_port = ScriptedPort()
     peer_port = ScriptedPort()
     executions = _ScriptedExecutions(ours_port, peer_port, refuse_at=1)
@@ -608,7 +608,7 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
     # That entry point fills no `stepGraphs` channel, so an `expectGraph` authored
     # on an interleaved case would be an oracle nothing answers. It is refused
     # rather than left silent.
-    case = _own_copy(_load_case("m-opt-lock-012"))
+    case = _own_copy(_load_case("m-concurrency-012"))
     when = cast("dict[str, Any]", case.document["when"])
     steps = cast("list[dict[str, Any]]", when["scenario"])
     steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
@@ -622,8 +622,8 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
 def _with_option_placement(
     placement: Mapping[str, Mapping[str, object]],
 ) -> case_format.Case:
-    """`m-opt-lock-012` with each block of ``placement`` merged into its document."""
-    case = _own_copy(_load_case("m-opt-lock-012"))
+    """`m-concurrency-012` with each block of ``placement`` merged into its document."""
+    case = _own_copy(_load_case("m-concurrency-012"))
     document = cast("dict[str, Any]", case.document)
     for group, fields in placement.items():
         document[group] = {**cast("Mapping[str, Any]", document.get(group) or {}), **fields}
@@ -722,7 +722,7 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
     # root the case configures reaches both dedicated sessions' Handles, and
     # each group's transaction opens at the root's level while the request
     # carries only what `when.uow` authored.
-    case = _load_case("m-opt-lock-012")
+    case = _load_case("m-concurrency-012")
     document = dict(case.document)
     document["given"] = {
         **cast("Mapping[str, Any]", document.get("given") or {}),

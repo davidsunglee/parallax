@@ -79,7 +79,7 @@ _INHERITANCE: Final[ModuleIdentity] = "m-inheritance"
 _STORAGE_LAYOUT: Final[ModuleIdentity] = "m-storage-layout"
 _RELATIONSHIP: Final[ModuleIdentity] = "m-relationship"
 _TEMPORAL: Final[ModuleIdentity] = "m-temporal-read"
-_OPT_LOCK: Final[ModuleIdentity] = "m-opt-lock"
+_CONCURRENCY: Final[ModuleIdentity] = "m-concurrency"
 
 
 def _is_text(value: object) -> TypeGuard[str]:
@@ -107,7 +107,7 @@ class _CustomMutableFacet:
 _INHERITANCE_FACET: Final[FacetKey[str]] = FacetKey(_INHERITANCE, _is_text)
 _RELATIONSHIP_FACET: Final[FacetKey[str]] = FacetKey(_RELATIONSHIP, _is_text)
 _TEMPORAL_FACET: Final[FacetKey[str]] = FacetKey(_TEMPORAL, _is_text)
-_OPT_LOCK_FACET: Final[FacetKey[str]] = FacetKey(_OPT_LOCK, _is_text)
+_CONCURRENCY_FACET: Final[FacetKey[str]] = FacetKey(_CONCURRENCY, _is_text)
 
 _PERMISSIVE_INHERITANCE_FACET: Final[FacetKey[str]] = FacetKey(_INHERITANCE, _accepts_everything)
 """A key equal to ``_INHERITANCE_FACET`` whose acceptance check refuses nothing.
@@ -619,7 +619,7 @@ def test_the_specification_table_is_readable_and_complete() -> None:
         "m-value-object",
         _RELATIONSHIP,
         _TEMPORAL,
-        _OPT_LOCK,
+        _CONCURRENCY,
     ]
 
 
@@ -763,14 +763,18 @@ def test_a_malformed_declared_code_is_invalid() -> None:
 
 def test_two_rows_claiming_one_issue_code_is_drift() -> None:
     """One catalog stem nested inside another lets two owners spell one code legally."""
-    shared: IssueCode = "opt-lock-multiple-attributes"
+    nested: ModuleIdentity = "m-concurrency-version"
+    shared: IssueCode = "concurrency-version-multiple-attributes"
     manifest = FormationManifest(
-        (_resolver_row(), _rule_set_row("m-opt", shared), _rule_set_row(_OPT_LOCK, shared))
+        (_resolver_row(), _rule_set_row(_CONCURRENCY, shared), _rule_set_row(nested, shared))
     )
     profile = _Profile(
-        rule_sets=(_RuleSet("m-opt", frozenset({shared})), _RuleSet(_OPT_LOCK, frozenset({shared})))
+        rule_sets=(
+            _RuleSet(_CONCURRENCY, frozenset({shared})),
+            _RuleSet(nested, frozenset({shared})),
+        )
     )
-    _contract_failure(manifest, profile, FORMATION_PROFILE_DRIFT, owner=_OPT_LOCK)
+    _contract_failure(manifest, profile, FORMATION_PROFILE_DRIFT, owner=nested)
 
 
 def test_an_undeclared_model_compiler_is_drift() -> None:
@@ -821,13 +825,15 @@ def test_requiring_a_facet_no_row_compiles_is_a_missing_facet() -> None:
     manifest = FormationManifest(
         (
             _resolver_row(),
-            _compiler_row(_TEMPORAL, _TEMPORAL_FACET, required_facets=frozenset({_OPT_LOCK_FACET})),
+            _compiler_row(
+                _TEMPORAL, _TEMPORAL_FACET, required_facets=frozenset({_CONCURRENCY_FACET})
+            ),
         )
     )
     profile = _Profile(
-        model_compilers=(_Compiler(_TEMPORAL, _TEMPORAL_FACET, frozenset({_OPT_LOCK_FACET})),)
+        model_compilers=(_Compiler(_TEMPORAL, _TEMPORAL_FACET, frozenset({_CONCURRENCY_FACET})),)
     )
-    _contract_failure(manifest, profile, FORMATION_FACET_MISSING, owner=_OPT_LOCK)
+    _contract_failure(manifest, profile, FORMATION_FACET_MISSING, owner=_CONCURRENCY)
 
 
 def test_a_facet_dependency_cycle_is_drift() -> None:
@@ -1284,8 +1290,8 @@ def _facet_manifest() -> FormationManifest:
                 _TEMPORAL, _TEMPORAL_FACET, required_facets=frozenset({_INHERITANCE_FACET})
             ),
             _compiler_row(
-                _OPT_LOCK,
-                _OPT_LOCK_FACET,
+                _CONCURRENCY,
+                _CONCURRENCY_FACET,
                 required_facets=frozenset({_INHERITANCE_FACET, _TEMPORAL_FACET}),
             ),
         )
@@ -1297,8 +1303,8 @@ def test_model_compilers_run_in_topological_order_with_ascending_owner_tiebreak(
     handed: dict[ModuleIdentity, tuple[str, ...]] = {}
     compilers = (
         _Compiler(
-            _OPT_LOCK,
-            _OPT_LOCK_FACET,
+            _CONCURRENCY,
+            _CONCURRENCY_FACET,
             frozenset({_INHERITANCE_FACET, _TEMPORAL_FACET}),
             calls,
             handed,
@@ -1308,11 +1314,11 @@ def test_model_compilers_run_in_topological_order_with_ascending_owner_tiebreak(
         _Compiler(_INHERITANCE, _INHERITANCE_FACET, frozenset(), calls, handed),
     )
     model = form(source(*_valid_model()), _facet_manifest(), _Profile(model_compilers=compilers))
-    assert calls == [_INHERITANCE, _RELATIONSHIP, _TEMPORAL, _OPT_LOCK]
+    assert calls == [_INHERITANCE, _RELATIONSHIP, _TEMPORAL, _CONCURRENCY]
     assert handed[_INHERITANCE] == ()
     assert handed[_TEMPORAL] == (_INHERITANCE,)
-    assert handed[_OPT_LOCK] == (_INHERITANCE, _TEMPORAL)
-    assert model.facet(_OPT_LOCK_FACET) == f"facet of {_OPT_LOCK}"
+    assert handed[_CONCURRENCY] == (_INHERITANCE, _TEMPORAL)
+    assert model.facet(_CONCURRENCY_FACET) == f"facet of {_CONCURRENCY}"
     assert model.facet(_RELATIONSHIP_FACET) == f"facet of {_RELATIONSHIP}"
 
 

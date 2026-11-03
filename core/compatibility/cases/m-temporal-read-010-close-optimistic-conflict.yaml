@@ -1,13 +1,13 @@
 # Optimistic Transaction-Time-Only termination gated on a STALE observed in_z affects
 # ZERO rows even though a current milestone exists — the lost update the in_z gate
-# catches (m-temporal-read + m-opt-lock). It carries the stale-gate conflict the
+# catches (m-temporal-read + m-concurrency). It carries the stale-gate conflict the
 # conflict form pinned — the close-only shape addressed by the key and the open
 # out_z, gated on an in_z no longer current — now produced by a public `terminate`
 # racing a concurrent unit of work's public `update` that committed first. It
 # additionally grades both units' fates and the state the race leaves: the
 # winner's close and chained successor stand, and the loser's close changes no row.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-temporal-write, m-unit-work, m-sql, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-concurrency, m-temporal-write, m-unit-work, m-sql, temporal, audit-only, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -917,7 +917,7 @@ def _gate(
 ) -> str:
     """``<version> = ?`` for a gated step, else nothing.
 
-    The gate binds LAST, no exception (`m-opt-lock` "the version gate binds
+    The gate binds LAST, no exception (`m-sql` "the version gate binds
     last"). Whether one exists at all was decided during planning, so nothing
     here consults a mode.
     """

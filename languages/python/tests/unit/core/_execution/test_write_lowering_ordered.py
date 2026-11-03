@@ -260,7 +260,7 @@ def _planned(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
-                concurrency="locking",
+                preference="locking",
                 composed_writes=[unobserved_write(prepared, meta)],
             )
         )

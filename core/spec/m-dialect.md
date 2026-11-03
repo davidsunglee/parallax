@@ -897,7 +897,7 @@ placement-free spelling `m-read-planning-012` already witnesses).
     `for share of t0` (the alias-qualified `for share`), **MariaDB** the
     unaliased **`lock in share mode`** (no `for share` keyword; MDEV-17514);
   - a lockable **object find** under the **Optimistic** strategy is returned
-    unchanged (`m-opt-lock` takes no lock).
+    unchanged (that strategy takes no lock, `m-concurrency`).
 
   Only the root alias's rows are locked. Postgres's qualified form names the root
   alias, so a locking read may join shared to-one targets and their owner results

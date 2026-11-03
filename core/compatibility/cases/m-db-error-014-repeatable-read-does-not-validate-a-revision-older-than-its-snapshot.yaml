@@ -2,7 +2,7 @@
 # transaction that starts afterward reads version 2 and writes from it; Repeatable
 # Read raises nothing, because the reviewed revision predates the snapshot.
 model: models/account.yaml
-tags: [m-db-error, m-opt-lock, m-unit-work, isolation, concurrency, repeatable-read, slice-snapshot-1]
+tags: [m-db-error, m-concurrency, m-unit-work, isolation, concurrency, repeatable-read, slice-snapshot-1]
 shape: concurrencySuccess
 compileEligibility:
   mode: run-only

@@ -306,3 +306,9 @@ composition whose range reaches coverage no observation holds finalizes as a
 deferred range unit, which the executor binds to the coverage it reads inside the
 flush. Result-dependent no-op filtering of a predicate-selected mutation is
 unchanged.
+
+*Superseded in part (2026-11, [ADR 0083](0083-concurrency-policy-is-a-model-facet-unit-of-work-reads-directly.md)):*
+locking no longer enters write finalization through an injected strategy port;
+the planner reads each Entity's strategy and version from the model's
+Concurrency Facet. Batching, temporal, and audit behavior still enter through
+injected strategy ports, and the rest of this decision stands.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from parallax.core import continuation, temporal_read
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
@@ -35,7 +35,7 @@ def find[Origin](
     port: DatabaseConnection,
     *,
     origin_collector: PageOriginCollector[Origin],
-    preference: Concurrency | None = None,
+    preference: ConcurrencyPreference | None = None,
     calls: DatabaseCallScope = INERT,
     observer: MaterializationObserver = INERT_OBSERVER,
     edition: str = "",
@@ -79,7 +79,7 @@ def find_history(
     read: DatabaseCallScope = INERT,
     observer: MaterializationObserver = INERT_OBSERVER,
     edition: str = "",
-    preference: Concurrency | None = None,
+    preference: ConcurrencyPreference | None = None,
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> HistoryPageResult:
     """The flat milestone-set read.
@@ -141,7 +141,7 @@ def deliver_history[Origin, Eager](
     publication: Publication[Origin, Eager],
     read: DatabaseCallScope,
     edition: str,
-    preference: Concurrency | None,
+    preference: ConcurrencyPreference | None,
     planner: ReadPlanner,
 ) -> Eager:
     """One milestone-set read published as ``publication``'s eager envelope."""

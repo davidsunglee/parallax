@@ -1,22 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Container, Sequence
+from collections.abc import Collection, Container, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
-from parallax.core._execution._unit_work.claims import SettledEvidence
 from parallax.core._execution._unit_work.clock import TransactionInstant
-from parallax.core._execution._unit_work.evidence import RetainedObservation
-from parallax.core._execution._unit_work.instructions import KeyedMutation
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    EntityIdentity,
-    EntityMetadata,
-    Metamodel,
-)
-from parallax.core.write_plan.keys import ObjectKey
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.observe import StateObservation
 from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
     PlannedAssignments,
@@ -31,49 +21,9 @@ __all__ = [
     "AuditDecoration",
     "AuditStrategy",
     "BatchingStrategy",
-    "Concurrency",
-    "ConcurrencyStrategy",
     "DatabaseLoginActor",
-    "EvidencePolicyLookup",
     "SubjectActor",
-    "VersionArithmetic",
-    "WriteEvidencePolicy",
-    "concurrency_preference",
 ]
-
-# The closed two-valued concurrency vocabulary (`m-unit-work` "Strategy
-# selection"). ONE name spells two related things: the unit of work's resolved
-# Concurrency PREFERENCE, and the Effective Concurrency STRATEGY `m-opt-lock`
-# derives per Entity from that preference and the Entity's Optimistic Lock
-# Facet. They coincide in spelling and differ in scope — a preference is
-# transaction-wide, a strategy is per Entity — so a signature naming this type
-# says which one it means.
-# Declared here, rather than on the unit-of-work shell that names it first in
-# prose, because every strategy port switches on it and both the shell
-# (`uow.py`) and the planner (`write_planner.py`) need the same value: defining
-# it in either would make the other import back.
-Concurrency = Literal["locking", "optimistic"]
-
-CONCURRENCY_PREFERENCES: Final[frozenset[str]] = frozenset(get_args(Concurrency))
-
-
-def concurrency_preference(value: object) -> Concurrency:
-    """Return the vocabulary's own spelling of ``value``, or raise ``ValueError``.
-
-    The vocabulary is closed, so a name outside it names no strategy any Entity
-    could resolve — the caller's mistake, reportable before a unit of work opens.
-    Every value outside it is refused the one way, whatever its type: the
-    candidate is compared to each preference rather than looked up in the set,
-    since a value no set can be asked about (an unhashable ``str`` subclass)
-    would make membership alone raise ``TypeError``. What comes back is the
-    matched preference itself, never the caller's own object.
-    """
-    known = sorted(CONCURRENCY_PREFERENCES)
-    if isinstance(value, str):
-        for preference in known:
-            if value == preference:
-                return cast("Concurrency", preference)
-    raise ValueError(f"concurrency must be one of {known}, got {value!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,94 +77,6 @@ class BatchingStrategy(Protocol):
         mutation: str,
         row: ManagedRow,
     ) -> object: ...
-
-
-@dataclass(frozen=True, slots=True)
-class VersionArithmetic:
-    """The two numbers `m-opt-lock` fixes for every versioned write: the version
-    a new lineage opens at, and the step a successful write advances by.
-
-    Data rather than policy — it decides nothing beyond addition — which is what
-    lets a settled write keep it: holding the strategy that produced it would
-    instead put a policy object inside a Write Plan.
-    """
-
-    initial: int
-    increment: int
-
-    def advance(self, observed: int) -> int:
-        return observed + self.increment
-
-
-@runtime_checkable
-class ConcurrencyStrategy(Protocol):
-    """How one transaction's Concurrency Preference settles a versioned write's
-    gate and version arithmetic (`m-opt-lock`).
-
-    Every method mirrors one `m-opt-lock` policy question the planner cannot
-    answer itself, because the module DAG runs `m-opt-lock --> m-unit-work`:
-    which Attribute (if any) carries an entity's optimistic version, whether the
-    write's own Entity gates at all, the arithmetic every version value derives
-    from, and whether a required version was actually observed. Each raises the
-    policy's own error on refusal; the planner never inspects or re-raises a specific type.
-
-    ``gates`` takes the write's own Entity beside the preference because a gate
-    is settled per Entity, not per transaction: the preference combines with
-    that Entity's Optimistic Lock Facet into its Effective Concurrency
-    Strategy, and only the Optimistic one gates. Both entity-scoped questions
-    take the accepted model the caller already holds, so one stateless
-    implementation serves every model.
-    """
-
-    def version_attribute(
-        self, model: Metamodel, entity: EntityIdentity
-    ) -> AttributeIdentity | None: ...
-
-    def gates(self, concurrency: Concurrency, model: Metamodel, entity: EntityIdentity) -> bool: ...
-
-    def version_arithmetic(self) -> VersionArithmetic: ...
-
-    def require_version(
-        self, entity: EntityIdentity, observation: StateObservation | None
-    ) -> int: ...
-
-
-class WriteEvidencePolicy(Protocol):
-    """One target Entity's write-evidence policy (`m-opt-lock`), which the unit
-    of work applies to its own transaction state when it admits a keyed write.
-
-    Both answers are declared facts about the target's family, never about a
-    source's evidence: :meth:`effective_strategy` combines the unit of work's
-    Concurrency Preference with the family's version source, and
-    :meth:`settled_evidence` names what a keyed write settles against — and so
-    claims — from the mutation alone: nothing for an insert, the supplied
-    retained observation for a versioned or temporal family, and the supplied
-    object key for an unversioned Non-Temporal one. Neither reads participation,
-    continuation, or claims, which are the unit of work's own state, and
-    neither refuses anything.
-    """
-
-    def effective_strategy(self, preference: Concurrency, /) -> Concurrency: ...
-
-    def settled_evidence(
-        self,
-        mutation: KeyedMutation,
-        /,
-        *,
-        object_key: ObjectKey | None,
-        observation: RetainedObservation | None,
-    ) -> SettledEvidence | None: ...
-
-
-type EvidencePolicyLookup = Callable[[EntityIdentity], WriteEvidencePolicy]
-"""The connected model's write-evidence policy for one accepted Entity.
-
-Bound once per accepted model by model preparation, because the policy is
-`m-opt-lock`'s and the module DAG runs `m-opt-lock --> m-unit-work`. An identity
-the model does not declare raises ``KeyError`` rather than answering a default
-policy: what an unrecognized Entity's write may claim cannot be read off what
-was missing.
-"""
 
 
 @runtime_checkable

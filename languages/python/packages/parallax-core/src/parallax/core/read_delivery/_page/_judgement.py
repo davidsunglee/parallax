@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Final, Protocol, cast
+from typing import Final, cast
 
+from parallax.core.concurrency import ConcurrencyFacet
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.metamodel import AttributeIdentity
 from parallax.core.read_delivery._page._rows import StoredDataIssueCode, StoredDataIssueInput
 from parallax.core.read_delivery._page._stored_data import StoredDataIssue
 from parallax.core.temporal_read import (
@@ -19,26 +20,12 @@ from parallax.core.write_plan import ObjectKey
 
 __all__ = [
     "NON_HYDRATING_CODES",
-    "VersionAttributes",
     "diagnosis",
     "hydrates",
     "observed_edge",
     "observed_object_key",
     "observed_version",
 ]
-
-
-class VersionAttributes(Protocol):
-    """Where an Entity's explicit optimistic-lock version Attribute is named.
-
-    Answers ``None`` for a family that carries no explicit version, a temporal
-    one included. The runtime composing a read supplies the policy that owns
-    that fact, so publishing an observed version needs no Metadata scan here.
-    """
-
-    def version_attribute(
-        self, model: Metamodel, entity: EntityIdentity
-    ) -> AttributeIdentity | None: ...
 
 
 NON_HYDRATING_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
@@ -123,13 +110,10 @@ def observed_object_key(
 
 
 def observed_version(
-    model: Metamodel,
-    versions: VersionAttributes,
-    layout: EntityLayout,
-    member_row: tuple[object, ...],
+    versioning: ConcurrencyFacet, layout: EntityLayout, member_row: tuple[object, ...]
 ) -> int | None:
     """A judged state's observed explicit version, or absence for every other shape."""
-    attribute = versions.version_attribute(model, layout.concrete)
+    attribute = versioning.version_attribute(layout.concrete)
     if attribute is None:
         return None
     value = _member(layout, member_row, attribute)

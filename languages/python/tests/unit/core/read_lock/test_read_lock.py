@@ -3,8 +3,8 @@
 The pure strategy -> lock policy scope
 (:func:`~parallax.core.read_lock.mode_for`) is exercised end-to-end by the
 compile sweep. This file pins the policy function itself in isolation; which
-strategy an Entity participates under is `m-opt-lock`'s own derivation, pinned
-in ``test_opt_lock.py``, and the composition of the two is
+strategy an Entity participates under is `m-concurrency`'s own derivation, pinned
+in ``test_concurrency.py``, and the composition of the two is
 ``test_transaction_reads.py``'s per-level lock coverage.
 """
 

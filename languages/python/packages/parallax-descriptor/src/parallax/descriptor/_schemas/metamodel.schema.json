@@ -108,7 +108,7 @@
       },
       "allOf": [
         {
-          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its optimistic key from its transaction-time start Attribute and must not declare an explicit optimisticLocking version Attribute. Every profile other than nontemporal derives a transaction-time axis.",
+          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its version from its transaction-time start Attribute and must not declare an explicit optimisticLocking version Attribute. Every profile other than nontemporal derives a transaction-time axis.",
           "if": {
             "required": ["temporality"],
             "properties": {
@@ -192,7 +192,7 @@
           "then": { "required": ["attributes"] }
         },
         {
-          "$comment": "At most one optimisticLocking attribute per entity (m-descriptor `attribute` / m-opt-lock \"The version column\"): the entity's OWN `attributes` array may CONTAIN at most one item with `optimisticLocking: true` (2020-12 `contains`/`minContains`/`maxContains`). `minContains: 0` is REQUIRED alongside `maxContains` — `contains` alone implies at least one match, which would wrongly force every entity to declare a version attribute; `minContains: 0` restores the flag's true optionality, so 0 or 1 both satisfy this, never more. This is a PER-ENTITY structural rule; the family-wide root-ownership rule (at most one across an inheritance family, declared only at the root) is the semantic `inheritance-optimistic-locking-not-root-owned` invariant a model-aware validator enforces (m-inheritance), not expressible here.",
+          "$comment": "At most one optimisticLocking attribute per entity (m-descriptor `attribute` / m-concurrency \"Version sources\"): the entity's OWN `attributes` array may CONTAIN at most one item with `optimisticLocking: true` (2020-12 `contains`/`minContains`/`maxContains`). `minContains: 0` is REQUIRED alongside `maxContains` — `contains` alone implies at least one match, which would wrongly force every entity to declare a version attribute; `minContains: 0` restores the flag's true optionality, so 0 or 1 both satisfy this, never more. This is a PER-ENTITY structural rule; the family-wide root-ownership rule (at most one across an inheritance family, declared only at the root) is the semantic `inheritance-optimistic-locking-not-root-owned` invariant a model-aware validator enforces (m-inheritance), not expressible here.",
           "properties": {
             "attributes": {
               "contains": {
@@ -281,7 +281,7 @@
           }
         },
         {
-          "$comment": "Explicit optimistic-lock version (m-opt-lock / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A temporal Entity locks via its Transaction-Time start (`txStart`, physically `in_z`) instead and declares no explicit version Attribute (the Entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
+          "$comment": "Explicit optimistic-lock version (m-concurrency / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A temporal Entity locks via its Transaction-Time start (`txStart`, physically `in_z`) instead and declares no explicit version Attribute (the Entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
           "if": {
             "required": ["optimisticLocking"],
             "properties": { "optimisticLocking": { "const": true } }

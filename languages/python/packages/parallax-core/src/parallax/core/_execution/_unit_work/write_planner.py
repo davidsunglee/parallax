@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from operator import itemgetter
 
-from parallax.core import inheritance, relationship, temporal_read
+from parallax.core import concurrency, inheritance, relationship, temporal_read
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
@@ -19,8 +19,6 @@ from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
     BatchingStrategy,
-    Concurrency,
-    ConcurrencyStrategy,
     UndecoratedAudit,
 )
 from parallax.core._execution._unit_work.write_items import (
@@ -37,7 +35,8 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.concurrency import ConcurrencyFacet, ConcurrencyPreference
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.managed_row import ManagedRow
@@ -80,7 +79,7 @@ class WritePlanningRequest:
 
     actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
-    concurrency: Concurrency
+    preference: ConcurrencyPreference
     composed_writes: ComposedWrites
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP
     counts_unchanged_rows: bool = False
@@ -89,8 +88,8 @@ class WritePlanningRequest:
 class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
-    Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` plans a flush, :meth:`audit_decoration` supplies
+    Constructed once per accepted Metamodel with its batching and audit
+    strategies already wired; :meth:`finalize` plans a flush, :meth:`audit_decoration` supplies
     the audit a deferred range of its plans binds under once that range's
     coverage is read, and :meth:`predicate_step` plans a predicate-selected
     write's one statement. No caller sequences coalescing, batching, ordering, temporal
@@ -108,13 +107,13 @@ class WritePlanner:
         "_audit",
         "_batching",
         "_compiler",
-        "_concurrency",
         "_families",
         "_model",
         "_payloads",
         "_relationships",
         "_settled",
         "_temporal_facet",
+        "_versioning",
     )
 
     def __init__(
@@ -122,7 +121,6 @@ class WritePlanner:
         model: Metamodel,
         *,
         batching: BatchingStrategy,
-        concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
         payloads: WritePayloadPreparer,
     ) -> None:
@@ -130,20 +128,20 @@ class WritePlanner:
         self._families = inheritance.view(model)
         self._temporal_facet = temporal_read.view(model)
         self._relationships = relationship.view(model)
+        self._versioning = concurrency.view(model)
         self._batching = batching
-        self._concurrency = concurrency
         self._audit = audit
         self._payloads = payloads
         self._settled = (
             frozenset[AttributeIdentity]()
             if isinstance(audit, UndecoratedAudit)
-            else _settled_attributes(model, self._families, self._temporal_facet, concurrency)
+            else _settled_attributes(model, self._families, self._temporal_facet, self._versioning)
         )
         self._compiler = WritePlanCompiler(
             model,
             self._families,
             self._temporal_facet,
-            concurrency=concurrency,
+            self._versioning,
             audit=audit,
             settled=self._settled,
             payloads=payloads,
@@ -188,7 +186,7 @@ class WritePlanner:
         batched = self._form_batches(survivors)
         return self._compiler.compile(
             self._order(batched),
-            concurrency=request.concurrency,
+            preference=request.preference,
             actor_identity=request.actor_identity,
             transaction_instant=request.transaction_instant,
             ownership=request.ownership,
@@ -224,24 +222,6 @@ class WritePlanner:
                 actor_identity=actor_identity, transaction_instant=transaction_instant
             ),
         )
-
-    def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:
-        """The Attribute carrying ``entity``'s optimistic version, or ``None``
-        for an unversioned Entity."""
-        return self._concurrency.version_attribute(self._model, entity)
-
-    def inserted_version(self, entity: EntityIdentity, advanced_from: int | None) -> int | None:
-        """The version a row of ``entity`` the planning attempt inserted holds,
-        given the version its last completed update advanced from — ``None``
-        where no update did — or ``None`` for an unversioned Entity.
-
-        The attempt wrote every revision of such a row, so the arithmetic that
-        stamped them answers its version without reading it.
-        """
-        if self.version_attribute(entity) is None:
-            return None
-        arithmetic = self._concurrency.version_arithmetic()
-        return arithmetic.initial if advanced_from is None else arithmetic.advance(advanced_from)
 
     def _form_batches(
         self, buffer: Sequence[ComposedWrite]
@@ -470,7 +450,7 @@ def _settled_attributes(
     model: Metamodel,
     families: inheritance.InheritanceFacet,
     temporal_facet: temporal_read.TemporalFacet,
-    concurrency: ConcurrencyStrategy,
+    versioning: ConcurrencyFacet,
 ) -> frozenset[AttributeIdentity]:
     """Every Attribute of ``model`` whose value settlement alone decides — each
     Entity's primary key, temporal bounds, and optimistic version — which no
@@ -481,7 +461,7 @@ def _settled_attributes(
         if position is None:  # pragma: no cover - the facet covers every accepted Entity
             raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
         settled.add(position.primary_key.identity)
-        version = concurrency.version_attribute(model, entity.identity)
+        version = versioning.version_attribute(entity.identity)
         if version is not None:
             settled.add(version)
         shape = temporal_facet.shape(entity.identity)

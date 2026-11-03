@@ -17,13 +17,15 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.conformance import models
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
-from parallax.core import opt_lock
+from parallax.core import concurrency
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.claims import (
     admits,
     admits_composed,
     claim_scope,
+    settled_evidence,
 )
 from parallax.core._execution._unit_work.instructions import (
     ExpectedVersion,
@@ -37,8 +39,7 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.opt_lock._facet import UNVERSIONED
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
@@ -67,10 +68,6 @@ _PERSON_ONE = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("i
 _STATE = VersionedObjectStateKey(
     ObjectKey(EntityIdentity("parallax.compatibility", "Account"), ()), 4
 )
-_VERSION_ATTRIBUTE = AttributeIdentity(
-    EntityIdentity("parallax.compatibility", "Account"), "version"
-)
-_START_ATTRIBUTE = AttributeIdentity(EntityIdentity("parallax.compatibility", "Balance"), "inZ")
 _RETAINED = RetainedObservation(
     VersionedObjectStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
 )
@@ -283,35 +280,51 @@ def test_a_temporal_objects_observed_writes_compose_unless_they_resurrect_or_hal
 # --------------------------------------------------------------------------- #
 # The claim-scope derivation and the object-locked case.                       #
 # --------------------------------------------------------------------------- #
+_MODELS = models.load_models()
+
+
+def _versioning(stem: str, entity: str) -> tuple[concurrency.ConcurrencyFacet, EntityIdentity]:
+    return concurrency.view(_MODELS[stem]), EntityIdentity("parallax.compatibility", entity)
+
+
 @pytest.mark.parametrize(
-    ("key", "mutation", "expected"),
+    ("stem", "entity", "mutation", "expected"),
     [
-        (UNVERSIONED, "insert", None),
-        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "insert", None),
-        (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "insertUntil", None),
-        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "amend", _RETAINED),
-        (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "delete", _RETAINED),
-        (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "terminate", _RETAINED),
-        (UNVERSIONED, "amend", _OBJECT),
-        (UNVERSIONED, "delete", _OBJECT),
+        ("animal", "Person", "insert", None),
+        ("account", "Account", "insert", None),
+        ("balance", "Balance", "insertUntil", None),
+        ("account", "Account", "amend", _RETAINED),
+        ("account", "Account", "delete", _RETAINED),
+        ("balance", "Balance", "terminate", _RETAINED),
+        ("animal", "Person", "amend", _OBJECT),
+        ("animal", "Person", "delete", _OBJECT),
     ],
 )
 def test_the_claim_scope_derivation_is_total_over_the_write_kind(
-    key: opt_lock.OptimisticKey, mutation: str, expected: object
+    stem: str, entity: str, mutation: str, expected: object
 ) -> None:
-    # Two declared facts decide every case — the target's Optimistic Key and the
-    # mutation — and each of the three Optimistic Key variants names its own, so
-    # no case is reached because something was absent or because the tests above
-    # it did not match.
+    # Two declared facts decide every case — what the target's family settles
+    # against and the mutation — so no case is reached because something was
+    # absent or because the tests above it did not match.
+    versioning, identity = _versioning(stem, entity)
     assert (
-        opt_lock.settled_evidence(
-            key,
+        settled_evidence(
+            versioning,
+            identity,
             mutation,  # pyright: ignore[reportArgumentType]
             object_key=_OBJECT,
             observation=_RETAINED,
         )
         is expected
     )
+
+
+def test_an_entity_the_model_lacks_settles_against_nothing_it_could_claim() -> None:
+    # Reading a miss as an object claim would let an unrecognized write claim an
+    # object on the strength of what was missing.
+    versioning, identity = _versioning("account", "Undeclared")
+    with pytest.raises(KeyError, match="Undeclared"):
+        settled_evidence(versioning, identity, "amend", object_key=_OBJECT, observation=_RETAINED)
 
 
 @pytest.mark.parametrize(
@@ -336,15 +349,10 @@ def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
     # none settles against nothing here — the required-observation rule refuses it
     # where every buffered write is settled, rather than an object claim standing
     # in for evidence a gate needs.
-    assert (
-        opt_lock.settled_evidence(
-            opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE),
-            "amend",
-            object_key=_OBJECT,
-            observation=None,
-        )
-        is None
-    )
+    versioning, identity = _versioning("account", "Account")
+    assert settled_evidence(
+        versioning, identity, "amend", object_key=_OBJECT, observation=None
+    ) is (None)
 
 
 def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:

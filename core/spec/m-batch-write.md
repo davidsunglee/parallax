@@ -10,8 +10,8 @@
 It owns only the set-based/readless vocabulary for the second family, including
 which targets that family can write at all, when its statement runs, and the count
 its verb returns. Versioning,
-locking, conflict abort, and temporal chaining belong respectively to `m-opt-lock`,
-`m-read-lock`, and `m-temporal-write`. The canonical golden SQL is
+locking, conflict abort, and temporal chaining belong respectively to `m-concurrency`,
+`m-read-lock`, `m-unit-work`, and `m-temporal-write`. The canonical golden SQL is
 fixed by `m-sql`.
 
 `m-batch-write` decides only **compatibility**: whether two buffered writes may
@@ -36,7 +36,7 @@ Delete whose Key Target holds several key tuples.
   writes of one group never share a step: membership in one step stays this
   module's decision alone.
 - Incompatible writes remain **separate logical steps**. In particular a
-  **per-row gated** write (`m-opt-lock`) can never join another: its gate binds
+  **per-row gated** write (`m-concurrency`) can never join another: its gate binds
   one row's observed version, so each stays its own step even where a driver
   later transmits several in one batch.
 - Batching shares the canonical member shape and uniform values across the step;
@@ -106,7 +106,7 @@ A predicate-selected write is **one readless statement**, so its target is an
 other target is judged against that object's own prior observation: a
 **versioned** target's version, under **both** Effective Concurrency Strategies —
 Optimistic binds it as that row's gate, while Locking needs the read that took
-its shared lock (`m-opt-lock`) — and a **temporal** target's current milestone,
+its shared lock (`m-concurrency`) — and a **temporal** target's current milestone,
 which the write closes and chains from (`m-temporal-write`). One predicate
 statement can neither carry nor acquire such an observation.
 
@@ -203,7 +203,7 @@ never an error** — and its verb returns `0`. Ordinary SQL set semantics alread
 <predicate>` and `delete … where <predicate>` no-ops when nothing matches; a
 predicate-selected write that matches nothing simply wrote nothing. This is
 categorically distinct from the shortfall an
-**observation-backed** per-row write raises (`m-opt-lock` / `m-temporal-write`),
+**observation-backed** per-row write raises (`m-concurrency` / `m-temporal-write`),
 which fires when a row the caller **did** match and observe was concurrently
 changed underneath it. Both effective strategies raise it, and the settled gate
 decides which one it is: a gated shortfall is an Optimistic Conflict, an ungated

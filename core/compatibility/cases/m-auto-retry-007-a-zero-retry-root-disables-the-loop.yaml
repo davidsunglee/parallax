@@ -2,7 +2,7 @@
 # Root configured with `maxRetries: 0` disables the loop for an invocation that
 # names no bound of its own — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-auto-retry, m-opt-lock, m-execution-lifecycle, m-api-conformance, transient, database-options, slice-snapshot-1]
+tags: [m-auto-retry, m-concurrency, m-execution-lifecycle, m-api-conformance, transient, database-options, slice-snapshot-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

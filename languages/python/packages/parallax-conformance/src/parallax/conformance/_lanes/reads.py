@@ -181,7 +181,7 @@ def run_read_case(
     lock"), opened with only the fields that block authors: the lock suffix is
     derived inside production from the preference that call resolves — the
     authored one, else the root this lane connected — and the read target's own
-    Optimistic Lock Facet, exactly as it is for a developer's ``tx.find``, rather
+    Concurrency Facet, exactly as it is for a developer's ``tx.find``, rather
     than from a lock this lane asked a compiler for while executing outside any
     boundary. Begin and commit reach the database but are no Database Call, so
     the Database Calls a locking case reports are the read's alone.

@@ -1,12 +1,12 @@
 # Optimistic bitemporal termination of the BOUNDED current rectangle a find observed, over
 # exactly that rectangle's extent: the close's address binds the observed rectangle's OWN
-# Valid-Time end, which here is FINITE (m-temporal-write + m-opt-lock, ADR 0046). It carries
+# Valid-Time end, which here is FINITE (m-temporal-write + m-concurrency, ADR 0046). It carries
 # the finite-bound addressing the conflict form pinned — only a real execution distinguishes
 # an address binding R2's own thru_z from one matching both current rectangles of the key,
 # and the table state shows R3 left current — now produced by a public `terminateUntil`
 # whose head and old tail are both empty, so the close is emitted alone.
 model: models/position.yaml
-tags: [m-temporal-write, m-opt-lock, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

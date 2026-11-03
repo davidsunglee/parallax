@@ -9,11 +9,9 @@ from decimal import Decimal
 
 import pytest
 
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import (
-    Concurrency,
-)
 from parallax.snapshot import TxnContext
 from tests._support.db_port import (
     Read,
@@ -67,7 +65,7 @@ _RETROACTIVE_RECTANGLE: MappingRow = {
     ids=["locking", "optimistic"],
 )
 def test_a_close_addresses_the_rectangle_the_written_value_came_from(
-    concurrency: Concurrency, gate_sql: str, gate_binds: tuple[dt.datetime, ...]
+    concurrency: ConcurrencyPreference, gate_sql: str, gate_binds: tuple[dt.datetime, ...]
 ) -> None:
     # One key holding TWO rectangles current at one Transaction Time — what a
     # retroactive correction leaves behind — read twice in one transaction: once

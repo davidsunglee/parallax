@@ -11,7 +11,7 @@ from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._routing import check_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.entity import DomainModel
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
@@ -83,7 +83,7 @@ class ScopedDatabase:
         self,
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ScopedDatabase:
         return self.create(
@@ -129,7 +129,7 @@ class ScopedDatabase:
         /,
         *,
         max_retries: int | Omitted = OMITTED,
-        concurrency: Concurrency | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._execution.transact(

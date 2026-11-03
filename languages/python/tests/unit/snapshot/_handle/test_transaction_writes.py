@@ -33,6 +33,7 @@ from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
 from parallax.core._execution._options import OMITTED
 from parallax.core._execution._unit_work import instructions
 from parallax.core.base import INT64, DocumentValue, InstantError, PresentDocument
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._errors import EntityRowError
@@ -43,7 +44,6 @@ from parallax.core.execution import (
 )
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
-    Concurrency,
     OptimisticLockConflictError,
     StaleWriteError,
     WriteEvidenceError,
@@ -134,7 +134,7 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
 
 
 def test_update_lowers_to_its_keyed_dml() -> None:
-    # m-unit-work-005, migrated to the m-opt-lock observation flow: a keyed
+    # m-unit-work-005, migrated to the m-concurrency observation flow: a keyed
     # update (SET the non-PK members, WHERE the key, version advanced from the
     # observation the source value itself retained). The edited copy is built
     # from a row `tx.find` fetches INSIDE this transaction, which every source
@@ -205,7 +205,7 @@ def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source(
 
 
 def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> None:
-    # m-unit-work-006, migrated to the m-opt-lock observation flow: a keyed
+    # m-unit-work-006, migrated to the m-concurrency observation flow: a keyed
     # DELETE of a versioned row requires
     # a PRIOR observation exactly like a keyed update — the
     # deleted row must be fetched INSIDE this transaction first, under the
@@ -250,7 +250,7 @@ def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
 
 
 def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
-    # m-opt-lock's `updatedRows != 1` signal at the production developer
+    # m-concurrency's `updatedRows != 1` signal at the production developer
     # surface, under the explicit `locking` preference: the UPDATE is ungated
     # there, so its zero-row shortfall is the non-retriable stale write rather
     # than the retriable optimistic conflict — classification follows the gate,
@@ -296,9 +296,9 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
 
 
 # --------------------------------------------------------------------------- #
-# ONE default transaction over two Entities whose Optimistic Lock Facets       #
+# ONE default transaction over two Entities whose Concurrency Facets          #
 # disagree: both strategies, both halves (read lock and write gate), one       #
-# commit (m-unit-work "Strategy selection"; m-opt-lock). The read half alone   #
+# commit (m-unit-work "Strategy selection"; m-concurrency). The read half alone   #
 # is `test_transaction_reads.py`'s per-level pair; these two carry it through  #
 # the writes those reads license, graded at the port they reach.               #
 # --------------------------------------------------------------------------- #
@@ -356,7 +356,7 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
 
 def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
     # One resolved Concurrency Preference, never a per-Entity strategy — and
-    # each statement carries what its own Entity's Effective Concurrency
+    # each statement carries what its own Entity's Effective ConcurrencyPreference
     # Strategy produced, which is where the lock and the gate are readable.
     port = _mixed_port()
     db_for(mx.MIXED_STRATEGY_MODEL, port).transact(_mix_strategies)
@@ -523,7 +523,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     # but `insert`. The edited copy names `balance` alone, so the row that
     # write preparation judges is exactly that pair. The version advances from
     # the observation the write carries, never a row-carried value
-    # (`m-opt-lock`); the `locking` preference keeps the statement ungated, so
+    # (`m-concurrency`); the `locking` preference keeps the statement ungated, so
     # what the assertion measures is the sparse row.
     port = ScriptedAdapter(
         Transact(
@@ -1046,7 +1046,7 @@ def test_a_bounded_keyed_terminate_rejects_a_reversed_window_bound() -> None:
 # --------------------------------------------------------------------------- #
 # The prior-observation license for keyed TEMPORAL update/terminate:           #
 # the temporal sibling of the versioned                                       #
-# `require_observed` rule, enforced at the developer verb.                    #
+# `require_observed_version` rule, enforced at the developer verb.            #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
 def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
@@ -1071,7 +1071,7 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 def test_a_standalone_temporal_source_is_refused_under_either_preference(
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
 ) -> None:
     # A plain `db.find` carries the milestone it observed, but no read of the
     # writing attempt produced it: under Optimistic the gate would bind a revision

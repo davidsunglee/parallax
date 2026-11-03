@@ -1,10 +1,10 @@
 # Optimistic Transaction-Time-Only termination after a find gates on the Transaction-Time
 # start the unit of work observed and closes EXACTLY one row (m-temporal-read +
-# m-opt-lock). It carries the fresh-gate success the conflict form pinned — the close-only
+# m-concurrency). It carries the fresh-gate success the conflict form pinned — the close-only
 # shape, gated on the observed in_z, affecting the one current milestone — now produced by
 # a public `terminate`, which chains no successor on a Transaction-Time-Only target.
 model: models/balance.yaml
-tags: [m-temporal-read, m-opt-lock, m-temporal-write, m-unit-work, m-sql, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-concurrency, m-temporal-write, m-unit-work, m-sql, temporal, audit-only, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

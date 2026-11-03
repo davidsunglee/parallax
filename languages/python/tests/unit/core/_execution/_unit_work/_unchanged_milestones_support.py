@@ -125,7 +125,7 @@ def planned(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at(NOW.isoformat()),
-            concurrency=concurrency,  # type: ignore[arg-type]
+            preference=concurrency,  # type: ignore[arg-type]
             composed_writes=admitted_writes(meta, list(writes)),
             ownership=ownership,
             counts_unchanged_rows=counts_unchanged_rows,

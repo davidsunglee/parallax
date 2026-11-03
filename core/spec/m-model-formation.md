@@ -91,7 +91,7 @@ derives manifest entries from contributor objects.
 | `m-value-object` | required | `value-object-empty`, `value-object-containment-cycle`, `value-object-many-nullable` | none; accepted occurrences are expanded by the Metadata Compiler after validation | `m-metamodel`, `m-model-formation` | none |
 | `m-relationship` | required | `relationship-join-source-invalid`, `relationship-join-target-invalid`, `relationship-join-type-mismatch`, `relationship-cardinality-join-mismatch`, `relationship-reverse-cycle`, `relationship-reverse-not-defining`, `relationship-reverse-inconsistent`, `relationship-defining-duplicate`, `relationship-order-on-to-one`, `relationship-order-attribute-invalid` | `RelationshipFacet` under `FacetKey(m-relationship)` | `m-metamodel`, `m-model-formation` | none |
 | `m-temporal-read` | none | none | `TemporalFacet` under `FacetKey(m-temporal-read)` | `m-metamodel`, `m-model-formation`, `m-inheritance` | `FacetKey(m-inheritance)` |
-| `m-opt-lock` | required | `opt-lock-multiple-attributes`, `opt-lock-temporal-explicit-attribute` | `OptimisticLockFacet` under `FacetKey(m-opt-lock)` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-temporal-read` | `FacetKey(m-inheritance)`, `FacetKey(m-temporal-read)` |
+| `m-concurrency` | required | `concurrency-multiple-version-attributes`, `concurrency-temporal-explicit-version` | `ConcurrencyFacet` under `FacetKey(m-concurrency)` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-temporal-read` | `FacetKey(m-inheritance)`, `FacetKey(m-temporal-read)` |
 
 An owner named here owns its complete Issue Code set exclusively. The owning
 module's specification defines each rule's semantics. A rule moves between

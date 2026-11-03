@@ -1,0 +1,101 @@
+# Optimistic-lock success (m-concurrency): a fresh-version UPDATE affects exactly ONE row.
+model: models/account.yaml
+tags: [m-concurrency, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (shape:conflict)"
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 2, balance: "500.00", observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update account set balance = ?, version = ? where id = ? and version = ?
+      binds: ["500.00", 2, 2, 1]
+  affectedRows: 1
+  databaseCalls: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              accessMode: read-write
+              concurrency: optimistic
+              retries: 10
+              isolation: read-committed
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: { policy: writer-only }
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired, route: writer }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: wire }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            flushStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted:
+              target: parallax.compatibility.Account
+              kind: write
+              statement: 0
+          - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            flushFinished: { outcome: completed }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 16
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "500.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }

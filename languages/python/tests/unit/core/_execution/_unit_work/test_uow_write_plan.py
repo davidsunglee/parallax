@@ -26,7 +26,7 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, attr, opt_lock, temporal_read
+from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, attr, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -53,6 +53,7 @@ from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import KeyedInsert, StateObservedWrite
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
@@ -61,7 +62,6 @@ from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
-    Concurrency,
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
@@ -137,11 +137,11 @@ def _uow(
     steps: ExecuteWriteSteps,
     *,
     rows: AcquireRows = NO_ROW_READS,
-    concurrency: Concurrency = "optimistic",
+    concurrency: ConcurrencyPreference = "optimistic",
     counted: ExecuteCountedStep = NO_COUNTED_STEPS,
 ) -> UnitOfWork:
     return UnitOfWork(
-        settings=TransactionSettings(concurrency=concurrency),
+        settings=TransactionSettings(preference=concurrency),
         lifetime=TxnAttemptLifetime(),
         clock=FixedClock(_FIXED),
         meta=meta,
@@ -150,7 +150,6 @@ def _uow(
         acquire_rows=rows,
         planner=build_write_planner(meta),
         actor_identity=TEST_ACTOR_IDENTITY,
-        evidence_policy_for=opt_lock.view(meta).required_key,
     )
 
 
@@ -347,7 +346,7 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
-            concurrency="optimistic",
+            preference="optimistic",
             composed_writes=[_span_insert()],
         )
     )

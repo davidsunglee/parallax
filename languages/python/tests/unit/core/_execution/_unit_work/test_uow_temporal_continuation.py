@@ -25,7 +25,6 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
-from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
@@ -47,11 +46,11 @@ from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.unit_work import (
-    Concurrency,
     KeyedWriteInstruction,
     RetainedObservation,
     RollbackOnlyError,
@@ -113,7 +112,7 @@ class _Session:
     def __init__(
         self,
         *,
-        concurrency: Concurrency = "optimistic",
+        concurrency: ConcurrencyPreference = "optimistic",
         execute: Callable[[SimulatedWriteSteps], Any] | None = None,
         ends: tuple[object, ...] = (INFINITY,),
     ) -> None:
@@ -136,7 +135,7 @@ class _Session:
         )
         self.requests: list[RowRequest] = []
         self.uow = UnitOfWork(
-            settings=TransactionSettings(concurrency=concurrency),
+            settings=TransactionSettings(preference=concurrency),
             lifetime=TxnAttemptLifetime(),
             clock=FixedClock(_NOW),
             meta=_META,
@@ -145,7 +144,6 @@ class _Session:
             acquire_rows=self._acquire,
             planner=build_write_planner(_META),
             actor_identity=TEST_ACTOR_IDENTITY,
-            evidence_policy_for=opt_lock.view(_META).required_key,
         )
 
     def _acquire[Request: RowRequest, Result](
@@ -226,7 +224,7 @@ def _by_start(stored: _Stored) -> dt.datetime:
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 def test_a_continuing_source_binds_to_the_rows_its_completed_writes_stored_without_a_read(
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
 ) -> None:
     session = _Session(concurrency=concurrency)
     source = session.observed()

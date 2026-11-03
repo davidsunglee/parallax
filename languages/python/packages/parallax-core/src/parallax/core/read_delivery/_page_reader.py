@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, Final, Never, Protocol, cast, overload
 
 from parallax.core import read_planning
-from parallax.core._execution._unit_work.uow import Concurrency
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
@@ -108,7 +108,7 @@ class EagerPageRequest[Origin]:
     query: ResolvedObjectQuery
     model: CatalogedModel
     port: DatabaseConnection
-    preference: Concurrency | None
+    preference: ConcurrencyPreference | None
     origin_collector: PageOriginCollector[Origin]
     calls: DatabaseCallScope
     planner: ReadPlanner
@@ -191,7 +191,7 @@ class StreamPageRequest[Origin]:
     at: At
     model: CatalogedModel
     port: DatabaseConnection
-    preference: Concurrency | None
+    preference: ConcurrencyPreference | None
     origin_collector: PageOriginCollector[Origin]
     calls: DatabaseCallScope
     planner: ReadPlanner
@@ -411,7 +411,7 @@ class PageReader:
         model: CatalogedModel,
         port: DatabaseConnection,
         *,
-        preference: Concurrency | None,
+        preference: ConcurrencyPreference | None,
         edition: str,
         planner: ReadPlanner,
     ) -> ReadPlan:

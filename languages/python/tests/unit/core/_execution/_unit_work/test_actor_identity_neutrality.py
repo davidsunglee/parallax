@@ -17,12 +17,12 @@ from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import ComposedWrite
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY
+from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     AdmittedWrite,
-    Concurrency,
     DatabaseLoginActor,
     KeyedWriteInstruction,
     PredicateSelection,
@@ -60,14 +60,14 @@ def _plan_under(
     buffered: Sequence[ComposedWrite],
     model: Metamodel,
     *,
-    concurrency: Concurrency,
+    concurrency: ConcurrencyPreference,
     tx_instant: TransactionInstant | None,
 ) -> WritePlan:
     return build_write_planner(model).finalize(
         WritePlanningRequest(
             actor_identity=actor,
             transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
-            concurrency=concurrency,
+            preference=concurrency,
             composed_writes=buffered,
         )
     )
@@ -87,7 +87,7 @@ def _assert_neutral(
     model: Metamodel,
     *,
     observations: dict[ObjectKey, StateObservation] | None = None,
-    concurrency: Concurrency = "locking",
+    concurrency: ConcurrencyPreference = "locking",
     tx_instant_literal: str | None = None,
 ) -> None:
     subject_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)

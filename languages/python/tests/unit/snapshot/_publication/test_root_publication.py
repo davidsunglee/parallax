@@ -15,7 +15,6 @@ from typing import Any, Final, Literal, cast
 
 import pytest
 
-from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import NeutralType, PresentDocument
 from parallax.core.entity import UNLOADED
 from parallax.core.entity._layout import CatalogedModel
@@ -683,7 +682,7 @@ def test_the_wire_renderer_forgets_a_root_whose_rendering_failed() -> None:
 
     includes = fixture.include_tree("EncodedOrder", (0, _ITEMS, "EncodedOrderItem"))
     publisher = WireRootPublisher(
-        fixture.model, wire_facts_for(CatalogedModel(fixture.model)), CONCURRENCY, includes, encode
+        fixture.model, wire_facts_for(CatalogedModel(fixture.model)), includes, encode
     )
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
@@ -790,9 +789,7 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_however_a_root_ends(
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture, address=_WRONG_KIND if hydrates else None, badge=None)
     fixture.attach(order, _ITEMS, (_item(fixture, 11, code="0c" if hydrates else _UNDECODABLE),))
-    publisher = TypedRootPublisher(
-        fixture.model, graph_construction_for(ENCODED_ORDERS), CONCURRENCY
-    )
+    publisher = TypedRootPublisher(fixture.model, graph_construction_for(ENCODED_ORDERS))
     held: list[RootView | None] = []
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
@@ -812,9 +809,7 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_when_construction_fails(
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture)
     fixture.attach(order, _ITEMS, (_item(fixture, 11),))
-    publisher = TypedRootPublisher(
-        fixture.model, graph_construction_for(ENCODED_ORDERS), CONCURRENCY
-    )
+    publisher = TypedRootPublisher(fixture.model, graph_construction_for(ENCODED_ORDERS))
 
     def failing_state(*_args: object) -> object:
         raise _Boom
