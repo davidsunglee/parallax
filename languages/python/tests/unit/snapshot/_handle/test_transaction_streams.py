@@ -427,7 +427,7 @@ def test_a_locking_delivery_keeps_its_second_page_and_outer_row_authority() -> N
     assert isinstance(page_two, ReadCall)
     assert page_two.sql.count("for share") == 1
     assert (
-        ")) u join account t0 on u.id = t0.id order by u.parallax_seek_0 asc "
+        ")) u join account t0 on u.id = t0.id order by t0.id asc "
         "limit %s for share of t0"
     ) in page_two.sql
     assert page_two.binds == (1, 1, 1, 2, 1, 2, 2)
