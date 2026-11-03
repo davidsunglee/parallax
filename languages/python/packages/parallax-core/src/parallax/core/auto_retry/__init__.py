@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 import time
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 from typing import Final
 
 from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
@@ -19,7 +20,7 @@ from parallax.core._execution._unit_work.uow import RollbackOnlyError
 from parallax.core.db_error import DatabaseError
 from parallax.core.temporal_write import TemporalConflictError
 
-__all__ = ["RetryCandidate", "check_retry_bound", "retry_eligible", "run_with_retry"]
+__all__ = ["RetryCandidate", "RetryTiming", "check_retry_bound", "retry_eligible", "run_with_retry"]
 
 _FLOOR_FIRST_S: Final = 0.008
 _FLOOR_LIMIT_S: Final = 0.025
@@ -40,9 +41,28 @@ starts long leaves a contended row idle."""
 _CEILING_S: Final = 1.0
 """The longest window, in seconds, however long the failed attempt took."""
 
-_rng = random.Random()
-_sleep: Callable[[float], None] = time.sleep
-_clock: Callable[[], float] = time.monotonic
+_RANDOM: Final = random.Random()
+
+
+def _full_jitter(window: float) -> float:
+    return _RANDOM.uniform(0.0, window)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RetryTiming:
+    """What the loop measures, waits, and draws with; the framework's own
+    seam, never an application option.
+
+    ``monotonic`` reads seconds, and is unrelated to the transaction-time
+    clock. ``jitter`` answers a wait from ``[0, window]``.
+    """
+
+    monotonic: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], None] = time.sleep
+    jitter: Callable[[float], float] = _full_jitter
+
+
+_SYSTEM_TIMING: Final = RetryTiming()
 
 
 def check_retry_bound(retries: int, /) -> None:
@@ -84,7 +104,9 @@ class RetryCandidate(Exception):
         self.failure = failure
 
 
-def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
+def run_with_retry[T](
+    attempt: Callable[[], T], *, retries: int, timing: RetryTiming = _SYSTEM_TIMING
+) -> T:
     """``retries`` counts re-executions after the first attempt.
 
     Before each re-execution the loop sleeps a full-jitter delay. Its window
@@ -97,23 +119,18 @@ def run_with_retry[T](attempt: Callable[[], T], *, retries: int) -> T:
     attempts = 0
     while True:
         attempts += 1
-        started = _clock()
+        started = timing.monotonic()
         try:
             return attempt()
         except RetryCandidate as candidate:
             failure = candidate.failure
-        elapsed = _clock() - started
+        elapsed = timing.monotonic() - started
         if attempts > retries:
             failure.add_note(
                 f"bounded retry exhausted after {attempts} attempts (retries={retries})"
             )
             raise failure
-        _sleep(_delay(attempts, elapsed, _rng))
-
-
-def _delay(attempt: int, elapsed: float, rng: random.Random) -> float:
-    """The wait after ``attempt`` failed having taken ``elapsed`` seconds."""
-    return rng.uniform(0.0, _window(attempt, elapsed))
+        timing.sleep(timing.jitter(_window(attempts, elapsed)))
 
 
 def _window(attempt: int, elapsed: float) -> float:
