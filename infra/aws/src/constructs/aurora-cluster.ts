@@ -11,6 +11,7 @@ import {
 } from "aws-cdk-lib";
 import type * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as logs from "aws-cdk-lib/aws-logs";
 import type { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import * as rds from "aws-cdk-lib/aws-rds";
 import { Provider } from "aws-cdk-lib/custom-resources";
@@ -196,6 +197,14 @@ export class AuroraCluster extends Construct {
     this.cluster.grantConnect(handler, MASTER_USER);
     this.masterSecret.grantRead(handler);
     const provider = new Provider(this, "RoleBootstrapProvider", { onEventHandler: handler });
+    // Keep CDK's managed log-group identities rather than migrating to new groups.
+    for (const construct of [handler, provider]) {
+      for (const child of construct.node.findAll()) {
+        if (child instanceof logs.CfnLogGroup) {
+          child.retentionInDays = logs.RetentionDays.ONE_MONTH;
+        }
+      }
+    }
     // No delete action: removing the resource must never drop what earlier runs converged.
     const bootstrap = new CustomResource(this, "RoleBootstrap", {
       serviceToken: provider.serviceToken,
