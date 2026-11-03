@@ -327,7 +327,8 @@ that the write holds or reads (*Concurrent creation in gaps*):
 The observed rectangle is addressed and gated as an inactivation always is. A
 rectangle no read of the write observed is read inside the flush that writes it
 — the object's current rows over the part of the extent the observations do
-not cover, read with the shared lock under Locking (`m-read-lock`) — and is
+not cover, read with the shared lock under Locking (`m-unit-work` *What one
+temporal observation locks*) — and is
 inactivated under its own observed `in_z` like any observed rectangle
 (`m-unit-work` *deferred settled write*). Where observed writes of one object
 compose (`m-unit-work` *Observed-State Coalescing*), the composition's segments
@@ -403,7 +404,7 @@ conflict. Under Locking the starting rectangle was read whole under the shared
 lock at submission, and the flush reuses it while no earlier settled write of the attempt
 has changed it and reads only the rectangles it does not cover, under the same
 lock (`m-unit-work` *Retained starting rows*), so no inactivation is gated
-(`m-read-lock`).
+(`m-unit-work` *What licenses a Locking write*).
 
 A target write composes with observed writes of one window and one
 starting state (`m-unit-work` *Observed-State Coalescing*): a replacement's
@@ -653,7 +654,8 @@ successor, wherever its unchanged state is proven without changing it:
 - a milestone the attempt opened is invisible to every other transaction, so it
   needs no proof and no statement;
 - under the effective Locking strategy the shared lock the attempt holds on every
-  row the write reaches (`m-read-lock`) keeps the row as it was read, so it needs
+  row the write reaches (`m-unit-work` *What one temporal observation locks*) keeps
+  the row as it was read, so it needs
   no statement either;
 - under Optimistic a milestone that existed before the attempt is proven by a
   **Planned Temporal Guard**: a write that matches the milestone only at its
@@ -850,8 +852,8 @@ Optimistic the stale observed `in_z` rides the gate, matches zero rows against
 the newer current milestone, and reports the conflict. Locking
 renders no gate and needs none: its observing read holds a shared read lock on
 the milestone the observation names, which is the same milestone the close
-addresses, so no concurrent writer can have superseded it (`m-concurrency`,
-`m-read-lock`).
+addresses, so no concurrent writer can have superseded it (`m-unit-work` *What
+licenses a Locking write*).
 
 An observation of a milestone the Transaction-Time past holds is a different
 thing and never reaches planning under either strategy: it could only come from a view

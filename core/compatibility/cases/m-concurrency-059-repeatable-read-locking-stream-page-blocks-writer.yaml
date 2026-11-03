@@ -1,5 +1,5 @@
 # A streamed page's roots still hold their shared row lock when the unit of work
-# asks for Repeatable Read (m-read-lock / m-snapshot-read / m-unit-work). Round 1:
+# asks for Repeatable Read (m-concurrency / m-snapshot-read / m-unit-work). Round 1:
 # transaction A, opened at `when.uow.isolation: repeatable-read`, issues two
 # keyset pages of a transactional stream over every account and HOLDS. Its
 # continuing PostgreSQL page keeps both UNION arms unlocked, joins their complete
@@ -7,7 +7,7 @@
 # transaction B updates account 3, a root reached only by that continuing page,
 # blocks on its shared lock, and raises lockWaitTimeout.
 model: models/account.yaml
-tags: [m-read-lock, m-snapshot-read, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, stream, lockWaitTimeout, slice-snapshot-1]
+tags: [m-concurrency, m-snapshot-read, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, stream, lockWaitTimeout, slice-snapshot-1]
 shape: error
 compileEligibility:
   mode: run-only

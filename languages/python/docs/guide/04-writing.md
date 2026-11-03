@@ -833,9 +833,8 @@ Otherwise it fails with `WritePreconditionError`, like any target write.
   Transaction-Time-Only chaining, the Bitemporal rectangle split, and why
   [the Transaction-Time past is never rewritten](../../../../core/spec/m-temporal-write.md#the-transaction-time-past-is-never-rewritten).
 - [Concurrency policy](../../../../core/spec/m-concurrency.md) defines the two concurrency
-  strategies, [read locks](../../../../core/spec/m-read-lock.md) the shared lock a
-  Locking read takes, and [batch writes](../../../../core/spec/m-batch-write.md) define
-  predicate writes.
+  strategies and the shared lock a Locking read takes, and
+  [batch writes](../../../../core/spec/m-batch-write.md) define predicate writes.
 - The [Wire codec](../../../../core/spec/m-wire.md) defines the canonical values Wire
   writes accept.
 - The [Python execution binding](../../spec/execution.md#transactions-and-failure-boundaries)

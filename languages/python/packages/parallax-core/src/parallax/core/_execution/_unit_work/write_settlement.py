@@ -132,7 +132,7 @@ class _AcquisitionCandidate:
 
     entity: EntityIdentity
     key_attribute: AttributeIdentity
-    locking: bool
+    shared_lock: bool
     key: _GroupKey
 
 
@@ -717,7 +717,7 @@ def _acquisition_candidate(
         return None
     (key,) = keys
     return _AcquisitionCandidate(
-        meaning.facts.entity.identity, meaning.key_attribute, not meaning.gated, key
+        meaning.facts.entity.identity, meaning.key_attribute, meaning.shared_lock, key
     )
 
 
@@ -725,7 +725,7 @@ def _acquisition_compatible(first: _AcquisitionCandidate, later: _AcquisitionCan
     return (
         first.entity == later.entity
         and first.key_attribute == later.key_attribute
-        and first.locking == later.locking
+        and first.shared_lock == later.shared_lock
     )
 
 

@@ -143,7 +143,7 @@ def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
 def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> StatementPlan:
     entity = next(entity for entity in family.entities if entity.identity.name == root)
     facet, storage = inheritance.view(family), storage_layout.view(family)
-    read = plan_read_shape(_planned_read(family, entity), facet, storage, False, None)
+    read = plan_read_shape(_planned_read(family, entity), facet, storage, False, False)
     return plan_statement(
         resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
         evaluation_context=EvaluationContext.SHARING_ALLOWED,
@@ -254,7 +254,7 @@ def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
     plan = _statement_plan(TRAVERSAL, "Vehicle", op)
     vehicle = next(entity for entity in TRAVERSAL.entities if entity.identity.name == "Vehicle")
     facet, storage = inheritance.view(TRAVERSAL), storage_layout.view(TRAVERSAL)
-    read = plan_read_shape(_planned_read(TRAVERSAL, vehicle), facet, storage, False, None)
+    read = plan_read_shape(_planned_read(TRAVERSAL, vehicle), facet, storage, False, False)
     assert isinstance(read, TpcsUnionReadPlan)
     assert list(plan.root_scopes) == [branch.identity for branch in read.branches]
     union = _row_builder(TRAVERSAL)

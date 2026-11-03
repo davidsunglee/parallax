@@ -44,9 +44,11 @@ _DOCUMENT_RESIDENT = "m-snapshot-read-035-stream-order-document-resident.yaml"
 _HISTORY_BOUNDARY = "m-snapshot-read-036-stream-history-page-boundary.yaml"
 _MILESTONE_EDGE_PINS = "m-snapshot-read-037-stream-milestone-edge-pins.yaml"
 _TABLELESS_POSITION = "m-inheritance-136-tpcs-union-vo-projection.yaml"
-_LOCKING_CONTINUATION = "m-read-lock-016-locking-stream-two-arm-continuation.yaml"
-_ROOT_LOCKING_CONTINUATION = "m-read-lock-017-locking-root-stream-inherits-the-shared-lock.yaml"
-_ROOT_OVERRIDDEN_CONTINUATION = "m-read-lock-018-explicit-optimistic-overrides-a-locking-root.yaml"
+_LOCKING_CONTINUATION = "m-concurrency-060-locking-stream-two-arm-continuation.yaml"
+_ROOT_LOCKING_CONTINUATION = "m-concurrency-061-locking-root-stream-inherits-the-shared-lock.yaml"
+_ROOT_OVERRIDDEN_CONTINUATION = (
+    "m-concurrency-062-explicit-optimistic-overrides-a-locking-root.yaml"
+)
 _PARTIAL_TPH_STREAM = "m-inheritance-150-partial-tph-streamed-root-unknown-tag.yaml"
 
 _TYPED_COORDINATES = (

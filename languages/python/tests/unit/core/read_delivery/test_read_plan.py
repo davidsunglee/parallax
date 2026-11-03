@@ -2460,7 +2460,7 @@ def test_direct_compilation_and_write_reads_prepare_no_template(
         _CORPUS_ORDERS,
         POSTGRES,
         result_form="row",
-        lock="locking",
+        shared_lock=True,
     )
     written = compile_write_predicate(
         resolve_temporal_visibility(

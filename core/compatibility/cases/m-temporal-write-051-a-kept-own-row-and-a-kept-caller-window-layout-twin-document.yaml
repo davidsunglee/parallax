@@ -1,5 +1,5 @@
 model: models/unchanged-milestone-layout-twin-document.yaml
-tags: [m-temporal-write, m-unit-work, m-read-lock, m-storage-layout, scenario, update, target-write, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-unit-work, m-concurrency, m-storage-layout, scenario, update, target-write, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario
 grading: state
 compileEligibility:

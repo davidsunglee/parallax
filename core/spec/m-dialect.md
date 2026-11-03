@@ -77,7 +77,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
-| **read-lock application** (`m-read-lock`) | locking-mode object find: `for share of t0` | locking-mode object find: **`lock in share mode`** (no `for share`; MDEV-17514) |
+| **read-lock application** (`m-sql` *Read-lock suffix*) | an object find that must take the shared row lock: `for share of t0` | an object find that must take the shared row lock: **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
@@ -886,18 +886,14 @@ placement-free spelling `m-read-planning-012` already witnesses).
   sentinel orders correctly above every finite milestone, preserving the
   current-row predicate. (The cost relative to native infinity is the Y9999 cliff
   Postgres avoids — acceptable for a dialect that offers no alternative.)
-- **Read-lock application (`m-read-lock`).** *Applying* the in-transaction shared
-  read lock is a dialect decision — not merely spelling the suffix, but deciding
-  **whether, where, and when** to attach it. Given a compiled read and the
-  already-derived Effective Concurrency Strategy of the Entity that read
-  materializes (`m-unit-work`), the dialect returns the read with this dialect's
-  locking applied:
-  - a lockable **object find** under the **Locking** strategy gets the
-    shared-row-lock form appended after every other clause — **Postgres**
-    `for share of t0` (the alias-qualified `for share`), **MariaDB** the
-    unaliased **`lock in share mode`** (no `for share` keyword; MDEV-17514);
-  - a lockable **object find** under the **Optimistic** strategy is returned
-    unchanged (that strategy takes no lock, `m-concurrency`).
+- **Read-lock application.** *Applying* the in-transaction shared read lock is a
+  dialect decision of **where and how** it attaches, not whether: a read's owner
+  decides that from the Effective Concurrency Strategy (`m-concurrency`). Given a
+  compiled **object find** that must take the shared row lock, the dialect appends
+  its shared-row-lock form after every other clause — **Postgres**
+  `for share of t0` (the alias-qualified `for share`), **MariaDB** the unaliased
+  **`lock in share mode`** (no `for share` keyword; MDEV-17514). An object find
+  requesting no lock is returned unchanged.
 
   Only the root alias's rows are locked. Postgres's qualified form names the root
   alias, so a locking read may join shared to-one targets and their owner results

@@ -4,7 +4,7 @@ The non-family, non-navigation, non-value-object lane of the read compiler: the
 public statement/error interface and private compiler-product value semantics,
 the `LoweredStatement` value itself, ordinary scalar/row projection,
 result-shaping directive composition and
-its refusals, the read-lock suffix, the
+its refusals, the shared-lock suffix, the
 deferred-node refusals, and the bind-ORDER invariants the whole compiler rests
 on (projection binds before predicate binds, limit bind last). Inheritance
 families, navigation hops, value-object traversal, and write predicates each
@@ -24,12 +24,20 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from parallax.core import inheritance, read_planning, relationship, storage_layout, temporal_read
+from parallax.core import (
+    concurrency,
+    inheritance,
+    read_planning,
+    relationship,
+    storage_layout,
+    temporal_read,
+)
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import DATE as DATE_TYPE
 from parallax.core.base import INFINITY, INT64, STRING, ManagedValue
+from parallax.core.concurrency import _compile as concurrency_compile
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
@@ -332,7 +340,7 @@ def test_compile_read_accepts_exactly_the_supported_call_shape() -> None:
         ("model", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
         ("dialect", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
         ("result_form", inspect.Parameter.KEYWORD_ONLY, True),
-        ("lock", inspect.Parameter.KEYWORD_ONLY, True),
+        ("shared_lock", inspect.Parameter.KEYWORD_ONLY, True),
     ]
 
 
@@ -897,7 +905,7 @@ def test_limit_bind_lands_after_predicate_binds() -> None:
 # Read-lock suffix (m-sql *Read-lock suffix*, via the m-dialect seam).         #
 # --------------------------------------------------------------------------- #
 def test_locking_object_find_matches_the_scenario_find_golden() -> None:
-    # The m-read-lock-001 golden's shape: an in-transaction object find whose
+    # The m-concurrency-045 golden's shape: an in-transaction object find whose
     # target resolved to the Locking strategy carries the shared-row-lock
     # suffix, last in the statement.
     compiled = compile_read(
@@ -931,14 +939,18 @@ def test_optimistic_and_default_reads_take_no_lock() -> None:
 def _fake_model() -> Metamodel:
     base = fake_metamodel.parity_model()
     inheritance_facet = inheritance_compile.compile_facet(base)
+    temporal_facet = temporal_read_compile.compile_facet(base, inheritance_facet)
     return fake_metamodel.parity_model(
         {
+            concurrency.FACET_KEY: concurrency_compile.compile_facet(
+                base, inheritance_facet, temporal_facet
+            ),
             inheritance.FACET_KEY: inheritance_facet,
             storage_layout.FACET_KEY: storage_layout_compile.compile_facet(
                 base, inheritance_facet, relationship_compile.compile_facet(base)
             ),
             relationship.FACET_KEY: relationship_compile.compile_facet(base),
-            temporal_read.FACET_KEY: temporal_read_compile.compile_facet(base, inheritance_facet),
+            temporal_read.FACET_KEY: temporal_facet,
         }
     )
 

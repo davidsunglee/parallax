@@ -12,7 +12,7 @@ from parallax.core.base import (
     ManagedValue,
 )
 from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import Dialect, LockMode
+from parallax.core.dialect import Dialect
 from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
@@ -319,13 +319,15 @@ def compile_template(
     dialect: Dialect,
     *,
     result_form: _ResultForm = "row",
-    lock: LockMode | None = None,
+    shared_lock: bool = False,
 ) -> CompiledTemplate:
     """Compile a read once, deferring to rendering its page's cap and seek
     carriers, its gathered parent keys, and the predicate operands and finite
     temporal bounds its planned query's execution-value sources name."""
     return _template(
-        _compile_read(query, model, dialect, result_form=result_form, lock=lock, deferred=True)
+        _compile_read(
+            query, model, dialect, result_form=result_form, shared_lock=shared_lock, deferred=True
+        )
     )
 
 
@@ -358,14 +360,17 @@ def compile_read(
     dialect: Dialect,
     *,
     result_form: _ResultForm = "row",
-    lock: LockMode | None = None,
+    shared_lock: bool = False,
 ) -> CompiledRead:
     """Compile one planned Entity Query into a self-contained read.
 
     ``result_form`` chooses only the materialization contract. Projection membership is
-    already present on ``query``; ``lock`` is the caller-derived effective read lock.
+    already present on ``query``; ``shared_lock`` is the read owner's decision
+    that the read takes the shared row lock.
     """
-    return _compile_read(query, model, dialect, result_form=result_form, lock=lock, deferred=False)
+    return _compile_read(
+        query, model, dialect, result_form=result_form, shared_lock=shared_lock, deferred=False
+    )
 
 
 def _compile_read(
@@ -374,7 +379,7 @@ def _compile_read(
     dialect: Dialect,
     *,
     result_form: _ResultForm,
-    lock: LockMode | None,
+    shared_lock: bool,
     deferred: bool,
 ) -> CompiledRead:
     """Lower ``query`` once; a ``deferred`` read binds its page's and its
@@ -387,9 +392,9 @@ def _compile_read(
     two_branches = (
         seek is not None and query.limit is not None and _needs_null_tail(seek, storage, dialect)
     )
-    outer_lock = two_branches and lock == "locking" and dialect.name == "postgres"
-    branch_lock = None if outer_lock else lock
-    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", lock)
+    outer_lock = two_branches and shared_lock and dialect.name == "postgres"
+    branch_lock = shared_lock and not outer_lock
+    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", shared_lock)
     statement_plan = _plan_statement(
         query.predicate,
         evaluation_context=_EvaluationContext.SHARING_ALLOWED,
@@ -411,7 +416,7 @@ def _compile_read(
         facet,
         storage,
         dialect,
-        lock=branch_lock,
+        shared_lock=branch_lock,
         null_tail=False,
         deferred=page_deferred,
     )
@@ -425,7 +430,7 @@ def _compile_read(
             facet,
             storage,
             dialect,
-            lock=branch_lock,
+            shared_lock=branch_lock,
             null_tail=True,
             deferred=page_deferred,
         )
@@ -441,7 +446,7 @@ def _compile_read(
             facet,
             storage,
             dialect,
-            locking=outer_lock,
+            shared_lock=outer_lock,
             deferred=page_deferred,
         )
     return CompiledRead(
@@ -469,11 +474,11 @@ def _union_null_tail(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     *,
-    locking: bool,
+    shared_lock: bool,
     deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """The ordered, capped `union all` of a continuing page's ordinary and
-    NULL-tail branches. A ``locking`` union selects payload and coordinates
+    NULL-tail branches. A ``shared_lock`` union selects payload and coordinates
     from the physical row it locks, which can have changed while it waited."""
     statement_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
         model, facet, storage, dialect
@@ -491,7 +496,7 @@ def _union_null_tail(
     source = f"(({ordinary.sql}) union all ({null_tail.sql})) {outer_alias}"
     lock_suffix = ""
     scope: _EntityRowScope | None = None
-    if locking:
+    if shared_lock:
         if not isinstance(read_shape, _SingleTableReadPlan):  # pragma: no cover
             raise SqlGenError("a locking continuation requires a single physical table")
         layout = read_shape.layout.branches[0].layout
@@ -502,7 +507,7 @@ def _union_null_tail(
     statement_ctx.append_fragment(ordinary)
     statement_ctx.append_fragment(null_tail)
     if scope is not None:
-        base_join, lock_suffix = _locking_base_join(
+        base_join, lock_suffix = _shared_lock_base_join(
             statement_ctx,
             select_list,
             scope.layout,
@@ -535,7 +540,7 @@ def _needs_null_tail(seek: ResolvedSeek, storage: _StorageLayoutFacet, dialect: 
     return _emits_null_tail(seek, dialect, leading_resident=leading_resident)
 
 
-def _locking_base_join[RowScope](
+def _shared_lock_base_join[RowScope](
     ctx: StatementBuilder[RowScope],
     select_list: _SelectListBuilder,
     layout: _TableLayout,
@@ -557,7 +562,7 @@ def _locking_base_join[RowScope](
         join_terms.append(f"{dialect.qualified(outer_alias, alias)} = {base.expression_sql}")
     return (
         f" join {layout.table.name} {base_alias} on " + " and ".join(join_terms),
-        f" {dialect.read_lock_suffix(base_alias)}",
+        f" {dialect.shared_lock_suffix(base_alias)}",
     )
 
 
@@ -729,11 +734,11 @@ def _append_read_tail(
     terms: tuple[_LoweredTerm, ...],
     subject: _TermSubject,
     limit: int | None,
-    lock: LockMode | None,
+    shared_lock: bool,
     *,
     deferred: bool,
 ) -> None:
-    """Append the ``order by`` / ``limit`` / read-lock tail (m-sql) to the select
+    """Append the ``order by`` / ``limit`` / shared-lock tail (m-sql) to the select
     reading ``scope``'s rows: a single-table read, or the outer select over a
     partitioned or union read.
 
@@ -752,10 +757,10 @@ def _append_read_tail(
     if limit is not None:
         parts.append(scope.dialect.limit_clause())
         _bind_limit(scope.ctx, limit, deferred=deferred)
-    if lock == "locking":
+    if shared_lock:
         # The shared-row-lock suffix is the last thing in the statement (after any
         # `where` / `order by` / `limit`).
-        parts.append(scope.dialect.read_lock_suffix(scope.alias))
+        parts.append(scope.dialect.shared_lock_suffix(scope.alias))
 
 
 def _bind_limit[RowScope](
@@ -778,7 +783,7 @@ def _render_read_branch(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     *,
-    lock: LockMode | None,
+    shared_lock: bool,
     null_tail: bool,
     deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
@@ -820,7 +825,7 @@ def _render_read_branch(
                 facet,
                 storage,
                 dialect,
-                lock,
+                shared_lock,
                 null_tail,
                 deferred=deferred,
             )
@@ -836,7 +841,7 @@ def _render_read_branch(
                 facet,
                 storage,
                 dialect,
-                lock,
+                shared_lock,
                 null_tail,
                 deferred=deferred,
             )
@@ -873,7 +878,7 @@ def _render_single_table_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
-    lock: LockMode | None,
+    shared_lock: bool,
     null_tail: bool,
     *,
     deferred: bool,
@@ -910,7 +915,7 @@ def _render_single_table_read(
         where_terms.append(tag_sql)
         ctx.bind_framework_all(tag_binds)
     _append_where(parts, *where_terms)
-    _append_read_tail(parts, scope, terms, scope.subject_for, limit, lock, deferred=deferred)
+    _append_read_tail(parts, scope, terms, scope.subject_for, limit, shared_lock, deferred=deferred)
     return _normalize(ctx.finish(" ".join(parts))), select_list
 
 
@@ -925,7 +930,7 @@ def _render_tph_partitioned_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
-    lock: LockMode | None,
+    shared_lock: bool,
     null_tail: bool,
     *,
     deferred: bool,
@@ -944,7 +949,7 @@ def _render_tph_partitioned_read(
             branch_ctx,
             entity,
             layout,
-            alias=f"t{branch_index + 1}" if lock is not None else "t0",
+            alias=f"t{branch_index + 1}" if shared_lock else "t0",
         )
         tag = _TagPredicate(
             _tag_column(layout, _entity_view(facet, entity.identity).root),
@@ -955,7 +960,7 @@ def _render_tph_partitioned_read(
         fence_sql, fence_binds = dialect.optimizer_fence()
         tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql} {fence_sql}"
         branch_scope = _EntityRowScope(branch_ctx, entity, layout, alias=tagged_alias)
-        if lock is not None:
+        if shared_lock:
             projection = ", ".join(
                 dialect.qualified(branch_scope.alias, column) for column in key_columns
             )
@@ -979,7 +984,7 @@ def _render_tph_partitioned_read(
         branches.append(branch_ctx.finish(branch_sql))
 
     union = " union all ".join(branch_sqls)
-    if lock is not None:
+    if shared_lock:
         statement_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
             model, facet, storage, dialect
         )
@@ -1011,7 +1016,13 @@ def _render_tph_partitioned_read(
             ),
         )
         _append_read_tail(
-            parts, outer_scope, terms, outer_scope.subject_for, limit, lock, deferred=deferred
+            parts,
+            outer_scope,
+            terms,
+            outer_scope.subject_for,
+            limit,
+            shared_lock,
+            deferred=deferred,
         )
         return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
@@ -1045,7 +1056,7 @@ def _render_tph_partitioned_read(
         ),
     )
     _append_read_tail(
-        parts, outer_scope, terms, outer_scope.subject_for, limit, None, deferred=deferred
+        parts, outer_scope, terms, outer_scope.subject_for, limit, False, deferred=deferred
     )
     return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
@@ -1145,7 +1156,9 @@ def _render_tpcs_union_read(
             deferred=deferred,
         ),
     )
-    _append_read_tail(outer_parts, outer_scope, terms, tail_subject, limit, None, deferred=deferred)
+    _append_read_tail(
+        outer_parts, outer_scope, terms, tail_subject, limit, False, deferred=deferred
+    )
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(capture_ctx.finish(""))
     for branch in branch_statements:

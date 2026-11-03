@@ -18,10 +18,9 @@ ports this module declares, so `m-unit-work` takes no direct edge to SQL generat
 `m-navigate` in turn depend on `m-unit-work`, because a list is an
 query-backed view resolved within a unit of work.)
 
-Layered on the unit of work are four modules: the automatic shared read lock
-(`m-read-lock`), bounded automatic retry (`m-auto-retry`), the transaction-scoped
-identity map (`m-identity-map`), and the process-wide identity + query caches
-(`m-process-cache`, deferred).
+Layered on the unit of work are three modules: bounded automatic retry
+(`m-auto-retry`), the transaction-scoped identity map (`m-identity-map`), and the
+process-wide identity + query caches (`m-process-cache`, deferred).
 
 `m-unit-work` also owns **write finalization**: the Write Planner and its stage
 order, which settle buffered writes into `m-write-plan`'s Planned Step algebra;
@@ -604,6 +603,49 @@ coordinates that resolve to one milestone produce one indistinguishable piece
 of evidence, so no observation of a milestone can be less licensing than
 another observation of that same milestone.
 
+### What a locking read observes
+
+Every observation a locking read returns **MUST** describe the physical row
+state protected by its lock: payload, revision evidence, and continuation
+coordinates remain coherent even when the locking read waits behind an updater.
+This requirement also holds at Read Committed; safe observed writes do not
+require a stable transaction snapshot. Read Committed may change result
+membership between statements or streaming batches. A row that ceases to qualify
+may be excluded, including a temporal milestone whose concurrent close changes
+its physical key, without discovering its successor in the same statement.
+Repeatable Read provides a stable transaction snapshot; a conflicting
+modification follows the serialization-failure and whole-attempt retry rules
+(`m-auto-retry`).
+
+### What one temporal observation locks
+
+A lock is taken on the **physical rows the read selected** — nothing wider. For a
+temporal entity this bears repeating, because the vocabulary invites a stronger
+reading than the lock supports: locking the current milestone a read selected
+does **not** lock the milestone chain's edge, the Provenance Lineage behind it,
+every row sharing that primary key, or every Valid-Time rectangle current at the
+same Transaction Time. Exactly one physical row per selected milestone is locked.
+
+Two consequences follow, and `m-write-plan`'s State Observation vocabulary depends
+on both:
+
+- A mutation that can change **several** current rectangles of one key must
+  resolve and observe **every** rectangle it can change, materializing per row.
+  Observing one rectangle licenses closing that rectangle alone. An observed
+  keyed write whose requested extent reaches rectangles no read of it observed
+  therefore reads them inside the flush before changing them (`m-temporal-write`
+  *Observed writes span their requested extent*), and under Locking that read
+  takes this same shared lock on every row it selects.
+- A temporal observation names **one milestone** and records nothing about the
+  read that produced it, so what it says about lock scope is exactly what this
+  section says: the read locked that one row, the row a Locking write closes
+  (*What licenses a Locking write*). A read at a **historical** Transaction-Time
+  coordinate locks a historical row and observes the milestone it actually
+  selected, which no current-milestone close addresses; a write over a view so
+  pinned is refused by the Transaction-Time pin rule (`m-identity-map`) rather
+  than by any lock-scope claim. A finite **Valid-Time** pin may still select a
+  current Transaction-Time row and so remains writable.
+
 ### Source-authorized replacement
 
 A keyed `replace` / `replaceUntil` states the complete writable state of the
@@ -704,7 +746,7 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   stated state, else from a live read of exactly that state this attempt holds
   under its shared lock and no completed write of it has changed since, else
   from one **acquisition**: a point
-  read of the stored row under the shared lock (`m-read-lock`) that executes no
+  read of the stored row under the shared lock (*Row acquisition*) that executes no
   pending write and publishes nothing. The stated revision is compared with the
   row that acquisition holds; a row standing at another revision, or no row, is
   a failed precondition refused at the call, leaving the pending writes as they
@@ -794,6 +836,11 @@ nothing of the read itself; acquisition settles its resources however the
 consumer ends. A completion reaches the same kind of consumer with no read
 behind it. Where a write reads nothing, it requests nothing: a predicate write
 is readless (`m-batch-write`), so it requests no acquisition at all.
+
+A request states whether its read takes the shared row lock, and execution
+applies that and derives nothing. A target read exists only under Locking and
+always takes the lock. A coverage read takes it exactly when its range is
+ungated, the other half of the gate decision settlement made for that range.
 
 ## Write finalization
 
@@ -998,7 +1045,7 @@ temporal topology and correctness semantics already decided.
   it, the unit of work has acquired the object's current rows over the range not
   already covered (*Row acquisition*) — at that turn, or earlier through its
   acquisition span's shared reads (*Shared coverage acquisition*), inside the
-  flush either way and under `m-read-lock`'s shared lock when the effective
+  flush either way and under the shared lock when the effective
   strategy is Locking — and at its group's turn it binds those rows, or the
   absence of any, with the observed ones into the write's physical steps, before
   any step of the Write Group it runs in executes. Temporal meaning,
@@ -1234,7 +1281,8 @@ That timing deliberately qualifies acquisition at each write's own turn:
   turn; under Repeatable Read, it observes the transaction's snapshot and the
   attempt's own writes as any read does (*The Isolation Level beside it*).
 - **Locks.** Under Locking, the shared lock is taken on the physical rows each
-  statement selects, nothing wider (`m-read-lock`), when that statement runs.
+  statement selects, nothing wider (*What one temporal observation locks*), when
+  that statement runs.
   No order of lock acquisition across objects or transactions is promised.
 - **Failures.** The failure actually encountered first propagates, and no
   failure is collected, deferred, ranked, or replayed to reproduce acquisition
@@ -1934,7 +1982,7 @@ a plain object find, a deep fetch's own included levels, and a streamed
 delivery's pages — because the guarantee belongs to the transaction rather than
 to a statement. A read taking the shared lock is no exception: the lock and the
 level compose, so a Locking read inside a Repeatable Read boundary both holds its
-lock and reads at the level.
+lock and reads at the level (*What a locking read observes*).
 
 An omitted level, and a joining boundary's, resolve as `m-execution` *Option
 resolution* states: the boundary requests a concrete level on every attempt

@@ -1,4 +1,4 @@
-"""``parallax.conformance.concurrency_runner`` unit tests (m-read-lock
+"""``parallax.conformance.concurrency_runner`` unit tests (m-concurrency
 behavioral matrix, Docker-free fake peer sessions).
 
 Pins the pure `when.concurrency.rounds` parsing and the rounds runner's own
@@ -24,12 +24,12 @@ from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES, Dialect
 
 
-def _case(document: dict[str, Any], *, case_id: str = "m-read-lock-900") -> case_format.Case:
+def _case(document: dict[str, Any], *, case_id: str = "m-concurrency-944") -> case_format.Case:
     return case_format.Case(
         path=Path(f"{case_id}.yaml"),
         case_id=case_id,
         shape="error",
-        tags=("m-read-lock", "slice-snapshot-1"),
+        tags=("m-concurrency", "slice-snapshot-1"),
         model="models/account.yaml",
         document=document,
     )

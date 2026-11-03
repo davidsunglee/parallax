@@ -1,13 +1,13 @@
 # A standalone read under a locking Database Root takes no lock: the root's
 # defaults govern the transactions opened through it, and a read that opens none
-# has nothing for them to govern (m-read-lock / m-unit-work / m-case-format). The
+# has nothing for them to govern (m-concurrency / m-unit-work / m-case-format). The
 # root is configured `locking` and the case names no `when.uow`, so the object
 # find is the plain non-transactional read every other standalone read is, and
-# its golden carries no `for share of t0` suffix. Contrast `m-read-lock-017`,
+# its golden carries no `for share of t0` suffix. Contrast `m-concurrency-061`,
 # where the same root's preference reaches a stream because a `uow` group put
 # that stream inside a transaction.
 model: models/account.yaml
-tags: [m-read-lock, m-concurrency, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
 shape: read
 given:
   databaseOptions:

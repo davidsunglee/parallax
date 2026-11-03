@@ -9,10 +9,9 @@
 
 It owns only the set-based/readless vocabulary for the second family, including
 which targets that family can write at all, when its statement runs, and the count
-its verb returns. Versioning,
-locking, conflict abort, and temporal chaining belong respectively to `m-concurrency`,
-`m-read-lock`, `m-unit-work`, and `m-temporal-write`. The canonical golden SQL is
-fixed by `m-sql`.
+its verb returns. Versioning and locking belong to `m-concurrency`, conflict abort
+to `m-unit-work`, and temporal chaining to `m-temporal-write`. The canonical golden
+SQL is fixed by `m-sql`.
 
 `m-batch-write` decides only **compatibility**: whether two buffered writes may
 share one step. The Planned Step algebra and the affected-row policy that step

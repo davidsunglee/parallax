@@ -762,7 +762,7 @@ def locking_continuation_facts(
     An explicit Locking preference always selects the strategy. Under the default
     Optimistic preference, a temporal target's Transaction-Time start or an
     ``optimisticLocking`` Attribute supplies a version source; only a non-temporal,
-    unversioned target falls back to Locking (m-read-lock / m-unit-work).
+    unversioned target falls back to Locking (m-concurrency / m-unit-work).
     """
     if "uow" not in case.when:
         return None

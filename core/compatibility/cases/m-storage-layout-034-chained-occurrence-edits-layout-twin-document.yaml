@@ -3,7 +3,7 @@
 # left. Only the physical mutation differs — one flat assignment at the occurrence's
 # path inside the shared `payload` document instead of one bind at its own Column.
 model: models/write-transparency-layout-twin-document.yaml
-tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-concurrency, m-read-lock, m-sql, scenario, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-concurrency, m-sql, scenario, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario
 when:
   scenario:

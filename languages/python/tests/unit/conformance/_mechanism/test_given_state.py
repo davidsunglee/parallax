@@ -421,7 +421,7 @@ def test_fixture_seeding_tracks_current_milestones_with_managed_axis_ends() -> N
             terms=(
                 CoverageTerm(1, (TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),)),
             ),
-            locking=False,
+            shared_lock=False,
         ),
     )
     assert [(row["value"], row["validEnd"], row["txEnd"]) for row in coverage_members(covered)] == [

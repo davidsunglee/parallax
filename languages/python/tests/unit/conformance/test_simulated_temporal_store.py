@@ -399,7 +399,7 @@ def _acquisition(valid_from: dt.datetime, until: dt.datetime | None) -> Coverage
         entity=POSITION_ENTITY,
         key_attribute=key,
         terms=(CoverageTerm(1, (TimeInterval(valid_from, INFINITY if until is None else until),)),),
-        locking=False,
+        shared_lock=False,
     )
 
 
@@ -496,7 +496,7 @@ def test_coverage_answers_a_stored_milestones_value_objects_positionally() -> No
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             terms=(CoverageTerm(7, ()),),
-            locking=False,
+            shared_lock=False,
         ),
     )
     (row,) = coverage_members(covered)
@@ -585,7 +585,7 @@ def _stored(store: SimulatedTemporalStore, key: int = 1) -> list[tuple[object, o
             entity=POSITION_ENTITY,
             key_attribute=_position("id"),
             terms=(CoverageTerm(key, ()),),
-            locking=False,
+            shared_lock=False,
         ),
     )
     return sorted(

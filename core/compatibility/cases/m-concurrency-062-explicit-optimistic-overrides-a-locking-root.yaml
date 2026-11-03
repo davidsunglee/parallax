@@ -1,6 +1,6 @@
 # An explicit `optimistic` request overrides a locking Database Root: the same
-# transactional stream as `m-read-lock-017`, under the same `locking` root, opens
-# lock-free pages because the invocation named its own preference (m-read-lock /
+# transactional stream as `m-concurrency-061`, under the same `locking` root, opens
+# lock-free pages because the invocation named its own preference (m-concurrency /
 # m-unit-work / m-case-format). Account declares a version, so `optimistic`
 # resolves to the Optimistic strategy rather than the unversioned Locking fallback,
 # and neither page carries a lock clause — the contrast that tells inheritance
@@ -9,7 +9,7 @@
 # alone; the two-arm PostgreSQL continuation and MariaDB's one-arm form are those
 # of any optimistic stream.
 model: models/account.yaml
-tags: [m-read-lock, m-concurrency, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, database-options, slice-snapshot-1]
+tags: [m-concurrency, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, database-options, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

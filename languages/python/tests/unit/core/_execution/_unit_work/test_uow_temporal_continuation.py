@@ -184,7 +184,7 @@ class _Session:
                 entity=_ENTITY,
                 key_attribute=AttributeIdentity(_ENTITY.identity, "id"),
                 terms=(CoverageTerm(1, ()),),
-                locking=False,
+                shared_lock=False,
             ),
             consume_coverage,
         )

@@ -1515,7 +1515,7 @@ def _assert_versioned_update_input(
     The golden SET clause is the domain set columns + the framework-owned ``version``
     column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
     binds are ``[…set values…, newVersion, pk]`` under the Locking strategy a
-    declared ``locking`` preference imposes (``m-concurrency-002`` — the m-read-lock
+    declared ``locking`` preference imposes (``m-concurrency-002`` — the
     shared read lock makes the write correct, so no
     ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` under
     the Optimistic strategy a versioned target takes by default. One golden
@@ -3133,7 +3133,7 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     assert_table_state(case, db, after="the choreography")
 
 
-# --- concurrency-success cases (m-read-lock behavioral read-lock) ---------------------
+# --- concurrency-success cases (m-concurrency behavioral read-lock) ---------------------
 
 
 def _concurrency_statements(case: Case, dialect: str) -> list[str]:
@@ -3209,7 +3209,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     """Two-node, barrier-synchronized rounds that assert NO error and each read's rows.
 
     The non-error counterpart of :func:`_assert_error_concurrency`, reusing the same
-    :func:`_run_concurrency_rounds` plumbing: ``m-read-lock-007`` (both readers take
+    :func:`_run_concurrency_rounds` plumbing: ``m-concurrency-051`` (both readers take
     the shared lock and BOTH succeed -- shared, not exclusive). Each node runs its
     round steps on its own held non-autocommit session; a ``kind: read`` step is
     fetched on that HELD session (``session.query`` -- inside the open transaction, so
@@ -3705,8 +3705,8 @@ def _run_error(case: Case, db: DatabaseProvider, dialect: str) -> None:
 
 
 def _run_concurrency_success(case: Case, db: DatabaseProvider, dialect: str) -> None:
-    # A concurrency-success case (m-read-lock behavioral read-lock:
-    # m-read-lock-007) also carries its golden per round inside
+    # A concurrency-success case (m-concurrency behavioral read-lock:
+    # m-concurrency-051) also carries its golden per round inside
     # `concurrency.rounds` (no top-level then.statements), as a sibling of the
     # error shape.
     _assert_schema(case)

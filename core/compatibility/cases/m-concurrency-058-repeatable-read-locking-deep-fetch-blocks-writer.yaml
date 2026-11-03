@@ -1,12 +1,12 @@
 # A deep fetch's CHILD level still holds its shared row lock when the unit of work
-# asks for Repeatable Read (m-read-lock / m-read-planning / m-unit-work). Round 1:
+# asks for Repeatable Read (m-concurrency / m-read-planning / m-unit-work). Round 1:
 # transaction A, opened at `when.uow.isolation: repeatable-read`, issues
-# m-read-lock-004's own two statements — the locking root read of every order item
+# m-concurrency-048's own two statements — the locking root read of every order item
 # and the locking include read of the orders they belong to — and HOLDS. Round 2:
 # transaction B updates order 1, a row only the SECOND statement touched, blocks on
 # that statement's shared lock, and raises lockWaitTimeout.
 model: models/orders.yaml
-tags: [m-read-lock, m-read-planning, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-managed-1]
+tags: [m-concurrency, m-read-planning, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-managed-1]
 shape: error
 compileEligibility:
   mode: run-only

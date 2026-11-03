@@ -531,11 +531,11 @@ def test_a_transaction_time_only_deferred_write_reads_alone() -> None:
     assert _spans(plan) == []
 
 
-def _candidate(key: int, *, locking: bool = False, entity: str = "ShareCols") -> Any:
+def _candidate(key: int, *, shared_lock: bool = False, entity: str = "ShareCols") -> Any:
     identity = EntityIdentity("parallax.execution.shared", entity)
     key_attribute = AttributeIdentity(identity, "id")
     return settlement._AcquisitionCandidate(  # pyright: ignore[reportPrivateUsage] - the facts a span compares
-        identity, key_attribute, locking, (key_attribute, key)
+        identity, key_attribute, shared_lock, (key_attribute, key)
     )
 
 
@@ -544,7 +544,7 @@ def _candidate(key: int, *, locking: bool = False, entity: str = "ShareCols") ->
     [
         (_candidate(2), [(0, 3)]),
         (_candidate(1), [(1, 3)]),
-        (_candidate(2, locking=True), []),
+        (_candidate(2, shared_lock=True), []),
         (_candidate(2, entity="ShareDoc"), []),
         (None, []),
     ],

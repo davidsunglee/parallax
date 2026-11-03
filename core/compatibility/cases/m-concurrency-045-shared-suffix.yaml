@@ -1,8 +1,6 @@
-# Read-lock divergence — an in-transaction read that intends to write appends the
-# dialect's shared-row-lock suffix, the one place the two dialects diverge on
-# read-locking syntax (m-read-lock / m-dialect seam).
+# Read-lock case (m-concurrency): an in-transaction read acquires a shared row lock.
 model: models/account.yaml
-tags: [m-read-lock, m-dialect]
+tags: [m-concurrency, m-dialect, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   uow:
@@ -17,7 +15,6 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
-        mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
       binds: [2]
   referenceSql: select id, owner, balance, version from account where id = 2
   rows:

@@ -22,7 +22,7 @@ The SQL lowering of this envelope is owned by the sibling module `m-sql-agg`.
 - **Schema surface.** The aggregate query envelope requires its own closed
   interchange schema rather than alternatives in the Object Query schema.
 - **Read-lock suppression.** An aggregation read never carries the shared read-lock
-  suffix (`m-read-lock` / `m-sql`): a grouped / aggregate result has no identifiable
+  suffix (`m-sql`): a grouped / aggregate result has no identifiable
   base row to lock.
 - **Fixture obligations.** Compatibility fixtures **MUST** cover every aggregate
   function, aliases that differ from Attribute names, grouped and ungrouped row

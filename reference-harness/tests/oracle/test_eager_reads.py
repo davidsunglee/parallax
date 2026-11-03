@@ -31,7 +31,7 @@ _TPH_ABSTRACT_ROOT = "m-inheritance-003-tph-abstract-root-read.yaml"
 _TPCS_ABSTRACT_ROOT = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
 _PARTIAL_TPH_ROOT = "m-inheritance-147-partial-tph-root-read-unknown-tag.yaml"
-_LOCKED_TPH_DOCUMENT = "m-read-lock-010-document-layout-tph-partitioned.yaml"
+_LOCKED_TPH_DOCUMENT = "m-concurrency-054-document-layout-tph-partitioned.yaml"
 
 _BEASTS: list[dict[str, Any]] = [
     {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},

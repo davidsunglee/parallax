@@ -866,16 +866,15 @@ def test_the_read_pipeline_row_forbids_the_write_policy_the_parent_reaches() -> 
 
 def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_reaches() -> None:
     # The exclusion the ingress row exists for: a keyed write addresses a row its
-    # caller already holds, so it delivers no read, takes no read lock, and pages
-    # no continuation — which only a row narrower than the parent's can state,
-    # since the parent reaches all three.
+    # caller already holds, so it delivers no read and pages no continuation —
+    # which only a row narrower than the parent's can state, since the parent
+    # reaches both.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     scope = "parallax.core._execution._keyed_writes"
     parent = dag.transitive_closure(adjacency, "parallax.core._execution")
     for reach in (
         "parallax.core.read_delivery",
-        "parallax.core.read_lock",
         "parallax.core.continuation",
     ):
         assert reach in parent, reach
@@ -1581,7 +1580,6 @@ def test_model_formation_and_its_consumers_reach_the_policy_but_no_unit_of_work(
 @pytest.mark.parametrize(
     "scope",
     [
-        "parallax.core.read_lock",
         "parallax.core.read_delivery._page",
         "parallax.snapshot._publication",
     ],

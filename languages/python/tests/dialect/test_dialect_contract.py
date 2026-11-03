@@ -93,10 +93,10 @@ def test_null_ordering_per_direction_and_placement(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_row_limit_and_read_lock(dialect: Dialect) -> None:
+def test_row_limit_and_shared_lock(dialect: Dialect) -> None:
     assert dialect.limit_clause() == "limit ?"
     assert dialect.optimizer_fence() == ("offset 0", [])
-    assert dialect.read_lock_suffix("t0") == "for share of t0"
+    assert dialect.shared_lock_suffix("t0") == "for share of t0"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

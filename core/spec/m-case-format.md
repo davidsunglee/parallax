@@ -184,7 +184,7 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   step's `expectRows` observed on its held session, a `write` step asserting that
   it did not raise and any `affectedRows` it states, a `commit` step ending that
   node's held transaction. It proves the shared read lock is compatible with a
-  second reader (`m-read-lock`), and carries the two-session isolation witnesses
+  second reader (`m-concurrency`), and carries the two-session isolation witnesses
   whose schedules end without an error.
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
@@ -630,7 +630,7 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
   - A **managed-object find or refresh step** — a developer-facing find whose rows become
     managed instances: an identity-map coordinate / refresh read, a coherence re-fetch, a
     scenario observation find, or a **concurrency full-scalar shared read** that observes
-    the object (`m-read-lock`) — is **instance-form** (object lane), exactly like a
+    the object (`m-concurrency`) — is **instance-form** (object lane), exactly like a
     `then.graph` read.
   - A relationship **`action: load` step** and the **first `action: access` step** of a
     relationship or query-backed list (`m-op-list`) — the SQL-producing read that
@@ -1701,9 +1701,9 @@ the Database Root's configured default (`given.databaseOptions.concurrency`, bui
 preference yields Optimistic or the mandatory Locking fallback. A case whose SQL
 depends on that effective choice SHOULD declare the preference that produces it —
 explicitly under `when.uow`, or as the root's default where the case is about the
-root: `m-read-lock-017` moves `m-read-lock-016`'s locking preference into
+root: `m-concurrency-061` moves `m-concurrency-060`'s locking preference into
 `given.databaseOptions` and keeps its shared-lock goldens, proving the group's
-transaction inherits the root's preference, while `m-read-lock-018` overrides that
+transaction inherits the root's preference, while `m-concurrency-062` overrides that
 locking root with an explicit `optimistic` request and expects the lock-free pages.
 
 **`when.uow.isolation`** is the block's one prescriptive member. It names a
@@ -1832,10 +1832,10 @@ case's Database, and only the fields `when.uow` authors to the transaction it
 opens, so that resolving the omission is the implementation's own work rather
 than the runner's. A runner that opens no transaction at all — a standalone read
 or a standalone stream — carries the root record nowhere, so a locking root does
-not turn a standalone read into a locking one (`m-read-lock-019`). What makes a
+not turn a standalone read into a locking one (`m-concurrency-063`). What makes a
 `read` case transactional is the presence of its `when.uow` block, never any one
 field inside it: a block that requests nothing still puts the read inside a unit
-of work, whose preference is then resolved against the root (`m-read-lock-020`
+of work, whose preference is then resolved against the root (`m-concurrency-064`
 renders the shared-lock suffix under a locking root with an empty block). The harness
 resolves the same explicit-over-root-over-built-in values for the sessions it
 holds and the strategy it grades, and executes the authored golden SQL as it

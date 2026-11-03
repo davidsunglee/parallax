@@ -103,13 +103,13 @@ class CoverageTerm:
 class CoverageReadRequest:
     """The current coverage deferred ranges bind to: every row each of
     ``terms`` names, read whole, in one statement, under the shared row lock
-    when ``locking``. Each row is returned whole however little of it a window
+    when ``shared_lock``. Each row is returned whole however little of it a window
     reaches, and the rows of several objects are told apart by their keys."""
 
     entity: EntityMetadata
     key_attribute: AttributeIdentity
     terms: tuple[CoverageTerm, ...]
-    locking: bool
+    shared_lock: bool
 
 
 @dataclass(frozen=True, slots=True)

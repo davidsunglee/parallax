@@ -136,10 +136,7 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # m-snapshot-read/m-value-object/m-inheritance (each a reasoned, case-scoped
 # entry rather than a blanket module bucket),
 # m-edit (every currently active case is a native runner-backed example),
-# m-read-lock (its runtime object-find pair -002/-005 are real idiomatic
-# read-story examples; its harness-lane and two-session proofs
-# -001/-006/-007/-010/-011 are case-scoped — no case needs a generic
-# module-wide reason), m-metamodel (each primary-module case is a foundational
+# m-metamodel (each primary-module case is a foundational
 # model reject, reasoned case-scoped), and
 # m-execution-lifecycle (its joined case is a real idiomatic story and the other
 # five name the grader that runs them), and m-execution-authority (one is a real
@@ -160,7 +157,6 @@ _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
         "m-snapshot-read",
         "m-value-object",
         "m-inheritance",
-        "m-read-lock",
         "m-metamodel",
     }
 )
@@ -251,7 +247,7 @@ def test_read_and_graph_story_snippets_render_no_private_name() -> None:
 
 
 def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
-    # Review remediation finding 2: `m-read-lock-002` (locking) and `-005`
+    # Review remediation finding 2: `m-concurrency-046` (locking) and `-049`
     # (optimistic) run the SAME `db.find` expression under DIFFERENT
     # Concurrency Preferences — the entire point of the pair. The rendered
     # snippet must show the mode (never render the two identically), and it
@@ -259,8 +255,8 @@ def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
     # execution with (`test_story_run.py`'s generic runner branches on that
     # SAME field) — single-sourced, not a second, independently-typed string.
     by_id = {story.case_id: story for story in READ_STORIES}
-    locking = by_id["m-read-lock-002"]
-    optimistic = by_id["m-read-lock-005"]
+    locking = by_id["m-concurrency-046"]
+    optimistic = by_id["m-concurrency-049"]
     assert locking.concurrency == "locking"
     assert optimistic.concurrency == "optimistic"
     locking_snippet = read_story_snippet(locking)

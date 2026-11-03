@@ -55,7 +55,7 @@ def run_error_case(
     two barrier-synchronized sessions this single-connection lane cannot drive
     at all — it is refused here UNCONDITIONALLY, never dispatched to from a
     caller that owns two sessions (
-    ``m-read-lock-006`` is graded by the CASE-DRIVEN two-session rounds
+    ``m-concurrency-050`` is graded by the CASE-DRIVEN two-session rounds
     runner instead, ``parallax.conformance.concurrency_runner`` — this
     module's own dispatcher (`tests/compatibility/test_run_sweep.py`) routes it
     there and never reaches this function for that case at all; the

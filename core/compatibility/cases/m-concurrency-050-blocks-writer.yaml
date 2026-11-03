@@ -1,11 +1,10 @@
-# A locking object find still holds its shared row lock when the unit of work asks
-# for Repeatable Read (m-read-lock / m-unit-work). Round 1: transaction A, opened
-# at `when.uow.isolation: repeatable-read`, issues the in-transaction shared read
-# lock (`for share of t0` / `lock in share mode`) on account 2 and HOLDS. Round 2:
-# transaction B updates account 2, blocks on A's shared lock, and raises
-# lockWaitTimeout on the session's lowered lock-wait budget.
+# Behavioral counterpart to m-concurrency-045/m-concurrency-046 (m-concurrency/m-dialect). Round 1: transaction A issues the
+# m-concurrency in-transaction shared read lock (`for share of t0` / `lock in share mode`) on
+# account 2 and HOLDS (no commit). Round 2: transaction B attempts to UPDATE account
+# 2 and, with the session's lowered lock-wait budget (lock_timeout /
+# innodb_lock_wait_timeout), blocks on A's shared lock and raises lockWaitTimeout.
 model: models/account.yaml
-tags: [m-read-lock, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, m-db-error, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error
 compileEligibility:
   mode: run-only
@@ -14,9 +13,6 @@ compileEligibility:
 given:
   fixtures: true
 when:
-  uow:
-    concurrency: locking
-    isolation: repeatable-read
   concurrency:
     rounds:
       - A:

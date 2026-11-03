@@ -1322,7 +1322,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # API-suite's own polymorphism observation (`queries-and-results.md`:         #
 # `type(node)`"), not a field the developer surface itself exposes.           #
 #                                                                              #
-# `story.concurrency` (the `m-read-lock` matrix) opts a story into the         #
+# `story.concurrency` (the `m-concurrency` matrix) opts a story into the         #
 # transactional half: `tx.find(build())` inside a `db.transact` of the        #
 # declared Concurrency Preference, still graded against the SAME `then.rows`  #
 # oracle, PLUS the statements this story's own find actually executed         #
@@ -1338,7 +1338,7 @@ _READ_STORY_IDS = [story.case_id for story in READ_STORIES]
 class _StatementCapturePort(ConnectsAsItself):
     """A pass-through ``m-db-port`` decorator capturing every SQL statement +
     binds a read story's find ACTUALLY executes: `then.rows` alone cannot
-    distinguish whether a `m-read-lock` story's runtime developer path emitted
+    distinguish whether a `m-concurrency` story's runtime developer path emitted
     the shared read-lock suffix; only the statement text can. ``transaction``
     nests another capture wrapper sharing this SAME ``statements`` list, because
     the underlying provider hands ``body`` ITSELF rather than this decorator, so
@@ -1426,7 +1426,7 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_r
     # Grade the statements this story's find actually executed against the
     # case's authored Postgres golden
     # dialect) — asserting the `for share of t0` lock suffix's presence
-    # (`m-read-lock-002`) or absence (`m-read-lock-005`/every other read story)
+    # (`m-concurrency-046`) or absence (`m-concurrency-049`/every other read story)
     # exactly as authored, reusing the SAME driver-SQL translation and
     # exact-Decimal bind comparison every other run lane uses rather than an
     # ad hoc string match.

@@ -780,7 +780,7 @@ class Case:
 
         A ``harness``-lane case executes as today; an ``api-conformance``-lane case
         (every boundary and edit case, plus the read-lock matrix reads
-        ``m-read-lock-002``, ``m-read-lock-004``, and ``m-read-lock-005``) is
+        ``m-concurrency-046``, ``m-concurrency-048``, and ``m-concurrency-049``) is
         schema-validated by the
         m-case-format harness but NOT executed — each language's API Conformance
         Suite satisfies it. :func:`case_runner.run_case` early-returns for the
@@ -1175,16 +1175,16 @@ class Case:
 
     @property
     def is_concurrency_success(self) -> bool:
-        """True for an m-read-lock behavioral read-lock concurrency-SUCCESS case.
+        """True for an m-concurrency behavioral read-lock concurrency-SUCCESS case.
 
         A concurrency-success case carries a ``when.concurrency`` choreography with NO
         ``then.errorClass`` (the discriminator that keeps it distinct from an
         error/concurrency case). It runs the barrier-separated rounds on two held
         non-autocommit sessions and asserts that NO error is raised — each read
         step's optional ``expectRows`` observed on its HELD session. Proves the
-        shared read lock is COMPATIBLE with a second reader (``m-read-lock-007``),
+        shared read lock is COMPATIBLE with a second reader (``m-concurrency-051``),
         the non-error counterpart to the error branch's lock CONTENTION
-        (``m-read-lock-006``).
+        (``m-concurrency-050``).
         """
         return self.shape == "concurrencySuccess"
 

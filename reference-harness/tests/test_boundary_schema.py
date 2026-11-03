@@ -208,7 +208,7 @@ def test_schema_accepts_a_root_on_a_read_case() -> None:
         _SCHEMA_PATH.parents[1]
         / "compatibility"
         / "cases"
-        / "m-read-lock-019-a-standalone-read-under-a-locking-root-takes-no-lock.yaml"
+        / "m-concurrency-063-a-standalone-read-under-a-locking-root-takes-no-lock.yaml"
     )
     assert case["given"] == {"databaseOptions": {"concurrency": "locking"}}
     assert list(_case_validator().iter_errors(case)) == []

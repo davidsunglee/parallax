@@ -38,7 +38,7 @@ def test_locking_continuation_binds_document_coordinates_in_projection_order(
         ).root,
         metamodel,
         POSTGRES,
-        lock="locking",
+        shared_lock=True,
     )
     compiled = template.render(query=current)
     profile_run.reset(metamodel, provision.load_fixtures("models/document-layout.yaml"))
@@ -75,7 +75,7 @@ def test_a_narrowed_abstract_continuation_locks_its_concrete_rows(
         ).root,
         metamodel,
         POSTGRES,
-        lock="locking",
+        shared_lock=True,
     )
     expected = (
         {
