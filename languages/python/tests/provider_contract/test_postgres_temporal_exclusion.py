@@ -10,6 +10,7 @@ created it.
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -46,6 +47,11 @@ _OVERLAPS = (
     "and tstzrange(a.from_z, a.thru_z) && tstzrange(b.from_z, b.thru_z) "
     "order by a.pos_id"
 )
+_OLDER_TRANSACTIONS = (
+    "select pid from pg_stat_activity "
+    "where datname = current_database() and pid <> pg_backend_pid() "
+    "and backend_xmin is not null and xact_start < %s"
+)
 
 
 def _provision(profile_run: Any, model_file: str) -> Metamodel:
@@ -67,6 +73,13 @@ def _refused(profile_run: Any, sql: str, binds: list[object]) -> DatabaseError:
     with pytest.raises(DatabaseError) as raised:
         profile_run.port.execute_write(sql, binds)
     return raised.value
+
+
+def _await_older_transactions(profile_run: Any, corrected_at: datetime) -> None:
+    deadline = time.monotonic() + 10.0
+    while profile_run.port.execute(_OLDER_TRANSACTIONS, [corrected_at]):
+        assert time.monotonic() < deadline, "a transaction older than the corrections stayed open"
+        time.sleep(0.05)
 
 
 def _exclusion_definition(constraints: TemporalHistoryConstraints) -> str:
@@ -301,6 +314,8 @@ def test_the_documented_migration_reaches_the_generated_catalog(profile_run: Any
     profile_run.port.execute_write(
         "update position set thru_z = %s where pos_id = %s and val = %s", [_JUN, 2, 1]
     )
+    ((corrected_at,),) = profile_run.port.execute("select clock_timestamp()", [])
+    _await_older_transactions(profile_run, corrected_at)
     assert profile_run.port.execute(_OVERLAPS, []) == []
     for statement in (
         f"alter table position rename constraint position_pkey to {constraints.primary_key_name}",
