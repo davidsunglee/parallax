@@ -41,9 +41,17 @@ from parallax.core.db_port import DatabaseConnection, MappingRow, Row, Transacti
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec._plan import AuthoringLane
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import AsOfRange, object_query, validate_object_query
+from parallax.core.object_query import AsOf, AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.predicate import And, Comparison, FieldSubject, ModelRejectedError, Quantifier
+from parallax.core.predicate import (
+    And,
+    Comparison,
+    FieldSubject,
+    ModelRejectedError,
+    Presence,
+    Quantifier,
+    ScalarLiteral,
+)
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
@@ -500,6 +508,68 @@ def test_case_query_adapter_preserves_unresolved_predicate_values_for_core_valid
     normalized = _case_ingress.normalize_case_query(query, model)
 
     assert serialize_predicate(normalized.predicate) == serialize_predicate(query.predicate)
+
+
+@pytest.mark.parametrize(
+    ("scope", "predicate_node", "expected"),
+    [
+        (
+            "parallax.compatibility.Coverage",
+            Quantifier(
+                "any",
+                "parallax.compatibility.Coverage.claims",
+                Comparison(
+                    op="eq",
+                    subject=FieldSubject("reserve"),
+                    value=cast("ScalarLiteral", Decimal("12.50")),
+                ),
+            ),
+            {
+                "any": {
+                    "path": "parallax.compatibility.Coverage.claims",
+                    "where": {"eq": {"path": "reserve", "value": "12.50"}},
+                }
+            },
+        ),
+        (
+            "parallax.compatibility.Claim",
+            Presence(
+                "exists",
+                "parallax.compatibility.Claim.coverage",
+                Comparison(
+                    op="eq",
+                    subject=FieldSubject("amount"),
+                    value=cast("ScalarLiteral", Decimal("12.50")),
+                ),
+            ),
+            {
+                "exists": {
+                    "path": "parallax.compatibility.Claim.coverage",
+                    "where": {"eq": {"path": "amount", "value": "12.50"}},
+                }
+            },
+        ),
+    ],
+    ids=["defining", "reverse"],
+)
+def test_case_query_adapter_normalizes_managed_decimals_through_relationship_directions(
+    scope: str, predicate_node: Quantifier | Presence, expected: Mapping[str, object]
+) -> None:
+    model = models.load_models()["policy"]
+    root = model_facts.case_entity(model, scope)
+    query = object_query(
+        root.identity,
+        predicate_node,
+        temporal={
+            "transaction-time": AsOf("latest"),
+            "valid-time": AsOf("2024-03-01T00:00:00.000000Z"),
+        },
+    )
+
+    normalized = _case_ingress.normalize_case_query(query, model)
+
+    assert serialize_predicate(normalized.predicate) == expected
+    validate_object_query(root, normalized, model)
 
 
 def test_case_ingress_bounds_missing_inheritance_positions(

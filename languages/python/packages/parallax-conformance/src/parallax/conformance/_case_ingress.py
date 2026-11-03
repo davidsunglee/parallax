@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Final, cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
-from parallax.core import inheritance, predicate, temporal_read
+from parallax.core import inheritance, predicate, relationship, temporal_read
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
@@ -28,15 +28,12 @@ from parallax.core.base import (
 from parallax.core.document_codec._plan import AuthoringPlan, AuthoringRefusal
 from parallax.core.metamodel import (
     AttributeMetadata,
-    DefiningRelationshipDeclaration,
-    EntityIdentity,
     EntityMetadata,
     MemberDefinition,
     MemberShape,
     Multiplicity,
     OccurrenceDefinition,
     OccurrenceMetadata,
-    RelationshipDeclaration,
     ScalarDefinition,
     TemporalDimension,
     ValueObjectAttributeMetadata,
@@ -599,7 +596,10 @@ def _member(model: AcceptedMetamodel, owner: _Reached, name: str) -> _Reached | 
             for candidate in _family(model, entity):
                 declaration = candidate.relationship(name)
                 if declaration is not None:
-                    return _Related(model.entity(_relationship_target(model, declaration)))
+                    metadata = relationship.view(model).relationship(declaration.identity)
+                    return _Related(
+                        None if metadata is None else model.entity(metadata.join.target.entity)
+                    )
             return None
 
 
@@ -622,12 +622,3 @@ def _family_members(
     for candidate in _family(model, entity):
         members.update(_entity_members(model, candidate))
     return members
-
-
-def _relationship_target(
-    model: AcceptedMetamodel, declaration: RelationshipDeclaration
-) -> EntityIdentity:
-    del model
-    if isinstance(declaration, DefiningRelationshipDeclaration):
-        return declaration.join.target.entity
-    return declaration.reverse_of.source_entity
