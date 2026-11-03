@@ -408,7 +408,8 @@ def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
         )
     tag_column = family.tag_column_of(target_name)
     table = target.table
-    if case.path.stem.startswith("m-read-lock-"):
+    # The SQL lint grades whether this read locks; this grades only how.
+    if tree.find(exp.Lock) is not None:
         outer_tables = [source.name for source in tree.find_all(exp.Table)]
         base_occurrences = [name for name in outer_tables if name == table]
         if (
@@ -419,7 +420,7 @@ def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
             raise CaseFailure(
                 f"{case.path.name}: locking TPH partition must join one outer base Table "
                 f"{table!r} to its {len(branches)} derived variant branches, got "
-                f"{outer_tables!r} (m-sql / m-read-lock)."
+                f"{outer_tables!r} (m-sql)."
             )
     for position_index, (branch, concrete) in enumerate(zip(branches, effective, strict=True)):
         tables = [source.name for source in branch.find_all(exp.Table)]
