@@ -175,6 +175,7 @@ from typing import Final, NamedTuple, cast, get_type_hints
 
 import pytest
 
+import parallax.core.execution_lifecycle._activity as _activity
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_port import (
     Bind,
@@ -233,7 +234,12 @@ from tests.unit._transact_support import (
     deadlock,
     new_account,
 )
-from tests.unit.core.execution_lifecycle._lifecycle_cost_support import STATEMENT, TARGET, rows
+from tests.unit.core.execution_lifecycle._lifecycle_cost_support import (
+    STATEMENT,
+    TARGET,
+    fixed_width_uuid4,
+    rows,
+)
 from tests.unit.memory_instruments import (
     REPEATS,
     Seam,
@@ -1756,4 +1762,5 @@ def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
 
 
 if __name__ == "__main__":
+    _activity.uuid4 = fixed_width_uuid4  # pyright: ignore[reportPrivateImportUsage] - the production draw, replaced only in this child
     serve_one_measurement(sys.argv[1])
