@@ -4,7 +4,7 @@ import datetime as dt
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core.base import (
     INFINITY_LITERAL,
     TIMESTAMP,

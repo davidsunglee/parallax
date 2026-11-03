@@ -18,12 +18,13 @@ from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work._write_ownership import NO_INSERTION_AUTHORITY
 from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.retain import NO_INSERTION_AUTHORITY, InsertionIdentity
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.uow import EscapedTransactionError, RollbackOnlyError
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite

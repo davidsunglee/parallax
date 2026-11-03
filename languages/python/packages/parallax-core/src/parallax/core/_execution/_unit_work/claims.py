@@ -4,11 +4,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from parallax.core._execution._unit_work.evidence import RetainedObservation
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
 

@@ -4,8 +4,8 @@ from collections.abc import Callable
 from typing import Final
 
 from parallax.core._execution._unit_work.claims import SettledEvidence
+from parallax.core._execution._unit_work.evidence import RetainedObservation
 from parallax.core._execution._unit_work.instructions import KeyedMutation
-from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.opt_lock._compile import MODEL_COMPILER

@@ -162,10 +162,10 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.write_items:TargetWrite.claim_scope`
 - `parallax.core._execution._unit_work.write_items:TargetWrite.retained`
 - `parallax.core._execution._unit_work.write_items:admitted_write`
-- `parallax.core._execution._unit_work.retain:ReadEvidence`
-- `parallax.core._execution._unit_work.retain:RetainedObservation`
-- `parallax.core._execution._unit_work.retain:RetainedTargetState`
-- `parallax.core._execution._unit_work.retain:InsertionIdentity`
+- `parallax.core._execution._unit_work.evidence:ReadEvidence`
+- `parallax.core._execution._unit_work.evidence:RetainedObservation`
+- `parallax.core._execution._unit_work.acquisition:RetainedTargetState`
+- `parallax.core._execution._unit_work.evidence:InsertionIdentity`
 - `parallax.core._execution._unit_work.claims:SettledEvidence`
 - `parallax.core.write_plan.plan:SettledWrite.source_evidence`
 - `parallax.core._execution._unit_work.instructions:ExpectedVersion`

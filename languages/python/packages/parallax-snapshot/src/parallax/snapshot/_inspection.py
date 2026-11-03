@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Final, cast
 
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from parallax.core._execution._unit_work.retain import ReadEvidence
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.entity import UNLOADED, GraphConstructionError
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (

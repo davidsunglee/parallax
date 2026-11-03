@@ -13,8 +13,10 @@ from parallax.core._execution._unit_work._errors import (
     WriteEvidenceError,
     WriteEvidenceErrorCode,
 )
+from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
+    RetainedTargetState,
     TargetReadRequest,
     consume_target,
 )
@@ -24,6 +26,7 @@ from parallax.core._execution._unit_work.effects import (
     CardinalityCorruptionError,
     WritePreconditionError,
 )
+from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
@@ -33,11 +36,6 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.ranges import RangeBindings
-from parallax.core._execution._unit_work.retain import (
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    RetainedTargetState,
-)
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,

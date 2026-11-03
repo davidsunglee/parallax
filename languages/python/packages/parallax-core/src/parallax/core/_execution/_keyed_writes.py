@@ -15,6 +15,12 @@ from parallax.core._execution._unit_work._errors import (
     KEYED_WRITE_VALUE_CODES,
     KeyedWriteValueError,
 )
+from parallax.core._execution._unit_work._write_ownership import (
+    NO_INSERTION_AUTHORITY,
+    KeyedWriteRefusalAdvice,
+    NoInsertionAuthority,
+)
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
@@ -26,13 +32,6 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core._execution._unit_work.retain import (
-    NO_INSERTION_AUTHORITY,
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    NoInsertionAuthority,
-    ReadEvidence,
-)
 from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry

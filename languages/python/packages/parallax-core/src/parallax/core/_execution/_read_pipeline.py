@@ -12,7 +12,7 @@ from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._routing import OperationRouting
-from parallax.core._execution._unit_work.retain import ReadEvidence
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_interpretation

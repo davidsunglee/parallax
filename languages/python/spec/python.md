@@ -258,6 +258,16 @@ implementation never needs its own facade to load. `m-unit-work`'s scope,
 package, so it is sealed: the ownership walk refuses every import of an
 execution module its grants do not cover.
 
+`parallax.core._execution._unit_work.evidence` holds the evidence a source
+value carries from a read to a later write: Read Evidence, the participation
+token, the retained observation, and the insertion identity. The unit of work
+issues and judges it, so it is that scope's sealed child, granted only the
+accepted metadata, temporal coordinates, and write-plan keys and observations
+it is stated in; every other module of the unit of work is runtime the seal
+refuses it. Snapshot's inspection and publication children carry that evidence
+on published values, so each is granted the evidence child rather than the unit
+of work.
+
 `parallax.core.read_delivery._page` holds the Page, its view schema, the
 stored-data vocabulary, and Page-owned judgement, and `parallax.snapshot._publication`
 holds Root View, classification, and Typed and Wire value publication. Both are
@@ -386,6 +396,7 @@ come from `core/spec/modules.md`.
 | `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-read-delivery`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-execution-authority`, `m-execution-lifecycle` |
 | `parallax.core._execution._read_query` | `m-metamodel`, `m-predicate`, `m-object-query` |
 | `parallax.core._execution._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-opt-lock` |
+| `parallax.core._execution._unit_work.evidence` | `m-metamodel`, `m-temporal-read`, `m-write-plan` |
 | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` |
 | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
 | `parallax.core.db_port` | `parallax.core.diagnostics` |
@@ -405,8 +416,8 @@ come from `core/spec/modules.md`.
 | `parallax.descriptor._hub` | `parallax.core.entity` |
 | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` |
 | `parallax.snapshot` | `parallax.core.entity` |
-| `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` |
-| `parallax.snapshot._publication` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.core.read_delivery._page`, `parallax.snapshot._inspection`, `m-read-planning`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
+| `parallax.snapshot._inspection` | `parallax.core.entity`, `parallax.core._execution._unit_work.evidence`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` |
+| `parallax.snapshot._publication` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.core.read_delivery._page`, `parallax.snapshot._inspection`, `parallax.core._execution._unit_work.evidence`, `m-read-planning`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
 
 Third-party packages are outside every scope, and a first-party grant says
 nothing about them. A **restricted external package** is one the framework
@@ -502,6 +513,7 @@ for the scopes each policy governs.
 | `parallax.core._execution._read_query` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._retention` | `parallax.core._execution` | sealed |
 | `parallax.core._execution._unit_work` | `parallax.core._execution` | sealed |
+| `parallax.core._execution._unit_work.evidence` | `parallax.core._execution._unit_work` | sealed |
 | `parallax.core._execution._write_lowering` | `parallax.core._execution` | ordinary |
 | `parallax.core.entity._construction_input` | `parallax.core.entity` | sealed |
 | `parallax.core.entity._edit` | `parallax.core.entity` | ordinary |

@@ -1109,7 +1109,11 @@ def test_runtime_child_rows_are_narrower_than_their_parent_rows() -> None:
     # broad parent scope does.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    for parent in ("parallax.core._execution", "parallax.snapshot"):
+    for parent in (
+        "parallax.core._execution",
+        "parallax.core._execution._unit_work",
+        "parallax.snapshot",
+    ):
         broad = set(forbidden[parent])
         for child, declared in dag.CHILD_SCOPES.items():
             if declared.parent == parent:
@@ -1143,7 +1147,11 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.core._execution._retention",
             "parallax.core._execution._publication",
             "parallax.core._execution._unit_work",
+            "parallax.core._execution._unit_work.evidence",
         }
+    )
+    assert dag.scope_descendants("parallax.core._execution._unit_work") == frozenset(
+        {"parallax.core._execution._unit_work.evidence"}
     )
     assert dag.scope_descendants("parallax.snapshot") == frozenset(
         {"parallax.snapshot._inspection", "parallax.snapshot._publication"}
@@ -1458,6 +1466,62 @@ def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None
     assert dag.child_grant_exceptions(adjacency, "parallax.snapshot") == []
 
 
+_EVIDENCE = "parallax.core._execution._unit_work.evidence"
+_UNIT_WORK = "parallax.core._execution._unit_work"
+_EVIDENCE_VOCABULARY = frozenset(
+    {"parallax.core.metamodel", "parallax.core.temporal_read", "parallax.core.write_plan"}
+)
+
+
+def test_the_evidence_scope_is_a_sealed_child_of_the_unit_of_work() -> None:
+    assert dag.CHILD_SCOPES[_EVIDENCE] == dag.ChildScope(parent=_UNIT_WORK, policy="sealed")
+    assert dag.scope_ancestors(_EVIDENCE) == frozenset({_UNIT_WORK, "parallax.core._execution"})
+    assert dag.scope_siblings(_EVIDENCE) == frozenset()
+
+
+def test_the_evidence_row_forbids_the_runtime_its_parent_reaches() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    row = set(forbidden[_EVIDENCE])
+    assert adjacency[_EVIDENCE] == _EVIDENCE_VOCABULARY
+    assert not row & _EVIDENCE_VOCABULARY
+    # The row sits inside both ancestors' packages, so it names neither; the
+    # seal grades that half over the files.
+    assert not row & dag.scope_ancestors(_EVIDENCE)
+    # What the unit of work reaches beyond its vocabulary is forbidden here,
+    # its own facade and the attempt's port among it.
+    assert set(forbidden[_UNIT_WORK]) < row
+    for runtime in ("parallax.core.db_port", "parallax.core.temporal_write"):
+        assert runtime in adjacency[_UNIT_WORK]
+        assert runtime in row
+    assert "parallax.core.unit_work" in row
+    # Every grant of the child already lies inside its parent's closure, so
+    # neither ancestor's row needs an exception for it.
+    assert dag.child_grant_exceptions(adjacency, _UNIT_WORK) == []
+    assert dag.child_grant_exceptions(adjacency, "parallax.core._execution") == []
+
+
+def test_published_values_carry_evidence_without_a_unit_of_work_grant() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    carriers = ("parallax.snapshot._inspection", "parallax.snapshot._publication")
+    for carrier in carriers:
+        assert _EVIDENCE in dag.PYTHON_FIRST_PARTY_GRANTS[carrier]
+        assert not {_UNIT_WORK, "parallax.core._execution"} & dag.PYTHON_FIRST_PARTY_GRANTS[carrier]
+    # What the evidence grant itself carries, whatever else a carrier's other
+    # grants reach: the evidence vocabulary and none of the unit of work.
+    carried = dag.transitive_closure(adjacency, _EVIDENCE)
+    assert carried >= _EVIDENCE_VOCABULARY
+    assert not {_UNIT_WORK, "parallax.core.db_port", "parallax.core.unit_work"} & carried
+    # A row holding that grant alone forbids the port a unit-of-work grant would
+    # have admitted, while giving up only the two ancestor names it sits inside.
+    carrier = carriers[0]
+    narrow = set(dag.compute_forbidden({**adjacency, carrier: frozenset({_EVIDENCE})})[carrier])
+    wide = set(dag.compute_forbidden({**adjacency, carrier: frozenset({_UNIT_WORK})})[carrier])
+    assert "parallax.core.db_port" in narrow
+    assert "parallax.core.db_port" not in wide
+    assert not narrow & dag.scope_ancestors(_EVIDENCE)
+
+
 # --------------------------------------------------------------------------
 # Canary 3: a child contract blocks what the parent contract permits.
 # --------------------------------------------------------------------------
@@ -1624,6 +1688,25 @@ def test_a_read_planning_import_in_value_publication_fails_lint_imports(
     assert "parallax.snapshot._publication._root -> parallax.core.read_delivery._read_plan" in (
         reported
     )
+
+
+# --------------------------------------------------------------------------
+# Canary 5d: the evidence a published value carries reaches none of the unit of
+# work it sits in.
+# --------------------------------------------------------------------------
+def test_a_unit_of_work_runtime_import_in_the_evidence_scope_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
+    # The row cannot name the unit of work around it, so what it reports is
+    # where that module leads: the attempt's port, outside the vocabulary.
+    reported = broken_by(
+        linted_copy,
+        _EVIDENCE,
+        "import parallax.core._execution._unit_work.uow  # deliberate runtime reach",
+    )
+
+    assert f"{_EVIDENCE} may import only its permitted" in reported
+    assert f"{_EVIDENCE} -> parallax.core._execution._unit_work.uow" in reported
 
 
 # --------------------------------------------------------------------------

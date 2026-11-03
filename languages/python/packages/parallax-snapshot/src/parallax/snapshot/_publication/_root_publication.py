@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Final
 
 from parallax.core import opt_lock
-from parallax.core._execution._unit_work.retain import ReadEvidence
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery._page import (
     Page,

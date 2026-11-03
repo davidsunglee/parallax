@@ -26,7 +26,7 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
 )
-from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
+from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core.base import PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase

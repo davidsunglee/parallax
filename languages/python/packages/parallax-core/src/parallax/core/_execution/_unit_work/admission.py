@@ -8,7 +8,10 @@ from typing import Final
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._errors import WriteEvidenceError
-from parallax.core._execution._unit_work._write_ownership import InsertionComposition
+from parallax.core._execution._unit_work._write_ownership import (
+    InsertionComposition,
+    KeyedWriteRefusalAdvice,
+)
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
     ClaimVerdict,
@@ -18,6 +21,7 @@ from parallax.core._execution._unit_work.claims import (
     claimed_object,
     keyed_intent,
 )
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     REPLACE_MUTATIONS,
@@ -25,11 +29,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     derive_keyed_instruction,
     refuse_opening_registry_advance,
-)
-from parallax.core._execution._unit_work.retain import (
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    RetainedObservation,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (

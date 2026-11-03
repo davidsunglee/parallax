@@ -34,6 +34,7 @@ from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import write_settlement
+from parallax.core._execution._unit_work._write_ownership import NO_INSERTION_AUTHORITY
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CoverageReadRequest,
@@ -41,6 +42,7 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
 )
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
@@ -48,11 +50,6 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWriteInstruction,
     prepare_typed_write,
     prepare_wire_write,
-)
-from parallax.core._execution._unit_work.retain import (
-    NO_INSERTION_AUTHORITY,
-    InsertionIdentity,
-    ReadEvidence,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenFlush

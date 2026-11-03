@@ -24,8 +24,8 @@ import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._execution._unit_work import ranges
+from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
-from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core.base import DocumentValue
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow

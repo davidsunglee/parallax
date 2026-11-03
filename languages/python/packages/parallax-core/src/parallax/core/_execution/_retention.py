@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from parallax.core import inheritance, opt_lock, temporal_read
-from parallax.core._execution._unit_work.retain import (
+from parallax.core._execution._unit_work.evidence import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,

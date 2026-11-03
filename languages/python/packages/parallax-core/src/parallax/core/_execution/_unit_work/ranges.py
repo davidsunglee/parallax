@@ -14,6 +14,7 @@ from parallax.core._execution._unit_work.acquisition import (
     CompletionRequest,
     CoverageReadRequest,
     CoverageTerm,
+    RetainedTargetState,
     consume_coverage,
     consume_coverage_by_key,
 )
@@ -22,11 +23,7 @@ from parallax.core._execution._unit_work.effects import (
     MissingTargetError,
     WritePreconditionError,
 )
-from parallax.core._execution._unit_work.retain import (
-    ReadEvidence,
-    RetainedObservation,
-    RetainedTargetState,
-)
+from parallax.core._execution._unit_work.evidence import ReadEvidence, RetainedObservation
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,

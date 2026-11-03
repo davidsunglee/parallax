@@ -298,10 +298,11 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         }
     ),
     # The Snapshot slice's own node-inspection surface is scoped apart from the
-    # rest of the lifecycle extension: it reads a node's loaded views, pin,
-    # milestone edge, and retained Read Evidence through the advanced Entity seam
-    # and nothing else, so its row proves it reaches no driver, no read planner,
-    # no SQL, and no dialect. The Database Port is NOT one of those: the granted
+    # rest of the lifecycle extension: it reads a node's loaded views, pin, and
+    # milestone edge through the advanced Entity seam, and carries the opaque
+    # evidence a node retains through the unit of work's evidence child, and
+    # nothing else, so its row proves it reaches no driver, no read planner, no
+    # SQL, and no dialect. The Database Port is NOT one of those: the granted
     # Entity frontend reaches it through `_formation_profile -> opt_lock ->
     # unit_work -> db_port`, and a forbidden row is the complement of a closure,
     # so this row admits it — `parallax.core._execution._read_query` below is the
@@ -314,6 +315,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.inheritance",
             "parallax.core.relationship",
             "parallax.core.temporal_read",
+            "parallax.core._execution._unit_work.evidence",
         }
     ),
     # The page node a streamed read advances by: pure, and scoped apart from the
@@ -464,6 +466,20 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core._execution._unit_work",
         }
     ),
+    # The evidence a source value carries between a read and a later write — its
+    # Read Evidence, participation token, retained observation, and insertion
+    # identity — is issued and judged by the unit of work but stated only in
+    # accepted metadata, temporal coordinates, and the write plan's keys and
+    # observations. Scoping it apart from the unit of work's runtime is what lets
+    # a published value carry it without its publisher being granted the
+    # attempt, the buffer, or the Database Port they reach.
+    "parallax.core._execution._unit_work.evidence": frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.temporal_read",
+            "parallax.core.write_plan",
+        }
+    ),
     # Write-observation retention is scoped apart from its own package so the
     # generated contract carries the OUTWARD half of its boundary: what a read
     # retains is a pure function of accepted metadata, the member layout a row is
@@ -531,6 +547,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.temporal_read",
             "parallax.core.wire",
             "parallax.snapshot._inspection",
+            "parallax.core._execution._unit_work.evidence",
         }
     ),
     "parallax.postgres": frozenset(
@@ -676,6 +693,13 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # is what refuses every import of an execution module beyond its grants.
     "parallax.core._execution._unit_work": ChildScope(
         parent="parallax.core._execution", policy="sealed"
+    ),
+    # The evidence vocabulary is sealed inside the unit of work it belongs to:
+    # every other module of that package is the runtime the vocabulary's
+    # carriers must not reach, and a row sourced here cannot name its own
+    # parent, so the seal is what refuses an import of any of them.
+    "parallax.core._execution._unit_work.evidence": ChildScope(
+        parent="parallax.core._execution._unit_work", policy="sealed"
     ),
     "parallax.core._execution._write_lowering": ChildScope(
         parent="parallax.core._execution", policy="ordinary"

@@ -25,19 +25,16 @@ import pytest
 from parallax.core import temporal_read
 from parallax.core._execution._unit_work._errors import UnitOfWorkError
 from parallax.core._execution._unit_work._write_ownership import (
+    NO_INSERTION_AUTHORITY,
     InsertionComposition,
+    KeyedWriteRefusalAdvice,
     WriteOwnership,
 )
 from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_wire_write,
-)
-from parallax.core._execution._unit_work.retain import (
-    NO_INSERTION_AUTHORITY,
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    RetainedObservation,
 )
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
