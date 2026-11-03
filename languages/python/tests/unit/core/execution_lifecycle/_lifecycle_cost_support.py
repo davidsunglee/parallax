@@ -20,8 +20,10 @@ carried by this MODULE's underscore — the same convention the private
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from typing import Final
+from uuid import UUID
 
 from parallax.core.db_port import (
     CanonicalWriteStatement,
@@ -36,6 +38,7 @@ __all__ = [
     "ORDERED",
     "STATEMENT",
     "TARGET",
+    "fixed_width_uuid4",
     "present",
     "rows",
 ]
@@ -80,3 +83,16 @@ def present(statements: Sequence[CanonicalWriteStatement] | _Untouchable) -> Ord
     """An ordered transport answering one completed count, whatever it is handed."""
     del statements
     return _COMPLETED
+
+
+def fixed_width_uuid4() -> UUID:
+    """A version-4 UUID whose integer is always five 30-bit digits wide.
+
+    A random draw leaves the top byte zero once in 256, and that integer is four
+    bytes narrower than every other, so two single runs drawing their own — two
+    first-run children, or the two transient readings one measurement child
+    compares — would disagree by those four bytes about the same seam. A
+    measurement child installs it as the production draw, and the paths it
+    measures draw through it alike, so a run's cost is the path's.
+    """
+    return UUID(int=uuid.uuid4().int | (1 << 127), version=4)
