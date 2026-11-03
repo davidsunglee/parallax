@@ -54,9 +54,7 @@ from parallax.core._execution._unit_work.uow import (
 )
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
-from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.dialect import LockMode
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -76,7 +74,7 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
-from parallax.core.read_delivery._fetch import entity_read_lock, execute_read
+from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import ABSENT, release_page_rows
 from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader, StreamPageResult
 from parallax.core.read_delivery._paging import At, PagingPlan
@@ -771,18 +769,16 @@ class TxnAttempt(_TxnAttemptBase):
         """The point read of the row a target write starts from: the
         current row at ``valid_from`` of a Bitemporal object, the current one of
         any other, read whole where the request retains it."""
-        meta = self._write.model.meta
-        entity = request.entity
         ((name, value),) = request.key.primary_key
         query = read_planning.plan_target_read(
-            entity,
-            model=meta,
+            request.entity,
+            model=self._write.model.meta,
             key=name,
             key_value=cast("ManagedValue", value),
             valid_from=request.valid_from,
             retain_predecessor=request.retains,
         )
-        return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
+        return self._row_read(query, shared_lock=True)
 
     def _coverage_read(self, request: CoverageReadRequest) -> CompiledRead:
         query = read_planning.plan_coverage_read(
@@ -791,16 +787,16 @@ class TxnAttempt(_TxnAttemptBase):
             key=request.key_attribute.name,
             terms=tuple((term.key_value, term.valid_time_windows) for term in request.terms),
         )
-        return self._row_read(query, "locking" if request.locking else None)
+        return self._row_read(query, shared_lock=request.shared_lock)
 
-    def _row_read(self, query: PlannedEntityQuery, lock: LockMode | None) -> CompiledRead:
+    def _row_read(self, query: PlannedEntityQuery, *, shared_lock: bool) -> CompiledRead:
         return compile_read(
-            query, self._write.model.meta, self._connection.dialect, result_form="row", lock=lock
+            query,
+            self._write.model.meta,
+            self._connection.dialect,
+            result_form="row",
+            shared_lock=shared_lock,
         )
-
-    @property
-    def _preference(self) -> ConcurrencyPreference:
-        return self._uow.settings.preference
 
     # Flush execution.
 

@@ -393,6 +393,12 @@ class _RangeMeaning:
     def object_key(self) -> ObjectKey:
         return _object_key(self.facts, self.key_attribute, self.key_value)
 
+    @property
+    def shared_lock(self) -> bool:
+        """Whether the range's coverage reads take the shared row lock: the
+        other half of the settled gate decision."""
+        return not self.gated
+
 
 @dataclass(frozen=True, slots=True)
 class _TemporalRangeBinder:
@@ -807,7 +813,7 @@ def _coverage_requests(
     key_attribute: AttributeIdentity,
     terms: Iterable[CoverageTerm],
     *,
-    locking: bool,
+    shared_lock: bool,
 ) -> Iterator[CoverageReadRequest]:
     """Reads of every Valid-Time window ``terms`` name, in order, each naming at
     most :data:`_COVERAGE_WINDOWS` windows; an object whose windows do not fit
@@ -819,7 +825,7 @@ def _coverage_requests(
         first = 0
         while first < len(windows):
             if not room:
-                yield CoverageReadRequest(entity, key_attribute, tuple(pending), locking)
+                yield CoverageReadRequest(entity, key_attribute, tuple(pending), shared_lock)
                 pending, room = [], _COVERAGE_WINDOWS
             part = windows[first : first + room]
             pending.append(
@@ -828,7 +834,7 @@ def _coverage_requests(
             first += len(part)
             room -= len(part)
     if pending:
-        yield CoverageReadRequest(entity, key_attribute, tuple(pending), locking)
+        yield CoverageReadRequest(entity, key_attribute, tuple(pending), shared_lock)
 
 
 def _bind_range(
@@ -1090,18 +1096,19 @@ def _coverage_reads(pending: deque[_PendingRange]) -> Iterator[CoverageReadReque
     """The reads of every window ``pending`` ranges need, packed in their
     order, or a Transaction-Time-Only range's one read of its current row."""
     meaning = pending[0].deferred.meaning
-    entity, key_attribute, locking = meaning.facts.entity, meaning.key_attribute, not meaning.gated
+    entity, key_attribute = meaning.facts.entity, meaning.key_attribute
+    shared_lock = meaning.shared_lock
     if len(pending) > 1:
         assert all(record.deferred.meaning.valid_time_window is not None for record in pending)
         terms = _packed_terms(deque(pending))
-        return _coverage_requests(entity, key_attribute, terms, locking=locking)
+        return _coverage_requests(entity, key_attribute, terms, shared_lock=shared_lock)
     (only,) = pending
     term = only.missing_term
     assert term is not None  # a range reading nothing has no read
     only.missing_term = None
     if meaning.valid_time_window is None:
-        return iter((CoverageReadRequest(entity, key_attribute, (term,), locking),))
-    return _coverage_requests(entity, key_attribute, (term,), locking=locking)
+        return iter((CoverageReadRequest(entity, key_attribute, (term,), shared_lock),))
+    return _coverage_requests(entity, key_attribute, (term,), shared_lock=shared_lock)
 
 
 def _packed_terms(unpacked: deque[_PendingRange]) -> Iterator[CoverageTerm]:

@@ -196,7 +196,7 @@ def test_a_target_range_reads_its_window_and_gates_its_start_on_the_callers_revi
     settled = _deferred_write(addressed_write(value="150.00"))
     assert settled.deferred is not None
     acquisition = _coverage(settled)
-    assert (acquisition.terms[0].valid_time_windows, acquisition.locking) == (
+    assert (acquisition.terms[0].valid_time_windows, acquisition.shared_lock) == (
         (TimeInterval(MAR, SEP),),
         False,
     )
@@ -281,7 +281,7 @@ def test_a_patch_after_a_replacement_keeps_its_extent_and_overlays_its_gaps() ->
 def test_a_locking_target_range_reads_its_coverage_under_the_shared_lock_ungated() -> None:
     settled = _deferred_write(addressed_write(value="150.00"), concurrency="locking")
     assert settled.deferred is not None
-    assert _coverage(settled).locking
+    assert _coverage(settled).shared_lock
     bound = _bound(settled, [START.evidence.predecessor])  # type: ignore[union-attr]
     close = next(step for step in bound.steps if isinstance(step, PlannedClose))
     assert close.concurrency == UNGATED

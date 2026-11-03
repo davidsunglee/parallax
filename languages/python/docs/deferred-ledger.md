@@ -48,8 +48,8 @@ Valid-Time-only target, or an explicit `concurrency="locking"`).
 **Why it is deferred rather than fixed.** It is a database restriction rather than
 a lowering gap: no spelling of the union acquires the lock the caller asked for.
 Closing it means either locking the concrete rows through a second statement per
-branch — which is a new statement-count contract — or refusing the fallback at the
-`m-read-lock` layer instead, where the caller can see it. Both are design choices
+branch — which is a new statement-count contract — or refusing the fallback where
+the read's owner decides its lock instead, where the caller can see it. Both are design choices
 with cross-language reach, so neither belongs in an incidental fix.
 
 *(The wider half of this entry — every mode refused, including `optimistic`, and

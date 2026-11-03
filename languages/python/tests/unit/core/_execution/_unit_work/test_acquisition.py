@@ -283,7 +283,7 @@ def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_ha
     with pytest.raises(_Unjudged) as raised:
         if coverage:
             coverage_request = CoverageReadRequest(
-                request.entity, _key(request), (CoverageTerm(1, ()),), locking=False
+                request.entity, _key(request), (CoverageTerm(1, ()),), shared_lock=False
             )
             consume_coverage(
                 coverage_request, selection, _failing_after(rows, 1), _ABSENT, documents, 2
@@ -308,7 +308,7 @@ def _key(request: TargetReadRequest) -> AttributeIdentity:
 def _shared_request() -> CoverageReadRequest:
     request = _target_request()
     terms = (CoverageTerm(1, ()), CoverageTerm(2, ()), CoverageTerm(3, ()))
-    return CoverageReadRequest(request.entity, _key(request), terms, locking=False)
+    return CoverageReadRequest(request.entity, _key(request), terms, shared_lock=False)
 
 
 def test_a_shared_reads_rows_and_documents_go_to_the_object_each_row_holds_the_key_of() -> None:

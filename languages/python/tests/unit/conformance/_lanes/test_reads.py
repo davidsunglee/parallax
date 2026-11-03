@@ -761,9 +761,9 @@ def test_a_read_carrying_an_empty_uow_block_under_a_locking_root_locks_in_both_l
     # whose preference production resolves against the locking root, so the
     # executed statement carries the suffix — and the compile lane, planning
     # under the same resolved preference, renders the same golden. The
-    # standalone sibling (`-019`) differs from this case by the block alone.
-    locking = _load_case("m-read-lock-020")
-    standalone = _load_case("m-read-lock-019")
+    # standalone sibling (`-063`) differs from this case by the block alone.
+    locking = _load_case("m-concurrency-064")
+    standalone = _load_case("m-concurrency-063")
     assert cast("Mapping[str, Any]", locking.document["when"])["uow"] == {}
     port = FakeDbPort(
         [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
@@ -780,7 +780,7 @@ def test_an_explicit_optimistic_request_under_a_locking_root_plans_and_runs_lock
     # The override half of the same rule on the versioned Account: the request
     # names `optimistic`, so neither lane renders the suffix the root alone
     # would have produced.
-    locking = _load_case("m-read-lock-020")
+    locking = _load_case("m-concurrency-064")
     when = cast("Mapping[str, Any]", locking.document["when"])
     case = dataclasses.replace(
         locking,
@@ -795,7 +795,7 @@ def test_an_explicit_optimistic_request_under_a_locking_root_plans_and_runs_lock
     assert "for share" not in reads.compile_read_case(case, "postgres")[0][0].sql
 
 
-@pytest.mark.parametrize("case_id", ["m-read-lock-024", "m-read-lock-025"])
+@pytest.mark.parametrize("case_id", ["m-concurrency-068", "m-concurrency-069"])
 def test_a_read_only_case_plans_and_runs_in_a_read_only_boundary_taking_no_lock(
     case_id: str,
 ) -> None:

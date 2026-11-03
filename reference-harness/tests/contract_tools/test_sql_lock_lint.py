@@ -131,7 +131,7 @@ def _corpus(
     case: dict[str, Any] = {
         "model": "models/model.yaml",
         "shape": sequence,
-        "tags": ["m-read-lock"],
+        "tags": ["m-concurrency"],
         "when": {sequence: steps},
         "then": {"databaseCalls": sum(step.get("databaseCalls", 0) for step in steps)},
     }
@@ -295,7 +295,7 @@ def test_exists_predicate_table_is_not_a_materialized_entity(tmp_path: Path) -> 
 def test_wrapped_stream_continuation_grades_only_outer_physical_lock(
     tmp_path: Path, mutation: str
 ) -> None:
-    raw = _borrow(tmp_path, "m-read-lock-016-locking-stream-two-arm-continuation.yaml")
+    raw = _borrow(tmp_path, "m-concurrency-060-locking-stream-two-arm-continuation.yaml")
     sql = raw["when"]["scenario"][0]["statements"][1]["sql"]["postgres"]
     if mutation == "missing-outer":
         sql = sql.removesuffix(" for share of t0")
@@ -554,7 +554,7 @@ def test_top_level_malformed_lock_is_rejected(tmp_path: Path, dialect: str, suff
     assert "expected only outer suffix" in errors[0]
 
 
-_TPH_LOCKED = "m-read-lock-010-document-layout-tph-partitioned.yaml"
+_TPH_LOCKED = "m-concurrency-054-document-layout-tph-partitioned.yaml"
 _TPH_UNLOCKED = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
 
 

@@ -4,12 +4,12 @@
 **Page** of Entity States and delivers it — whole, or streamed one bounded Page
 at a time — to the lifecycle **Publication** that turns Page states into that
 lifecycle's values. It owns preparation and caching of reusable execution plans,
-effective read-lock derivation, statement execution and Page assembly, stored-data
+each level's shared-lock decision, statement execution and Page assembly, stored-data
 judgement, and whole-result and streamed delivery. Per the dependency graph it
 depends on `m-read-planning` for pure flat-read and include planning, `m-sql` for the statements it
 executes, `m-document-codec` for stored-document judgement, `m-db-port` for the
-calls it makes, `m-temporal-read` for the pins a fetch propagates, `m-read-lock`
-and `m-concurrency` for the lock each fetch takes, and `m-execution-lifecycle` for
+calls it makes, `m-temporal-read` for the pins a fetch propagates,
+`m-concurrency` for the lock each fetch takes, and `m-execution-lifecycle` for
 the activities it opens. It names no lifecycle: snapshot graphs
 (`m-snapshot-read`) and managed objects are alternative Publications over the
 same delivery, and neither depends on the other.
@@ -280,6 +280,15 @@ demand-driven: identity and correlation are judged as a row is recorded, and a
 member's payload is judged when a Publication first asks for the state that
 holds it, or as the row is recorded where its logical row can hold no other
 fetched row.
+
+## The shared-lock decision
+
+Delivery decides whether the root and each fetch level take the shared row lock,
+once while it prepares the read's execution plan, and hands `m-sql` that request.
+A level takes the lock exactly when its read carries a Concurrency Preference and
+that level's Entity resolves to Locking (`m-concurrency`), so one read may lock an
+unversioned level beside a versioned one. A read no writable unit of work owns
+carries no preference and takes no lock (`m-execution`).
 
 ## Whole-result delivery
 

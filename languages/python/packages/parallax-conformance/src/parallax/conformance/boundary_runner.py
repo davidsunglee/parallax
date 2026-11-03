@@ -68,7 +68,7 @@ __all__ = [
 ]
 
 # The key every boundary target reads: account.yaml's versioned row (Linus,
-# balance 250.00, version 1) — the SAME row every reachable m-concurrency/m-read-lock
+# balance 250.00, version 1) — the SAME row every reachable m-concurrency
 # case targets — and balance.yaml's current milestone (acct B, value 200.00).
 TARGET_ID: Final[int] = 2
 

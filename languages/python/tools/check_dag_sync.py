@@ -117,7 +117,6 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-unit-work": "parallax.core._execution._unit_work",
     "m-write-plan": "parallax.core.write_plan",
     "m-write-payload": "parallax.core.write_payload",
-    "m-read-lock": "parallax.core.read_lock",
     "m-auto-retry": "parallax.core.auto_retry",
     "m-execution-authority": "parallax.core.execution_authority",
     "m-execution-lifecycle": "parallax.core.execution_lifecycle",
@@ -418,9 +417,9 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # stated in, the unit of work it claims and buffers into, and the lifecycle
     # whose re-entry it refuses first. A keyed write addresses a row its caller
     # already holds, so the read half of the parent scope falls outside this
-    # closure — read delivery, the read lock, and the continuation are each
-    # forbidden here and each reached by the parent — and so does batch writing,
-    # which model preparation alone wires in.
+    # closure — read delivery and the continuation are each forbidden here and
+    # each reached by the parent — and so does batch writing, which model
+    # preparation alone wires in.
     #
     # `m-db-port`, `m-read-planning` and `m-navigate` are deliberately NOT among
     # those exclusions, and the row does not claim them: `modules.md` routes the

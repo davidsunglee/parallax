@@ -7,8 +7,8 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Literal, NamedTuple, Protocol, assert_never
 
-from parallax.core import inheritance, read_planning
-from parallax.core.concurrency import ConcurrencyPreference
+from parallax.core import concurrency, inheritance, read_planning
+from parallax.core.concurrency import ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, TablePerConcreteSubtype
@@ -41,7 +41,7 @@ from parallax.core.predicate._resolved import (
     ScalarCollection,
     SubjectPosition,
 )
-from parallax.core.read_delivery._fetch import correlation_table, entity_read_lock, slot_table
+from parallax.core.read_delivery._fetch import correlation_table, slot_table
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, SourceLevel, ViewSchema
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import (
@@ -477,6 +477,7 @@ def _plan_uncached(
 ) -> _CachedDelivery:
     """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
     template every cached delivery renders."""
+    versioning = concurrency.view(model.meta)
     empty_root = _empty_root(model, query)
     projection = read_planning.ReadProjectionRequest(
         "none" if result_form == "row" else "all",
@@ -499,19 +500,19 @@ def _plan_uncached(
     if empty_root:
         root = EMPTY_READ
     else:
-        lock = entity_read_lock(model.meta, query.root.identity, preference)
+        shared_lock = _takes_shared_lock(versioning, query.root.identity, preference)
         if templated:
             root_template = compile_template(
-                planned.root, model.meta, dialect, result_form=result_form, lock=lock
+                planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
             )
             root = root_template.compiled
         else:
             root = compile_read(
-                planned.root, model.meta, dialect, result_form=result_form, lock=lock
+                planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
             )
     if reusable is None:
         fetches = _fetch_work(
-            planned, model, dialect, result_form, preference, empty_root=empty_root
+            planned, model, dialect, result_form, versioning, preference, empty_root=empty_root
         )
         correlations = correlation_table(
             planned,
@@ -584,6 +585,17 @@ def _plan_uncached(
     return _CachedDelivery(prepared, root_template)
 
 
+def _takes_shared_lock(
+    versioning: ConcurrencyFacet,
+    entity: EntityIdentity,
+    preference: ConcurrencyPreference | None,
+) -> bool:
+    """Whether a read of ``entity`` takes the shared row lock: the lock follows
+    the Entity each level reads, and a read no writable unit of work owns has no
+    preference and never locks."""
+    return preference is not None and versioning.effective_strategy(entity, preference) == "locking"
+
+
 def _empty_root(model: CatalogedModel, query: ResolvedObjectQuery) -> bool:
     """Whether ``query``'s result position has no concrete inhabitant.
 
@@ -602,6 +614,7 @@ def _fetch_work(
     model: CatalogedModel,
     dialect: Dialect,
     result_form: ResultForm,
+    versioning: ConcurrencyFacet,
     preference: ConcurrencyPreference | None,
     *,
     empty_root: bool,
@@ -627,7 +640,7 @@ def _fetch_work(
                     model.meta,
                     dialect,
                     result_form=result_form,
-                    lock=entity_read_lock(model.meta, step.query.target, preference),
+                    shared_lock=_takes_shared_lock(versioning, step.query.target, preference),
                 )
             )
     return tuple(work)

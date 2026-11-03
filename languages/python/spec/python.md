@@ -166,9 +166,8 @@ representations enter, scoped apart from its package for the converse reason:
 its row states what a keyed write reaches and what it does not. A keyed write
 addresses a row its caller already holds, so it resolves nothing from the store,
 and the read half of the parent's reach falls outside this closure — read
-delivery, the continuation, and the read lock are each forbidden here and each
-reached by the parent. So is batch writing, which model preparation alone wires
-in. `m-db-port`, `m-read-planning`, and `m-navigate` are deliberately NOT among
+delivery and the continuation are each forbidden here and each reached by the
+parent. So is batch writing, which model preparation alone wires in. `m-db-port`, `m-read-planning`, and `m-navigate` are deliberately NOT among
 those exclusions, and the row does not claim them: `modules.md` routes the port
 through `m-execution-lifecycle`, which the re-entry gate requires, and the two
 traversal modules through `parallax.core.entity`, whose values every Typed write
@@ -345,7 +344,6 @@ tree fails the sync check.
 | `m-pk-gen` | `parallax.core.pk_gen` |
 | `m-predicate` | `parallax.core.predicate` |
 | `m-read-delivery` | `parallax.core.read_delivery` |
-| `m-read-lock` | `parallax.core.read_lock` |
 | `m-relationship` | `parallax.core.relationship` |
 | `m-schema-delta` | `parallax.evolution.schema_delta` |
 | `m-snapshot-read` | `parallax.snapshot` |

@@ -127,7 +127,6 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-write-plan` | Planned Step algebra, State Observations, and predecessor evidence | active | cases |
 | `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
-| `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
 | `m-execution` | Database Roots, execution scopes, option resolution, Model Edition serving, and transaction attempts | active | cases |
 | `m-execution-lifecycle` | Transient execution observability | active | cases |
@@ -239,8 +238,6 @@ m-write-payload --> m-document-codec
 m-write-payload --> m-write-plan
 m-execution-authority --> m-unit-work
 m-execution-authority --> m-db-port
-m-read-lock --> m-unit-work
-m-read-lock --> m-dialect
 m-auto-retry --> m-unit-work
 m-auto-retry --> m-db-error
 m-execution-lifecycle --> m-sql
@@ -287,7 +284,6 @@ m-read-delivery --> m-document-codec
 m-read-delivery --> m-db-port
 m-read-delivery --> m-temporal-read
 m-read-delivery --> m-execution-lifecycle
-m-read-delivery --> m-read-lock
 m-read-delivery --> m-concurrency
 m-execution --> m-unit-work
 m-execution --> m-read-delivery
@@ -297,7 +293,6 @@ m-execution --> m-sql
 m-execution --> m-read-planning
 m-execution --> m-execution-authority
 m-execution --> m-auto-retry
-m-execution --> m-read-lock
 m-execution --> m-execution-lifecycle
 m-execution --> m-db-port
 m-execution --> m-batch-write
@@ -604,15 +599,15 @@ construction it may reference any behavioral module it harnesses.
   Database Calls and Stream Batches it executes. It holds no transaction, model
   selection, or authority — those are the conditions `m-execution` establishes
   before delivery runs.
-- **`m-read-delivery --> m-read-lock`, `--> m-concurrency`.** The lock a fetch
-  takes is derived where the fetch is planned: the effective read lock of each
-  level comes from the read-lock suffix rule and the level's Effective
-  Concurrency Strategy, so delivery's execution-plan preparation, not its
-  caller, decides it. Page judgement also reads which explicit version a root
-  publishes and whether its family's writes settle against what it observed.
+- **`m-read-delivery --> m-concurrency`.** The lock a fetch takes is decided
+  where the fetch is planned: each level's Effective Concurrency Strategy
+  answers whether it takes the shared row lock, so delivery's execution-plan
+  preparation, not its caller, decides it. Page judgement also reads which
+  explicit version a root publishes and whether its family's writes settle
+  against what it observed.
 - **`m-execution --> m-unit-work`, `--> m-read-delivery`, `--> m-write-plan`,
   `--> m-sql`, `--> m-read-planning`, `--> m-execution-authority`, `--> m-auto-retry`,
-  `--> m-read-lock`, `--> m-execution-lifecycle`, `--> m-db-port`.** The
+  `--> m-execution-lifecycle`, `--> m-db-port`.** The
   execution runtime is the behavioral module the unit of work's ports are
   implemented in: it runs attempts under the retry loop and the authority a
   scope captured, executes reads through delivery, lowers and executes the

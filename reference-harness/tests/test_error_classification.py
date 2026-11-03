@@ -243,7 +243,7 @@ def test_schema_accepts_two_connection_error_case() -> None:
 
 
 def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
-    # m-read-lock-006: a behavioral read-lock case whose round-1 A step is a locking SELECT
+    # m-concurrency-050: a behavioral read-lock case whose round-1 A step is a locking SELECT
     # (not a write) that HOLDS the shared lock while B's round-2 UPDATE blocks and
     # times out. The runner runs A's round-1 statement verbatim and is agnostic
     # about statement kind, so a round-1 read is a first-class concurrency step.
@@ -276,14 +276,14 @@ def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
 
 
 def test_schema_accepts_read_lock_concurrency_error_case() -> None:
-    # The m-read-lock-006 shape validates against the existing error + concurrency branch as-is:
+    # The m-concurrency-050 shape validates against the existing error + concurrency branch as-is:
     # a round-1 A locking SELECT plus a round-2 B UPDATE needs no schema change.
     case = {
         "model": "models/account.yaml",
         "shape": "error",
         "given": {"fixtures": True},
         "tags": [
-            "m-read-lock",
+            "m-concurrency",
             "m-db-error",
             "read-lock",
             "concurrency",

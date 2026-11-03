@@ -3,7 +3,7 @@ and the wrapped-``union all`` oracle it calls (``sql_wrapped_union``).
 
 These are Docker-free: ``normalize`` is a pure function, so the canonical-form
 rules can be checked without booting a database. They guard the canonical form
-of the m-read-lock read-lock suffix, whose lock-clause keywords sqlglot tokenizes as
+of the m-sql read-lock suffix, whose lock-clause keywords sqlglot tokenizes as
 ``VAR`` (not keyword tokens) — the case that previously escaped lowercasing.
 """
 

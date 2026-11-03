@@ -36,7 +36,6 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
 | `m-op-list` | `lists` |
 | `m-concurrency` | `concurrency` |
 | `m-pk-gen` | `pk-gen` |
-| `m-read-lock` | `read-lock` |
 | `m-sql` | `sql` |
 | `m-relationship` | `relationship` |
 | `m-temporal-read` | `temporal-read` |

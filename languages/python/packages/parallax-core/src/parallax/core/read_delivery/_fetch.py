@@ -3,13 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import cast
 
-from parallax.core import concurrency, inheritance, read_lock, read_planning
+from parallax.core import inheritance, read_planning
 from parallax.core.base import ManagedValue
-from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection, Row
-from parallax.core.dialect import LockMode
 from parallax.core.execution_lifecycle._activity import DatabaseCallScope
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, ChildSlot, PageBuilder
 from parallax.core.sql_gen._compile import CompiledRead
 
@@ -19,36 +17,12 @@ __all__ = [
     "attach_empty",
     "correlation_member",
     "correlation_table",
-    "entity_read_lock",
     "execute_read",
     "gather_keys",
     "guarded_parents",
     "parent_refs",
     "slot_table",
 ]
-
-
-def entity_read_lock(
-    meta: Metamodel, entity: EntityIdentity, preference: ConcurrencyPreference | None
-) -> LockMode | None:
-    """The read-lock mode a participating read of ``entity`` carries, composed
-    from the two policies read planning names at once.
-
-    The lock follows the ENTITY, not the query: `m-concurrency` derives that
-    Entity's Effective Concurrency Strategy from the unit of work's one
-    Concurrency Preference and the Entity's own family, and
-    `m-read-lock` maps the derived strategy to the `m-dialect` lock parameter.
-    So one transaction's deep fetch locks its unversioned levels while leaving
-    its versioned and temporal ones lock-free, and the same level locks or not
-    depending on the model rather than on the call.
-
-    ``preference`` is ``None`` for a read no unit of work owns — a standalone
-    read — which has no participation to derive a strategy from and therefore
-    never locks.
-    """
-    if preference is None:
-        return None
-    return read_lock.mode_for(concurrency.view(meta).effective_strategy(entity, preference))
 
 
 def correlation_table(

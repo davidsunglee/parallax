@@ -1242,7 +1242,7 @@ def test_run_only_write_sequence_run_sweep(
 
 # --------------------------------------------------------------------------- #
 # The `when.concurrency` rounds runner: every two-session choreography the    #
-# corpus states, whatever module owns it — the m-read-lock behavioral matrix, #
+# corpus states, whatever module owns it — the m-concurrency behavioral matrix, #
 # `m-db-error`'s two-session error cases, and the isolation witnesses. Two    #
 # barrier-synchronized peer sessions run verbatim statements; the error shape #
 # classifies its one raised error, the success shape grades each read and    #

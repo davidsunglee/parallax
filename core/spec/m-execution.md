@@ -13,8 +13,8 @@ read it executes; `m-write-plan` for the Planned Steps it runs;
 `m-write-payload` for the payload preparer model preparation wires into the
 Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-read-planning` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for
-the attempt loop's bound and classification; `m-read-lock` for the lock an
-acquisition takes; `m-execution-lifecycle` for the activities it opens;
+the attempt loop's bound and classification; `m-execution-lifecycle` for the
+activities it opens;
 `m-db-port` for the runtime, connections, and boundaries it drives; and
 `m-batch-write`, whose collapse eligibility model preparation wires into the
 Write Planner.
@@ -84,7 +84,7 @@ rollback-only, then authority, then access mode, then explicit options — is
 
 A standalone read or stream opens no transaction, so no transaction option
 applies to it: a scope whose effective preference is `locking` does not make a
-standalone read take the shared lock (`m-read-lock`).
+standalone read take the shared lock (`m-concurrency`).
 
 ### Read routing
 
@@ -216,7 +216,7 @@ never by an option, a join, or a read:
   and every attempt of a writable invocation asks for a read/write one
   (`m-db-port`), so neither mode is inherited from a native default;
 - its reads take no participation lock — the unversioned fallback a writable
-  read takes included (`m-read-lock`) — stamp no participation on what they
+  read takes included (`m-concurrency`) — stamp no participation on what they
   publish, and force no flush, since nothing is buffered; the surface offers no
   mutation, so the runtime refuses one before native enforcement could;
 - a joining call is admitted only in the same mode: a writable call while a
@@ -259,8 +259,8 @@ and retaining no Page.
 
 A write that must read existing rows reads them through the unit of work's
 **row acquisition** port (`m-unit-work` *Row acquisition*), which execution
-implements once for every request kind: plan the entity's row read, execute it,
-assemble its flat Page, and hand the unit of work's consumer the judged member
+implements once for every request kind: plan the entity's row read, execute it
+under the lock its request states, assemble its flat Page, and hand the unit of work's consumer the judged member
 rows and aligned raw documents while the Page's resources are still live.
 Execution settles the read afterwards whatever the consumer did — finished,
 stopped early, never started, or raised. The request kind decides the bracket:

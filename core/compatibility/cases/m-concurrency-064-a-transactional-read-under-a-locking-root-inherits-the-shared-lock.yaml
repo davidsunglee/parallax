@@ -2,14 +2,14 @@
 # locking preference: the root is configured `locking`, the read carries a
 # `when.uow` block that requests nothing, and the object find inside that unit
 # of work renders the dialect's shared-row-lock suffix (`for share of t0`) on the
-# versioned Account exactly as `m-read-lock-001`'s explicit `locking` request does
-# (m-read-lock / m-unit-work / m-case-format *Root configuration*). The block's
+# versioned Account exactly as `m-concurrency-045`'s explicit `locking` request does
+# (m-concurrency / m-unit-work / m-case-format *Root configuration*). The block's
 # presence is the boundary and its contents are the request, so production
 # resolves the omitted preference against the root at connect rather than a
-# runner restating it. Contrast `m-read-lock-019`, the same root with no block,
+# runner restating it. Contrast `m-concurrency-063`, the same root with no block,
 # whose standalone read takes no lock.
 model: models/account.yaml
-tags: [m-read-lock, m-concurrency, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
 shape: read
 given:
   databaseOptions:

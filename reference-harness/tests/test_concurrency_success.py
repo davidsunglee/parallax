@@ -1,4 +1,4 @@
-"""Unit tests for the `m-read-lock` behavioral concurrency-SUCCESS shape (DB-free).
+"""Unit tests for the `m-concurrency` behavioral concurrency-SUCCESS shape (DB-free).
 
 The shape recognition, the `then.errorClass`-absent discriminator that keeps it
 distinct from an error/concurrency case, the explicit per-step `kind`
@@ -6,7 +6,7 @@ discriminator (`read` / `write`) with its structural `expectRows` if/then, and t
 runner's minimal `kind`-based structural guard are pinned here. The DB-coupled part
 -- running two held sessions and asserting NO error + each read's `expectRows` on
 its held session -- is exercised end-to-end against real Postgres + MariaDB by the
-compatibility suite's `m-read-lock-007` case via `test_compatibility.py`.
+compatibility suite's `m-concurrency-051` case via `test_compatibility.py`.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _case_validator() -> Draft202012Validator:
 def _concurrency_case(raw: dict) -> Case:
     descriptor = {"entity": {"name": "Account", "table": "account", "attributes": []}}
     model = Model(path=Path("account.yaml"), descriptor=descriptor)
-    return Case(path=Path("m-read-lock-007-x.yaml"), raw=raw, model=model)
+    return Case(path=Path("m-concurrency-051-x.yaml"), raw=raw, model=model)
 
 
 # --- shape recognition (the errorClass-absent discriminator) -----------------
@@ -101,7 +101,7 @@ def test_case_recognizes_concurrency_success_shape() -> None:
 
 
 def test_error_concurrency_is_not_concurrency_success() -> None:
-    # An error/concurrency case (m-read-lock-006) carries then.errorClass, so it stays an `error`
+    # An error/concurrency case (m-concurrency-050) carries then.errorClass, so it stays an `error`
     # case and is NOT a concurrency-success case -- the discriminator that keeps the
     # root oneOf single-match. It carries NO `kind` (only the classified error is
     # asserted).
@@ -125,7 +125,7 @@ def test_error_concurrency_is_not_concurrency_success() -> None:
 
 
 def test_schema_accepts_shared_reader_concurrency_success_case() -> None:
-    # m-read-lock-007: both A and B take the shared read lock and BOTH succeed, each a kind: read
+    # m-concurrency-051: both A and B take the shared read lock and BOTH succeed, each a kind: read
     # asserting its held-session rows. Validates against the concurrency-success oneOf
     # member (concurrency present, errorClass absent, every present step declaring kind).
     case = {
@@ -157,7 +157,7 @@ def test_schema_accepts_shared_reader_concurrency_success_case() -> None:
             }
         },
         "tags": [
-            "m-read-lock",
+            "m-concurrency",
             "m-dialect",
             "read-lock",
             "concurrency",
@@ -190,7 +190,7 @@ def test_schema_accepts_read_then_write_concurrency_success_case() -> None:
             }
         },
         "tags": [
-            "m-read-lock",
+            "m-concurrency",
             "m-dialect",
             "read-lock",
             "concurrency",
@@ -214,7 +214,7 @@ def test_schema_rejects_concurrency_with_error_class_but_no_native_code() -> Non
         "shape": "error",
         "when": {"concurrency": {"rounds": [{"A": {"statements": [_entry(_SHARED_READ, [2])]}}]}},
         "then": {"errorClass": "lockWaitTimeout"},
-        "tags": ["m-read-lock", "m-dialect", "read-lock", "concurrency"],
+        "tags": ["m-concurrency", "m-dialect", "read-lock", "concurrency"],
     }
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a concurrency case that carries errorClass but omits "
@@ -236,7 +236,7 @@ def test_schema_rejects_success_step_missing_kind() -> None:
                 ]
             }
         },
-        "tags": ["m-read-lock", "read-lock", "concurrency"],
+        "tags": ["m-concurrency", "read-lock", "concurrency"],
     }
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a concurrency-success step that omits kind"
@@ -254,7 +254,7 @@ def test_schema_rejects_read_step_missing_expect_rows() -> None:
                 "rounds": [{"A": {"kind": "read", "statements": [_entry(_SHARED_READ, [2])]}}]
             }
         },
-        "tags": ["m-read-lock", "read-lock", "concurrency"],
+        "tags": ["m-concurrency", "read-lock", "concurrency"],
     }
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a kind: read step that omits expectRows"
@@ -280,7 +280,7 @@ def test_schema_rejects_write_step_with_expect_rows() -> None:
                 ]
             }
         },
-        "tags": ["m-read-lock", "read-lock", "concurrency"],
+        "tags": ["m-concurrency", "read-lock", "concurrency"],
     }
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a kind: write step that carries expectRows"
@@ -306,7 +306,7 @@ def test_schema_rejects_non_array_expect_rows() -> None:
                 ]
             }
         },
-        "tags": ["m-read-lock", "read-lock", "concurrency"],
+        "tags": ["m-concurrency", "read-lock", "concurrency"],
     }
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a non-array expectRows on a concurrency step"
@@ -462,7 +462,7 @@ def test_schema_accepts_a_commit_step_on_the_concurrency_success_shape() -> None
                 ]
             },
         },
-        "tags": ["m-read-lock", "isolation", "read-lock"],
+        "tags": ["m-concurrency", "isolation", "read-lock"],
     }
     assert list(_case_validator().iter_errors(case)) == []
 

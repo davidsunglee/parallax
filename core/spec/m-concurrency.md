@@ -7,10 +7,10 @@ source**, the derivation that combines the two, what an existing-row write
 settles against, and the version arithmetic that runs under both strategies.
 
 These are facts of the accepted model. The module holds no transaction state and
-applies nothing: `m-unit-work` applies the strategy to an attempt's reads,
-admission, claims, and settlement; `m-write-plan`, `m-temporal-write`, and
-`m-sql` state and render the gates; `m-auto-retry` replays a recoverable
-conflict. `m-concurrency` depends on `m-metamodel`, `m-model-formation`,
+applies nothing: `m-read-delivery` decides each find level's lock from them;
+`m-unit-work` applies the strategy to an attempt's acquisition reads, admission,
+claims, and settlement; `m-write-plan`, `m-temporal-write`, and `m-sql` state and
+render the gates; `m-auto-retry` replays a recoverable conflict. `m-concurrency` depends on `m-metamodel`, `m-model-formation`,
 `m-inheritance`, and `m-temporal-read`, and names no attempt, write-plan, or SQL
 construct.
 
@@ -110,10 +110,12 @@ overrides.
 
 ## What each strategy promises
 
-- **Locking.** A participating object find takes a shared row lock on what it
-  reads. An observation-requiring write is `Ungated`: the lock its required
-  observation took is what makes it correct (`m-unit-work` *What licenses a
-  Locking write*).
+- **Locking.** A participating object find **MUST** take a shared row lock on
+  what it reads, with no locking SQL from the caller, and holds it until the
+  transaction ends, so a concurrent transaction cannot mutate the row out from
+  under a read-then-write. An observation-requiring write is `Ungated`: the lock
+  its required observation took is what makes it correct (`m-unit-work` *What
+  licenses a Locking write*).
 - **Optimistic.** A participating object find takes no lock. An
   observation-requiring write gates on the version or `txStart` its observation
   carries, so the database detects an intervening write.
@@ -123,8 +125,10 @@ overrides.
   `UPDATE` issued against it.
 
 Which reads participate, and that standalone and read-only reads take no lock,
-belongs to `m-unit-work` and `m-execution`. Where and how a lock attaches belongs
-to `m-dialect` and `m-sql`.
+belongs to `m-unit-work` and `m-execution`. Whether a participating read takes
+the lock is decided by its owner from this strategy: `m-read-delivery` for an
+object find, `m-unit-work` for a write's acquisition read. Where and how a lock
+attaches belongs to `m-dialect` and `m-sql`.
 
 ### Effective Concurrency Strategy determines the gate uniformly
 
@@ -173,3 +177,15 @@ Locking promise for a versioned write — no gate, version still advanced — is
 `m-concurrency-002`, and the fallback under the `optimistic` preference is
 `m-concurrency-023`. The formation rules and every Facet answer are proven by
 each language's own suite over the corpus models.
+
+The golden SQL proves a locking read well-formed and result-correct on one
+connection (`m-sql` *Read-lock suffix*). The two-connection concurrency cases
+prove that the emitted lock *behaves as a lock*: it **excludes a writer**
+(`m-concurrency-050`, `error`/`concurrency`) and is **shared, not exclusive**
+(`m-concurrency-051`, whose `concurrencySuccess` shape holds two sessions, admits
+the second reader, and raises no error).
+
+Both halves are proven again for the strategy the caller never asked for: the
+unversioned Non-Temporal fallback renders the suffix under the default
+`optimistic` preference (`m-concurrency-023`), and that derived lock excludes a
+writer too (`m-concurrency-056`).

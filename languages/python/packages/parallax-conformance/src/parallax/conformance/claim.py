@@ -105,7 +105,6 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-pk-gen",
         "m-predicate",
         "m-read-delivery",
-        "m-read-lock",
         "m-relationship",
         "m-schema-delta",
         "m-snapshot-read",

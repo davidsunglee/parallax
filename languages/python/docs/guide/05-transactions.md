@@ -558,8 +558,7 @@ declines it.
   and [the isolation level beside it](../../../../core/spec/m-unit-work.md#the-isolation-level-beside-it--what-the-transaction-reads).
 - [Automatic retry](../../../../core/spec/m-auto-retry.md) defines which failures are
   retried, the bound and the delay.
-  [Concurrency policy](../../../../core/spec/m-concurrency.md#what-each-strategy-promises) and
-  [read locks](../../../../core/spec/m-read-lock.md) define the two strategies.
+  [Concurrency policy](../../../../core/spec/m-concurrency.md#what-each-strategy-promises) defines the two strategies.
 - The [database port](../../../../core/spec/m-db-port.md#the-portable-isolation-vocabulary)
   defines the isolation levels and
   [what PostgreSQL does with each](../../../../core/spec/m-db-port.md#adapter-profile--nonportable-per-engine).

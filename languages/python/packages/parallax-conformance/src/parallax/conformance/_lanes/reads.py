@@ -176,9 +176,9 @@ def run_read_case(
     reports is the row production materialized, not a row this adapter
     re-derived from the query a second time.
 
-    A case carrying `when.uow` is RUN in a transaction (`m-read-lock` "an
-    in-transaction object find that intends to write acquires a shared row
-    lock"), opened with only the fields that block authors: the lock suffix is
+    A case carrying `when.uow` is RUN in a transaction (`m-concurrency` *What
+    each strategy promises*), opened with only the fields that block authors: the
+    lock suffix is
     derived inside production from the preference that call resolves — the
     authored one, else the root this lane connected — and the read target's own
     Concurrency Facet, exactly as it is for a developer's ``tx.find``, rather

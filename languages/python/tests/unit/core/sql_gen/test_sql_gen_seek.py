@@ -19,7 +19,7 @@ import pytest
 
 from parallax.core import continuation, read_planning
 from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
-from parallax.core.dialect import POSTGRES, Dialect, LockMode
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
@@ -85,13 +85,13 @@ def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.Con
 
 
 def _lowered(
-    model: Metamodel, node: ResolvedObjectQuery, *, lock: LockMode | None = None
+    model: Metamodel, node: ResolvedObjectQuery, *, shared_lock: bool = False
 ) -> LoweredStatement:
     return compile_entity_query(
         read_planning.plan(node, model, projection=_PROJECTION).root,
         model,
         POSTGRES,
-        lock=lock,
+        shared_lock=shared_lock,
     ).statement
 
 
@@ -381,7 +381,7 @@ def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() 
     statement = _lowered(
         ORDERS,
         _planned(ORDERS, "Order").after(ContinuationCoordinate((1,)), limit=2),
-        lock="locking",
+        shared_lock=True,
     )
 
     assert statement.sql.count("for share") == 1
@@ -399,7 +399,7 @@ def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity
     statement = _lowered(
         PAYMENT,
         _planned(PAYMENT, "CardPayment").after(ContinuationCoordinate((1,)), limit=2),
-        lock="locking",
+        shared_lock=True,
     )
 
     assert statement.sql.count("for share") == 1
@@ -412,7 +412,7 @@ def test_a_postgres_locking_continuation_refuses_multiple_concrete_tables() -> N
         TRAVERSAL, "Vehicle", OrderKey(attr="parallax.compatibility.Vehicle.dealerId")
     ).after(ContinuationCoordinate((3, 1)), limit=2)
     with pytest.raises(SqlGenError, match="2\\+ effective concretes"):
-        _lowered(TRAVERSAL, page, lock="locking")
+        _lowered(TRAVERSAL, page, shared_lock=True)
 
 
 @pytest.mark.parametrize("target", ["Vehicle", "Car"])
@@ -431,7 +431,7 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
         ContinuationCoordinate((3, 1)), limit=2
     )
     planned = read_planning.plan(node, TRAVERSAL, projection=_PROJECTION).root
-    compiled = compile_entity_query(planned, TRAVERSAL, POSTGRES, lock="locking")
+    compiled = compile_entity_query(planned, TRAVERSAL, POSTGRES, shared_lock=True)
     unlocked = compile_entity_query(planned, TRAVERSAL, POSTGRES)
     statement = compiled.statement
     branch = (
@@ -478,7 +478,7 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
         _planned(POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END)).after(
             ContinuationCoordinate((INFINITY, 1)), limit=2
         ),
-        lock="locking",
+        shared_lock=True,
     )
 
     assert statement.sql.count("for share") == 1
@@ -598,9 +598,9 @@ def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
 
 
 @pytest.mark.parametrize("instance", [False, True], ids=["row", "instance"])
-@pytest.mark.parametrize("lock", [None, "locking"])
+@pytest.mark.parametrize("shared_lock", [False, True])
 def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock(
-    lock: LockMode | None, instance: bool
+    shared_lock: bool, instance: bool
 ) -> None:
     plan = continuation.plan(
         validate_object_query(
@@ -620,20 +620,20 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
         ).root,
         projection_support.MATRIX_META,
         POSTGRES,
-        lock=lock,
+        shared_lock=shared_lock,
         result_form="instance" if instance else "row",
     )
-    alias = "t0" if lock else "u"
+    alias = "t0" if shared_lock else "u"
     occurrences = (
         f", not {alias}.origin is null, {alias}.origin, not {alias}.home is null, {alias}.home, "
         f"not {alias}.right_home is null, {alias}.right_home"
         if instance
         else ""
     )
-    digest = "encode(t0.digest, ?) digest_hex" if lock else "u.digest_hex"
+    digest = "encode(t0.digest, ?) digest_hex" if shared_lock else "u.digest_hex"
     coordinates = (
         "t0.holder_id parallax_seek_0, t0.id parallax_seek_1"
-        if lock
+        if shared_lock
         else "u.parallax_seek_0, u.parallax_seek_1"
     )
     assert compiled.statement.sql.startswith(
@@ -641,16 +641,16 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
         f"not {alias}.tags is null, {alias}.tags{occurrences}, {coordinates} from ((select "
     )
     assert compiled.statement.sql.endswith(
-        (") u join mx_tph_columns t0 on u.id = t0.id" if lock else ") u")
+        (") u join mx_tph_columns t0 on u.id = t0.id" if shared_lock else ") u")
         + (
             " order by t0.holder_id asc, t0.id asc limit ?"
-            if lock
+            if shared_lock
             else " order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?"
         )
-        + (" for share of t0" if lock else "")
+        + (" for share of t0" if shared_lock else "")
     )
     assert compiled.statement.binds == (
-        *(("hex",) if lock else ()),
+        *(("hex",) if shared_lock else ()),
         "hex",
         10,
         10,
@@ -840,7 +840,7 @@ def test_each_continuing_branch_joins_its_own_shared_sources_beneath_the_root_lo
         read_planning.plan(node, ORDERS, projection=_PROJECTION).root,
         ORDERS,
         POSTGRES,
-        lock="locking",
+        shared_lock=True,
     )
     statement = compiled.statement
     joined = "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ? and "
@@ -986,35 +986,35 @@ def _template_pages() -> list[object]:
             orders.first(limit=2), orders.first(limit=5), ORDERS, None, id="first-page-cap"
         ),
         pytest.param(*after(orders, (1,), (9,)), ORDERS, None, id="direct-hoisted-range"),
-        pytest.param(*after(orders, (1,), (9,)), ORDERS, "locking", id="locking-outer-join"),
+        pytest.param(*after(orders, (1,), (9,)), ORDERS, True, id="locking-outer-join"),
         pytest.param(
             *after(_planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE)), (True, 1), (False, 7)),
             ORDERS,
-            None,
+            False,
             id="null-tail-branches",
         ),
         pytest.param(
             *after(nullable, (None, february, 1), (None, march, 4)),
             ORDERS,
-            None,
+            False,
             id="null-then-finite",
         ),
         pytest.param(
             *after(nullable, ("A-100", None, 1), ("B-200", None, 3)),
             ORDERS,
-            "locking",
+            True,
             id="finite-then-null",
         ),
         pytest.param(
             *after(positions, (INFINITY, Decimal("1.50"), 1), (INFINITY, Decimal("2.5"), 2)),
             POSITIONS,
-            None,
+            False,
             id="infinity-then-finite",
         ),
         pytest.param(
             *after(positions, (INFINITY, Decimal("1.50"), 1), (INFINITY, Decimal("2.5"), 2)),
             POSITIONS,
-            "locking",
+            True,
             id="infinity-locking",
         ),
         pytest.param(
@@ -1024,13 +1024,13 @@ def _template_pages() -> list[object]:
                 ("0000-13-99", 2),
             ),
             DOCUMENT_LAYOUT,
-            None,
+            False,
             id="text-compared-carrier",
         ),
         pytest.param(
             *after(_planned(PAYMENT, "CardPayment"), (1,), (6,)),
             PAYMENT,
-            "locking",
+            True,
             id="family-tag-guard",
         ),
         pytest.param(
@@ -1045,7 +1045,7 @@ def _template_pages() -> list[object]:
                 (8, 5),
             ),
             TRAVERSAL,
-            None,
+            False,
             id="union-branches",
         ),
         pytest.param(
@@ -1060,19 +1060,19 @@ def _template_pages() -> list[object]:
                 (march, 12),
             ),
             ORDERS,
-            "locking",
+            True,
             id="shared-source-branches",
         ),
     ]
 
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
-@pytest.mark.parametrize(("cold", "current", "model", "lock"), _template_pages())
+@pytest.mark.parametrize(("cold", "current", "model", "shared_lock"), _template_pages())
 def test_a_page_template_renders_what_direct_compilation_of_the_current_page_binds(
     cold: ResolvedObjectQuery,
     current: ResolvedObjectQuery,
     model: Metamodel,
-    lock: LockMode | None,
+    shared_lock: bool,
     dialect: Dialect,
 ) -> None:
     # The template is compiled from another page of the same pattern, so every
@@ -1080,10 +1080,16 @@ def test_a_page_template_renders_what_direct_compilation_of_the_current_page_bin
     # branches, the open bound's framework bind, and every typed span and
     # override stay those direct compilation of the current page derives.
     template = compile_template(
-        read_planning.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
+        read_planning.plan(cold, model, projection=_PROJECTION).root,
+        model,
+        dialect,
+        shared_lock=shared_lock,
     )
     direct = compile_entity_query(
-        read_planning.plan(current, model, projection=_PROJECTION).root, model, dialect, lock=lock
+        read_planning.plan(current, model, projection=_PROJECTION).root,
+        model,
+        dialect,
+        shared_lock=shared_lock,
     )
 
     rendered = template.render(query=current)
@@ -1105,7 +1111,10 @@ def test_a_page_template_renders_what_direct_compilation_of_the_current_page_bin
     assert (
         template.render(query=cold).statement
         == compile_entity_query(
-            read_planning.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
+            read_planning.plan(cold, model, projection=_PROJECTION).root,
+            model,
+            dialect,
+            shared_lock=shared_lock,
         ).statement
     )
 

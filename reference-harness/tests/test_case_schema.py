@@ -470,7 +470,7 @@ def _error_concurrency_case() -> dict[str, Any]:
 def _concurrency_success_case() -> dict[str, Any]:
     return {
         "model": "models/account.yaml",
-        "tags": ["m-read-lock"],
+        "tags": ["m-concurrency"],
         "shape": "concurrencySuccess",
         "given": {"fixtures": True},
         "when": {

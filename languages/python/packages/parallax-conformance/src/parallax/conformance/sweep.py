@@ -45,7 +45,6 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-read-delivery",
         "m-snapshot-read",
         "m-concurrency",
-        "m-read-lock",
         "m-auto-retry",
         "m-execution",
         "m-execution-authority",

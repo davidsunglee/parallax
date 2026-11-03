@@ -9,7 +9,7 @@ from parallax.core.base import (
     NeutralType,
     UnknownFamilyTag,
 )
-from parallax.core.dialect import LockMode, ScalarResult
+from parallax.core.dialect import ScalarResult
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import (
     EntityMemberSelection,
@@ -867,7 +867,7 @@ def plan_read_shape(
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
-    lock: LockMode | None,
+    shared_lock: bool,
 ) -> SingleTableReadPlan | TpcsUnionReadPlan:
     """Plan the physical read of ``query``'s position, whatever its Entity's
     inheritance shape.
@@ -882,8 +882,8 @@ def plan_read_shape(
 
     ``instance_form`` is the object lane (`result_form == "instance"`), which
     decides only sibling padding and which branch-owned fields a row publishes.
-    ``lock`` is here rather than at the rendering site because the union lane must
-    REFUSE a genuinely requested shared row lock before any branch is rendered;
+    ``shared_lock`` is here rather than at the rendering site because the union
+    lane must REFUSE a requested shared row lock before any branch is rendered;
     ordering and the cap are the renderer's, since a union applies them to its
     own outer select rather than to any branch.
     """
@@ -893,7 +893,13 @@ def plan_read_shape(
     layout = position_layout(storage, position.concrete_subtypes)
     if isinstance(view.strategy, TablePerConcreteSubtype) and len(position.concrete_subtypes) != 1:
         return _plan_tpcs_union_read(
-            position, layout, facet, storage, query.projection, lock, instance_form=instance_form
+            position,
+            layout,
+            facet,
+            storage,
+            query.projection,
+            shared_lock,
+            instance_form=instance_form,
         )
     return _plan_single_table_read(
         entity,
@@ -1017,7 +1023,7 @@ def _plan_tpcs_union_read(
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     projection: ResolvedReadProjection,
-    lock: LockMode | None,
+    shared_lock: bool,
     *,
     instance_form: bool,
 ) -> TpcsUnionReadPlan:
@@ -1035,16 +1041,14 @@ def _plan_tpcs_union_read(
     position resolves to several concretes, and it has no container of its own to
     reach for.
     """
-    if lock == "locking":
+    if shared_lock:
         # A shared row lock is the one clause a derived-table wrap cannot rescue:
         # PostgreSQL forbids a locking clause over a `UNION` result and over every
         # input of one, and dropping it silently would leave a later ungated write
         # unlicensed. Ordering and limiting have an outer select to land on, so
-        # only a GENUINELY requested lock refuses — matching the append site's own
-        # `== "locking"` test, which is why a participating read carrying the
-        # `optimistic` Effective Concurrency Strategy passes here.
+        # only a requested lock refuses.
         raise SqlGenError(
-            "a read-lock suffix over a table-per-concrete-subtype union-all read "
+            "a shared-lock suffix over a table-per-concrete-subtype union-all read "
             "(2+ effective concretes) has no goldened lowering yet"
         )
     # A branch storing no document of its own still pads its siblings' document

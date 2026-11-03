@@ -670,7 +670,7 @@ without omitting a root from the ordered result, including a stored `NULL` under
 dropped `NOT NULL` constraint. Where placement ranks `NULL` first, the range arm alone
 is complete because the NULL region is already behind the coordinate.
 
-When PostgreSQL's Effective Concurrency Strategy requires a shared row lock, the
+When a read must take the shared row lock on PostgreSQL, the
 two-arm form keeps both union inputs unlocked: PostgreSQL permits no locking
 clause on a `UNION` result or either input. The outer SELECT joins the derived
 relation back to the read's one physical base Table as `t0`, equating EVERY
@@ -680,14 +680,15 @@ then projects, orders, and caps the physical base rows and ends with
 hidden capture cells from `t0`, using the same expressions and result layout
 as an ordinary read of that Table. It MUST NOT return those values from the
 derived relation: a row updated while the statement waits must be observed as
-the state protected by the acquired lock (`m-read-lock`). The derived relation
+the state protected by the acquired lock (`m-unit-work` *What a locking read
+observes*). The derived relation
 selects candidate identities; it supplies no returned state. A temporal key
 therefore includes all of its physical edge components, and a TPH or single-concrete inheritance read
 uses its shared or concrete Table's complete key. A key projected through an
 encoded result alias compares the base key through that same lossless projection.
 The form remains one statement and one atomic shared-lock acquisition, so every
-published unversioned row retains the pessimistic authority `m-read-lock`
-requires. It does not make a table-per-concrete-subtype union lockable: that read
+published unversioned row retains the pessimistic authority `m-unit-work`
+requires (*What licenses a Locking write*). It does not make a table-per-concrete-subtype union lockable: that read
 has multiple base Tables and remains refused below.
 
 Nothing is hoisted where the leading term is **document-resident**. Its extraction
@@ -1462,11 +1463,12 @@ state, not SQL — but it executes two dialect-specific SQL fragments through th
 
 ### Read-lock suffix
 
-An in-transaction **object find** whose target Entity's Effective Concurrency
-Strategy is Locking carries the dialect's shared-row-lock suffix (`m-read-lock`,
-`m-dialect`); one under the Optimistic strategy carries none. The read-lock is an
-**object-find property**, and the `m-dialect` layer **owns applying** the lock
-(whether and where to append it — see `m-dialect`'s *Read-lock application*).
+An in-transaction **object find** that must take the shared row lock carries the
+dialect's shared-row-lock suffix; one requesting no lock carries none. Whether it
+locks is decided by the read's owner (`m-concurrency` *What each strategy
+promises*), not here. The read-lock is an **object-find property**, and the
+`m-dialect` layer **owns applying** the lock (where and how to append it — see
+`m-dialect`'s *Read-lock application*).
 For Postgres the suffix is `for share of t0` — `for share` qualified by the root
 alias — appended **after** every other clause (it is the last thing in the
 statement, after any `where`):
@@ -1675,7 +1677,8 @@ matches no row and the `UPDATE` affects **zero** rows — the conflict signal
 success exactly **one** row is affected and its version advances.
 
 **Locking mode** issues the same statement **without** the version gate — the
-shared read lock (`m-read-lock`), not the version, makes it correct — but still
+shared read lock (`m-unit-work` *What licenses a Locking write*), not the version,
+makes it correct — but still
 advances the version (the `m-concurrency-002` locking-mode shape):
 
 ```yaml
@@ -1965,10 +1968,10 @@ exactly as for a single-table read.
 A **read-lock suffix** is the one part of the tail the wrap does not rescue.
 PostgreSQL forbids a locking clause over a `UNION` result and over every input of
 one, and the suffix cannot be silently dropped, because that lock is what licenses a
-later ungated write (`m-read-lock`). A table-per-concrete-subtype union read that
-genuinely requests a shared row lock is therefore **refused**. The `optimistic`
-Effective Concurrency Strategy emits no suffix and is not such a request, so a
-participating read carrying it is ordered, capped, and executed like any other.
+later ungated write (`m-unit-work` *What licenses a Locking write*). A
+table-per-concrete-subtype union read that must take the shared row lock is
+therefore **refused**. A union read requesting no lock is ordered, capped, and
+executed like any other.
 
 ### Inheritance — a position with no concrete subtype
 

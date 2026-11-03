@@ -39,7 +39,6 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-predicate` | `predicate` |
 | `m-concurrency` | `concurrency` |
 | `m-pk-gen` | `pk-gen` |
-| `m-read-lock` | `read-lock` |
 | `m-read-delivery` | `read-delivery` |
 | `m-snapshot-read` | `snapshot` |
 | `m-sql` | `sql` |

@@ -42,15 +42,14 @@ class ReadStory:
     sourced from ``concurrency`` below rather than a second, independently-
     authored string.
 
-    ``concurrency`` (the `m-read-lock` matrix's -002/-005 object-find pair) opts
+    ``concurrency`` (the `m-concurrency` matrix's -046/-049 object-find pair) opts
     a story into the TRANSACTIONAL read half instead of
     the default non-transactional one: ``None`` (every other entry, unchanged)
     runs ``db.find(build())``; a declared mode runs
     ``db.transact(lambda tx: tx.find(build()), concurrency=...)`` — a
     participating `tx.find`, whose emitted SQL carries (or, `optimistic`,
-    omits) the dialect's shared read-lock suffix per the SAME `m-read-lock`
-    policy `TxnContext.find` derives production-side
-    (`parallax.core.read_lock.mode_for`). `test_story_run.py`'s own generic
+    omits) the dialect's shared read-lock suffix per the SAME `m-concurrency`
+    policy read planning applies production-side. `test_story_run.py`'s own generic
     runner branches on this SAME field to build the executed callable — the
     ONE place the mode is authored, flowing into both the rendered snippet
     (:func:`read_story_snippet`) and the execution, so neither can drift from
@@ -71,7 +70,7 @@ def read_story_snippet(story: ReadStory) -> str:
     ``db.transact(lambda tx: tx.find(query), concurrency=...)`` wrapper
     `test_story_run.py`'s generic runner actually executes, rendered from
     that SAME field rather than a second, independently-typed copy of the
-    mode (a `m-read-lock-002` vs. `-005`-style
+    mode (a `m-concurrency-046` vs. `-049`-style
     pair renders IDENTICALLY otherwise, hiding the one thing the pair
     exists to demonstrate)."""
     if story.concurrency is None:
@@ -362,17 +361,17 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         lambda: Account.where(Account.all),
         "query = Account.where(Account.all)",
     ),
-    # -- m-read-lock (runtime object-find lock/omit pair), account.yaml ------ #
+    # -- m-concurrency (runtime object-find lock/omit pair), account.yaml ---- #
     # The `api-conformance`-lane runtime half of
     # the read-lock matrix — `tx.find` inside a `db.transact` of the declared
-    # mode. `m-read-lock-001` (the harness-lane single-connection golden) and
-    # `-006`/`-007` (the two-session behavioral proofs) need no idiomatic
+    # mode. `m-concurrency-045` (the harness-lane single-connection golden) and
+    # `-050`/`-051` (the two-session behavioral proofs) need no idiomatic
     # story: they need no `db.transact` Concurrency Preference CONFIGURATION to
     # demonstrate (the harness proof runs the golden verbatim; the two-session
     # proofs are a concurrency property this generic single-session runner
     # cannot hold open) — see `api_suite.CASE_SKIP_REASONS`.
     ReadStory(
-        "m-read-lock-002",
+        "m-concurrency-046",
         "A locking-mode object find carries the shared read lock",
         "account",
         lambda: Account.where(Account.id == 2),
@@ -380,7 +379,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         concurrency="locking",
     ),
     ReadStory(
-        "m-read-lock-005",
+        "m-concurrency-049",
         "An optimistic-mode object find omits the shared read lock",
         "account",
         lambda: Account.where(Account.id == 2),

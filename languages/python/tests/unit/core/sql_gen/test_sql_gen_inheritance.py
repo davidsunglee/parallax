@@ -1880,20 +1880,18 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
 # these pin the seams a golden over `document.yaml` cannot reach, because that #
 # family's contributors neither collide nor live inside a document.            #
 # --------------------------------------------------------------------------- #
-def test_tpcs_union_refuses_only_a_genuinely_requested_read_lock() -> None:
-    # `entity_read_lock` hands the read its target's Effective Concurrency
-    # Strategy verbatim, so a participating read of a versioned family carries
-    # `optimistic` even though no suffix is ever emitted for it. The refusal tests
-    # what the append site tests — an actual shared row lock, which PostgreSQL
-    # grants over neither a `UNION` result nor any input of one, and which cannot
-    # be silently dropped because that lock is what licenses a later ungated
-    # write. An unversioned family takes that lock under either preference.
+def test_tpcs_union_refuses_only_a_requested_shared_lock() -> None:
+    # A participating read of a versioned family requests no shared lock, so its
+    # union compiles. A requested lock refuses: PostgreSQL grants one over neither
+    # a `UNION` result nor any input of one, and it cannot be silently dropped
+    # because it is what licenses a later ungated write. An unversioned family
+    # requests it under either preference.
     compiled = compile_read(
         oa.TrueNode(), APPLIANCE, POSTGRES, target(APPLIANCE, "Appliance"), preference="optimistic"
     )
     assert " union all " in compiled.statement.sql
     assert "for share" not in compiled.statement.sql
-    with pytest.raises(SqlGenError, match="read-lock suffix over a table-per-concrete-subtype"):
+    with pytest.raises(SqlGenError, match="shared-lock suffix over a table-per-concrete-subtype"):
         compile_read(
             oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), preference="locking"
         )

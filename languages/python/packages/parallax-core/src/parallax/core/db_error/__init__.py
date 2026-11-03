@@ -126,7 +126,7 @@ class DatabaseError(Exception):
 
     @property
     def is_timed_out(self) -> bool:
-        """The lock-path predicate (`m-read-lock`) over this error's category."""
+        """The lock-path predicate (`m-concurrency`) over this error's category."""
         return is_timed_out(self.category)
 
 

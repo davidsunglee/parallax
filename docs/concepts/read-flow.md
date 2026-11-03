@@ -62,7 +62,7 @@ writes are flushed, so a query that cannot be answered has no side effects
 A read runs in one of three places. A standalone read goes through an Execution Scope
 and opens no transaction. The other two run inside a Transaction Attempt, read-only or
 read-write ([read-only transactions](../../core/spec/m-execution.md#read-only-transactions),
-[`m-read-lock`](../../core/spec/m-read-lock.md)):
+[`m-concurrency`](../../core/spec/m-concurrency.md#what-each-strategy-promises)):
 
 |  | standalone | read-only transaction | read-write transaction |
 | -- | -- | -- | -- |

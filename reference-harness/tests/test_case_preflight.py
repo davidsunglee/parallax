@@ -956,14 +956,14 @@ def _locking_session_statement(case: Case) -> Any:
             "int32",
         ),
         (
-            "m-read-lock-010-document-layout-tph-partitioned",
+            "m-concurrency-054-document-layout-tph-partitioned",
             _read_statement,
             {"postgres": 5, "mariadb": 7},
             10,
             r"decimal\(18,2\)",
         ),
         (
-            "m-read-lock-011-document-layout-tph-partitioned-blocks-writer",
+            "m-concurrency-055-document-layout-tph-partitioned-blocks-writer",
             _locking_session_statement,
             {"postgres": 2, "mariadb": 3},
             10,

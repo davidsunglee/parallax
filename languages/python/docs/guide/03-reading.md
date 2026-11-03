@@ -803,8 +803,8 @@ conditioned on the milestone a Wire read returned.
 - [Execution](../../../../core/spec/m-execution.md#read-only-transactions) defines
   read-only transactions and the
   [conditions every read runs under](../../../../core/spec/m-execution.md#reads-under-an-attempt-or-a-scope).
-  [Read locks](../../../../core/spec/m-read-lock.md) define when a read takes a shared
-  lock, and the
+  [Concurrency policy](../../../../core/spec/m-concurrency.md#what-each-strategy-promises) defines when a read takes a
+  shared lock, and the
   [unit of work](../../../../core/spec/m-unit-work.md#current-attempt-source-admission)
   defines which reads can license a write.
 - The [database port](../../../../core/spec/m-db-port.md#the-portable-isolation-vocabulary)

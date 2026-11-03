@@ -231,7 +231,7 @@ def _planned_shape(
         facet,
         storage,
         False,
-        None,
+        False,
     )
     plan = plan_statement(
         predicate,

@@ -17,10 +17,10 @@ from parallax.conformance._mechanism.envelope import EngineError
 
 def _read_case(when: dict[str, object]) -> case_format.Case:
     return case_format.Case(
-        path=Path("m-read-lock-999-synthetic.yaml"),
-        case_id="m-read-lock-999",
+        path=Path("m-concurrency-1043-synthetic.yaml"),
+        case_id="m-concurrency-1043",
         shape="read",
-        tags=("m-read-lock", "slice-snapshot-1"),
+        tags=("m-concurrency", "slice-snapshot-1"),
         model="models/orders.yaml",
         document={"model": "models/orders.yaml", "when": when},
     )
@@ -36,5 +36,5 @@ def test_a_read_refused_inside_its_transaction_is_the_case_error() -> None:
             },
         }
     )
-    with pytest.raises(EngineError, match=r"m-read-lock-999-synthetic\.yaml"):
+    with pytest.raises(EngineError, match=r"m-concurrency-1043-synthetic\.yaml"):
         compile_read_case(case, "postgres")

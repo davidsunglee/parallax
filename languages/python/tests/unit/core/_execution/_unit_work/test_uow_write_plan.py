@@ -631,7 +631,7 @@ def _stored(
             entity=entity,
             key_attribute=AttributeIdentity(entity.identity, "id"),
             terms=(CoverageTerm(key, ()),),
-            locking=False,
+            shared_lock=False,
         ),
         consume_coverage,
     )

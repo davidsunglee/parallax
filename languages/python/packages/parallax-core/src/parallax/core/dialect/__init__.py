@@ -40,15 +40,12 @@ __all__ = [
     "ExclusionDdl",
     "IndexColumnDdl",
     "IntervalCheckDdl",
-    "LockMode",
     "PhysicalIndexName",
     "RenderedScalarCell",
     "ScalarResult",
     "Unsupported",
     "scalar_result",
 ]
-
-LockMode = Literal["locking", "optimistic"]
 
 EncodedJsonKind = Literal["boolean", "number", "string"]
 """The JSON primitive kind a scalar's canonical document encoding takes."""
@@ -395,9 +392,9 @@ class Dialect:
             return f"{column_sql} {direction}"
         return f"{column_sql} {direction} nulls {placement}"
 
-    # -- read lock --------------------------------------------------------- #
-    def read_lock_suffix(self, root_alias: str) -> str:
-        """The shared-row-lock suffix for an in-transaction object find."""
+    # -- shared lock ------------------------------------------------------- #
+    def shared_lock_suffix(self, root_alias: str) -> str:
+        """The shared-row-lock suffix for an object find required to take the lock."""
         return f"for share of {root_alias}"
 
     # -- structured documents (m-value-object) ----------------------------- #

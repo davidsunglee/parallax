@@ -1,12 +1,12 @@
-# Read-lock matrix (m-read-lock / m-concurrency): an object find inside an OPTIMISTIC unit of work
-# emits NO lock — the locking/optimistic contrast — `api-conformance` lane.
+# Read-lock matrix (m-concurrency / m-dialect): a runtime object find inside a LOCKING unit of work
+# emits the shared row lock — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-read-lock, m-concurrency, m-dialect, m-api-conformance, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, m-api-conformance, locking-mode, slice-snapshot-1, slice-managed-1]
 lane: api-conformance
 shape: read
 when:
   uow:
-    concurrency: optimistic
+    concurrency: locking
   objectQuery:
     target: parallax.compatibility.Account
     predicate:
@@ -16,7 +16,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
       binds: [2]
   referenceSql: select id, owner, balance, version from account where id = 2
   rows:

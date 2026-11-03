@@ -62,14 +62,14 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 )
 _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
     {
-        "m-read-lock-001",
-        "m-read-lock-002",
-        "m-read-lock-005",
-        "m-read-lock-010",
-        "m-read-lock-019",
-        "m-read-lock-020",
-        "m-read-lock-024",
-        "m-read-lock-025",
+        "m-concurrency-045",
+        "m-concurrency-046",
+        "m-concurrency-049",
+        "m-concurrency-054",
+        "m-concurrency-063",
+        "m-concurrency-064",
+        "m-concurrency-068",
+        "m-concurrency-069",
     }
 )
 _DESCRIPTOR_DEFAULT_COLUMN_READS: Final[frozenset[str]] = frozenset({"m-descriptor-002"})

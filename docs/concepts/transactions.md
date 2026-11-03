@@ -119,7 +119,7 @@ a shared lock. The two strategies trade differently. Optimistic costs nothing un
 writers meet, and then one of them conflicts and replays
 ([conflict detection](../../core/spec/m-unit-work.md#affected-row-enforcement)). Locking makes
 the second writer wait instead
-([read locks](../../core/spec/m-read-lock.md#automatic-read-lock-correctness)), which
+([shared read locks](../../core/spec/m-concurrency.md#what-each-strategy-promises)), which
 suits rows many transactions write at once, at the cost of waiting and of deadlocks
 between waiters.
 

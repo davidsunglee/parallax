@@ -1,7 +1,7 @@
-# Read-lock matrix (m-read-lock / m-dialect): a deep fetch inside a LOCKING unit of work emits the
+# Read-lock matrix (m-concurrency / m-dialect): a deep fetch inside a LOCKING unit of work emits the
 # shared row lock on EVERY level — root + each child — `api-conformance` lane.
 model: models/orders.yaml
-tags: [m-read-lock, m-object-query, m-dialect, m-read-planning, m-op-list, m-api-conformance, locking-mode, slice-managed-1]
+tags: [m-concurrency, m-object-query, m-dialect, m-read-planning, m-op-list, m-api-conformance, locking-mode, slice-managed-1]
 lane: api-conformance
 shape: read
 when:

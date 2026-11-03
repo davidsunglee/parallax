@@ -33,7 +33,7 @@ __all__ = [
 # the provider seam's `open_session` applies "the dialect's lock-contention
 # tuning ... so a blocked lock fails fast"). Long enough that a genuinely
 # admitted (non-blocking) statement never spuriously times out, short enough
-# that a genuinely blocked one (m-read-lock-006's contended writer) fails
+# that a genuinely blocked one (m-concurrency-050's contended writer) fails
 # fast rather than hanging the suite.
 #
 # BOTH values are load-bearing, and `_DEADLOCK_TIMEOUT` MUST stay strictly
@@ -455,7 +455,7 @@ def run_rounds(
     lock_waits: Callable[[], int] | None = None,
 ) -> RoundsRun:
     """Drive ``rounds`` over two independently-held peer sessions (the
-    m-read-lock behavioral matrix and `m-db-error`'s own five two-session
+    m-concurrency behavioral matrix and `m-db-error`'s own five two-session
     error cases; `m-case-format` "Error cases" / "concurrencySuccess").
 
     ``isolation`` is the portable Isolation Level the case resolves — its

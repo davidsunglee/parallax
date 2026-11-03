@@ -1,7 +1,14 @@
-# The transaction supplies no preference: its lock must come from the root.
-# A standalone stream under that root has no transaction lock to inherit.
+# A locking transactional stream reaches a continuing page without surrendering
+# PostgreSQL's shared-row authority (m-concurrency / m-snapshot-read / m-sql).
+# Page 1 asks for three roots and publishes accounts 1 and 2. Page 2 seeks from
+# account 2 and returns account 3 alone, which proves exhaustion. PostgreSQL's
+# emitted NULL placement requires the two disjoint arms even though the accepted
+# key is non-nullable; neither arm may carry a lock clause. Their derived result
+# joins account on its complete physical identity, retains the capture-alias
+# order and outer cap, and locks only t0. MariaDB places ascending NULLs first, so
+# its existing one-arm continuation remains the complete and canonical form.
 model: models/account.yaml
-tags: [m-read-lock, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, concurrency, locking-mode, database-options, slice-snapshot-1]
+tags: [m-concurrency, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, concurrency, locking-mode, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only
@@ -9,9 +16,9 @@ compileEligibility:
   note: "the continuing page binds the primary key of the root the first page delivered last"
 given:
   fixtures: true
-  databaseOptions:
-    concurrency: locking
 when:
+  uow:
+    concurrency: locking
   scenario:
     - uow: locking-stream
       objectQuery:

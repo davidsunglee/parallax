@@ -91,8 +91,8 @@
   base: valid-snapshot.md
   old: |-
     | `m-pk-gen` | `pk-gen` |
-    | `m-read-lock` | `read-lock` |
-  new: "| `m-read-lock` | `read-lock` |"
+    | `m-read-delivery` | `read-delivery` |
+  new: "| `m-read-delivery` | `read-delivery` |"
   code: missing-source-module
   message: "source-enforcement topology has no row for m-pk-gen"
 
@@ -119,8 +119,8 @@
   base: valid-snapshot.md
   old: |-
     | `m-pk-gen` | `pk-gen` |
-    | `m-read-lock` | `read-lock` |
-  new: "| `m-read-lock` m-pk-gen | `read-lock` |"
+    | `m-read-delivery` | `read-delivery` |
+  new: "| `m-read-delivery` m-pk-gen | `read-delivery` |"
   code: missing-source-module
   message: "source-enforcement topology has no row for m-pk-gen"
 
@@ -130,10 +130,10 @@
   base: valid-snapshot.md
   old: |-
     | `m-pk-gen` | `pk-gen` |
-    | `m-read-lock` | `read-lock` |
-  new: "| `m-pk-gen` `m-read-lock` | `pk-gen` |"
+    | `m-read-delivery` | `read-delivery` |
+  new: "| `m-pk-gen` `m-read-delivery` | `pk-gen` |"
   code: combined-source-module-row
-  message: "source-enforcement topology combines m-pk-gen, m-read-lock in one row"
+  message: "source-enforcement topology combines m-pk-gen, m-read-delivery in one row"
 
 - name: duplicate-source-module
   base: valid-snapshot.md

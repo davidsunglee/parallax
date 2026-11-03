@@ -589,7 +589,7 @@ def test_a_completed_retained_row_is_judged_as_a_coverage_read_judges_it(
             metadata,
             key_attribute,
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            locking=True,
+            shared_lock=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         count, retained, document = tx.uow.acquire_rows(
@@ -620,7 +620,7 @@ def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -
             metadata,
             key_attribute,
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            locking=True,
+            shared_lock=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         seen.append(
@@ -761,7 +761,7 @@ def test_a_retaining_read_judges_a_top_level_collection_as_a_coverage_read_judge
             metadata,
             key_attribute,
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            locking=True,
+            shared_lock=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         seen.append(
@@ -1289,7 +1289,7 @@ def test_a_coverage_read_of_a_family_member_reads_its_complete_predecessor(
             metadata,
             key_attribute,
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            locking=True,
+            shared_lock=True,
         )
         seen.append(tx.uow.acquire_rows(coverage, _rows_and_documents))
 

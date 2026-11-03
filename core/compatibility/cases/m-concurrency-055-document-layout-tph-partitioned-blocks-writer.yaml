@@ -1,7 +1,7 @@
 # A transaction holding the outer locking SELECT for a cast-safe, tag-partitioned
 # TPH document read prevents a concurrent writer from updating a matched base row.
 model: models/document-layout.yaml
-tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-db-error, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-inheritance, m-storage-layout, m-sql, m-dialect, m-db-error, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error
 compileEligibility:
   mode: run-only

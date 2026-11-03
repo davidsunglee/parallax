@@ -502,7 +502,6 @@ data migration that you run yourself.
 - [Temporal reads](../../../../core/spec/m-temporal-read.md) and
   [temporal writes](../../../../core/spec/m-temporal-write.md) define the two time axes.
 - [Concurrency policy](../../../../core/spec/m-concurrency.md) defines the two concurrency
-  strategies, and [read locks](../../../../core/spec/m-read-lock.md) the shared lock a
-  Locking read takes.
+  strategies and the shared lock a Locking read takes.
 - [Storage layout](../../../../core/spec/m-storage-layout.md) defines both layouts and
   why callers can't tell them apart.

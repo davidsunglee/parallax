@@ -5,7 +5,7 @@
 # collection, and coalesces the equal rectangles it writes. Its twin authors the
 # same submissions under Relational Document Layout.
 model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
-tags: [m-temporal-write, m-unit-work, m-read-lock, m-storage-layout, m-document-codec, scenario, update, target-write, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-unit-work, m-concurrency, m-storage-layout, m-document-codec, scenario, update, target-write, json, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario
 grading: state
 compileEligibility:

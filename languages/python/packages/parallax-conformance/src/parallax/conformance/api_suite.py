@@ -864,7 +864,7 @@ EXAMPLES: Final[list[Example]] = [
     # (`parallax.conformance.read_stories`) — the snippet is `read_story_
     # snippet(story)` (single-sourced from the story's own `concurrency`
     # field rather than the bare `snippet`,
-    # which would render a `m-read-lock` transactional story identically to
+    # which would render a `m-concurrency` transactional story identically to
     # its non-transactional siblings), and the real-Postgres suite executes
     # the SAME `build()` through the shipped `parallax.snapshot.connect` +
     # `parallax-postgres` (test_story_run's generic runner), grading the
@@ -1694,17 +1694,17 @@ _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
     "expression) — the reference harness remains its independent behavioral "
     "cross-check"
 )
-# The read-lock module's single-connection golden (`m-read-lock-001`) verifies
+# The Locking strategy's single-connection golden (`m-concurrency-045`) verifies
 # that an object find resolving to the Locking strategy carries the shared read
 # lock and is graded end-to-end by the compile and run sweeps. Its own declared
 # `locking` preference is all it needs (its api-conformance-lane runtime
-# siblings `-002` and `-005` are already exercised above).
+# siblings `-046` and `-049` are already exercised above).
 _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
     "the module's own harness-lane single-connection golden (a Locking-strategy "
     "object find carries the shared read lock) is graded end-to-end by the "
     "compile AND run sweeps; no idiomatic example is "
     "needed beyond the runtime matrix's own api-conformance siblings "
-    "(`m-read-lock-002`/`-005`, exercised as idiomatic read-story examples "
+    "(`m-concurrency-046`/`-049`, exercised as idiomatic read-story examples "
     "above) — this witness needs nothing from `db.transact` beyond the "
     "`locking` preference the case itself declares"
 )
@@ -1722,8 +1722,8 @@ _READ_LOCK_STREAM_CONTINUATION_REASON: Final[str] = (
     "root's pessimistic authority on an update, so another narrative example would "
     "duplicate that dedicated contract proof"
 )
-# The read-lock module's two-session behavioral proofs
-# (`m-read-lock-006`/`-007`/`-011`/`-012`/`-013`/`-015`) cover a genuine
+# The Locking strategy's two-session behavioral proofs
+# (`m-concurrency-050`/`-051`/`-055`/`-056`/`-057`/`-059`) cover a genuine
 # two-connection concurrency property (a shared lock blocking/admitting a writer or
 # a second reader) no single-session idiomatic example can demonstrate — graded by
 # the case-driven `when.concurrency` rounds runner instead.
@@ -2279,7 +2279,7 @@ _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
     "these shares is the one root-options story the usage guide already shows "
     "(`m-unit-work-041`), so a second narrative per configured field would repeat it"
 )
-# The read-lock module's root-configured golden witnesses: the locking stream
+# The Locking strategy's root-configured golden witnesses: the locking stream
 # inheriting its root's preference, the explicit optimistic override of that
 # root, the standalone read a locking root leaves untouched, and the
 # transactional read that inherits it. Each is a SQL shape the compile/run
@@ -2479,7 +2479,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         _BUFFERED_SEQUENCE_REASON,
     ),
     **dict.fromkeys(
-        ("m-read-lock-021", "m-read-lock-022", "m-temporal-write-050", "m-temporal-write-051"),
+        ("m-concurrency-065", "m-concurrency-066", "m-temporal-write-050", "m-temporal-write-051"),
         _UNCHANGED_MILESTONE_REASON,
     ),
     **dict.fromkeys(("m-temporal-write-076", "m-temporal-write-077"), _TEMPORAL_CONFLICT_REASON),
@@ -2487,27 +2487,27 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-concurrency-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-concurrency-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
     "m-concurrency-013": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
-    # -- m-concurrency / m-read-lock concurrency cases -------------------------- #
+    # -- m-concurrency concurrency cases ---------------------------------------- #
     "m-concurrency-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-concurrency-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-concurrency-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-temporal-read-010": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-temporal-write-021": _OPT_LOCK_INTERLEAVED_RACE_REASON,
-    "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
-    "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-010": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
-    "m-read-lock-011": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-012": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-013": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-015": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-016": _READ_LOCK_STREAM_CONTINUATION_REASON,
-    "m-read-lock-017": _READ_LOCK_ROOT_GOLDEN_REASON,
-    "m-read-lock-018": _READ_LOCK_ROOT_GOLDEN_REASON,
-    "m-read-lock-019": _READ_LOCK_ROOT_GOLDEN_REASON,
-    "m-read-lock-020": _READ_LOCK_ROOT_GOLDEN_REASON,
-    "m-read-lock-024": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
-    "m-read-lock-025": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
+    "m-concurrency-045": _READ_LOCK_HARNESS_GOLDEN_REASON,
+    "m-concurrency-050": _READ_LOCK_TWO_SESSION_REASON,
+    "m-concurrency-051": _READ_LOCK_TWO_SESSION_REASON,
+    "m-concurrency-054": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
+    "m-concurrency-055": _READ_LOCK_TWO_SESSION_REASON,
+    "m-concurrency-056": _READ_LOCK_TWO_SESSION_REASON,
+    "m-concurrency-057": _READ_LOCK_TWO_SESSION_REASON,
+    "m-concurrency-059": _READ_LOCK_TWO_SESSION_REASON,
+    "m-concurrency-060": _READ_LOCK_STREAM_CONTINUATION_REASON,
+    "m-concurrency-061": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-concurrency-062": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-concurrency-063": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-concurrency-064": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-concurrency-068": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
+    "m-concurrency-069": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
     # -- m-unit-work: the isolation scenarios ------------------------------- #
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
@@ -2536,7 +2536,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-batch-write-038",
             "m-batch-write-040",
             "m-batch-write-041",
-            "m-read-lock-023",
+            "m-concurrency-067",
             "m-temporal-write-061",
             "m-temporal-write-062",
             "m-temporal-write-080",

@@ -159,7 +159,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │     root: PlannedEntityQuery
    │     includes: IncludeTree
    │     fetch_steps: QueryFetchStep | BackReferenceFetchStep
-   ├ entity_read_lock(meta, entity, preference) for the root and each query fetch step
+   ├ _takes_shared_lock(versioning, entity, preference) for the root and each query fetch step
    ├ compile_template(cached root, each query fetch step) / compile_read(uncached root)
    │                                                                     sql_gen._compile
    │     resolve storage layout, inheritance and physical reads; append the lock
@@ -212,9 +212,10 @@ reconciled per row, and nothing above this stage knows whether an Entity is stor
 Columns or as a document. A position with no concrete subtype compiles to `EmptyRead`
 and executes no statement.
 
-`entity_read_lock` returns no lock when there is no Concurrency Preference, which is
+`_takes_shared_lock` answers no when there is no Concurrency Preference, which is
 the case for every standalone and read-only read; inside a writable attempt each level
-derives its own lock from its own Entity.
+asks the Concurrency Facet about its own Entity, and SQL lowering receives only that
+yes or no.
 
 `ReadPlanCache` (owned once by `RootResources`) keeps the reusable planning products
 and nothing else: no Page, result, connection, evidence or publication. The
@@ -273,7 +274,7 @@ admission stay outside the cache.
 - `parallax.core.read_planning:QueryFetchStep`
 - `parallax.core.read_planning:BackReferenceFetchStep`
 - `parallax.core.read_planning:ResolvedReadProjection`
-- `parallax.core.read_delivery._fetch:entity_read_lock`
+- `parallax.core.read_delivery._read_plan:_takes_shared_lock`
 - `parallax.core.sql_gen._compile:compile_read`
 - `parallax.core.sql_gen._compile:compile_template`
 - `parallax.core.sql_gen._compile:CompiledRead`
@@ -533,7 +534,7 @@ exhausted, failed or stopped early.
 | Entry points, lanes, adoption, connections | [`m-execution`](../../../../core/spec/m-execution.md), [Python execution binding](../../spec/execution.md) |
 | Query value and its resolution | [`m-object-query`](../../../../core/spec/m-object-query.md) |
 | Levels and `1 + L` | [`m-read-planning`](../../../../core/spec/m-read-planning.md) |
-| Statements, seeks, locks | [`m-sql`](../../../../core/spec/m-sql.md), [`m-read-lock`](../../../../core/spec/m-read-lock.md) |
+| Statements, seeks, locks | [`m-sql`](../../../../core/spec/m-sql.md), [`m-concurrency`](../../../../core/spec/m-concurrency.md) |
 | Storage layout | [`m-storage-layout`](../../../../core/spec/m-storage-layout.md#storage-layout-transparency) |
 | Plan cache, Page, delivery, streams | [`m-read-delivery`](../../../../core/spec/m-read-delivery.md) |
 | Root Views, classification, Snapshot values | [`m-snapshot-read`](../../../../core/spec/m-snapshot-read.md), [Python queries and results](../../spec/queries-and-results.md) |

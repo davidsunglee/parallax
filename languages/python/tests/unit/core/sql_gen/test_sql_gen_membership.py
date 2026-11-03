@@ -19,7 +19,7 @@ from parallax.core import object_query as oq
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INT32, INT64, STRING
 from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES, Dialect, LockMode
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.sql_gen._compile import (
@@ -59,17 +59,20 @@ def _membership(op: str, path: str, values: Sequence[object]) -> dict[str, objec
 
 
 def _template(
-    cold: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, lock: LockMode | None = None
+    cold: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, shared_lock: bool = False
 ) -> CompiledTemplate:
     planned = read_planning.plan(cold, meta, projection=_PROJECTION, defer_execution_values=True)
-    return compile_template(planned.root, meta, dialect, lock=lock)
+    return compile_template(planned.root, meta, dialect, shared_lock=shared_lock)
 
 
 def _direct(
-    query: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, lock: LockMode | None = None
+    query: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, shared_lock: bool = False
 ) -> CompiledRead:
     return compile_read(
-        read_planning.plan(query, meta, projection=_PROJECTION).root, meta, dialect, lock=lock
+        read_planning.plan(query, meta, projection=_PROJECTION).root,
+        meta,
+        dialect,
+        shared_lock=shared_lock,
     )
 
 
@@ -89,14 +92,14 @@ def _assert_renders_as_direct(
     currents: Sequence[ResolvedObjectQuery],
     meta: Metamodel,
     dialect: Dialect,
-    lock: LockMode | None = None,
+    shared_lock: bool = False,
 ) -> CompiledTemplate:
     """Every query of ``currents``, rendered from the template ``cold`` compiled,
     is what direct compilation of it produces, carrier for carrier."""
-    template = _template(cold, meta, dialect, lock)
+    template = _template(cold, meta, dialect, shared_lock)
     for current in (cold, *currents):
         rendered = template.render(query=current).statement
-        direct = _direct(current, meta, dialect, lock).statement
+        direct = _direct(current, meta, dialect, shared_lock).statement
         assert rendered == direct
         assert _carriers(rendered.binds) == _carriers(direct.binds)
         assert rendered.wire_binds() == direct.wire_binds()
@@ -165,7 +168,7 @@ def test_a_null_tail_page_renders_its_membership_in_both_branches(dialect: Diale
         [page([1, 2, 3, 4, 5], (False, 2)), page([7], (True, 3))],
         ORDERS,
         dialect,
-        lock="locking",
+        shared_lock=True,
     )
 
     (membership,) = (
