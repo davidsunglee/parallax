@@ -392,6 +392,27 @@ describe("the role bootstrap", () => {
     expect(resources("AWS::StepFunctions::StateMachine")).toEqual([]);
   });
 
+  it("retains handler and provider logs for 30 days without changing their managed identities", () => {
+    for (const [logGroupId, functionId] of [
+      ["AuroraRoleBootstrapHandlerLogGroup3A30503C", "AuroraRoleBootstrapHandler05052B4B"],
+      [
+        "AuroraRoleBootstrapProviderframeworkonEventLogGroup97474895",
+        "AuroraRoleBootstrapProviderframeworkonEventCBDBEA11",
+      ],
+    ] as const) {
+      expect(all[functionId]?.Type).toBe("AWS::Lambda::Function");
+      expect(all[logGroupId]).toMatchObject({
+        Type: "AWS::Logs::LogGroup",
+        Properties: {
+          LogGroupName: { "Fn::Join": ["", ["/aws/lambda/", ref(functionId)]] },
+          RetentionInDays: 30,
+        },
+        DeletionPolicy: "Retain",
+        UpdateReplacePolicy: "Retain",
+      });
+    }
+  });
+
   it("signs in to this cluster's writer as its master user, with that user's own secret", () => {
     const [cluster] = only("AWS::RDS::DBCluster");
     const [secret] = only("AWS::SecretsManager::Secret");
