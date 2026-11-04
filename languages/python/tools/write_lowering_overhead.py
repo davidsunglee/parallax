@@ -293,10 +293,18 @@ validation failure reports it under; a matrix is exact under one whole case
 set and one whole counter vocabulary."""
 
 
-def runtime_cases(runtime: str, case_names: Sequence[str] = CASE_NAMES) -> tuple[str, ...]:
+def runtime_cases(
+    runtime: str,
+    case_names: Sequence[str] = CASE_NAMES,
+    *,
+    runtime_scope: Sequence[str] | None = None,
+) -> tuple[str, ...]:
     """The cases among ``case_names`` read on ``runtime``: the scalar-type cases
-    only on the supported minors the scalar-type manifest scopes them to."""
-    if runtime in scalar_type_runtimes(supported_minors()):
+    only on the minors the scalar-type manifest scopes them to within
+    ``runtime_scope`` (current support by default)."""
+    if runtime in scalar_type_runtimes(
+        supported_minors() if runtime_scope is None else runtime_scope
+    ):
         return tuple(case_names)
     return tuple(case for case in case_names if case not in SCALAR_TYPE_CASE_NAMES)
 
@@ -531,12 +539,14 @@ def expected_addresses(
     runtimes: Sequence[str],
     call_names: Sequence[str] = CALL_NAMES,
     case_names: Sequence[str] = CASE_NAMES,
+    *,
+    runtime_scope: Sequence[str] | None = None,
 ) -> frozenset[tuple[str, str, str]]:
     """Every (runtime, case, cell) address a complete envelope over
     ``case_names`` carries whose keyed-write cases count ``call_names``."""
     addresses: set[tuple[str, str, str]] = set()
     for runtime in runtimes:
-        for case in runtime_cases(runtime, case_names):
+        for case in runtime_cases(runtime, case_names, runtime_scope=runtime_scope):
             window = ENVELOPE_WINDOWS[case]
             addresses.update((runtime, case, metric) for metric in metrics_of(window, case))
             if window == KEYED_WINDOW:

@@ -5,7 +5,7 @@ import decimal as _decimal
 import enum
 import re
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType, NoneType, UnionType
 from typing import (
@@ -767,41 +767,21 @@ def _shadow_inherited_members(bases: tuple[type, ...], ns: dict[str, object]) ->
 
 
 def _class_body_annotations(ns: dict[str, object]) -> dict[str, object]:
-    """The class-body annotations, read from the metaclass namespace cross-version.
-
-    On Python 3.13 the live annotation objects sit eagerly in
-    ``__annotations__``. Under PEP 649 / PEP 749 the namespace carries a deferred
-    ``__annotate_func__`` instead. The result is always a fresh mapping the
-    caller may mutate.
-    """
+    """Return a fresh mapping from eager or deferred class-body annotations."""
     eager = ns.get("__annotations__")
     if isinstance(eager, dict):
         return dict(cast("dict[str, object]", eager))
     annotate = ns.pop("__annotate_func__", None)
     if annotate is None:
         return {}
-    return _resolve_deferred(annotate)  # pragma: no cover - deferred namespace only on 3.14+
+    return _resolve_deferred(annotate)
 
 
 def _resolve_deferred(annotate: object) -> dict[str, object]:
-    """Recover deferred (PEP 649 / PEP 749) class-body annotations.
+    import annotationlib
 
-    Reached only on Python 3.14+, where a class declared without
-    ``from __future__ import annotations`` carries an ``__annotate_func__``
-    instead of an eager ``__annotations__`` mapping; 3.13 always takes
-    the eager path. Evaluated in ``VALUE`` format to recover the same live
-    objects the eager path returns. The ``sys.version_info`` guard is a
-    static-typing shim that keeps the 3.14-only ``annotationlib`` import off
-    Pyright's 3.13 path; it is never taken at runtime because this function runs
-    only on 3.14+.
-    """
-    if sys.version_info < (3, 14):  # pragma: no cover - typing shim; runs only on 3.14+
-        return {}
-    import annotationlib  # pragma: no cover - Python 3.14+ only (PEP 649 / PEP 749)
-
-    return dict(  # pragma: no cover - Python 3.14+ only (PEP 649 / PEP 749)
-        annotationlib.call_annotate_function(annotate, annotationlib.Format.VALUE)
-    )
+    function = cast("Callable[[annotationlib.Format], dict[str, Any]]", annotate)
+    return dict(annotationlib.call_annotate_function(function, annotationlib.Format.VALUE))
 
 
 def _module_globals(ns: dict[str, object]) -> dict[str, Any]:

@@ -64,7 +64,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -106,7 +106,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Download the request
         uses: actions/download-artifact@v8
         with:
@@ -156,7 +156,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Download the request
         uses: actions/download-artifact@v8
         with:

@@ -646,7 +646,7 @@ def test_a_complete_sharded_run_reports_its_cost_from_job_durations_and_head_spa
     assert "modeled serial work" in after.modeled_serial.note
     assert after.internal_setup.seconds is None
     assert all(
-        shard.runtimes == {"3.13": "CPython 3.13.1", "3.14": "CPython 3.14.1"}
+        shard.runtimes == {"3.14": "CPython 3.14.1", "3.15": "CPython 3.15.1"}
         for shard in after.shards
     )
     assert after.coverage == coverage_of([envelopes[shard.subject] for shard in PLAN])
@@ -1036,8 +1036,8 @@ def test_equivalent_coverage_under_one_protocol_yields_an_observed_historical_re
     assert "Equivalent: the same multiset" in rendered
     assert ORDINARY_CI_ROW in rendered
     assert (
-        "| Interpreters | 3.14.7; 3.13 patch unknown (parent CPython from provenance) | "
-        "CPython 3.13.1, CPython 3.14.1 |"
+        "| Interpreters | 3.14.7; 3.15 patch unknown (parent CPython from provenance) | "
+        "CPython 3.14.1, CPython 3.15.1 |"
     ) in rendered
     assert (
         "| Internal setup spans | unknown (not instrumented) | "

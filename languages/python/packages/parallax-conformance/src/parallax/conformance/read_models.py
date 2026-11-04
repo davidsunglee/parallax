@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 import datetime as dt
 import uuid
 from decimal import Decimal

@@ -261,7 +261,7 @@ def _decode(text: str, fmt: str) -> tuple[bool, object]:
         if fmt == serde.JSON:
             return True, json.loads(text)
         return True, yaml.safe_load(text)
-    except (json.JSONDecodeError, yaml.YAMLError):
+    except json.JSONDecodeError, yaml.YAMLError:
         return False, None
 
 

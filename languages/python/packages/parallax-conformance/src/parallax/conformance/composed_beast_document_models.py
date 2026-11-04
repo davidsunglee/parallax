@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 from parallax.core import (
     ONE_TO_MANY,
     AbstractRoot,

@@ -727,7 +727,7 @@ def _decode_timestamp_classified(value: object, neutral_type: str) -> datetime.d
         _fail("out-of-space", value, neutral_type)
     try:
         normalized = decoded.astimezone(datetime.UTC)
-    except (OverflowError, ValueError):
+    except OverflowError, ValueError:
         _fail("out-of-space", value, neutral_type)
     if not value.endswith("Z"):
         _fail("noncanonical", value, neutral_type)

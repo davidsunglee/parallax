@@ -53,6 +53,17 @@ _CORE = "packages/parallax-core/src"
 _POSTGRES = "packages/parallax-postgres/src"
 
 
+def test_source_roots_treat_the_workspace_literally_and_include_hidden_packages(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace[one]"
+    hidden = workspace / "packages/.hidden/src"
+    visible = workspace / "packages/visible/src"
+    for source in (hidden, visible, tmp_path / "workspaceo/packages/decoy/src"):
+        source.mkdir(parents=True)
+    assert origins.source_roots(workspace) == tuple(sorted((hidden.resolve(), visible.resolve())))
+
+
 def test_the_checkouts_own_sources_and_an_abi_matched_loader_extension_break_no_rule() -> None:
     modules = {
         "parallax": _module("parallax", None, path=[_source(f"{_CORE}/parallax")]),

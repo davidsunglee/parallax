@@ -146,7 +146,7 @@ def test_the_plan_checks_out_the_requested_ref_once_with_history_and_pins_it() -
     (checkout,) = _using(job, "actions/checkout@")
     assert checkout["with"] == {"ref": REQUESTED_REF, "fetch-depth": 0}
     (uv,) = _using(job, "astral-sh/setup-uv@")
-    assert uv["with"]["python-version"] == "3.14"
+    assert uv["with"]["python-version"] == "3.15.2"
     assert _named(job, "Sync Python workspace (frozen)")["run"] == "uv sync --frozen"
     step = _named(job, "Pin the request and plan its shards")
     assert step["id"] == "plan"

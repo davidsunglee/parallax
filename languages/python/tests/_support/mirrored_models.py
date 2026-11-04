@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 """The corpus models the class frontend mirrors, each as one Domain Model.
 
 Every model here composes exactly the classes of one corpus model, so the

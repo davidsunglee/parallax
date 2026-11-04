@@ -3,7 +3,7 @@ name = "parallax-aws"
 version = "0.1.0"
 description = "Parallax AWS credential providers: RDS IAM database authentication as a Credential Source (the sole botocore declarer)."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [

@@ -295,7 +295,7 @@ def define_shadowed_model_namespace_binding() -> type:
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
 
-        def model_copy(self, *, update: object = None, deep: bool = False) -> "Bad":
+        def model_copy(self, *, update: object = None, deep: bool = False) -> "Bad":  # noqa: UP037 - relationship target resolves at model formation
             return self
 
     return Bad
@@ -467,7 +467,7 @@ def define_wide_union_relationship_target() -> type:
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
         peer_id: Attr[int]
-        peer: Rel["Peer | Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+        peer: Rel["Peer | Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
     return Bad
 
@@ -494,13 +494,15 @@ def accepted_relationship_targets() -> type:
     class Hop(Entity, table="hop"):
         id: Attr[int] = attr(primary_key=True)
         peer_id: Attr[int]
-        bare: Rel["Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
-        qualified: Rel["ops.Peer"] = rel(  # type: ignore[name-defined]  # noqa: F821 - qualified target is a spelling, not a resolvable name
+        bare: Rel["Peer"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
+        qualified: Rel["ops.Peer"] = rel(  # type: ignore[name-defined]  # noqa: UP037, F821 - qualified target is a spelling, not a resolvable name
             cardinality=MANY_TO_ONE, join=("peer_id", "id")
         )
-        union_optional: Rel["Peer | None"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
-        alias_optional: Rel[Optional["Peer"]] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
-        many: Rel[tuple["Peer", ...]] = rel(reverse_of="bare")
+        union_optional: Rel["Peer | None"] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
+        alias_optional: Rel[Optional["Peer"]] = rel(  # noqa: UP037, UP045 - the Optional alias is an accepted relationship spelling
+            cardinality=MANY_TO_ONE, join=("peer_id", "id")
+        )
+        many: Rel[tuple["Peer", ...]] = rel(reverse_of="bare")  # noqa: UP037 - relationship target resolves at model formation
 
     return Hop
 
@@ -510,8 +512,8 @@ def accepted_value_object_spellings() -> type:
 
     class Holder(Entity, table="holder"):
         id: Attr[int] = attr(primary_key=True)
-        home: Attr["Address | None"]
-        tags: Attr[tuple["Tag", ...]]
+        home: Attr["Address | None"]  # noqa: UP037 - relationship target resolves at model formation
+        tags: Attr[tuple["Tag", ...]]  # noqa: UP037 - relationship target resolves at model formation
 
     return Holder
 

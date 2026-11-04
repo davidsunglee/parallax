@@ -119,7 +119,7 @@ def test_scalar_cells_read_every_measured_scalar_type_as_a_geometry_read_is_read
 
 def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> None:
     contract = BudgetContract.load()
-    expected = addresses(contract, ("3.13", "3.14"))
+    expected = addresses(contract, ("3.14", "3.15"))
     assert len(expected) == len(scalar_cells()) + 2 * (
         len(expanded_cells(contract))
         + len(geometry_cells())
@@ -132,12 +132,12 @@ def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> Non
         runtime
         for runtime, workload, _cell in expected
         if workload.startswith(report.SCALAR_PREFIX)
-    } == {"3.14"}
-    before_scalar_types = addresses(contract, ("3.13", "3.14"), scalar_types=False)
+    } == {"3.15"}
+    before_scalar_types = addresses(contract, ("3.14", "3.15"), scalar_types=False)
     assert set(before_scalar_types) == set(expected) - {
         address for address in expected if address[1].startswith(report.SCALAR_PREFIX)
     }
-    without = addresses(contract, ("3.13", "3.14"), controls=False, scalar_types=False)
+    without = addresses(contract, ("3.14", "3.15"), controls=False, scalar_types=False)
     assert set(without) == set(before_scalar_types) - {
         address for address in expected if address[1].startswith(report.CONTROL_PREFIX)
     }
@@ -161,7 +161,7 @@ def _results(
 
 def test_envelope_compares_the_authority_runtime_alone_and_labels_every_reading() -> None:
     contract = BudgetContract.load()
-    runtimes = ("3.13", "3.14")
+    runtimes = ("3.14", "3.15")
     provenance = replace(
         canary(contract, lambda _request: ChildReading(1.0, "ms", (1.0,) * 9)).provenance,
         dirty=True,
@@ -233,14 +233,14 @@ def test_a_diagnostic_run_answers_only_the_chosen_addresses_and_is_no_envelope()
         return ChildReading(1.0, unit(request.cell), samples)
 
     document = diagnostic(
-        contract, runner, ("3.13",), selection(["plan-*"], ["*.retainedKiB"]), None
+        contract, runner, ("3.14",), selection(["plan-*"], ["*.retainedKiB"]), None
     )
     assert document["diagnostic"] is True
-    assert document["runtimes"] == ["3.13"]
+    assert document["runtimes"] == ["3.14"]
     assert document["unavailable"] == []
     readings = _documents(document, "readings")
     assert {(r["runtime"], r["workload"], r["cell"]) for r in readings} == {
-        ("3.13", cell.workload, cell.path)
+        ("3.14", cell.workload, cell.path)
         for cell in plan_cells()
         if cell.path.endswith(".retainedKiB")
     }
@@ -314,7 +314,7 @@ def _measured(spans: Spans | None) -> tuple[list[ChildRequest], _FakeProvisioner
 
     provisioner = _FakeProvisioner()
     envelope = report.measure(
-        contract, cast("Provisioner", provisioner), runner, ("3.13", "3.14"), spans=spans
+        contract, cast("Provisioner", provisioner), runner, ("3.14", "3.15"), spans=spans
     )
     validate(envelope)
     return asked, provisioner, [f"{r.runtime} {r.workload}.{r.cell}" for r in envelope.readings]
@@ -330,7 +330,7 @@ def test_recording_spans_changes_no_request_provisioning_or_reading() -> None:
     contract = BudgetContract.load()
     assert len(plain_requests) == sum(
         expected_readings(contract, cell)
-        for _runtime, _workload, cell in addresses(contract, ("3.13", "3.14"))
+        for _runtime, _workload, cell in addresses(contract, ("3.14", "3.15"))
     )
     assert [(r.warmups, r.measured) for r in plain_requests] == [
         (contract.timing_warmups, contract.timing_measured)
@@ -345,12 +345,12 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
     workload_spans = [span for span in spans.spans if span.scope == "workload"]
     assert [(span.name, span.labels["runtime"]) for span in workload_spans] == [
         (name, runtime)
-        for runtime in ("3.13", "3.14")
+        for runtime in ("3.14", "3.15")
         for name in (
             *contract.workload_ids,
             *(f"live-read-{name}" for name in report.live_read_workloads.WORKLOAD_IDS),
             GEOMETRY_GROUP,
-            *((SCALAR_GROUP,) if runtime == "3.14" else ()),
+            *((SCALAR_GROUP,) if runtime == "3.15" else ()),
             PLAN_GROUP,
             CONTROL_GROUP,
         )
@@ -434,7 +434,7 @@ def _measured_selection(
 
     provisioner = _FakeProvisioner()
     envelope = report.measure(
-        contract, cast("Provisioner", provisioner), runner, ("3.13", "3.14"), selected=selected
+        contract, cast("Provisioner", provisioner), runner, ("3.14", "3.15"), selected=selected
     )
     validate(envelope)
     return asked, provisioner, envelope
@@ -445,7 +445,7 @@ def test_a_selected_measurement_reads_and_compares_the_selected_addresses_alone(
     first = contract.workload_ids[0]
     chosen = workload_selection([first, GEOMETRY_GROUP], contract)
     asked, provisioner, envelope = _measured_selection(chosen)
-    expected = report.selected_addresses(contract, ("3.13", "3.14"), chosen)
+    expected = report.selected_addresses(contract, ("3.14", "3.15"), chosen)
     assert {(r.runtime, r.workload, r.cell) for r in envelope.readings} == set(expected)
     assert envelope.incomplete == () and envelope.errors == ()
     assert {(c.workload, c.cell) for c in envelope.comparisons} == {
@@ -487,15 +487,15 @@ def test_selection_spans_cover_only_the_selected_workloads_and_groups() -> None:
         lambda request: ChildReading(
             1.0, unit(request.cell), () if is_memory_cell(request.cell) else (1.0,) * 9
         ),
-        ("3.14",),
+        ("3.15",),
         spans=spans,
         selected=workload_selection([first, PLAN_GROUP], contract),
     )
     assert [
         (span.name, span.labels["runtime"]) for span in spans.spans if span.scope == "workload"
     ] == [
-        (first, "3.14"),
-        (PLAN_GROUP, "3.14"),
+        (first, "3.15"),
+        (PLAN_GROUP, "3.15"),
     ]
 
 
@@ -590,7 +590,7 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
     def probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
         events.append(f"probe {command[-1] if command[0] == 'uv' else 'current'}")
         assert environment["PYTHONHASHSEED"] == "0"
-        return (0, identity, "") if "uv" not in command[0] else (1, "", "no 3.13 here")
+        return (0, identity, "") if "uv" not in command[0] else (1, "", "no 3.14 here")
 
     def child(request: ChildRequest) -> ChildReading:
         events.append("child")
@@ -633,7 +633,7 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
     other = next(minor for minor in report.supported_minors() if minor != CURRENT_MINOR)
     assert recorded["runtimes"][other] == {
         "status": "unavailable",
-        "reason": "the identity probe exited 1: no 3.13 here",
+        "reason": "the identity probe exited 1: no 3.14 here",
     }
     spans = Spans.load(durations)
     assert [span.name for span in spans.spans if span.scope == "setup"][: len(probes)] == [

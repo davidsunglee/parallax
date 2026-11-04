@@ -161,7 +161,7 @@ class Shallow(Entity, table="instance_state_shallow", namespace=NAMESPACE):
     parent_id: Attr[int | None]
     name: Attr[str | None] = attr(max_length=32)
     amount: Attr[Decimal | None] = attr(precision=18, scale=2)
-    parent: Rel["Shallow | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+    parent: Rel["Shallow | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
 
 class Wide(Entity, table="instance_state_wide", namespace=NAMESPACE):
@@ -183,7 +183,7 @@ class Wide(Entity, table="instance_state_wide", namespace=NAMESPACE):
     n04: Attr[int | None] = attr(type=Int32)
     f01: Attr[float | None]
     f02: Attr[float | None]
-    parent: Rel["Wide | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+    parent: Rel["Wide | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
 
 class Geo(ValueObject):
@@ -217,7 +217,7 @@ class Nested(Entity, table="instance_state_nested", namespace=NAMESPACE):
     code: Attr[str | None] = attr(max_length=16)
     address: Attr[Address | None]
     phones: Attr[tuple[Phone, ...]]
-    parent: Rel["Nested | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+    parent: Rel["Nested | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
 
 class Optionals(Entity, table="instance_state_optionals", namespace=NAMESPACE):
@@ -238,7 +238,7 @@ class Optionals(Entity, table="instance_state_optionals", namespace=NAMESPACE):
     o06: Attr[bool | None]
     o07: Attr[Decimal | None] = attr(precision=18, scale=2)
     o08: Attr[str | None] = attr(max_length=32)
-    parent: Rel["Optionals | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+    parent: Rel["Optionals | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
 
 class Vehicle(
@@ -253,7 +253,7 @@ class Vehicle(
     parent_id: Attr[int | None]
     label: Attr[str | None] = attr(max_length=32)
     weight: Attr[float | None]
-    parent: Rel["Vehicle | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+    parent: Rel["Vehicle | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
 
 class Wheeled(Vehicle, namespace=NAMESPACE, inheritance=AbstractSubtype):
@@ -284,7 +284,7 @@ class Warmed(Entity, table="instance_state_warmed", namespace=NAMESPACE):
     parent_id: Attr[int | None]
     name: Attr[str | None] = attr(max_length=32)
     amount: Attr[Decimal | None] = attr(precision=18, scale=2)
-    parent: Rel["Warmed | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))
+    parent: Rel["Warmed | None"] = rel(cardinality=MANY_TO_ONE, join=("parent_id", "id"))  # noqa: UP037 - relationship target resolves at model formation
 
     _revision = PrivateAttr(default=0)
 

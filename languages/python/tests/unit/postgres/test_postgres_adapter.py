@@ -1830,7 +1830,7 @@ def test_a_read_pipeline_broken_in_transport_is_submitted_once_more_whole_on_a_r
     sent = broken.result_cursors[: 1 if failing == "queueing" else 2]
     for original, repeated in zip(sent, fresh.result_cursors, strict=False):
         assert original.submitted is not None and repeated.submitted is not None
-        assert all(map(operator.is_, original.submitted, repeated.submitted))
+        assert all(map(operator.is_, original.submitted, repeated.submitted, strict=False))
     assert fresh.result_cursors[0].row_factory is not None
     assert fresh.result_cursors[0].row_factory is not broken.result_cursors[0].row_factory
 

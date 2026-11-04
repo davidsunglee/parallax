@@ -4,7 +4,7 @@ version = "0.0.0"
 description = "The canonical m-case-format compatibility runner for parallax. Tooling, NOT an ORM: it never compiles queries to SQL — it proves the suite is internally consistent and that golden SQL is correct against real databases."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "jsonschema>=4.21",
     "referencing>=0.28.4",
@@ -54,7 +54,7 @@ markers = [
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C90"]
@@ -64,7 +64,7 @@ max-complexity = 10
 
 [tool.basedpyright]
 include = ["src"]
-pythonVersion = "3.13"
+pythonVersion = "3.14"
 typeCheckingMode = "standard"
 
 [tool.deptry]

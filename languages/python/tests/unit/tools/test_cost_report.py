@@ -702,6 +702,69 @@ def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     ]
 
 
+@pytest.mark.parametrize(
+    "capture", ["current", "structural-metadata-before", "structural-metadata-after"]
+)
+@pytest.mark.usefixtures("committed_cost_evidence")
+def test_retained_portfolios_keep_their_captured_runtime_generation(capture: str) -> None:
+    portfolio = json.loads(
+        (cost_report.EVIDENCE_DIRECTORY / capture / "portfolio.json").read_text()
+    )
+    for member in portfolio["members"]:
+        envelope, failures = cost_report._comparable_envelope(  # pyright: ignore[reportPrivateUsage] - historical-reader seam
+            cost_report.HEAD if capture == "current" else cost_report.BASE,
+            portfolio,
+            member["subject"],
+            BudgetContract.load(),
+        )
+        assert failures == []
+        assert envelope == member
+        scope = cost_report._captured_runtime_scope(member)  # pyright: ignore[reportPrivateUsage] - historical-reader seam
+        if member["subject"] == "snapshot-delivery":
+            if scope != supported_minors():
+                with pytest.raises(ValueError, match="matrix is not exact"):
+                    validate_snapshot_matrix(member, BudgetContract.load(), current=True)
+            forged = deepcopy(member)
+            _forge_outcome(forged)
+            with pytest.raises(ValueError, match="comparison outcome"):
+                validate_snapshot_matrix(forged, BudgetContract.load())
+            missing = deepcopy(member)
+            missing["readings"] = [r for r in missing["readings"] if r["runtime"] != scope[0]]
+            with pytest.raises(ValueError, match=f"missing CPython {scope[0]}"):
+                validate_snapshot_matrix(missing, BudgetContract.load())
+        if member["subject"] == write_report.SUBJECT and scope != supported_minors():
+            with pytest.raises(ValueError, match="not exact"):
+                validate_write_lowering_matrix(member, current=True)
+
+
+def test_a_diagnostic_runtime_subset_does_not_change_scalar_eligibility() -> None:
+    contract = BudgetContract.load()
+    snapshot = _complete_snapshot(contract)
+    prior, newest = supported_minors()
+    scalar = next(r for r in snapshot["readings"] if r["workload"].startswith("scalar-"))
+    snapshot["readings"] = []
+    snapshot["comparisons"] = []
+
+    def scalar_only(workload: str, _cell: str) -> bool:
+        return workload.startswith("scalar-")
+
+    validate_snapshot_matrix(snapshot, contract, scalar_only, (prior,))
+    snapshot["readings"] = [{**scalar, "runtime": prior}]
+    with pytest.raises(ValueError, match="unexpected CPython"):
+        validate_snapshot_matrix(snapshot, contract, scalar_only, (prior,))
+    write = _complete_write(contract)
+    scalar_write = next(
+        r
+        for r in write["readings"]
+        if r["runtime"] == newest and r["workload"] in write_report.SCALAR_TYPE_CASE_NAMES
+    )
+    write["readings"] = [r for r in write["readings"] if r["runtime"] == prior]
+    validate_write_lowering_matrix(write, (prior,))
+    write["readings"].append({**scalar_write, "runtime": prior})
+    with pytest.raises(ValueError, match="unexpected CPython"):
+        validate_write_lowering_matrix(write, (prior,))
+
+
 def test_a_complete_matrix_verifies_under_any_whole_vocabulary_and_no_mixture() -> None:
     contract = BudgetContract.load()
     current = _complete_write(contract)
@@ -1670,7 +1733,7 @@ def _instance_add_samples(document: dict[str, Any]) -> None:
 
 def _instance_drop_runtime(document: dict[str, Any]) -> None:
     readings = cast("list[dict[str, object]]", document["readings"])
-    readings[:] = [r for r in readings if not str(r["workload"]).startswith("cpython-3.13")]
+    readings[:] = [r for r in readings if not str(r["workload"]).startswith("cpython-3.14")]
 
 
 def _instance_add_reading(document: dict[str, Any]) -> None:
@@ -1695,7 +1758,7 @@ def _instance_add_reading(document: dict[str, Any]) -> None:
         (_instance_add_window, "names a window"),
         (_instance_add_samples, "carries samples"),
         (_forge_outcome, "comparison outcome"),
-        (_instance_drop_runtime, "reading matrix is not exact: missing cpython-3.13"),
+        (_instance_drop_runtime, "reading matrix is not exact: missing cpython-3.14"),
         (_instance_add_reading, "unexpected cpython-3.14/shallow.compact.unknownProjectionNs"),
     ],
 )
@@ -1739,10 +1802,10 @@ def test_require_member_is_a_verify_or_compare_option_over_requirable_subjects(
 # --------------------------------------------------------------------------- #
 # Conditions: what the envelopes cannot carry, written beside them            #
 # --------------------------------------------------------------------------- #
-def _identities(version: str = "3.14.7") -> dict[str, dict[str, RuntimeStatus]]:
+def _identities(version: str = "3.15.7") -> dict[str, dict[str, RuntimeStatus]]:
     return {
         member.subject: {
-            minor: RuntimeIdentity("CPython", f"{minor}.1" if minor != "3.14" else version, "/p")
+            minor: RuntimeIdentity("CPython", f"{minor}.1" if minor != "3.15" else version, "/p")
             for minor in supported_minors()
         }
         for member in MEMBERS
@@ -1771,8 +1834,8 @@ def test_conditions_record_every_members_sources_and_runtimes_and_round_trip(
     loaded = cost_report.load_conditions(path)
     assert set(loaded) == set(members)
     assert loaded["snapshot-delivery"].sources == members["snapshot-delivery"]["sources"]
-    assert loaded["snapshot-delivery"].runtimes["3.14"] == RuntimeIdentity(
-        "CPython", "3.14.7", "/p"
+    assert loaded["snapshot-delivery"].runtimes["3.15"] == RuntimeIdentity(
+        "CPython", "3.15.7", "/p"
     )
     members["snapshot-delivery"]["sources"]["tools/snapshot_delivery_reading.py"] = "not a digest"
     path.write_text(json.dumps(document), encoding="utf-8")
@@ -1997,13 +2060,13 @@ def test_an_unmatched_pair_is_refused_before_any_arithmetic(
     members = cast("dict[str, dict[str, Any]]", head_conditions["members"])
     members["snapshot-delivery"]["sources"]["tests/unit/_delivery_control_support.py"] = "0" * 64
     members[write_report.SUBJECT]["sources"]["tools/write_lowering_reading.py"] = "0" * 64
-    members[write_report.SUBJECT]["runtimes"]["3.14"] = {
+    members[write_report.SUBJECT]["runtimes"]["3.15"] = {
         "status": "available",
         "implementation": "CPython",
-        "version": "3.14.8",
+        "version": "3.15.8",
         "executable": "/p",
     }
-    members["snapshot-delivery"]["runtimes"]["3.13"] = {
+    members["snapshot-delivery"]["runtimes"]["3.14"] = {
         "status": "unavailable",
         "reason": "the identity probe exited 1",
     }
@@ -2011,10 +2074,10 @@ def test_an_unmatched_pair_is_refused_before_any_arithmetic(
     assert refused() == [
         "the snapshot-delivery control source tests/unit/_delivery_control_support.py differs "
         "between the captures",
-        "snapshot-delivery CPython 3.13 identity is unknown on head (the identity probe exited 1)",
+        "snapshot-delivery CPython 3.14 identity is unknown on head (the identity probe exited 1)",
         "the write-lowering instrument tools/write_lowering_reading.py differs between the "
         "captures",
-        "write-lowering CPython 3.14 is CPython 3.14.7 on base and CPython 3.14.8 on head",
+        "write-lowering CPython 3.15 is CPython 3.15.7 on base and CPython 3.15.8 on head",
     ]
 
     _rewrite(head.parent / cost_report.CONDITIONS_FILE, base_conditions)

@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 """``models/dormant-position-layout-twin-columns.yaml``: a table-per-hierarchy
 and a table-per-concrete-subtype family, each composing a live concrete beside
 an abstract subtype with no concrete descendant."""

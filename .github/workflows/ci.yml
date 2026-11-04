@@ -59,7 +59,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -79,7 +79,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -148,7 +148,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -169,7 +169,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen
@@ -201,7 +201,7 @@ jobs:
           cache: pnpm
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - run: pnpm install --frozen-lockfile
       - name: Sync harness deps
         working-directory: reference-harness
@@ -221,7 +221,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -234,7 +234,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13", "3.14"]
+        python-version: ["3.14.10", "3.15.2"]
     env:
       UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
@@ -251,13 +251,13 @@ jobs:
         working-directory: languages/python
         run: uv sync --frozen
       - name: just python-check-coverage
-        if: matrix.python-version == '3.14'
+        if: matrix.python-version == '3.15.2'
         run: just python-check-coverage
 
-      # Python 3.13 proves runtime compatibility without the slower branch
+      # Python 3.14 proves runtime compatibility without the slower branch
       # tracer; the latest interpreter owns both coverage verdicts above.
       - name: just python-test-dbfree
-        if: matrix.python-version != '3.14'
+        if: matrix.python-version != '3.15.2'
         env:
           PYTEST_ADDOPTS: "--no-cov"
         run: just python-test-dbfree
@@ -270,15 +270,20 @@ jobs:
   python-check-db:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14.10", "3.15.2"]
     env:
       UV_FROZEN: "1"
+      UV_PYTHON: ${{ matrix.python-version }}
       PARALLAX_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -312,7 +317,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -338,7 +343,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -367,7 +372,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Identify the inspected head
         shell: bash
         run: echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -398,14 +403,19 @@ jobs:
   python-test-pydantic-floor:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14.10", "3.15.2"]
     env:
       UV_FROZEN: "1"
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -421,15 +431,20 @@ jobs:
   python-test-psycopg-c:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14.10", "3.15.2"]
     env:
       UV_FROZEN: "1"
+      UV_PYTHON: ${{ matrix.python-version }}
       PARALLAX_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: ${{ matrix.python-version }}
       - name: Install libpq headers and pg_config
         run: sudo apt-get update && sudo apt-get install -y libpq-dev
       - name: Sync Python workspace (frozen)
@@ -530,7 +545,7 @@ jobs:
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
@@ -557,7 +572,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
+          python-version: "3.15.2"
       - name: Sync harness deps
         working-directory: reference-harness
         run: uv sync --frozen

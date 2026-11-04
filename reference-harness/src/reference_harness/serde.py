@@ -130,7 +130,7 @@ def _canonical_include_paths(paths: list[Any]) -> list[Any]:
             )
         ]
         return sorted(maximal, key=_include_path_key)
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return paths
 
 

@@ -317,26 +317,26 @@ def test_the_counter_vocabularies_differ_only_in_the_retired_and_renamed_counter
         "encodeMany",
     }
     keyed = [case.name for case in lowering_support.CASES]
-    current = report.expected_addresses(("3.14",))
-    managed = report.expected_addresses(("3.14",), report.MANAGED_CALL_NAMES)
-    legacy = report.expected_addresses(("3.14",), report.LEGACY_CALL_NAMES)
-    assert current == report.expected_addresses(("3.14",), report.CALL_NAMES)
+    current = report.expected_addresses(("3.15",))
+    managed = report.expected_addresses(("3.15",), report.MANAGED_CALL_NAMES)
+    legacy = report.expected_addresses(("3.15",), report.LEGACY_CALL_NAMES)
+    assert current == report.expected_addresses(("3.15",), report.CALL_NAMES)
     uncounted = {address for address in current if not address[2].startswith("calls.")}
     assert uncounted == {address for address in managed if not address[2].startswith("calls.")}
     assert uncounted == {address for address in legacy if not address[2].startswith("calls.")}
     assert managed - current == {
-        ("3.14", case, f"calls.{name}")
+        ("3.15", case, f"calls.{name}")
         for case in keyed
         for name in ("shapeOfDeclaration", "entityShape")
     }
     assert current < managed
     assert managed - legacy == {
-        ("3.14", case, f"calls.{name}")
+        ("3.15", case, f"calls.{name}")
         for case in keyed
         for name in ("encodeManagedDocument", "encodeManagedMany")
     }
     assert legacy - managed == {
-        ("3.14", case, f"calls.{name}")
+        ("3.15", case, f"calls.{name}")
         for case in keyed
         for name in ("encodeDocument", "encodeMany")
     }
@@ -701,15 +701,15 @@ def test_entrypoint_refuses_arguments_and_an_incomplete_matrix(
 
 
 def test_missing_cells_and_envelope_refuse_an_incomplete_matrix() -> None:
-    assert report.missing_cells({}, ("3.14",), report.CASE_NAMES) == [
-        f"CPython 3.14, {case}: no child was run" for case in report.CASE_NAMES
+    assert report.missing_cells({}, ("3.15",), report.CASE_NAMES) == [
+        f"CPython 3.15, {case}: no child was run" for case in report.CASE_NAMES
     ]
     contract = BudgetContract.load()
     with pytest.raises(ValueError, match="matrix is incomplete"):
         report.build_envelope(
             contract,
-            report._provenance(contract, _matrix("3.14")),  # pyright: ignore[reportPrivateUsage] - entrypoint seam
-            {"3.14": {}},
+            report._provenance(contract, _matrix("3.15")),  # pyright: ignore[reportPrivateUsage] - entrypoint seam
+            {"3.15": {}},
         )
 
 

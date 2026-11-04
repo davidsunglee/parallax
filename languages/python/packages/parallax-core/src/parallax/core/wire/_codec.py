@@ -508,7 +508,7 @@ def _decode_timestamp(value: object, neutral_type: Timestamp) -> _DecodedWireLit
         _fail("out-of-space", value, neutral_type)
     try:
         instant = managed.astimezone(dt.UTC)
-    except (OverflowError, ValueError):
+    except OverflowError, ValueError:
         _fail("out-of-space", value, neutral_type)
     if zone != "Z":
         _fail("noncanonical", value, neutral_type)
