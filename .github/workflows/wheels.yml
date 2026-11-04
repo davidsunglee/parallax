@@ -43,9 +43,10 @@ jobs:
         id: matrix
         shell: bash
         run: |
-          echo "matrix=$(python languages/python/tools/wheel_build.py --matrix)" >> "$GITHUB_OUTPUT"
-          echo "postgres=$(python languages/python/tools/wheel_build.py --newest-postgres)" >> "$GITHUB_OUTPUT"
-          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          matrix=$(python languages/python/tools/wheel_build.py --matrix)
+          postgres=$(python languages/python/tools/wheel_build.py --newest-postgres)
+          source=$(git rev-parse HEAD)
+          printf '%s\n' "matrix=$matrix" "postgres=$postgres" "source=$source" >> "$GITHUB_OUTPUT"
       - name: Build shared companion wheels
         run: python languages/python/tools/wheel_build.py --prepare-companions languages/python/reports/wheel-companions
       - uses: actions/upload-artifact@v7

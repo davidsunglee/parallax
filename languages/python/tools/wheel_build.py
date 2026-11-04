@@ -41,8 +41,24 @@ def matrix() -> list[dict[str, str]]:
 
 
 def newest_postgres() -> str:
-    with urllib.request.urlopen("https://www.postgresql.org/versions.json", timeout=60) as response:
-        versions = json.load(response)
+    failures = 0
+    while True:
+        try:
+            with urllib.request.urlopen(
+                "https://www.postgresql.org/versions.json", timeout=60
+            ) as response:
+                versions = json.load(response)
+            break
+        except OSError as error:
+            failures += 1
+            print(
+                f"PostgreSQL release lookup failed ({failures}/3): {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if failures == 3:
+                raise
+            time.sleep(2)
     entry = next(version for version in versions if str(version["major"]) == "18")
     minor = int(entry["latestMinor"])
     if minor < 6:
