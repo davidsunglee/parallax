@@ -29,6 +29,7 @@ from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core.base import DocumentValue
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.execution import RetryPolicy
 from parallax.core.metamodel import (
     EntityIdentity,
     ValueObjectAttributeIdentity,
@@ -290,7 +291,9 @@ def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_ret
     assert [call.binds[-1] for call in starts] == [_T0, _T0]
     without_retry = ScriptedAdapter(Transact(Read(rows=rows), Write(), Write(affected=0)))
     with raises_contextualized(OptimisticLockConflictError):
-        _db(without_retry).transact(lambda tx: _patch(tx, value="150.00"), max_retries=0)
+        _db(without_retry).transact(
+            lambda tx: _patch(tx, value="150.00"), retry=RetryPolicy(max_retries=0)
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1287,7 +1290,7 @@ def test_a_condition_after_a_predicate_write_restating_the_replaced_start_fails_
         _window_patch(tx, _JUN_AUG, "175.00")
 
     with raises_contextualized(WritePreconditionError) as failed:
-        _predicated(port).transact(fn, concurrency=concurrency, max_retries=0)
+        _predicated(port).transact(fn, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     # Nothing the earlier write derived from the state the caller names
     # stands for that state: the condition fails before anything of the later
     # operation executes.
@@ -1387,7 +1390,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
         )
     )
     with raises_contextualized(WritePreconditionError):
-        _predicated(lost_later).transact(fn, max_retries=0)
+        _predicated(lost_later).transact(fn, retry=RetryPolicy(max_retries=0))
     assert isinstance(lost_later.calls[-1], RollbackCall)
 
 
@@ -1459,7 +1462,9 @@ def test_a_transaction_time_target_after_a_predicate_write_restating_its_start_f
         tx.wire.amend_if("Balance", {"id": 1, "acctNum": "B"}, tx_start=_T0)
 
     with raises_contextualized(WritePreconditionError) as failed:
-        db_for(DomainModel(mm.Balance, WhereTag), port).transact(fn, max_retries=0)
+        db_for(DomainModel(mm.Balance, WhereTag), port).transact(
+            fn, retry=RetryPolicy(max_retries=0)
+        )
     assert failed.value.expected == _T0
     assert _sql_kinds(port) == ["read", "close", "insert", "predicate", "read"]
     assert isinstance(port.calls[-1], RollbackCall)

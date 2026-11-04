@@ -927,9 +927,10 @@ def _check_history(
     for index, attempt in enumerate(attempts[:-1]):
         _check_retried(attempt, attempts[index + 1], problems)
     _check_terminal_attempt(invocation, attempts, label, problems)
-    bound = invocation.started_payload.get("retries")
-    if not isinstance(bound, int):
+    policy = invocation.started_payload.get("retry")
+    if policy is None:
         return
+    bound = policy["maxRetries"]
     if len(attempts) > bound + 1:
         problems.append(
             f"{label} ran {len(attempts)} attempt(s), but its invocation resolved {bound} "

@@ -54,6 +54,8 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import (
+    AdaptiveBackoff,
+    RetryPolicy,
     TransactionAccessModeError,
     TransactionOptionConflictError,
     TxnOptions,
@@ -124,7 +126,7 @@ def test_boundary_steps_reads_a_joins_own_options() -> None:
             "when": {
                 "boundary": [
                     {"action": "join", "isolation": "serializable"},
-                    {"action": "join", "maxRetries": 0, "concurrency": "locking"},
+                    {"action": "join", "retry": {"maxRetries": 0}, "concurrency": "locking"},
                     {"action": "join", "note": "inherits everything"},
                 ]
             }
@@ -132,7 +134,9 @@ def test_boundary_steps_reads_a_joins_own_options() -> None:
     )
     assert boundary_runner.boundary_steps(case) == [
         boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
-        boundary_runner.BoundaryStep("join", {"max_retries": 0, "concurrency": "locking"}),
+        boundary_runner.BoundaryStep(
+            "join", {"retry": RetryPolicy(max_retries=0), "concurrency": "locking"}
+        ),
         boundary_runner.BoundaryStep("join", {}),
     ]
 
@@ -142,14 +146,16 @@ def test_boundary_steps_reads_a_joins_own_access_mode() -> None:
         {
             "when": {
                 "boundary": [
-                    {"action": "join", "accessMode": "read-only", "maxRetries": 1},
+                    {"action": "join", "accessMode": "read-only", "retry": {"maxRetries": 1}},
                     {"action": "join"},
                 ]
             }
         }
     )
     assert boundary_runner.boundary_steps(case) == [
-        boundary_runner.BoundaryStep("join", {"max_retries": 1}, None, "read_only"),
+        boundary_runner.BoundaryStep(
+            "join", {"retry": RetryPolicy(max_retries=1)}, None, "read_only"
+        ),
         boundary_runner.BoundaryStep("join", {}),
     ]
 
@@ -368,7 +374,7 @@ def test_a_join_through_the_outer_read_only_entrypoint_reads_in_the_same_attempt
     db = _db(port)
     steps = [
         boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("join", {"max_retries": 10}),
+        boundary_runner.BoundaryStep("join", {"retry": RetryPolicy()}),
         boundary_runner.BoundaryStep("read", {}),
     ]
 
@@ -856,6 +862,23 @@ _ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, str, str, int]] = {
 }
 
 
+_TUNED_BACKOFF = AdaptiveBackoff(base_delay=0.002, max_delay=0.05)
+_RETRY_POLICY_WITNESSES: dict[str, RetryPolicy] = {
+    "m-auto-retry-011": RetryPolicy(max_retries=2, backoff=_TUNED_BACKOFF),
+    "m-auto-retry-012": RetryPolicy(max_retries=1),
+    "m-auto-retry-013": RetryPolicy(backoff=AdaptiveBackoff(max_delay=0.5)),
+    "m-auto-retry-014": RetryPolicy(max_retries=2, backoff=_TUNED_BACKOFF),
+    "m-auto-retry-015": RetryPolicy(max_retries=2),
+    "m-auto-retry-016": RetryPolicy(max_retries=2, backoff=_TUNED_BACKOFF),
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(_RETRY_POLICY_WITNESSES))
+def test_a_retry_policy_witness_resolves_the_whole_policy_it_authors(case_id: str) -> None:
+    case = corpus_case(case_id)
+    assert case_format.effective_options(case).retry == _RETRY_POLICY_WITNESSES[case_id]
+
+
 @pytest.mark.parametrize("case_id", sorted(_ROOT_WITNESS_ATTEMPTS))
 def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
     case_id: str,
@@ -864,7 +887,7 @@ def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
     max_retries, concurrency, isolation, attempts = _ROOT_WITNESS_ATTEMPTS[case_id]
     effective = case_format.effective_options(case)
     assert effective == TxnOptions(
-        max_retries=max_retries,
+        retry=RetryPolicy(max_retries=max_retries),
         concurrency=concurrency,  # pyright: ignore[reportArgumentType] - a corpus spelling
         isolation=isolation,  # pyright: ignore[reportArgumentType] - a corpus spelling
     )
@@ -883,7 +906,7 @@ def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
         boundary_runner.expected_attempts(
             fault=boundary_runner.fault_kind(case),
             outcome_kind=outcome,
-            max_retries=effective.max_retries,
+            max_retries=effective.retry.max_retries,
         )
         == attempts
     )
@@ -939,7 +962,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
             db.transact(fn, **requests)
     effective = case_format.effective_options(case)
     attempts = boundary_runner.expected_attempts(
-        fault=fault, outcome_kind=outcome, max_retries=effective.max_retries
+        fault=fault, outcome_kind=outcome, max_retries=effective.retry.max_retries
     )
     assert port.boundaries == attempts
     assert port.levels == [effective.isolation] * attempts

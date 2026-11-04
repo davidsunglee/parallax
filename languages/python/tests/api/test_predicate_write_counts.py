@@ -10,6 +10,7 @@ import pytest
 from parallax.core import MANY_TO_ONE, Attr, DomainModel, Entity, Rel, attr, rel
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
+from parallax.core.execution import RetryPolicy
 from parallax.core.unit_work import MissingTargetError, RollbackOnlyError, StaleWriteError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
@@ -241,7 +242,7 @@ def test_a_source_whose_row_a_predicate_write_deleted_fails_its_own_write(
         tx.amend(source.edit(quantity=1))
 
     with raises_contextualized(MissingTargetError | StaleWriteError):  # type: ignore[arg-type]
-        db.transact(fn, concurrency=concurrency, max_retries=0)
+        db.transact(fn, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     assert len(_bins(profile_run)) == 4
 
 
@@ -261,7 +262,7 @@ def test_a_statement_failure_surfaces_at_the_call_and_dooms_the_transaction(
         tx.find(Bin.where(Bin.id == 1))
 
     with raises_contextualized(RollbackOnlyError):
-        db.transact(fn, max_retries=0)
+        db.transact(fn, retry=RetryPolicy(max_retries=0))
     assert len(caught) == 1
     # Everything the attempt wrote, the insert its flush ran first included, is
     # rolled back.
@@ -285,6 +286,6 @@ def test_a_deferred_constraint_a_predicate_write_violates_fails_at_commit(
         answered.append(tx.delete_where(Shelf.where(Shelf.id == 2)))
 
     with raises_contextualized(DatabaseError):
-        db.transact(fn, max_retries=0)
+        db.transact(fn, retry=RetryPolicy(max_retries=0))
     assert answered == [1]
     assert len(_bins(profile_run)) == 4

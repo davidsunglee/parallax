@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -42,7 +42,7 @@ from parallax.core.db_port import (
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
-from parallax.core.execution import ExecutionFailure, TxnOptions
+from parallax.core.execution import AdaptiveBackoff, ExecutionFailure, RetryPolicy, TxnOptions
 from parallax.snapshot import Database, TxnContext, connect
 from tests._support.db_port import (
     BeginCall,
@@ -363,7 +363,7 @@ def test_an_attempt_that_cannot_acquire_is_not_retried_however_retriable_it_look
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("timeout")])
     with _db(adapter) as _root_db, pytest.raises(ExecutionFailure):
         db = _root_db.using_database_login()
-        db.transact(lambda _tx: None, max_retries=5)
+        db.transact(lambda _tx: None, retry=RetryPolicy(max_retries=5))
     assert adapter.acquisitions == 0
 
 
@@ -566,12 +566,38 @@ def test_omitted_options_and_a_whole_record_none_are_the_built_in_record() -> No
     assert explicit.using_database_login().transact(lambda tx: tx.options) == TxnOptions()
 
 
+def test_the_facade_derives_a_policy_whole_and_reports_it_on_every_handle() -> None:
+    tuned = RetryPolicy(max_retries=4, backoff=AdaptiveBackoff(base_delay=0.5, max_delay=2.0))
+    root = _db(ScriptedAdapter(Transact(), Transact(), Transact()))
+    scoped = root.with_options(retry=tuned).using_database_login()
+    replaced = scoped.with_options(retry=RetryPolicy(max_retries=1))
+
+    assert scoped.transact(lambda tx: tx.options.retry) is tuned
+    assert scoped.read_only(lambda rtx: rtx.options.retry) is tuned
+    assert replaced.transact(lambda tx: tx.options.retry) == RetryPolicy(max_retries=1)
+
+
+def test_an_invalid_policy_keyword_is_refused_on_the_facade_before_anything_runs() -> None:
+    adapter = ScriptedAdapter()
+    db = _db(adapter).using_database_login()
+
+    for value in (None, 3):
+        with pytest.raises(ValueError, match="retry must be a RetryPolicy"):
+            db.with_options(retry=cast("Any", value))
+        with pytest.raises(ValueError, match="retry must be a RetryPolicy"):
+            db.transact(lambda _tx: None, retry=cast("Any", value))
+        with pytest.raises(ValueError, match="retry must be a RetryPolicy"):
+            db.read_only(lambda _rtx: None, retry=cast("Any", value))
+
+    assert adapter.calls == []
+
+
 def test_an_invalid_record_opens_no_runtime_at_all() -> None:
     # The record refuses itself at construction, so nothing reaches `connect`;
     # what this pins is that a caller building the record beside the call
     # spends no runtime on it either.
     with pytest.raises(ValueError, match="max_retries"):
-        connect(_NeverAcquires(), ACCOUNT, options=TxnOptions(max_retries=-1))
+        connect(_NeverAcquires(), ACCOUNT, options=TxnOptions(retry=RetryPolicy(max_retries=-1)))
 
 
 def test_the_direct_constructor_takes_the_same_record() -> None:

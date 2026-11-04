@@ -7,12 +7,20 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
-from parallax.core.execution import TransactionOptionConflictError, TxnOptions
+from parallax.core.execution import (
+    AdaptiveBackoff,
+    RetryPolicy,
+    TransactionOptionConflictError,
+    TxnOptions,
+)
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
     "ResolvedOptions",
+    "ResolvedRetryPolicies",
     "a_root_default_is_overridden_per_call_and_a_join_inherits_the_override",
+    "a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole",
+    "retry_policy_snippet",
     "root_options_snippet",
 ]
 
@@ -46,7 +54,7 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
     other value, the root's own included, is refused before the joined body
     runs. Nothing is passed as ``None``: only an omitted keyword inherits.
     """
-    root = TxnOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", retry=RetryPolicy(max_retries=2))
     with connect(adapter, model, options=root) as database:
         db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options)
@@ -76,6 +84,52 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
         return db.transact(outer, isolation="serializable")
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedRetryPolicies:
+    """The Retry Policy each transaction of the story ran under."""
+
+    inherited: RetryPolicy
+    replaced: RetryPolicy
+    equal_policy_joined: RetryPolicy
+    other_backoff_refused_on_join: bool
+
+
+def a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole(
+    adapter: DatabaseAdapter, model: DomainModel
+) -> ResolvedRetryPolicies:
+    """A root tuned once, a call that replaces the whole policy, and a joining
+    call compared with the policy of the transaction it joins.
+
+    A policy is one value. Naming ``max_retries`` alone leaves nothing of the
+    root's backoff in force: the fields a policy omits take their built-in
+    values, never the inherited ones. A joining call may repeat a policy equal
+    to the active one; the same bound with another backoff is a different policy.
+    """
+    tuned = RetryPolicy(max_retries=3, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05))
+    with connect(adapter, model, options=TxnOptions(retry=tuned)) as database:
+        db = database.using_database_login()
+        inherited = db.transact(lambda tx: tx.options.retry)
+
+        def outer(tx: TxnContext) -> ResolvedRetryPolicies:
+            def joined_body(joined_tx: TxnContext) -> RetryPolicy:
+                return joined_tx.options.retry
+
+            equal = db.transact(joined_body, retry=RetryPolicy(max_retries=1))
+            refused = False
+            try:
+                db.transact(joined_body, retry=RetryPolicy(max_retries=1, backoff=tuned.backoff))
+            except TransactionOptionConflictError:
+                refused = True
+            return ResolvedRetryPolicies(
+                inherited=inherited,
+                replaced=tx.options.retry,
+                equal_policy_joined=equal,
+                other_backoff_refused_on_join=refused,
+            )
+
+        return db.transact(outer, retry=RetryPolicy(max_retries=1))
+
+
 def root_options_snippet() -> str:
     """The story's own source — the Usage Guide snippet that cannot drift.
 
@@ -87,5 +141,16 @@ def root_options_snippet() -> str:
         for part in (
             ResolvedOptions,
             a_root_default_is_overridden_per_call_and_a_join_inherits_the_override,
+        )
+    )
+
+
+def retry_policy_snippet() -> str:
+    """The Retry Policy story's own source, with the record it answers."""
+    return "\n\n\n".join(
+        inspect.getsource(part).rstrip("\n")
+        for part in (
+            ResolvedRetryPolicies,
+            a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole,
         )
     )

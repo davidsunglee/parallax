@@ -22,12 +22,13 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core.base import INFINITY
 from parallax.core.db_port import ArrayBind, MappingRow
-from parallax.core.execution import KeyedWriteValueError, ServingModel, prepare_model
+from parallax.core.execution import KeyedWriteValueError, RetryPolicy, ServingModel, prepare_model
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.unit_work import KeyedWriteInstruction, WriteEvidenceError
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import Database, TxnContext
+from tests._support.retry import fast_retry
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -35,12 +36,15 @@ _NOW = dt.datetime(2026, 6, 1, tzinfo=dt.UTC)
 _ACCOUNT: MappingRow = {"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}
 
 
+_NO_RETRY = RetryPolicy(max_retries=0)
+
+
 def _run[T](
     name: str,
     port: FakeWritePort | ScriptedPort,
     body: Callable[[WireSubmitter, TxnContext, AcceptedMetamodel], T],
     *,
-    max_retries: int = 0,
+    retry: RetryPolicy = _NO_RETRY,
     concurrency: str = "optimistic",
 ) -> T:
     domain = models.load_domain_model(models.default_models_dir() / f"{name}.yaml")
@@ -56,7 +60,7 @@ def _run[T](
         return transact(
             root.using_database_login(),
             attempt,
-            max_retries=max_retries,
+            retry=retry,
             concurrency=cast("Any", concurrency),
         )
 
@@ -449,7 +453,7 @@ def test_a_retried_attempt_gets_fresh_submitter_and_source() -> None:
             read_submissions(model, [_entry("amend", {"id": 1, "owner": "Grace"})])
         )
 
-    _run("account", port, body, max_retries=1)
+    _run("account", port, body, retry=fast_retry(1))
     assert len(attempts) == 2 and attempts[0] is not attempts[1]
     assert [binds[-1] for _, binds in port.writes] == [1, 2]
     assert port.rollbacks == port.commits == 1
@@ -558,10 +562,10 @@ def test_declared_versions_are_checked_against_each_retried_attempts_source(decl
 
     if declared == 1:
         with pytest.raises(EngineError, match=r"observedVersion: 1.*source observed 2"):
-            _run("account", port, body, max_retries=1)
+            _run("account", port, body, retry=fast_retry(1))
         assert len(port.writes) == 1 and hooks == [1]
     else:
-        _run("account", port, body, max_retries=1)
+        _run("account", port, body, retry=fast_retry(1))
         assert [binds[-1] for _, binds in port.writes] == [1, 2] and hooks == [1, 2]
     assert len(attempts) == 2 and attempts[0] is not attempts[1]
 

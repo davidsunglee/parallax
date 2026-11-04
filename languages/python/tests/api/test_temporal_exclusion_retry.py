@@ -30,7 +30,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, attr, storage_layout
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptRolledBack,
@@ -40,6 +40,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.metamodel import Table
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 
 _NAMESPACE: Final = "temporal.exclusion"
@@ -285,7 +286,7 @@ def test_an_insert_partly_over_current_coverage_exhausts_its_bound_as_the_origin
 
     with pytest.raises(ExecutionFailure) as failed:
         _db(profile_run, [_FEB, _MAR, _APR]).transact(
-            overlap, concurrency=concurrency, max_retries=retries
+            overlap, concurrency=concurrency, retry=fast_retry(retries)
         )
 
     assert len(attempts) == retries + 1
@@ -294,7 +295,7 @@ def test_an_insert_partly_over_current_coverage_exhausts_its_bound_as_the_origin
     assert error.constraint_name == _exclusion(entity)
     assert not error.is_retriable
     assert error.__notes__ == [
-        f"bounded retry exhausted after {retries + 1} attempts (retries={retries})"
+        f"bounded retry exhausted after {retries + 1} attempts (max_retries={retries})"
     ]
     assert _span_rows(profile_run, entity) == [(_JAN, None, _MAR, _SEP, 100)]
 
@@ -312,7 +313,7 @@ def _attempted_once(
         work(tx)
 
     with pytest.raises(ExecutionFailure) as failed:
-        _db(profile_run, [_FEB, _MAR, _APR]).transact(counted, max_retries=2)
+        _db(profile_run, [_FEB, _MAR, _APR]).transact(counted, retry=fast_retry(2))
     return _refused(failed), len(attempts)
 
 
@@ -522,7 +523,7 @@ def _race(
                 barrier.wait()
 
         try:
-            db.transact(attempt, isolation=isolation, max_retries=3)
+            db.transact(attempt, isolation=isolation, retry=RetryPolicy(max_retries=3))
         except BaseException as failure:  # inspected on the test's thread
             outcomes[index] = failure
         finally:

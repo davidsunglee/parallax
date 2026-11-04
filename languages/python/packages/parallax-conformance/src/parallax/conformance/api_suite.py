@@ -504,8 +504,10 @@ RECIPES: Final[list[Recipe]] = [
             "\n"
             "from parallax.core import DomainModel\n"
             "from parallax.core.execution import (\n"
+            "    AdaptiveBackoff,\n"
             "    ExecutionFailure,\n"
             "    ReadOnlyTxnOptions,\n"
+            "    RetryPolicy,\n"
             "    TransactionAccessModeError,\n"
             "    TransactionOptionConflictError,\n"
             "    TxnOptions,\n"
@@ -555,6 +557,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="make-a-single-attempt",
         title="Turn retries off for one call",
         snippet=_sources(guide_recipes.add_to_an_order_once),
+    ),
+    Recipe(
+        recipe_id="tune-the-backoff",
+        title="Tune the waits between attempts",
+        snippet=_sources(guide_recipes.a_scope_for_slow_conflicts),
     ),
     Recipe(
         recipe_id="set-transaction-defaults",
@@ -1178,6 +1185,16 @@ EXAMPLES: Final[list[Example]] = [
         "A root default is overridden per call, and a joining call inherits the override",
         database_options_stories.root_options_snippet(),
     ),
+    # A Retry Policy is one value (m-auto-retry): the cases' own oracles state
+    # the policy each invocation resolved. What this executable story adds is
+    # the SPELLING — a tuned `RetryPolicy` on the root's record and a call or
+    # join naming another. Executed against real Postgres by
+    # `tests/api/test_database_options.py`.
+    Example(
+        "m-auto-retry-012",
+        "A tuned Retry Policy is inherited until a call replaces it whole",
+        database_options_stories.retry_policy_snippet(),
+    ),
     # Read-only transactions (m-execution): the case's own oracle states the
     # read-only boundary, its explicit level, and the joined read-only call,
     # and the boundary runner grades it. What this executable story adds is the
@@ -1303,7 +1320,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
         "by fake-port unit tests of db.transact (test_database_transact), including the "
         "recoverable-conflict classification; the boundary-shape cases (transient retry, "
-        "`maxRetries: 0` disabling the loop, and bound exhaustion) are graded end-to-end "
+        "a `maxRetries` of 0 disabling the loop, and bound exhaustion) are graded end-to-end "
         "by the "
         "case-driven boundary runner (`tests/api/test_boundary_run.py`, "
         "driving the REAL db.transact against the provisioned database through a "
@@ -2279,6 +2296,16 @@ _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
     "these shares is the one root-options story the usage guide already shows "
     "(`m-unit-work-041`), so a second narrative per configured field would repeat it"
 )
+# The Retry Policy's boundary witnesses, beside the one story that spells it
+# (`m-auto-retry-012`).
+_RETRY_POLICY_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "one facet of a Retry Policy being one exact value — a tuned policy resolved and "
+    "replayed under, a partial policy taking built-in rather than inherited values, a "
+    "read-only invocation reporting its policy, and a join compared by value — graded "
+    "end-to-end by the case-driven boundary runner (`tests/api/test_boundary_run.py`), "
+    "which hands the REAL `db` the authored policy unchanged; the developer spelling is "
+    "the one Retry Policy story (`m-auto-retry-012`)"
+)
 # The Locking strategy's root-configured golden witnesses: the locking stream
 # inheriting its root's preference, the explicit optimistic override of that
 # root, the standalone read a locking root leaves untouched, and the
@@ -2569,6 +2596,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-auto-retry-008": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-009": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-auto-retry-010": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-011": _RETRY_POLICY_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-013": _RETRY_POLICY_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-014": _RETRY_POLICY_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-015": _RETRY_POLICY_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-016": _RETRY_POLICY_BOUNDARY_RUNNER_REASON,
     "m-concurrency-024": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-concurrency-025": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     "m-temporal-read-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,

@@ -723,7 +723,7 @@ def _rooted(case_id: str, *, uow: dict[str, object] | None = None) -> case_forma
     document["given"] = {
         **cast("Mapping[str, Any]", document.get("given") or {}),
         "databaseOptions": {
-            "maxRetries": 0,
+            "retry": {"maxRetries": 0},
             "concurrency": "locking",
             "isolation": "serializable",
         },

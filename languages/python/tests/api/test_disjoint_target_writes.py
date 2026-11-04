@@ -37,7 +37,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.unit_work import (
     OptimisticLockConflictError,
     WriteEvidenceError,
@@ -494,7 +494,7 @@ def test_a_target_after_a_predicate_write_stating_the_start_the_first_replaced_f
         db.transact(
             lambda tx: _write_across(tx, entity, earlier, later),
             concurrency=concurrency,
-            max_retries=0,
+            retry=RetryPolicy(max_retries=0),
         )
     # The later caller states the original the first operation closed; what
     # the first derived from it proves nothing for that literal condition.
@@ -799,7 +799,7 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
         tx.amend(source.edit(label="o"), until=_OCT)
 
     with pytest.raises(ExecutionFailure) as failed:
-        ours.transact(fn, max_retries=0)
+        ours.transact(fn, retry=RetryPolicy(max_retries=0))
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     assert [row[:2] for row in _rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
@@ -830,7 +830,7 @@ def test_a_transaction_time_write_after_a_predicate_write_restating_the_first_on
         tx.wire.amend_if(_name(entity), {"id": 1, "spec": {"title": "s2"}}, tx_start=_T0)
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(fn, concurrency=concurrency, max_retries=0)
+        db.transact(fn, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     assert isinstance(failed.value.cause, WritePreconditionError)
     members = ", ".join(_member(entity, name) for name in ("label", "spec"))
     rows = profile_run.port.execute(

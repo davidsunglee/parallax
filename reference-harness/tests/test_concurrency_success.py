@@ -566,15 +566,15 @@ def test_the_retired_retries_request_key_is_refused_by_the_schema() -> None:
     case = _serializable_error_case()
     case["when"]["uow"]["retries"] = 2
     assert list(_case_validator().iter_errors(case)), (
-        "Schema should reject the retired `retries` request key; the spelling is `maxRetries`"
+        "Schema should reject the retired `retries` request key; the spelling is `retry`"
     )
 
 
-def test_the_schema_accepts_max_retries_and_refuses_a_null_option() -> None:
+def test_the_schema_accepts_a_retry_policy_and_refuses_a_null_option() -> None:
     accepted = _serializable_error_case()
-    accepted["when"]["uow"]["maxRetries"] = 0
+    accepted["when"]["uow"]["retry"] = {"maxRetries": 0}
     assert not list(_case_validator().iter_errors(accepted))
-    for field in ("maxRetries", "concurrency", "isolation"):
+    for field in ("retry", "concurrency", "isolation"):
         refused = _serializable_error_case()
         refused["when"]["uow"][field] = None
         assert list(_case_validator().iter_errors(refused)), field
@@ -604,15 +604,32 @@ def test_a_root_level_is_the_level_an_unrequesting_case_resolves() -> None:
 
 def test_every_option_resolves_explicit_over_root_over_built_in() -> None:
     raw = _serializable_error_case()
-    raw["when"]["uow"] = {"maxRetries": 5}
-    raw["given"] = {"databaseOptions": {"maxRetries": 2, "concurrency": "locking"}}
+    raw["when"]["uow"] = {"retry": {"maxRetries": 5}}
+    raw["given"] = {"databaseOptions": {"retry": {"maxRetries": 2}, "concurrency": "locking"}}
     case = _concurrency_case(raw)
-    assert case.resolved_option("maxRetries") == 5
+    assert case.resolved_option("retry") == {"maxRetries": 5}
     assert case.resolved_option("concurrency") == "locking"
     assert case.resolved_option("isolation") == "read-committed"
     # An authored `0` is a value, never an omission the root fills.
-    zeroed = _concurrency_case({**raw, "when": {**raw["when"], "uow": {"maxRetries": 0}}})
-    assert zeroed.resolved_option("maxRetries") == 0
+    zeroed = _concurrency_case(
+        {**raw, "when": {**raw["when"], "uow": {"retry": {"maxRetries": 0}}}}
+    )
+    assert zeroed.retry_policy["maxRetries"] == 0
+
+
+def test_a_policy_resolves_whole_and_fills_only_its_own_omitted_fields() -> None:
+    raw = _serializable_error_case()
+    raw["given"] = {
+        "databaseOptions": {
+            "retry": {"maxRetries": 3, "backoff": {"baseDelay": 0.002, "maxDelay": 0.05}}
+        }
+    }
+    raw["when"]["uow"] = {"retry": {"backoff": {"maxDelay": 0.5}}}
+    case = _concurrency_case(raw)
+    assert case.retry_policy == {
+        "maxRetries": 10,
+        "backoff": {"baseDelay": 0.008, "maxDelay": 0.5},
+    }
 
 
 def test_an_unconfigured_case_has_no_root_and_resolves_the_built_ins() -> None:
@@ -620,6 +637,9 @@ def test_an_unconfigured_case_has_no_root_and_resolves_the_built_ins() -> None:
     del raw["when"]["uow"]
     case = _concurrency_case(raw)
     assert case.database_options == {}
-    assert case.resolved_option("maxRetries") == 10
+    assert case.retry_policy == {
+        "maxRetries": 10,
+        "backoff": {"baseDelay": 0.008, "maxDelay": 1.0},
+    }
     assert case.concurrency_mode == "optimistic"
     assert case.isolation == "read-committed"

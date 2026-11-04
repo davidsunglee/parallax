@@ -39,6 +39,7 @@ from parallax.conformance.guide_recipes import (
     PostalDelivery,
     StorePickup,
     a_scope_for_reports,
+    a_scope_for_slow_conflicts,
     add_a_customer_from_json,
     add_a_surcharge_to_every_order,
     add_and_find_a_customer,
@@ -128,7 +129,9 @@ from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, Tran
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
 from parallax.core.execution import (
+    AdaptiveBackoff,
     ExecutionFailure,
+    RetryPolicy,
     TransactionAccessModeError,
     TransactionOptionConflictError,
     TransactionTimePinReadOnlyError,
@@ -167,6 +170,7 @@ from parallax.snapshot import (
     connect,
 )
 from tests._support.db_port import ConnectsAsItself, projected_row
+from tests._support.retry import TINY_BACKOFF
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
 
@@ -1387,11 +1391,13 @@ def test_a_conflict_on_every_attempt_exhausts_ten_retries(profile_run: Any) -> N
     )
 
     with pytest.raises(ExecutionFailure) as exhausted:
-        add_to_an_order(db, 10, Decimal("20.00"))
+        add_to_an_order(
+            db.with_options(retry=RetryPolicy(backoff=TINY_BACKOFF)), 10, Decimal("20.00")
+        )
 
     assert isinstance(exhausted.value.cause, OptimisticLockConflictError)
     assert exhausted.value.cause.__notes__ == [
-        "bounded retry exhausted after 11 attempts (retries=10)"
+        "bounded retry exhausted after 11 attempts (max_retries=10)"
     ]
     assert observer.attempts == ["OptimisticLockConflictError, retried"] * 11
     assert db.find(Order.where(Order.id == 10)).result().total == Decimal("161.00")
@@ -1444,7 +1450,7 @@ def test_a_single_attempt_surfaces_the_conflict_unretried(profile_run: Any) -> N
 
     assert isinstance(conflicted.value.cause, OptimisticLockConflictError)
     assert conflicted.value.cause.__notes__ == [
-        "bounded retry exhausted after 1 attempts (retries=0)"
+        "bounded retry exhausted after 1 attempts (max_retries=0)"
     ]
     assert observer.attempts == ["OptimisticLockConflictError, retried"]
     assert db.find(Order.where(Order.id == 10)).result().total == Decimal("155.00")
@@ -1459,15 +1465,23 @@ def test_root_and_scope_defaults_resolve_each_transactions_options(profile_run: 
     reports = a_scope_for_reports(db)
 
     assert db.transact(lambda tx: tx.options) == TxnOptions(
-        max_retries=3, concurrency="locking", isolation="read_committed"
+        retry=RetryPolicy(max_retries=3), concurrency="locking", isolation="read_committed"
     )
     assert reports.transact(lambda tx: tx.options) == TxnOptions(
-        max_retries=3, concurrency="locking", isolation="repeatable_read"
+        retry=RetryPolicy(max_retries=3), concurrency="locking", isolation="repeatable_read"
     )
-    assert reports.transact(lambda tx: tx.options, max_retries=0) == TxnOptions(
-        max_retries=0, concurrency="locking", isolation="repeatable_read"
+    assert reports.transact(lambda tx: tx.options, retry=RetryPolicy(max_retries=0)) == TxnOptions(
+        retry=RetryPolicy(max_retries=0), concurrency="locking", isolation="repeatable_read"
     )
     assert reports.read_only(lambda rtx: rtx.options.isolation) == "repeatable_read"
+
+
+def test_a_tuned_scope_runs_its_transactions_under_the_policy_it_names(profile_run: Any) -> None:
+    db = a_scope_for_slow_conflicts(_shop(profile_run))
+
+    assert db.transact(lambda tx: tx.options.retry) == RetryPolicy(
+        max_retries=5, backoff=AdaptiveBackoff(base_delay=0.05, max_delay=2.0)
+    )
 
 
 def test_a_join_must_name_the_options_its_transaction_resolved(profile_run: Any) -> None:
@@ -2078,6 +2092,16 @@ def test_a_family_stored_per_subtype_runs_through_the_shipped_surface() -> None:
     assert tracked_deliveries_for(db, 10) == []
 
 
+def test_a_tuned_scope_runs_through_the_shipped_surface() -> None:
+    db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
+
+    tuned = a_scope_for_slow_conflicts(db)
+
+    assert tuned.transact(lambda tx: tx.options.retry) == RetryPolicy(
+        max_retries=5, backoff=AdaptiveBackoff(base_delay=0.05, max_delay=2.0)
+    )
+
+
 def test_transaction_defaults_run_through_the_shipped_surface() -> None:
     database = own_root(
         connect_with_transaction_defaults(cast("PostgresAdapter", _ScriptedPort()), SHOP_MODEL)
@@ -2086,7 +2110,7 @@ def test_transaction_defaults_run_through_the_shipped_surface() -> None:
     reports = a_scope_for_reports(database.using_database_login())
 
     assert reports.transact(lambda tx: tx.options) == TxnOptions(
-        max_retries=3, concurrency="locking", isolation="repeatable_read"
+        retry=RetryPolicy(max_retries=3), concurrency="locking", isolation="repeatable_read"
     )
 
 
@@ -2100,6 +2124,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             PostalDelivery,
             StorePickup,
             a_scope_for_reports,
+            a_scope_for_slow_conflicts,
             add_a_customer_from_json,
             add_a_surcharge_to_every_order,
             add_and_find_a_customer,

@@ -48,7 +48,7 @@ from parallax.core.db_port import (
     ReleaseUnconfirmed,
 )
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.postgres import PostgresRole
 from parallax.snapshot import SnapshotConnectionError
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
@@ -395,7 +395,7 @@ def test_an_execution_composes_its_handle_over_the_root_record_it_is_handed() ->
     # reaches the composed Database, so a transaction the group opens resolves
     # what it omits against the case's root, and an execution handed none
     # composes the record's own defaults.
-    root = TxnOptions(isolation="serializable", max_retries=0)
+    root = TxnOptions(isolation="serializable", retry=RetryPolicy(max_retries=0))
     execution = _execution(_FakeConnection(), options=root)
     assert execution.database.transact(lambda tx: tx.options) is root
     unconfigured = _execution(_FakeConnection())

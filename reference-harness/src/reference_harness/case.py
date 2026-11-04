@@ -691,10 +691,23 @@ def names_earlier_step(source: int, step_index: int) -> bool:
 DEFAULT_CONCURRENCY = "optimistic"
 DEFAULT_ISOLATION = "read-committed"
 BUILT_IN_DATABASE_OPTIONS: dict[str, Any] = {
-    "maxRetries": 10,
+    "retry": {"maxRetries": 10, "backoff": {"baseDelay": 0.008, "maxDelay": 1.0}},
     "concurrency": DEFAULT_CONCURRENCY,
     "isolation": DEFAULT_ISOLATION,
 }
+
+
+def complete_retry_policy(authored: dict[str, Any]) -> dict[str, Any]:
+    """``authored`` with each omitted field at its built-in value.
+
+    Defaults are local to one policy document: nothing here reaches for a
+    policy the document would replace (`m-auto-retry`).
+    """
+    built_in = BUILT_IN_DATABASE_OPTIONS["retry"]
+    return {
+        "maxRetries": authored.get("maxRetries", built_in["maxRetries"]),
+        "backoff": {**built_in["backoff"], **authored.get("backoff", {})},
+    }
 
 
 @dataclass(frozen=True)
@@ -794,7 +807,7 @@ class Case:
         requests (m-case-format ``when.uow``), or empty.
 
         A case MAY carry a ``when.uow`` block naming any of ``concurrency``,
-        ``maxRetries``, and ``isolation``. All but ``isolation`` are
+        ``retry``, and ``isolation``. All but ``isolation`` are
         DESCRIPTIVE here — the harness executes the authored
         golden SQL either way — so this accessor exists for self-description /
         tooling; the resolved accessors below answer what each option is under
@@ -829,6 +842,13 @@ class Case:
         if name in self.database_options:
             return self.database_options[name]
         return BUILT_IN_DATABASE_OPTIONS[name]
+
+    @property
+    def retry_policy(self) -> dict[str, Any]:
+        """The complete Retry Policy the case's outer invocation resolves: one
+        placement's policy whole (:meth:`resolved_option`), its omitted fields
+        at their built-in values rather than another placement's."""
+        return complete_retry_policy(self.resolved_option("retry"))
 
     @property
     def concurrency_mode(self) -> str:

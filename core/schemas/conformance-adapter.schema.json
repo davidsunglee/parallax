@@ -642,6 +642,30 @@
         }
       ]
     },
+    "retryPolicy": {
+      "description": "A Retry Policy (m-auto-retry), its delays in seconds.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRetries": {"type": "integer", "minimum": 0},
+        "backoff": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "baseDelay": {"type": "number", "exclusiveMinimum": 0},
+            "maxDelay": {"type": "number", "exclusiveMinimum": 0}
+          }
+        }
+      }
+    },
+    "resolvedRetryPolicy": {
+      "description": "The complete Retry Policy an outer invocation resolved.",
+      "$ref": "#/$defs/retryPolicy",
+      "required": ["maxRetries", "backoff"],
+      "properties": {
+        "backoff": {"required": ["baseDelay", "maxDelay"]}
+      }
+    },
     "lifecycleInvocationStarted": {
       "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED retry policy it runs under and, for a read/write invocation, its RESOLVED Concurrency Preference — resolved values only, never whether the caller supplied them — plus the Access Mode and Isolation Level it REQUESTED. A Database-driven invocation always states both, because its entrypoint fixes the mode and it always resolves a level — the explicit level, else the Database Root's default (`read-committed` on an unconfigured root); the two stay optional because the lifecycle vocabulary also serves a lower-level caller that asks the port for neither, and then each is absent rather than a default nothing here established. A read-only invocation resolves no Concurrency Preference and states none. A `joined` invocation shares the outer root, attempt, and transaction, runs no Transaction Attempt of its own, and states none of these: all were resolved or requested by the invocation it joined, which a joined boundary may not renegotiate.",
       "type": "object",
@@ -651,19 +675,19 @@
         "invocation": {"enum": ["outer", "joined"]},
         "accessMode": {"enum": ["read-only", "read-write"]},
         "concurrency": {"enum": ["locking", "optimistic"]},
-        "retries": {"type": "integer", "minimum": 0},
+        "retry": {"$ref": "#/$defs/resolvedRetryPolicy"},
         "isolation": {"enum": ["read-committed", "repeatable-read", "serializable"]}
       },
       "allOf": [
         {
           "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states it, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested access mode and isolation are OPTIONAL on an outer invocation — a lower-level caller may ask the port for neither, while a Database-driven invocation always states both — and forbidden on a joined one for the same reason the policy is.",
           "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
-          "then": {"required": ["retries"]},
+          "then": {"required": ["retry"]},
           "else": {
             "allOf": [
               {"not": {"required": ["accessMode"]}},
               {"not": {"required": ["concurrency"]}},
-              {"not": {"required": ["retries"]}},
+              {"not": {"required": ["retry"]}},
               {"not": {"required": ["isolation"]}}
             ]
           }

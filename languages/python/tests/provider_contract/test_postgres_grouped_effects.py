@@ -55,6 +55,7 @@ from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
 
@@ -293,7 +294,7 @@ def test_another_sessions_change_refuses_exactly_its_objects_gate_then_replays(
             conflicts.append(conflict)
             raise
 
-    db.transact(amend, max_retries=1)
+    db.transact(amend, retry=fast_retry(1))
     (conflict,) = conflicts
     assert isinstance(conflict, OptimisticLockConflictError)
     assert conflict.target.key_values == ((3,),)
@@ -328,7 +329,7 @@ def test_a_check_violation_fails_the_whole_grouped_update_and_rolls_it_back(
         control.close()
     before = _rows(profile_run, "grp_order")
     with pytest.raises(ExecutionFailure) as escaped:
-        db.transact(_amend_all(Order), max_retries=2)
+        db.transact(_amend_all(Order), retry=fast_retry(2))
     cause = escaped.value.cause
     assert isinstance(cause, DatabaseError)
     assert (cause.category, cause.native_code) == ("constraintViolation", "23514")
@@ -388,7 +389,7 @@ def test_a_unique_violation_fails_the_whole_grouped_update_naming_no_row(
             tx.amend(seat.edit(seat_no=9 - seat.id))
 
     with pytest.raises(ExecutionFailure) as escaped:
-        db.transact(collide, max_retries=2)
+        db.transact(collide, retry=fast_retry(2))
     cause = escaped.value.cause
     assert isinstance(cause, DatabaseError)
     assert (cause.category, cause.native_code) == ("uniqueViolation", "23505")
@@ -656,7 +657,7 @@ def test_another_sessions_change_refuses_exactly_its_milestone_and_rolls_back_th
             stored.append(_history(profile_run, "grp_book"))
             raise
 
-    db.transact(amend, max_retries=1)
+    db.transact(amend, retry=fast_retry(1))
     (conflict,) = conflicts
     target = conflict.target
     assert isinstance(target, MilestoneTarget)
@@ -702,7 +703,7 @@ def test_an_exclusion_refusal_fails_the_whole_grouped_close_as_a_recoverable_con
         control.close()
     before = _history(profile_run, "grp_book")
     with pytest.raises(ExecutionFailure) as escaped:
-        db.transact(_amend_books, max_retries=1)
+        db.transact(_amend_books, retry=fast_retry(1))
     cause = escaped.value.cause
     assert isinstance(cause, DatabaseError)
     assert (cause.native_code, cause.constraint_name) == ("23P01", name)

@@ -181,12 +181,13 @@ the **recoverable conflicts**:
 The bound counts re-executions: the root's built-in bound is ten, so an invocation makes
 at most eleven attempts, and a bound of zero runs the callback once. An exhausted bound
 surfaces the last attempt's own failure, saying how many attempts ran. Before each
-re-execution the boundary waits a bounded randomized delay, whose scale follows how long
-the failed attempt took, so that invocations which collided spread out instead of
-colliding again
+re-execution the boundary waits a bounded randomized delay, which grows per attempt and
+widens with how long the failed attempt took, so that invocations which collided spread
+out instead of colliding again
 ([waiting between attempts](../../core/spec/m-auto-retry.md#waiting-between-attempts)).
-Which failures are retried, and the delay, are fixed policy; the bound is the only
-option.
+Which failures are retried is fixed policy. The bound and the delay's base and maximum
+are one option, the [Retry Policy](../../core/spec/m-auto-retry.md#the-retry-policy),
+and naming one replaces the inherited policy whole.
 
 ### Observed and stated revisions
 

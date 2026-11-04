@@ -11,7 +11,7 @@ given:
 when:
   uow:
     concurrency: optimistic
-    maxRetries: 2
+    retry: {maxRetries: 2}
   scenario:
     - uow: equal
       objectQuery:

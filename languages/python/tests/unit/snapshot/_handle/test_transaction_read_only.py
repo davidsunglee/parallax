@@ -19,7 +19,7 @@ import pytest
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
 from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.execution import ReadOnlyTxnOptions, TxnOptions
+from parallax.core.execution import ReadOnlyTxnOptions, RetryPolicy, TxnOptions
 from parallax.core.unit_work import RollbackOnlyError
 from parallax.snapshot import (
     ReadOnlyTxnContext,
@@ -55,7 +55,7 @@ def _locking_db(port: ScriptedAdapter) -> ScopedDatabase:
 def test_read_only_takes_the_retry_bound_and_isolation_and_no_concurrency() -> None:
     signature = inspect.signature(ScopedDatabase.read_only)
     keywords = [name for name in signature.parameters if name not in ("self", "fn")]
-    assert keywords == ["max_retries", "isolation"]
+    assert keywords == ["retry", "isolation"]
     assert all(
         signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in keywords
     )
@@ -111,7 +111,7 @@ def test_the_context_states_its_edition_and_its_resolved_options() -> None:
         lambda rtx: (rtx.edition, rtx.options), isolation="serializable"
     )
     assert edition
-    assert options == ReadOnlyTxnOptions(max_retries=10, isolation="serializable")
+    assert options == ReadOnlyTxnOptions(retry=RetryPolicy(), isolation="serializable")
     assert port.calls[0] == BeginCall("serializable", "read_only")
 
 

@@ -1,0 +1,35 @@
+model: models/account.yaml
+tags: [m-auto-retry, m-execution, m-execution-lifecycle, m-api-conformance, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection read-only boundary intent (shape:boundary)"
+when:
+  uow:
+    accessMode: read-only
+    retry: {maxRetries: 2, backoff: {baseDelay: 0.002, maxDelay: 0.05}}
+  boundary:
+    - action: read
+      note: the read-only callback observes the row
+then:
+  outcome: committed
+  databaseCalls: 1
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - { sequence: 1, activity: 1, parent: null, transactionInvocationStarted: { invocation: outer, accessMode: read-only, retry: {maxRetries: 2, backoff: {baseDelay: 0.002, maxDelay: 0.05}}, isolation: read-committed } }
+          - { sequence: 2, activity: 2, parent: 1, transactionAttemptStarted: { edition: account } }
+          - { sequence: 3, activity: 3, parent: 2, acquisitionStarted: { policy: writer-only } }
+          - { sequence: 4, activity: 3, parent: 2, acquisitionFinished: { outcome: acquired, route: writer } }
+          - { sequence: 5, activity: 4, parent: 2, readStarted: { target: parallax.compatibility.Account, interface: typed } }
+          - { sequence: 6, activity: 5, parent: 4, databaseCallStarted: { target: parallax.compatibility.Account, kind: read } }
+          - { sequence: 7, activity: 5, parent: 4, databaseCallFinished: { outcome: readCompleted, returnedRows: 1 } }
+          - { sequence: 8, activity: 4, parent: 2, readFinished: { outcome: completed } }
+          - { sequence: 9, activity: 6, parent: 2, releaseStarted: {} }
+          - { sequence: 10, activity: 6, parent: 2, releaseFinished: { cleanup: returned } }
+          - { sequence: 11, activity: 2, parent: 1, transactionAttemptFinished: { outcome: committed } }
+          - { sequence: 12, activity: 1, parent: null, transactionInvocationFinished: { outcome: committed } }

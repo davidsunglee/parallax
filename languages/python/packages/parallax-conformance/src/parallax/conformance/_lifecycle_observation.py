@@ -701,7 +701,7 @@ def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, obj
         case OuterInvocation(
             access_mode=access_mode,
             concurrency=concurrency,
-            retry_policy=policy,
+            retry=retry,
             isolation=isolation,
         ):
             observed: dict[str, object] = {"invocation": "outer"}
@@ -709,7 +709,13 @@ def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, obj
                 observed["accessMode"] = serialized_access_mode(access_mode)
             if concurrency is not None:
                 observed["concurrency"] = concurrency
-            observed["retries"] = policy.retries
+            observed["retry"] = {
+                "maxRetries": retry.max_retries,
+                "backoff": {
+                    "baseDelay": retry.backoff.base_delay,
+                    "maxDelay": retry.backoff.max_delay,
+                },
+            }
             if isolation is not None:
                 observed["isolation"] = serialized_isolation(isolation)
             return observed

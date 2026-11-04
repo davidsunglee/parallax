@@ -11,6 +11,7 @@ import pytest
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Document, DomainModel, TemporalBound, TxTemporal, attr
 from parallax.core.entity import model_of
+from parallax.core.execution import RetryPolicy
 from parallax.snapshot import TxnContext, connect, edge_of
 from tests._support.root_ownership import own_root
 
@@ -93,7 +94,7 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
 
     def run() -> None:
         try:
-            db.transact(read, concurrency="locking", max_retries=0)
+            db.transact(read, concurrency="locking", retry=RetryPolicy(max_retries=0))
         except BaseException as failure:
             failures.append(failure)
 

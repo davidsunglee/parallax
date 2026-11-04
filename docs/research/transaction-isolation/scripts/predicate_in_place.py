@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from _support import (
+    DISABLED_POLICY,
     Order,
     OrderItem,
     await_lock_wait,
@@ -93,7 +94,7 @@ def emitted(run: Any, verb: str, predicate: str) -> tuple[str, tuple[object, ...
 
     with scoped(adapter) as db:
         try:
-            db.transact(body, max_retries=0)
+            db.transact(body, retry=DISABLED_POLICY)
         except Exception as exc:  # the discard, wrapped in its execution context
             if not isinstance(getattr(exc, "cause", exc), _Discard):
                 raise

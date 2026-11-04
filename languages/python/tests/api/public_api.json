@@ -107,7 +107,6 @@
     "ReadStarted",
     "ReleaseFinished",
     "ReleaseStarted",
-    "RetryPolicy",
     "RootExecution",
     "RootExecutionKind",
     "StreamBatchCompleted",
@@ -141,6 +140,7 @@
     "StreamStateError"
   ],
   "parallax.core.execution": [
+    "AdaptiveBackoff",
     "DeferredFeatureError",
     "ExecutionFailure",
     "InvalidPrincipalError",
@@ -151,6 +151,7 @@
     "PublicationConflictError",
     "QueryTargetError",
     "ReadOnlyTxnOptions",
+    "RetryPolicy",
     "ServingModel",
     "TransactionAccessModeError",
     "TransactionAuthorityError",

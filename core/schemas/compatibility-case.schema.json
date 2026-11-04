@@ -717,7 +717,7 @@
       "additionalProperties": false,
       "properties": {
         "databaseOptions": {
-          "description": "The transaction option defaults the Database Root every unit of work of this case runs through is CONFIGURED with at connect (m-concurrency strategy derivation, m-auto-retry, m-db-port; ADR 0065): the same three fields `when.uow` requests, under the same definitions. A field the case omits here is the root's built-in default — `maxRetries` 10, `concurrency` `optimistic`, `isolation` `read-committed` — and no field may be null. Configuration is not a request: an outer invocation resolves each option as its own explicit `when.uow` value, else this root value; a joining call inherits the ACTIVE transaction's resolved value and never compares against this record on its own. A runner that opens no transaction at all — a standalone read or stream — carries it nowhere: a locking root does not turn a standalone read into a locking one. Admitted on every shape, because every shape that opens a unit of work does so through a root.",
+          "description": "The transaction option defaults the Database Root every unit of work of this case runs through is CONFIGURED with at connect (m-concurrency strategy derivation, m-auto-retry, m-db-port; ADR 0065): the same three fields `when.uow` requests, under the same definitions. A field the case omits here is the root's built-in default — the built-in Retry Policy, `concurrency` `optimistic`, `isolation` `read-committed` — and no field may be null. Configuration is not a request: an outer invocation resolves each option as its own explicit `when.uow` value, else this root value; a joining call inherits the ACTIVE transaction's resolved value and never compares against this record on its own. A runner that opens no transaction at all — a standalone read or stream — carries it nowhere: a locking root does not turn a standalone read into a locking one. Admitted on every shape, because every shape that opens a unit of work does so through a root.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -725,9 +725,9 @@
               "description": "The root's default Concurrency Preference, resolved by every outer invocation that names none of its own.",
               "$ref": "#/$defs/transactionOptions/concurrency"
             },
-            "maxRetries": {
-              "description": "The root's default retry bound, resolved by every outer invocation that names none of its own; `0` disables the loop for every such invocation.",
-              "$ref": "#/$defs/transactionOptions/maxRetries"
+            "retry": {
+              "description": "The root's default Retry Policy, resolved whole by every outer invocation that names none of its own; a `maxRetries` of `0` disables the loop for every such invocation.",
+              "$ref": "#/$defs/retryPolicy"
             },
             "isolation": {
               "description": "The root's default portable Isolation Level, requested on every attempt of every outer invocation that names none of its own; the harness opens every held session a case owns at the level the case resolves the same way.",
@@ -779,7 +779,7 @@
           }
         },
         "fault": {
-          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient or an `optimistic-lock-conflict` (each retriable), or a `lock-wait-timeout` (never retriable). Four kinds are not failures of the WORK, and each is terminal for a different reason. `isolation-setup-failure` and `access-mode-setup-failure`: the session setup opening the boundary at the requested Isolation Level, or in the requested Access Mode, fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed` on a connection it did acquire, and the callback is never called (m-db-port *Mapping obligations*). `connection-acquisition-failure`: the attempt's Acquisition grants no connection at all, so it carries the partial cleanup it ran, no release follows it, and the attempt finishes `beginFailed` CAUSED by it — an acquisition failure is outside the `m-db-error` categories and is never retriable. `connection-cleanup-failure`: the connection the attempt used reaches release-unconfirmed when the attempt gives it back, which is diagnostic rather than an outcome — the work stands and the boundary commits. Absent when the case exercises only loop configuration (`maxRetries: 0`, the callback-withheld-on-abort case).",
+          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient or an `optimistic-lock-conflict` (each retriable), or a `lock-wait-timeout` (never retriable). Four kinds are not failures of the WORK, and each is terminal for a different reason. `isolation-setup-failure` and `access-mode-setup-failure`: the session setup opening the boundary at the requested Isolation Level, or in the requested Access Mode, fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed` on a connection it did acquire, and the callback is never called (m-db-port *Mapping obligations*). `connection-acquisition-failure`: the attempt's Acquisition grants no connection at all, so it carries the partial cleanup it ran, no release follows it, and the attempt finishes `beginFailed` CAUSED by it — an acquisition failure is outside the `m-db-error` categories and is never retriable. `connection-cleanup-failure`: the connection the attempt used reaches release-unconfirmed when the attempt gives it back, which is diagnostic rather than an outcome — the work stands and the boundary commits. Absent when the case exercises only loop configuration (a `maxRetries` of `0`, the callback-withheld-on-abort case).",
           "enum": [
             "serialization-failure",
             "deadlock",
@@ -828,9 +828,9 @@
               "description": "The Unit Work's Concurrency Preference this invocation explicitly requests: `optimistic` (a gate-capable Entity uses lock-free reads and observation-bound gates; an unversioned Non-Temporal Entity falls back to Locking) or `locking` (force shared-lock participation and ungated writes for every lockable Entity). Omitted, the Database Root's configured default applies (`given.databaseOptions.concurrency`, built-in `optimistic`). Gate presence follows the target Entity's derived Effective Concurrency Strategy alone, uniformly across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close.",
               "$ref": "#/$defs/transactionOptions/concurrency"
             },
-            "maxRetries": {
-              "description": "The bound on automatic re-executions of the unit-of-work body after a retriable failure (m-auto-retry bounded automatic retry) this invocation explicitly requests. Omitted, the Database Root's configured default applies (`given.databaseOptions.maxRetries`, built-in 10); `0` disables the loop, so even a recoverable conflict surfaces to the caller.",
-              "$ref": "#/$defs/transactionOptions/maxRetries"
+            "retry": {
+              "description": "The Retry Policy (m-auto-retry) this invocation explicitly requests, replacing the inherited policy whole. Omitted, the Database Root's configured default applies (`given.databaseOptions.retry`, else the built-in policy); a `maxRetries` of `0` disables the loop, so even a recoverable conflict surfaces to the caller.",
+              "$ref": "#/$defs/retryPolicy"
             },
             "isolation": {
               "description": "The portable Isolation Level every held session or unit-of-work group this case opens runs at (m-db-port), as this invocation explicitly requests it. PRESCRIPTIVE wherever a runner opens the boundary — the harness opens each held session at it, an API Conformance Suite passes it to each group's transaction — and omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`). A case never names an engine level or a session variable: mapping the portable value is the adapter's, and the provider's, own work.",
@@ -1391,9 +1391,9 @@
                 "description": "The provider-neutral authorization fixture paired with a subject actor on THIS joining call. Legal on a join alone and forbidden for database-login mode.",
                 "$ref": "#/$defs/databaseAuthorization"
               },
-              "maxRetries": {
-                "description": "The retry bound THIS joining call explicitly names, spelled as `when.uow.maxRetries` is. A joining call may not renegotiate the boundary (m-unit-work): omitting the bound inherits the active transaction's resolved bound, naming that bound is accepted, and naming any other — the Database Root's own default included, where the outer call overrode it — is the option conflict `then.outcome: option-conflict` states. Legal on a `join` step alone.",
-                "$ref": "#/$defs/transactionOptions/maxRetries"
+              "retry": {
+                "description": "The Retry Policy THIS joining call explicitly names, spelled as `when.uow.retry` is. A joining call may not renegotiate the boundary (m-unit-work): omitting the policy inherits the active transaction's resolved policy, naming a policy equal to it by value is accepted, and naming any other — one differing only in its backoff, and the Database Root's own default where the outer call overrode it, included — is the option conflict `then.outcome: option-conflict` states. Legal on a `join` step alone.",
+                "$ref": "#/$defs/retryPolicy"
               },
               "concurrency": {
                 "description": "The Concurrency Preference THIS joining call explicitly names, spelled as `when.uow.concurrency` is, under the same inherit / accept / refuse rule as every other option a join may name. Legal on a `join` step alone.",
@@ -1418,7 +1418,7 @@
                 "then": {
                   "allOf": [
                     { "not": { "required": ["accessMode"] } },
-                    { "not": { "required": ["maxRetries"] } },
+                    { "not": { "required": ["retry"] } },
                     { "not": { "required": ["concurrency"] } },
                     { "not": { "required": ["isolation"] } },
                     { "not": { "required": ["actorIdentity"] } },
@@ -1808,19 +1808,42 @@
   },
   "$defs": {
     "transactionOptions": {
-      "description": "The three transaction options, defined once and shared by the three placements that spell them: the Database Root's configured defaults (`given.databaseOptions`), an outer invocation's explicit request (`when.uow`), and a joining call's explicit request (a `when.boundary` `join` step). Each placement gives a field its own meaning; the value vocabulary, type, and bound are the same in all three, and null is a value none of them admits.",
+      "description": "The transaction options, defined once and shared by the three placements that spell them: the Database Root's configured defaults (`given.databaseOptions`), an outer invocation's explicit request (`when.uow`), and a joining call's explicit request (a `when.boundary` `join` step). Each placement gives a field its own meaning; the value vocabulary, type, and bound are the same in all three, and null is a value none of them admits. The third option, `retry`, is `$defs/retryPolicy`, which the outer lifecycle observation reports as well.",
       "concurrency": {
         "description": "A Concurrency Preference (m-concurrency strategy derivation): `locking` forces the effective Locking strategy for every lockable Entity; `optimistic` selects Optimistic for an Entity with an explicit or Transaction-Time version, while an unversioned Non-Temporal Entity falls back to Locking.",
         "enum": ["locking", "optimistic"]
       },
-      "maxRetries": {
-        "description": "A bound on automatic re-executions of a unit-of-work body after a retriable failure (m-auto-retry): re-executions rather than attempts, so `0` runs the body once and `N` admits at most `N + 1` attempts.",
-        "type": "integer",
-        "minimum": 0
-      },
       "isolation": {
         "description": "A portable Isolation Level (m-db-port), named by the anomalies it forbids rather than by any engine's spelling: `read-committed` forbids dirty reads, `repeatable-read` also forbids nonrepeatable reads, `serializable` additionally makes the committed participating transactions equivalent to some serial order.",
         "enum": ["read-committed", "repeatable-read", "serializable"]
+      }
+    },
+    "retryPolicy": {
+      "description": "A Retry Policy (m-auto-retry), its delays in seconds. A field omitted here takes its built-in value, never an inherited one: `{maxRetries: 0}` is a complete policy with the built-in backoff. Finiteness and `maxDelay >= baseDelay`, judged after the built-in values are filled, are case-authoring rules JSON Schema cannot express (m-case-format *Retry policies*).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRetries": {
+          "description": "A bound on automatic re-executions of a unit-of-work body after a retriable failure: re-executions rather than attempts, so `0` runs the body once and `N` admits at most `N + 1` attempts.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "backoff": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "baseDelay": {"type": "number", "exclusiveMinimum": 0},
+            "maxDelay": {"type": "number", "exclusiveMinimum": 0}
+          }
+        }
+      }
+    },
+    "resolvedRetryPolicy": {
+      "description": "A Retry Policy as an outer invocation observed it: every field stated, because resolution is complete by then.",
+      "$ref": "#/$defs/retryPolicy",
+      "required": ["maxRetries", "backoff"],
+      "properties": {
+        "backoff": {"required": ["baseDelay", "maxDelay"]}
       }
     },
     "evolutionEndpoints": {
@@ -2648,19 +2671,19 @@
         "invocation": {"enum": ["outer", "joined"]},
         "accessMode": {"enum": ["read-only", "read-write"]},
         "concurrency": {"enum": ["locking", "optimistic"]},
-        "retries": {"type": "integer", "minimum": 0},
+        "retry": {"$ref": "#/$defs/resolvedRetryPolicy"},
         "isolation": {"enum": ["read-committed", "repeatable-read", "serializable"]}
       },
       "allOf": [
         {
           "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states it, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested access mode and isolation are OPTIONAL on an outer invocation — a lower-level caller may ask the port for neither, while a Database-driven invocation always states both — and forbidden on a joined one for the same reason the policy is.",
           "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
-          "then": {"required": ["retries"]},
+          "then": {"required": ["retry"]},
           "else": {
             "allOf": [
               {"not": {"required": ["accessMode"]}},
               {"not": {"required": ["concurrency"]}},
-              {"not": {"required": ["retries"]}},
+              {"not": {"required": ["retry"]}},
               {"not": {"required": ["isolation"]}}
             ]
           }

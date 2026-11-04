@@ -1,0 +1,156 @@
+model: models/account.yaml
+tags: [m-auto-retry, m-execution-lifecycle, m-api-conformance, transient, database-options, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: deadlock
+  databaseOptions:
+    retry: {maxRetries: 2, backoff: {baseDelay: 0.002, maxDelay: 0.05}}
+when:
+  boundary:
+    - action: read
+      note: observe the versioned row
+    - action: amend
+      note: the first attempt's write raises an injected deadlock — replayed under the root's policy
+then:
+  outcome: committed
+  databaseCalls: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              accessMode: read-write
+              concurrency: optimistic
+              retry: {maxRetries: 2, backoff: {baseDelay: 0.002, maxDelay: 0.05}}
+              isolation: read-committed
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: { policy: writer-only }
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired, route: writer }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            flushStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            flushFinished: { outcome: failed, attribution: caused, cause: 7 }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 6
+          - sequence: 16
+            activity: 9
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 17
+            activity: 10
+            parent: 9
+            acquisitionStarted: { policy: writer-only }
+          - sequence: 18
+            activity: 10
+            parent: 9
+            acquisitionFinished: { outcome: acquired, route: writer }
+          - sequence: 19
+            activity: 11
+            parent: 9
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 20
+            activity: 12
+            parent: 11
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 21
+            activity: 12
+            parent: 11
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 22
+            activity: 11
+            parent: 9
+            readFinished: { outcome: completed }
+          - sequence: 23
+            activity: 13
+            parent: 9
+            flushStarted: { trigger: pre-commit }
+          - sequence: 24
+            activity: 14
+            parent: 13
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 25
+            activity: 14
+            parent: 13
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 26
+            activity: 13
+            parent: 9
+            flushFinished: { outcome: completed }
+          - sequence: 27
+            activity: 15
+            parent: 9
+            releaseStarted: {}
+          - sequence: 28
+            activity: 15
+            parent: 9
+            releaseFinished: { cleanup: returned }
+          - sequence: 29
+            activity: 9
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 30
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

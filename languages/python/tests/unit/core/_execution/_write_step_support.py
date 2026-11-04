@@ -23,6 +23,7 @@ from parallax.core.base import INFINITY as OPEN
 from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     FlushActivity,
@@ -245,7 +246,7 @@ def open_flush(
             installed_lifecycle(provider),
             access_mode="read_write",
             concurrency="locking",
-            retries=0,
+            retry=RetryPolicy(max_retries=0),
             isolation=None,
         ) as invocation,
         invocation.attempt("test") as attempt,

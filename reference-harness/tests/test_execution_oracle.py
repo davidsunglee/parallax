@@ -37,6 +37,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCHEMAS = _REPO_ROOT / "core" / "schemas"
 _CASES = _REPO_ROOT / "core" / "compatibility" / "cases"
 _REGISTRY = build_registry(load_schemas(_SCHEMAS.parent))
+_BUILT_IN_RETRY: dict[str, Any] = {
+    "maxRetries": 10,
+    "backoff": {"baseDelay": 0.008, "maxDelay": 1.0},
+}
 
 
 def _valid_against(schema_name: str, doc: dict[str, Any]) -> bool:
@@ -85,7 +89,7 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -349,7 +353,10 @@ def test_a_commit_phase_failure_naming_a_cause_is_refused_by_both_schemas() -> N
 
 def test_a_joined_invocation_restating_the_resolved_policy_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][0]["transactionInvocationStarted"] = {"invocation": "joined", "retries": 10}
+    root["events"][0]["transactionInvocationStarted"] = {
+        "invocation": "joined",
+        "retry": _BUILT_IN_RETRY,
+    }
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
@@ -550,7 +557,7 @@ def test_an_attempt_under_a_joined_invocation_is_flagged() -> None:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -584,7 +591,7 @@ def test_a_second_outer_invocation_nested_in_the_first_is_flagged() -> None:
             transactionInvocationStarted={
                 "invocation": "outer",
                 "concurrency": "locking",
-                "retries": 10,
+                "retry": _BUILT_IN_RETRY,
             },
         ),
     )
@@ -625,7 +632,7 @@ def test_a_joined_invocation_finishing_in_the_outer_vocabulary_is_flagged() -> N
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -701,7 +708,7 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -761,7 +768,7 @@ def test_a_read_dependency_flush_standing_before_its_read_is_accepted() -> None:
 _OUTER_POLICY: dict[str, Any] = {
     "invocation": "outer",
     "concurrency": "locking",
-    "retries": 10,
+    "retry": _BUILT_IN_RETRY,
 }
 
 
@@ -1139,7 +1146,7 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "optimistic",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -1251,7 +1258,7 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -1347,7 +1354,7 @@ def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
             transactionInvocationStarted={
                 "invocation": "outer",
                 "concurrency": "locking",
-                "retries": retries,
+                "retry": {**_BUILT_IN_RETRY, "maxRetries": retries},
             },
         )
     ]
@@ -1479,7 +1486,7 @@ def _beginless_root(outcome: dict[str, Any]) -> dict[str, Any]:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 1, None, transactionInvocationFinished=outcome),
@@ -1504,7 +1511,7 @@ def _begin_failed_root() -> dict[str, Any]:
                 transactionInvocationStarted={
                     "invocation": "outer",
                     "concurrency": "locking",
-                    "retries": 10,
+                    "retry": _BUILT_IN_RETRY,
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
@@ -1623,6 +1630,12 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-auto-retry-007-a-zero-retry-root-disables-the-loop.yaml",
         "m-auto-retry-009-a-root-level-stands-over-every-attempt.yaml",
         "m-auto-retry-010-an-explicit-level-overrides-the-root-level.yaml",
+        "m-auto-retry-011-a-tuned-root-policy-governs-an-invocation-naming-none.yaml",
+        "m-auto-retry-012-an-explicit-policy-replaces-a-tuned-root-policy-whole.yaml",
+        "m-auto-retry-013-a-partial-backoff-takes-built-in-values-not-inherited-ones.yaml",
+        "m-auto-retry-014-a-read-only-invocation-reports-its-tuned-policy.yaml",
+        "m-auto-retry-015-a-join-naming-an-equal-policy-is-accepted.yaml",
+        "m-auto-retry-016-a-join-differing-only-in-backoff-conflicts.yaml",
         "m-concurrency-006-success.yaml",
         "m-execution-001-an-invocation-naming-no-option-resolves-every-root-default.yaml",
         "m-execution-002-a-read-only-invocation-at-an-explicit-level-joins-read-only.yaml",

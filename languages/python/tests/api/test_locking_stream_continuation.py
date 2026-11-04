@@ -23,6 +23,7 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import DatabaseCallFailed, DatabaseCallFinished
 from parallax.core.metamodel import TablePerConcreteSubtype
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "locking.stream"
@@ -251,7 +252,7 @@ def test_repeatable_read_restarts_the_whole_attempt_or_reports_serialization_fai
     outcome = _behind_updater(
         profile_run,
         _peer_update(Counter),
-        lambda: db.transact(increment, isolation="repeatable_read", max_retries=retries),
+        lambda: db.transact(increment, isolation="repeatable_read", retry=fast_retry(retries)),
     )
     failures = [
         (event.outcome.diagnostic.category, event.outcome.diagnostic.native_code)

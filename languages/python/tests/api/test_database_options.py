@@ -33,12 +33,15 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 
 _ACCOUNT = MODELS["account"]
 _root_options_story = (
     database_options_stories.a_root_default_is_overridden_per_call_and_a_join_inherits_the_override
+)
+_retry_policy_story = (
+    database_options_stories.a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole
 )
 
 
@@ -77,11 +80,12 @@ def test_the_direct_constructor_takes_the_same_keywords_over_an_open_runtime() -
 def test_transact_names_the_three_options_by_their_record_field_names() -> None:
     signature = inspect.signature(ScopedDatabase.transact)
     keywords = [name for name in signature.parameters if name not in ("self", "fn")]
-    assert keywords == ["max_retries", "concurrency", "isolation"]
+    assert keywords == ["retry", "concurrency", "isolation"]
     assert all(
         signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in keywords
     )
     assert "retries" not in signature.parameters
+    assert "max_retries" not in signature.parameters
     # Every keyword's default is one shared omission marker: never `None`, and
     # never a value any of the three fields admits.
     defaults = {signature.parameters[name].default for name in keywords}
@@ -94,7 +98,7 @@ def test_the_record_is_read_only_on_the_transaction_and_names_the_same_three_fie
     assert isinstance(TxnContext.options, property)
     assert TxnContext.options.fset is None
     assert [field.name for field in dataclasses.fields(TxnOptions)] == [
-        "max_retries",
+        "retry",
         "concurrency",
         "isolation",
     ]
@@ -248,14 +252,45 @@ def test_every_level_a_root_can_be_configured_with_is_the_level_its_attempts_run
     assert [entry["effective"] for entry in seen] == [level.replace("_", " ")]
 
 
+def test_the_retry_policy_story_runs_against_a_real_database(profile_run: Any) -> None:
+    _seeded(profile_run)
+    shape = _retry_policy_story(profile_run.port, _ACCOUNT)
+    assert shape.inherited == RetryPolicy(
+        max_retries=3, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05)
+    )
+    assert shape.replaced == RetryPolicy(max_retries=1)
+    assert shape.equal_policy_joined == shape.replaced
+    assert shape.other_backoff_refused_on_join
+
+
+@pytest.mark.parametrize("retired", ["max_retries", "retries"])
+def test_a_retired_bound_keyword_is_an_unknown_keyword_on_every_public_surface(
+    profile_run: Any, retired: str
+) -> None:
+    _seeded(profile_run)
+    keywords: dict[str, Any] = {retired: 1}
+    with connect(profile_run.port, _ACCOUNT) as database:
+        db = database.using_database_login()
+        with pytest.raises(TypeError, match=retired):
+            db.transact(_read_one, **keywords)
+        with pytest.raises(TypeError, match=retired):
+            db.read_only(lambda _rtx: None, **keywords)
+        with pytest.raises(TypeError, match=retired):
+            db.with_options(**keywords)
+        with pytest.raises(TypeError, match=retired):
+            database.with_options(**keywords)
+
+
 def test_the_root_options_usage_guide_story_runs_against_a_real_database(
     profile_run: Any,
 ) -> None:
     _seeded(profile_run)
     shape = _root_options_story(profile_run.port, _ACCOUNT)
-    root = TxnOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", retry=RetryPolicy(max_retries=2))
     assert shape.inherited == root
-    assert shape.overridden == TxnOptions(isolation="serializable", max_retries=2)
+    assert shape.overridden == TxnOptions(
+        isolation="serializable", retry=RetryPolicy(max_retries=2)
+    )
     assert shape.joined == shape.overridden
     assert shape.repeated == shape.overridden
     assert shape.root_level_refused_on_join
@@ -272,7 +307,7 @@ def test_a_standalone_read_and_stream_under_a_configured_root_open_no_transactio
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
     root = TxnOptions(
-        max_retries=0,
+        retry=RetryPolicy(max_retries=0),
         concurrency="locking",
         isolation="serializable",
     )

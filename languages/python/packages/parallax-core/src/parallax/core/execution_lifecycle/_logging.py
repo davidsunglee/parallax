@@ -296,7 +296,7 @@ def _invocation_started_fields(
         case OuterInvocation(
             access_mode=access_mode,
             concurrency=concurrency,
-            retry_policy=policy,
+            retry=retry,
             isolation=isolation,
         ):
             fields: dict[str, object] = {"invocation": "outer"}
@@ -304,7 +304,9 @@ def _invocation_started_fields(
                 fields["access_mode"] = access_mode
             if concurrency is not None:
                 fields["concurrency"] = concurrency
-            fields["retries"] = policy.retries
+            fields["max_retries"] = retry.max_retries
+            fields["backoff_base_delay"] = retry.backoff.base_delay
+            fields["backoff_max_delay"] = retry.backoff.max_delay
             if isolation is not None:
                 fields["isolation"] = isolation
             return fields

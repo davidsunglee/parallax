@@ -45,10 +45,10 @@ Scope (`m-execution-authority` *Scope creation and use*).
 ### Options a root is configured with
 
 A root is connected with one complete, immutable record of the three
-**transaction options**: the retry bound (`m-auto-retry`), the Concurrency
+**transaction options**: the Retry Policy (`m-auto-retry`), the Concurrency
 Preference (`m-unit-work` *Strategy selection*), and the Isolation Level
 (`m-db-port`). A root connected without a record carries the built-in record:
-**ten** re-executions, the **`optimistic`** preference, and **Read Committed**.
+the built-in Retry Policy, the **`optimistic`** preference, and **Read Committed**.
 Read Committed is a concrete level the runtime requests on every attempt, not
 the absence of a request (`m-db-port` *Mapping obligations*).
 
@@ -64,10 +64,11 @@ An outer transaction resolves each option as its explicit argument, else its
 invoking scope's effective value. Every physical attempt of that invocation, and
 every call joining it, observes that one resolved record, and the transaction
 exposes it as a value of the same shape the root and scope carry. A read-only
-transaction (*Read-only transactions*, below) resolves the retry bound and the
+transaction (*Read-only transactions*, below) resolves the Retry Policy and the
 Isolation Level the same way and nothing else: it has no Concurrency Preference,
 whatever the scope's effective record names, and the record it exposes carries
-none.
+none. A Retry Policy is a single option, so these rules apply to it whole: an
+explicit policy replaces the inherited one rather than merging with it.
 
 A joining call never renegotiates, and it compares only the options its own
 entrypoint takes. An omitted option inherits the active transaction's resolved

@@ -28,7 +28,7 @@ from parallax.core.db_port import (
     RoutePolicy,
     RouteSelection,
 )
-from parallax.core.execution import ExecutionFailure, TxnOptions
+from parallax.core.execution import ExecutionFailure, RetryPolicy, TxnOptions
 from parallax.core.execution_lifecycle._activity import ActivityTarget
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, root
@@ -176,7 +176,9 @@ def test_routing_derivation_composes_with_authority_and_options_and_acquires_not
     adapter = ScriptedAdapter(Transact(), routes=("writer", "reader"))
     database = root(adapter)
 
-    pinned = database.with_routing(read_policy="writer_only").with_options(max_retries=2)
+    pinned = database.with_routing(read_policy="writer_only").with_options(
+        retry=RetryPolicy(max_retries=2)
+    )
     scope = pinned.using_database_login()
     unpinned = scope.with_routing(read_policy="reader_preferred").with_options(
         isolation="serializable"
@@ -185,7 +187,7 @@ def test_routing_derivation_composes_with_authority_and_options_and_acquires_not
 
     _read(scope)
     _read(unpinned)
-    assert scope.read_only(lambda attempt: attempt.options.max_retries, itself) == 2
+    assert scope.read_only(lambda attempt: attempt.options.retry.max_retries, itself) == 2
 
     assert adapter.requested_policies == ["writer_only", "reader_preferred", "writer_only"]
     shared = cast("Any", unpinned)
@@ -263,7 +265,7 @@ def test_a_read_only_invocation_that_fell_back_retries_on_the_writer() -> None:
     )
     scope = root(adapter, read_policy="reader_preferred").using_database_login()
 
-    scope.read_only(lambda _attempt: None, itself, max_retries=1)
+    scope.read_only(lambda _attempt: None, itself, retry=RetryPolicy(max_retries=1))
 
     assert adapter.requested_policies == ["reader_preferred", "writer_only"]
 
@@ -409,7 +411,7 @@ def test_a_boundary_that_moved_its_lease_settles_the_route_it_opened_on() -> Non
     scope = root(adapter, read_policy="reader_preferred").using_database_login()
     callbacks: list[object] = []
 
-    scope.read_only(callbacks.append, itself, max_retries=1)
+    scope.read_only(callbacks.append, itself, retry=RetryPolicy(max_retries=1))
 
     assert len(callbacks) == 2
     assert adapter.requested_policies == ["reader_preferred", "writer_only"]

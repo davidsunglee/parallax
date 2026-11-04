@@ -60,6 +60,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
+    RetryPolicy,
     TransactionTimePinReadOnlyError,
     TxnOptions,
 )
@@ -2672,7 +2673,7 @@ def test_a_conflict_attempt_counts_duplicate_addressed_keys_once() -> None:
         "conflict",
         {
             "when": {
-                "uow": {"concurrency": "optimistic", "maxRetries": 0},
+                "uow": {"concurrency": "optimistic", "retry": {"maxRetries": 0}},
                 "write": [
                     {"id": 2, "owner": "Ada", "observedVersion": 1},
                     {"id": 2, "balance": "500.00", "observedVersion": 1},
@@ -2965,8 +2966,8 @@ def test_a_conflict_case_whose_invocation_ends_before_its_last_attempt_is_refuse
 @pytest.mark.parametrize(
     ("uow", "root"),
     [
-        ({"concurrency": "optimistic", "maxRetries": 0}, {}),
-        ({"concurrency": "optimistic"}, {"maxRetries": 0}),
+        ({"concurrency": "optimistic", "retry": {"maxRetries": 0}}, {}),
+        ({"concurrency": "optimistic"}, {"retry": {"maxRetries": 0}}),
     ],
     ids=["requested", "root"],
 )
@@ -3728,7 +3729,7 @@ def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
 # and the writeSequence entry alike.                                           #
 # --------------------------------------------------------------------------- #
 _CONSPICUOUS_ROOT: Final[dict[str, object]] = {
-    "maxRetries": 0,
+    "retry": {"maxRetries": 0},
     "concurrency": "locking",
     "isolation": "serializable",
 }
@@ -3833,7 +3834,7 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
     # The two travel apart: the record is the whole root, the request only what
     # `when.uow` authored, and the planning preference is what the two resolve
     # to — so neither seam can be fed the other's value.
-    case = _rooted(_case("m-unit-work-001"), uow={"maxRetries": 3})
+    case = _rooted(_case("m-unit-work-001"), uow={"retry": {"maxRetries": 3}})
     serving = model_facts.case_serving_model(case)
     context = scenario.CaseContext(
         serving,
@@ -3843,11 +3844,11 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
         case_format.database_options(case),
     )
     assert context.options == TxnOptions(
-        max_retries=0,
+        retry=RetryPolicy(max_retries=0),
         concurrency="locking",
         isolation="serializable",
     )
-    assert context.requests == {"max_retries": 3}
+    assert context.requests == {"retry": RetryPolicy(max_retries=3)}
     assert context.concurrency == "locking"
 
 
@@ -3858,7 +3859,7 @@ def test_a_conflict_attempt_opens_at_the_roots_level_and_runs_under_its_bound() 
     # the request authors.
     case = _rooted(_load_case("m-concurrency-006"), uow={"concurrency": "optimistic"})
     assert case_format.database_options(case) == TxnOptions(
-        max_retries=0,
+        retry=RetryPolicy(max_retries=0),
         concurrency="locking",
         isolation="serializable",
     )
@@ -4452,7 +4453,7 @@ def test_a_state_graded_replay_replaces_refusals_and_failure_location() -> None:
         "scenario",
         {
             "grading": "state",
-            "when": {"uow": {"maxRetries": 1}, "scenario": steps},
+            "when": {"uow": {"retry": {"maxRetries": 1}}, "scenario": steps},
             "then": {"units": {"g": {"outcome": "committed"}}},
         },
     )

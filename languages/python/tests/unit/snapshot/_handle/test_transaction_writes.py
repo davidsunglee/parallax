@@ -40,6 +40,7 @@ from parallax.core.entity._errors import EntityRowError
 from parallax.core.execution import (
     KEYED_WRITE_VALUE_CODES,
     KeyedWriteValueError,
+    RetryPolicy,
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.read_delivery import InvalidData
@@ -291,7 +292,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(OptimisticLockConflictError, match="Account"):
-        account_db(port).transact(fn, concurrency="optimistic", max_retries=0)
+        account_db(port).transact(fn, concurrency="optimistic", retry=RetryPolicy(max_retries=0))
     assert RollbackCall() in port.calls
 
 

@@ -223,7 +223,7 @@ def _refuse_a_replayed_abort(case: case_format.Case, labels: Iterable[str]) -> N
     the bound, so the abort the case grades is reachable only where the bound
     leaves the first attempt unreplayed (`m-auto-retry`).
     """
-    bound = case_format.effective_options(case).max_retries
+    bound = case_format.effective_options(case).retry.max_retries
     if bound == 0:
         return
     for label in labels:

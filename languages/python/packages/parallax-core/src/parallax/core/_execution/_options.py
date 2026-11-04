@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from parallax.core.auto_retry import RetryPolicy, retry_policy
 from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import IsolationLevel, isolation_level
 
@@ -11,7 +12,6 @@ __all__ = [
     "Omitted",
     "ReadOnlyTxnOptions",
     "TxnOptions",
-    "check_max_retries",
     "patch_options",
 ]
 
@@ -33,20 +33,7 @@ class Omitted:
 
 OMITTED: Final[Omitted] = Omitted()
 
-
-def check_max_retries(value: object) -> int:
-    """``value`` as a retry bound, or ``ValueError``.
-
-    A bound is a nonnegative built-in ``int``: ``bool`` is refused although it
-    subclasses ``int``, because ``True`` reads as a flag rather than as the
-    bound 1, and a fractional or otherwise non-integral value names no number of
-    re-executions at all.
-    """
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"max_retries must be a nonnegative int, got {value!r}")
-    if value < 0:
-        raise ValueError(f"max_retries must be >= 0, got {value}")
-    return value
+_BUILT_IN_RETRY: Final = RetryPolicy()
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,24 +41,24 @@ class TxnOptions:
     """The three transaction options a Database Root configures as defaults, and
     the resolved record every outer invocation runs under.
 
-    ``max_retries`` bounds re-executions rather than attempts: ``0`` runs the
-    callback once and ``N`` admits at most ``N + 1`` attempts. ``concurrency``
-    is the Concurrency Preference each Entity's Effective Concurrency Strategy is
-    derived from. ``isolation`` is the portable level every physical attempt
-    asks the port for; the built-in default is Read Committed, requested
-    concretely rather than left to the database's configured default.
+    ``retry`` is the one Retry Policy an invocation's attempts run under.
+    ``concurrency`` is the Concurrency Preference each Entity's Effective
+    Concurrency Strategy is derived from. ``isolation`` is the portable level
+    every physical attempt asks the port for; the built-in default is Read
+    Committed, requested concretely rather than left to the database's
+    configured default.
 
     Every field is validated at construction under the same rules an explicit
     ``db.transact`` keyword meets, and ``None`` is invalid for all three: only
     an omitted keyword inherits.
     """
 
-    max_retries: int = 10
+    retry: RetryPolicy = _BUILT_IN_RETRY
     concurrency: ConcurrencyPreference = "optimistic"
     isolation: IsolationLevel = "read_committed"
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "max_retries", check_max_retries(self.max_retries))
+        retry_policy(self.retry)
         object.__setattr__(self, "concurrency", concurrency_preference(self.concurrency))
         object.__setattr__(self, "isolation", isolation_level(self.isolation))
 
@@ -86,35 +73,29 @@ class ReadOnlyTxnOptions:
     no Concurrency Preference to resolve, whatever the scope's defaults name.
     """
 
-    max_retries: int
+    retry: RetryPolicy
     isolation: IsolationLevel
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "max_retries", check_max_retries(self.max_retries))
+        retry_policy(self.retry)
         object.__setattr__(self, "isolation", isolation_level(self.isolation))
 
 
 def patch_options(
     options: TxnOptions,
     *,
-    max_retries: int | Omitted = OMITTED,
+    retry: RetryPolicy | Omitted = OMITTED,
     concurrency: ConcurrencyPreference | Omitted = OMITTED,
     isolation: IsolationLevel | Omitted = OMITTED,
 ) -> TxnOptions:
     """Apply one partial option patch, reusing ``options`` when unchanged."""
-    bound = (
-        options.max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
-    )
+    policy = options.retry if isinstance(retry, Omitted) else retry_policy(retry)
     preference = (
         options.concurrency
         if isinstance(concurrency, Omitted)
         else concurrency_preference(concurrency)
     )
     level = options.isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
-    if (
-        bound == options.max_retries
-        and preference == options.concurrency
-        and level == options.isolation
-    ):
+    if policy == options.retry and preference == options.concurrency and level == options.isolation:
         return options
-    return TxnOptions(max_retries=bound, concurrency=preference, isolation=level)
+    return TxnOptions(retry=policy, concurrency=preference, isolation=level)

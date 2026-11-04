@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -186,9 +187,9 @@ def test_schema_rejects_zero_database_calls_where_one_dialect_opened_its_boundar
 
 # --- root configuration and the three-field join (m-case-format *Root configuration*)
 
-_OPTION_FIELDS = ("maxRetries", "concurrency", "isolation")
+_OPTION_FIELDS = ("retry", "concurrency", "isolation")
 _A_VALUE = {
-    "maxRetries": 2,
+    "retry": {"maxRetries": 2, "backoff": {"baseDelay": 0.002, "maxDelay": 0.05}},
     "concurrency": "locking",
     "isolation": "serializable",
 }
@@ -219,7 +220,11 @@ def test_schema_rejects_a_null_root_field_and_the_retired_keys() -> None:
         case = _valid_boundary_case()
         case["given"] = {"databaseOptions": {field: None}}
         assert list(_case_validator().iter_errors(case)), field
-    for retired_key, value in (("retries", 2), ("retryOptimisticConflicts", True)):
+    for retired_key, value in (
+        ("maxRetries", 2),
+        ("retries", 2),
+        ("retryOptimisticConflicts", True),
+    ):
         retired = _valid_boundary_case()
         retired["given"] = {"databaseOptions": {retired_key: value}}
         assert list(_case_validator().iter_errors(retired)), (
@@ -229,8 +234,14 @@ def test_schema_rejects_a_null_root_field_and_the_retired_keys() -> None:
 
 def test_schema_rejects_a_root_field_outside_its_type_bound_or_vocabulary() -> None:
     for field, value in (
-        ("maxRetries", -1),
-        ("maxRetries", "2"),
+        ("retry", 2),
+        ("retry", {"maxRetries": -1}),
+        ("retry", {"maxRetries": "2"}),
+        ("retry", {"retries": 2}),
+        ("retry", {"backoff": 0.1}),
+        ("retry", {"backoff": {"baseDelay": 0}}),
+        ("retry", {"backoff": {"maxDelay": -1}}),
+        ("retry", {"backoff": {"multiplier": 2}}),
         ("concurrency", "pessimistic"),
         ("isolation", "read-uncommitted"),
     ):
@@ -261,10 +272,81 @@ def test_schema_rejects_every_option_on_an_action_that_opens_no_boundary() -> No
             assert list(_case_validator().iter_errors(case)), (action, field)
 
 
-def test_schema_rejects_the_retired_retries_key_on_a_join() -> None:
+def test_schema_rejects_a_retired_bound_key_on_a_join() -> None:
+    for retired in ("maxRetries", "retries"):
+        case = _valid_boundary_case()
+        case["when"]["boundary"] = [{"action": "join", retired: 2}]
+        assert list(_case_validator().iter_errors(case)), retired
+
+
+def test_schema_accepts_a_policy_omitting_any_field_where_it_is_configured() -> None:
+    for policy in (
+        {},
+        {"maxRetries": 0},
+        {"backoff": {}},
+        {"backoff": {"baseDelay": 0.5}},
+        {"backoff": {"maxDelay": 0.5}},
+    ):
+        case = _valid_boundary_case()
+        case["given"] = {"databaseOptions": {"retry": policy}}
+        case["when"]["uow"] = {"retry": policy}
+        case["when"]["boundary"] = [{"action": "read"}, {"action": "join", "retry": policy}]
+        assert list(_case_validator().iter_errors(case)) == [], policy
+
+
+def _lifecycle_case(started: dict[str, object]) -> dict[str, Any]:
     case = _valid_boundary_case()
-    case["when"]["boundary"] = [{"action": "join", "retries": 2}]
-    assert list(_case_validator().iter_errors(case))
+    case["then"]["executionLifecycle"] = {
+        "roots": [
+            {
+                "execution": 1,
+                "kind": "transaction-invocation",
+                "events": [
+                    {
+                        "sequence": 1,
+                        "activity": 1,
+                        "parent": None,
+                        "transactionInvocationStarted": started,
+                    },
+                    {
+                        "sequence": 2,
+                        "activity": 1,
+                        "parent": None,
+                        "transactionInvocationFinished": {"outcome": "committed"},
+                    },
+                ],
+            }
+        ]
+    }
+    return case
+
+
+_COMPLETE_POLICY = {"maxRetries": 10, "backoff": {"baseDelay": 0.008, "maxDelay": 1.0}}
+_OUTER = {"invocation": "outer", "concurrency": "optimistic"}
+
+
+def test_schema_requires_an_outer_observation_to_state_the_complete_policy() -> None:
+    assert (
+        list(_case_validator().iter_errors(_lifecycle_case({**_OUTER, "retry": _COMPLETE_POLICY})))
+        == []
+    )
+    assert list(_case_validator().iter_errors(_lifecycle_case(_OUTER)))
+    for partial in (
+        {"maxRetries": 10},
+        {"backoff": {"baseDelay": 0.008, "maxDelay": 1.0}},
+        {"maxRetries": 10, "backoff": {"baseDelay": 0.008}},
+        {"maxRetries": 10, "backoff": {"maxDelay": 1.0}},
+    ):
+        assert list(_case_validator().iter_errors(_lifecycle_case({**_OUTER, "retry": partial}))), (
+            partial
+        )
+
+
+def test_schema_forbids_a_joined_observation_a_policy_and_retires_the_integer_report() -> None:
+    joined = {"invocation": "joined", "retry": _COMPLETE_POLICY}
+    assert list(_case_validator().iter_errors(_lifecycle_case(joined)))
+    retired = {**_OUTER, "retries": 10}
+    assert list(_case_validator().iter_errors(_lifecycle_case(retired)))
 
 
 def test_schema_accepts_complete_authority_selectors_at_both_boundaries() -> None:

@@ -189,7 +189,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -226,6 +226,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests._support.retry import fast_retry
 from tests.unit._gc_reachability import Closure, closure
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -728,7 +729,7 @@ def _begun_attempt(
             installed,
             access_mode="read_write",
             concurrency="optimistic",
-            retries=1,
+            retry=RetryPolicy(max_retries=1),
             isolation=None,
         )
     )
@@ -1375,7 +1376,7 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
 
         def run() -> None:
             with suppress(ExecutionFailure):
-                database.transact(lambda tx: tx.insert(new_account()), max_retries=1)
+                database.transact(lambda tx: tx.insert(new_account()), retry=fast_retry(1))
 
         assert _left_behind(run) == []
     assert port.begins == 2

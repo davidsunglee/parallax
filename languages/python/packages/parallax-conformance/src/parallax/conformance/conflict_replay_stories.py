@@ -38,7 +38,7 @@ def a_credit_overtaken_by_another_writer_is_replayed_from_a_fresh_read(
     Another writer commits between the first attempt's read and its write, so
     that write's version check fails and the transaction replays the whole
     callback: the replay reads the other writer's balance and credits on top of
-    it. Nothing asks for the replay; ``max_retries`` only bounds it.
+    it. Nothing asks for the replay; the Retry Policy only bounds it.
     """
     with connect(adapter, model) as database:
         db = database.using_database_login()

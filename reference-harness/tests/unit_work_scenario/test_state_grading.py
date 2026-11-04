@@ -419,7 +419,7 @@ def _overtake_observed_span_1(case: Case, peer: dict[str, Any]) -> list[dict[str
     scenario = case.when["scenario"]
     del scenario[4]
     del case.then["units"]["control"]
-    case.when["uow"]["maxRetries"] = 0
+    case.when["uow"]["retry"] = {"maxRetries": 0}
     scenario.insert(1, {"uow": "ahead", "write": [peer]})
     case.then["units"]["ahead"] = {"outcome": "committed"}
     rows = [row for row in _rows(case, "sequence_span") if row["id"] != 1]

@@ -33,6 +33,7 @@ from parallax.core.db_port import (
     Returned,
 )
 from parallax.core.diagnostics import diagnostic_for
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -73,7 +74,6 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
-    RetryPolicy,
     RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
@@ -98,6 +98,7 @@ from tests._support.db_port import (
     Transact,
     Write,
 )
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, deadlock, new_account
 
@@ -681,7 +682,9 @@ def test_an_outer_invocation_states_the_policy_it_resolved(
                 1,
                 1,
                 None,
-                OuterInvocation("read_write", "locking", RetryPolicy(10), "serializable"),
+                OuterInvocation(
+                    "read_write", "locking", RetryPolicy(max_retries=10), "serializable"
+                ),
             ),
             TransactionInvocationStarted(TRANSACTION.id, 2, 3, 2, JoinedInvocation()),
         ],
@@ -690,11 +693,15 @@ def test_an_outer_invocation_states_the_policy_it_resolved(
     assert outer.fields["invocation"] == "outer"
     assert outer.fields["access_mode"] == "read_write"
     assert outer.fields["concurrency"] == "locking"
-    assert outer.fields["retries"] == 10
+    assert outer.fields["max_retries"] == 10
+    assert outer.fields["backoff_base_delay"] == 0.008
+    assert outer.fields["backoff_max_delay"] == 1.0
+    assert "retries" not in outer.fields
     assert "retry_optimistic_conflicts" not in outer.fields
     assert outer.fields["isolation"] == "serializable"
     assert joined.fields["invocation"] == "joined"
     assert "concurrency" not in joined.fields, "a joined call resolved no policy of its own"
+    assert "max_retries" not in joined.fields, "a joined call resolved no policy of its own"
     assert "access_mode" not in joined.fields, "a joined call requests no mode of its own"
     assert "isolation" not in joined.fields, "a joined call may not renegotiate the level"
 
@@ -713,7 +720,7 @@ def test_an_invocation_that_requested_no_level_or_mode_omits_the_keys(
                 1,
                 1,
                 None,
-                OuterInvocation(None, "optimistic", RetryPolicy(10), None),
+                OuterInvocation(None, "optimistic", RetryPolicy(max_retries=10), None),
             )
         ],
         execution=TRANSACTION,
@@ -734,7 +741,7 @@ def test_a_read_only_invocation_states_its_mode_and_no_preference(
                 1,
                 1,
                 None,
-                OuterInvocation("read_only", None, RetryPolicy(10), "repeatable_read"),
+                OuterInvocation("read_only", None, RetryPolicy(max_retries=10), "repeatable_read"),
             )
         ],
         execution=TRANSACTION,
@@ -913,15 +920,17 @@ def test_a_logger_below_the_level_is_told_nothing(caplog: pytest.LogCaptureFixtu
 
 def test_a_transition_the_logger_would_drop_is_never_described() -> None:
     # The saving, graded through the interface the test itself supplied rather
-    # than through a byte count: `retries` is read only while a record is being
-    # described, and the counters never touch it, so a Logger that would drop
-    # the record leaves the policy unread entirely.
+    # than through a byte count: `max_retries` is read only while a record is
+    # being described, and the counters never touch it, so a Logger that would
+    # drop the record leaves the policy unread entirely.
     class _CountingPolicy:
+        backoff = AdaptiveBackoff()
+
         def __init__(self) -> None:
             self.read = 0
 
         @property
-        def retries(self) -> int:
+        def max_retries(self) -> int:
             self.read += 1
             return 3
 
@@ -930,8 +939,8 @@ def test_a_transition_the_logger_would_drop_is_never_described() -> None:
         collected = _Collecting()
         logger.addHandler(collected)
         policy = _CountingPolicy()
-        invocation = OuterInvocation("read_write", "locking", RetryPolicy(3), None)
-        object.__setattr__(invocation, "retry_policy", policy)
+        invocation = OuterInvocation("read_write", "locking", RetryPolicy(max_retries=3), None)
+        object.__setattr__(invocation, "retry", policy)
         handler = LoggingLifecycleProvider(logger).open(TRANSACTION)
         assert handler is not None
         handler.handle(TransactionInvocationStarted(TRANSACTION.id, 1, 1, None, invocation))
@@ -1075,7 +1084,7 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         db = _db(port, LoggingLifecycleProvider(logger))
         try:
             with raises_contextualized(DatabaseError):
-                db.transact(lambda tx: tx.insert(new_account()), max_retries=1)
+                db.transact(lambda tx: tx.insert(new_account()), retry=fast_retry(1))
         finally:
             logger.removeHandler(collected)
         written = [_written(record) for record in collected.records]

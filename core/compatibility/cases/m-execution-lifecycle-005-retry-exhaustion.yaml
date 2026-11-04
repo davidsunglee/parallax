@@ -14,7 +14,7 @@ given:
 when:
   uow:
     concurrency: locking
-    maxRetries: 1
+    retry: {maxRetries: 1}
   boundary:
     - action: read
       note: observe the row the write addresses
@@ -35,7 +35,7 @@ then:
               invocation: outer
               accessMode: read-write
               concurrency: locking
-              retries: 1
+              retry: {maxRetries: 1, backoff: {baseDelay: 0.008, maxDelay: 1.0}}
               isolation: read-committed
           - sequence: 2
             activity: 2

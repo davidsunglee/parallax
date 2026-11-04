@@ -11,6 +11,7 @@ from typing import Literal
 import pytest
 
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution import RetryPolicy
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
@@ -96,7 +97,9 @@ def test_where_the_count_proves_no_guard_an_unchanged_row_is_closed_and_chained(
 def test_a_guard_that_matches_nothing_is_the_milestones_conflict() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(affected=0)))
     with raises_contextualized(OptimisticLockConflictError):
-        db_for(BALANCE, port).transact(lambda tx: _restate(tx, "typed"), max_retries=0)
+        db_for(BALANCE, port).transact(
+            lambda tx: _restate(tx, "typed"), retry=RetryPolicy(max_retries=0)
+        )
     assert [call.sql for call in _writes(port)] == [_GUARD]
 
 

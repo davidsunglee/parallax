@@ -13,7 +13,7 @@ given:
 when:
   uow:
     concurrency: locking
-    maxRetries: 2
+    retry: {maxRetries: 2}
   boundary:
     - action: read
       note: observe the versioned row

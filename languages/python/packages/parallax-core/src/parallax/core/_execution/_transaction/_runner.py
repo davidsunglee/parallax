@@ -14,7 +14,6 @@ from parallax.core._execution._options import (
     Omitted,
     ReadOnlyTxnOptions,
     TxnOptions,
-    check_max_retries,
 )
 from parallax.core._execution._publication import (
     ModelSelection,
@@ -26,7 +25,13 @@ from parallax.core._execution._routing import OperationRouting, read_only_policy
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core.auto_retry import RetryCandidate, retry_eligible, run_with_retry
+from parallax.core.auto_retry import (
+    RetryCandidate,
+    RetryPolicy,
+    retry_eligible,
+    retry_policy,
+    run_with_retry,
+)
 from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import (
     AccessMode,
@@ -208,7 +213,7 @@ class TransactionRunner:
         *,
         authority: ExecutionAuthority,
         defaults: TxnOptions,
-        max_retries: int | Omitted,
+        retry: RetryPolicy | Omitted,
         concurrency: ConcurrencyPreference | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
@@ -236,7 +241,7 @@ class TransactionRunner:
         # correctly would have been accepted. An omitted keyword is left as the
         # marker until it is resolved — against the scope for an outer
         # invocation, against the active transaction for a join.
-        bound = max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
+        requested_retry = retry if isinstance(retry, Omitted) else retry_policy(retry)
         preference = (
             concurrency if isinstance(concurrency, Omitted) else concurrency_preference(concurrency)
         )
@@ -245,10 +250,12 @@ class TransactionRunner:
         if active is not None:
             joined = self._admitted(active, authority, TxnAttempt)
             _check_join_options(
-                joined.options, max_retries=bound, concurrency=preference, isolation=level
+                joined.options, retry=requested_retry, concurrency=preference, isolation=level
             )
             return _joined(joined, cast("Tx", active.context), fn)
-        options = _resolved(defaults, max_retries=bound, concurrency=preference, isolation=level)
+        options = _resolved_options(
+            defaults, retry=requested_retry, concurrency=preference, isolation=level
+        )
         # The Root Execution opens after the deterministic refusals above and
         # spans every physical attempt below, and it opens BEFORE anything is
         # adopted: a Provider that fails to open keeps its own type, because no
@@ -257,7 +264,7 @@ class TransactionRunner:
             self._lifecycle,
             access_mode="read_write",
             concurrency=options.concurrency,
-            retries=options.max_retries,
+            retry=options.retry,
             isolation=options.isolation,
         )
 
@@ -284,7 +291,7 @@ class TransactionRunner:
             root=root,
             authority=authority,
             routing=OperationRouting(authority.source, "writer_only"),
-            retries=options.max_retries,
+            retry=options.retry,
             isolation=options.isolation,
             access_mode="read_write",
         )
@@ -298,7 +305,7 @@ class TransactionRunner:
         defaults: TxnOptions,
         read_policy: RoutePolicy,
         routes: Mapping[Route, RouteCapabilities],
-        max_retries: int | Omitted,
+        retry: RetryPolicy | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
         """Run ``fn`` in a read-only transaction under ``authority``, returning
@@ -306,23 +313,23 @@ class TransactionRunner:
 
         :meth:`transact`'s path with a read-only attempt: the same refusals and
         join admission, a :class:`ReadOnlyTxnOptions` record resolved from the
-        retry bound and isolation alone, and a boundary every attempt asks the
+        Retry Policy and isolation alone, and a boundary every attempt asks the
         port to open read-only. An outer invocation's attempts request
         ``read_policy``, refused before anything is observed or acquired where
         its route declares no read-only transaction at the resolved isolation;
         a join never consults it.
         """
         refuse_reentry(self._lifecycle)
-        bound = max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
+        requested_retry = retry if isinstance(retry, Omitted) else retry_policy(retry)
         level = isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
         active = _ACTIVE.active()
         if active is not None:
             joined = self._admitted(active, authority, ReadOnlyTxnAttempt)
-            _refuse_conflict("max_retries", bound, joined.options.max_retries)
+            _refuse_conflict("retry", requested_retry, joined.options.retry)
             _refuse_conflict("isolation", level, joined.options.isolation)
             return _joined(joined, cast("Tx", active.context), fn)
         options = ReadOnlyTxnOptions(
-            max_retries=defaults.max_retries if isinstance(bound, Omitted) else bound,
+            retry=defaults.retry if isinstance(requested_retry, Omitted) else requested_retry,
             isolation=defaults.isolation if isinstance(level, Omitted) else level,
         )
         policy = read_only_policy(read_policy, options.isolation, routes)
@@ -330,7 +337,7 @@ class TransactionRunner:
             self._lifecycle,
             access_mode="read_only",
             concurrency=None,
-            retries=options.max_retries,
+            retry=options.retry,
             isolation=options.isolation,
         )
 
@@ -353,7 +360,7 @@ class TransactionRunner:
             root=root,
             authority=authority,
             routing=OperationRouting(authority.source, policy),
-            retries=options.max_retries,
+            retry=options.retry,
             isolation=options.isolation,
             access_mode="read_only",
         )
@@ -394,7 +401,7 @@ class TransactionRunner:
         root: TransactionInvocationActivity,
         authority: ExecutionAuthority,
         routing: OperationRouting,
-        retries: int,
+        retry: RetryPolicy,
         isolation: IsolationLevel,
         access_mode: AccessMode,
     ) -> T:
@@ -492,7 +499,7 @@ class TransactionRunner:
                 # The loop handles only what an attempt handed it as a retry
                 # candidate; every other failure, a refused begin included,
                 # passes straight through it as the caller's own error.
-                return run_with_retry(attempt, retries=retries)
+                return run_with_retry(attempt, policy=retry)
 
         # Contextualized around the whole invocation and outside the root scope:
         # the classifier saw every underlying error, the lifecycle reported it
@@ -650,10 +657,10 @@ def _attempted[T](
             raise triggering_error from rollback_error
 
 
-def _resolved(
+def _resolved_options(
     defaults: TxnOptions,
     *,
-    max_retries: int | Omitted,
+    retry: RetryPolicy | Omitted,
     concurrency: ConcurrencyPreference | Omitted,
     isolation: IsolationLevel | Omitted,
 ) -> TxnOptions:
@@ -666,22 +673,22 @@ def _resolved(
     every keyword omitted, or explicit values equal to the defaults — so an
     invocation that changes nothing allocates nothing.
     """
-    bound = defaults.max_retries if isinstance(max_retries, Omitted) else max_retries
+    policy = defaults.retry if isinstance(retry, Omitted) else retry
     preference = defaults.concurrency if isinstance(concurrency, Omitted) else concurrency
     level = defaults.isolation if isinstance(isolation, Omitted) else isolation
     if (
-        bound == defaults.max_retries
+        policy == defaults.retry
         and preference == defaults.concurrency
         and level == defaults.isolation
     ):
         return defaults
-    return TxnOptions(max_retries=bound, concurrency=preference, isolation=level)
+    return TxnOptions(retry=policy, concurrency=preference, isolation=level)
 
 
 def _check_join_options(
     active: TxnOptions,
     *,
-    max_retries: int | Omitted,
+    retry: RetryPolicy | Omitted,
     concurrency: ConcurrencyPreference | Omitted,
     isolation: IsolationLevel | Omitted,
 ) -> None:
@@ -695,7 +702,7 @@ def _check_join_options(
     needs a default of its own, and a partial request is never materialized as a
     record merely to be compared.
     """
-    _refuse_conflict("max_retries", max_retries, active.max_retries)
+    _refuse_conflict("retry", retry, active.retry)
     _refuse_conflict("concurrency", concurrency, active.concurrency)
     _refuse_conflict("isolation", isolation, active.isolation)
 

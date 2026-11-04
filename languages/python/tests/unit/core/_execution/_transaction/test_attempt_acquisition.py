@@ -37,6 +37,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.document_codec import _document as document_module
 from parallax.core.entity._model import model_of
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     ExecutionEvent,
@@ -1021,7 +1022,7 @@ def test_a_ready_writes_failure_precedes_the_read_its_successor_waits_for() -> N
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64)),
             itself,
             concurrency="optimistic",
-            max_retries=0,
+            retry=RetryPolicy(max_retries=0),
         )
     # The first write's close conflicted before the read its successor waits
     # for; no write of the successor ran.
@@ -1043,7 +1044,7 @@ def test_a_later_reads_failure_leaves_the_writes_completed_before_it() -> None:
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64), (shared.ShareCols, 3, 1)),
             itself,
             concurrency="optimistic",
-            max_retries=0,
+            retry=RetryPolicy(max_retries=0),
         )
     assert raised.value.category == "deadlock"
     assert _flush_calls(port) == [ReadCall, WriteCall, WriteCall, WriteCall, ReadCall]
@@ -1100,7 +1101,7 @@ def test_a_later_writes_shortfall_in_a_ready_group_precedes_an_earlier_writes_in
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
             itself,
             concurrency="optimistic",
-            max_retries=0,
+            retry=RetryPolicy(max_retries=0),
         )
     target = raised.value.target
     assert isinstance(target, MilestoneTarget)
@@ -1120,7 +1121,7 @@ def test_a_ready_groups_failing_insert_reports_its_statement_error_alone() -> No
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
             itself,
             concurrency="optimistic",
-            max_retries=0,
+            retry=RetryPolicy(max_retries=0),
         )
     assert raised.value is failure
     # The grouped insert of both objects' openings is the last call: nothing

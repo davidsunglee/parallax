@@ -7,7 +7,7 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -52,7 +52,7 @@ def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
     that capture. Two independently selected equal principal scopes can join
     because execution authority compares by value within the same root.
     """
-    defaults = TxnOptions(max_retries=1)
+    defaults = TxnOptions(retry=RetryPolicy(max_retries=1))
     with connect(adapter, model, options=defaults) as root:
         login = root.using_database_login()
         principal_value = AuthorityPrincipal("authority-guide", authorization)

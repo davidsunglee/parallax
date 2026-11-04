@@ -73,7 +73,7 @@ then:
           - sequence: 1
             activity: 1
             parent: null
-            transactionInvocationStarted: { invocation: outer, accessMode: read-write, concurrency: locking, retries: 10, isolation: read-committed }
+            transactionInvocationStarted: { invocation: outer, accessMode: read-write, concurrency: locking, retry: {maxRetries: 10, backoff: {baseDelay: 0.008, maxDelay: 1.0}}, isolation: read-committed }
           - sequence: 2
             activity: 2
             parent: 1

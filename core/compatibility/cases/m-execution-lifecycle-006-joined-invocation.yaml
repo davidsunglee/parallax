@@ -34,7 +34,7 @@ then:
               invocation: outer
               accessMode: read-write
               concurrency: locking
-              retries: 10
+              retry: {maxRetries: 10, backoff: {baseDelay: 0.008, maxDelay: 1.0}}
               isolation: read-committed
           - sequence: 2
             activity: 2

@@ -26,6 +26,7 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, attr
 from parallax.core.entity._model import model_of
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import DatabaseCallStarted, FlushStarted
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
 from tests._support.root_ownership import own_root
@@ -192,7 +193,9 @@ def test_a_revision_moving_its_start_earlier_runs_after_the_row_it_absorbs_ends(
     provider = RecordingLifecycleProvider()
     db = _seeded(profile_run, entity, provider)
 
-    db.transact(_edit(entity, neighbour, stated), concurrency=concurrency, max_retries=0)
+    db.transact(
+        _edit(entity, neighbour, stated), concurrency=concurrency, retry=RetryPolicy(max_retries=0)
+    )
 
     writes = _last_flush(provider)
     vacating: _Effect = "close" if neighbour == "stored" else "remove"

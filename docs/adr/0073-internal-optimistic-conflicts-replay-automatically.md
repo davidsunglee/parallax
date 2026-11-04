@@ -44,3 +44,8 @@ only the environment its constants were measured in.
 
 The contract lives in `core/spec/m-auto-retry.md` and `core/spec/m-opt-lock.md`
 (*Retry contract*).
+
+*Superseded in part (2026-11, [ADR 0084](0084-retry-timing-is-a-public-policy-and-the-fixed-window-grows-to-its-maximum.md)):*
+the base and maximum delay are now part of a public Retry Policy, and the fixed
+window no longer plateaus below the maximum. Automatic replay of optimistic
+conflicts, the wait after release, and the duration-scaled window stand.

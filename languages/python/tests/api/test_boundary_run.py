@@ -272,7 +272,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # call above.
     effective = case_format.effective_options(case)
     assert attempts == boundary_runner.expected_attempts(
-        fault=fault, outcome_kind=outcome, max_retries=effective.max_retries
+        fault=fault, outcome_kind=outcome, max_retries=effective.retry.max_retries
     ), case.case_id
 
     then = cast("dict[str, Any]", case_document(case)["then"])
@@ -292,7 +292,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
 
 def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # Grep-verified complete set (the corpus's complete boundary
-    # population): `m-auto-retry-001` and `-004..010`, `m-concurrency-010/011/024/025`, its
+    # population): `m-auto-retry-001` and `-004..016`, `m-concurrency-010/011/024/025`, its
     # Transaction-Time-Only analogue `m-temporal-read-011`,
     # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the four
     # root-configured join cases `m-unit-work-037/038/040/041`, the root-default
@@ -311,6 +311,12 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-auto-retry-008",
         "m-auto-retry-009",
         "m-auto-retry-010",
+        "m-auto-retry-011",
+        "m-auto-retry-012",
+        "m-auto-retry-013",
+        "m-auto-retry-014",
+        "m-auto-retry-015",
+        "m-auto-retry-016",
         "m-execution-001",
         "m-execution-002",
         "m-execution-003",

@@ -18,8 +18,10 @@ from decimal import Decimal
 
 from parallax.core import DomainModel
 from parallax.core.execution import (
+    AdaptiveBackoff,
     ExecutionFailure,
     ReadOnlyTxnOptions,
+    RetryPolicy,
     TransactionAccessModeError,
     TransactionOptionConflictError,
     TxnOptions,
@@ -168,7 +170,7 @@ transaction behave.
   of those values, state the revision it carries in a
   [target write](04-writing.md#target-writes).
 
-A read-only transaction is retried like any other, and it takes `max_retries` and
+A read-only transaction is retried like any other, and it takes `retry` and
 `isolation`. It has no concurrency preference, because it takes no locks.
 
 ## Isolation levels
@@ -425,24 +427,23 @@ the target write: only the stated version counts.
 
 ### How many times
 
+A `RetryPolicy` sets how many times, and how long Parallax waits between attempts. Its
 `max_retries` counts re-runs, not attempts. The default is 10, so a transaction makes up
 to 11 attempts. If every one of them fails with something retryable, the last attempt's
 failure reaches you as the `cause` of an `ExecutionFailure`, with a note naming the
-count, such as `bounded retry exhausted after 11 attempts (retries=10)`. For a deadlock
+count, such as `bounded retry exhausted after 11 attempts (max_retries=10)`. For a deadlock
 or a serialization failure, that cause is a `DatabaseError` whose `category` is
 `"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it. A
 `TemporalConflictError` that outlasts every attempt means a clock stayed behind stored
 history for longer than the retries took. A temporal overlap that outlasts every attempt
 is usually permanent, such as an insert over coverage that is already current: every
 attempt is refused again, so the error arrives only after every retry and the waits
-between them. The waits grow with how long the attempts take, up to a second each, so at
-the default that is a fraction of a second for quick attempts and can reach several
-seconds for slow ones. A transaction that expects such a refusal can pass a lower
-`max_retries` to see it sooner, but can't take it to mean the coverage is current: an
-insert by a clock behind closed history is refused the same way, and only a retry
-recovers it. To answer for current coverage, read it before inserting, as
-[Errors](08-errors.md#failures-the-database-reports) shows.
-`max_retries=0` turns retries off, and the callback runs once:
+between them, up to about 4 seconds at the default. A transaction that expects such a
+refusal can pass a lower `max_retries` to see it sooner, but can't take it to mean the
+coverage is current: an insert by a clock behind closed history is refused the same way,
+and only a retry recovers it. To answer for current coverage, read it before inserting,
+as [Errors](08-errors.md#failures-the-database-reports) shows.
+`RetryPolicy(max_retries=0)` turns retries off, and the callback runs once:
 
 <!-- example: make-a-single-attempt -->
 ```python
@@ -453,20 +454,44 @@ def add_to_an_order_once(db: ScopedDatabase, order_id: int, amount: Decimal) -> 
         order = tx.find(Order.where(Order.id == order_id)).result()
         tx.amend(order, Order.total.set(order.total + amount))
 
-    db.transact(add, max_retries=0)
+    db.transact(add, retry=RetryPolicy(max_retries=0))
 ```
 <!-- /example -->
 
 If another transaction changes the order between the read and the write, this raises an
 `ExecutionFailure` whose `cause` is an `OptimisticLockConflictError`, and the job queue
-runs the job again later. `max_retries` is the only control: which failures are retried,
-and how long Parallax waits between attempts, aren't options.
+runs the job again later. Which failures are retried isn't an option.
+
+### How long between attempts
+
+Parallax waits before each retry, and only then: never before the first attempt, after
+the last, or after a failure it won't retry. Each wait is a random draw from zero up to a
+window, so transactions that collided spread out rather than collide again. The window
+doubles with each retry from `base_delay`, 8 ms by default, up to `max_delay`, 1 second
+by default, and a slow attempt widens it further, up to `max_delay`. Pass an
+`AdaptiveBackoff` to trade latency against contention:
+
+<!-- example: tune-the-backoff -->
+```python
+def a_scope_for_slow_conflicts(db: ScopedDatabase) -> ScopedDatabase:
+    """Commits here take a while to become visible, so the first waits start longer."""
+    return db.with_options(
+        retry=RetryPolicy(max_retries=5, backoff=AdaptiveBackoff(base_delay=0.05, max_delay=2.0))
+    )
+```
+<!-- /example -->
+
+Both delays are in seconds, and each only bounds the draw: any wait can be as short as
+zero. A small `max_retries` is a limit worth knowing. A quick attempt waits about the sum
+of the doubling `base_delay` windows, so three retries at the default wait a few tens of
+milliseconds at most, and can run out while a conflicting commit is still becoming
+visible. A deployment that sees this should raise `max_retries` or `base_delay`.
 
 ## Options and root defaults
 
-A transaction runs under three options: `max_retries`, `concurrency` and `isolation`.
-`TxnOptions` holds all three, and its defaults are 10 retries, the optimistic preference
-and Read Committed. Each option comes from the first of these that sets it:
+A transaction runs under three options: `retry`, `concurrency` and `isolation`.
+`TxnOptions` holds all three, and its defaults are `RetryPolicy()`, the optimistic
+preference and Read Committed. Each option comes from the first of these that sets it:
 
 1. a keyword on the call, such as `db.transact(callback, isolation="serializable")`;
 2. the scope the call is made through, which `db.with_options(...)` derives with some
@@ -480,7 +505,11 @@ def connect_with_transaction_defaults(
     adapter: PostgresAdapter, model: DomainModel
 ) -> Database[PostgresRole]:
     """Every transaction of this root makes at most four attempts and prefers locking."""
-    return connect(adapter, model, options=TxnOptions(max_retries=3, concurrency="locking"))
+    return connect(
+        adapter,
+        model,
+        options=TxnOptions(retry=RetryPolicy(max_retries=3), concurrency="locking"),
+    )
 
 
 def a_scope_for_reports(db: ScopedDatabase) -> ScopedDatabase:
@@ -494,8 +523,11 @@ type parameter is what its subject scopes take as a database authorization, a
 `PostgresRole` on PostgreSQL, as [Execution authority](06-execution-authority.md#subject-scope)
 explains. Pass `a_scope_for_reports` a scope of that root, such as
 `root.using_database_login()`. A transaction through the reports scope then runs with
-`max_retries=3`, `concurrency="locking"` and `isolation="repeatable_read"`, and a call
-through it that passes `max_retries=0` changes only that. Only leaving a keyword out
+`retry=RetryPolicy(max_retries=3)`, `concurrency="locking"` and
+`isolation="repeatable_read"`, and a call through it that passes
+`retry=RetryPolicy(max_retries=0)` changes only that. A `RetryPolicy` is one value, so
+naming one replaces the inherited policy whole: `RetryPolicy(max_retries=0)` has the
+default backoff, whatever the root's policy said. Only leaving a keyword out
 inherits; passing `None` raises `ValueError` before anything runs. `tx.options` holds the resolved `TxnOptions`, the same for every
 attempt and every joined call. In a read-only transaction, `rtx.options` holds a
 `ReadOnlyTxnOptions`, which has no concurrency preference.

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from parallax.core import auto_retry
 from parallax.core._execution._unit_work.uow import FlushTrigger
+from parallax.core.auto_retry import RetryPolicy
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
@@ -79,7 +80,6 @@ from parallax.core.execution_lifecycle._events import (
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
-    RetryPolicy,
     RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
@@ -2402,7 +2402,7 @@ def open_transaction_root(
     *,
     access_mode: AccessMode | None,
     concurrency: ConcurrencyPreference | None,
-    retries: int,
+    retry: RetryPolicy,
     isolation: IsolationLevel | None,
 ) -> TransactionInvocationActivity:
     """The Transaction Invocation root activity for one outermost writable or
@@ -2412,8 +2412,7 @@ def open_transaction_root(
     ownership, authority, access mode, and option conflict — and before any
     attempt adopts an edition, because a begin failure is an OUTCOME of an
     attempt of this invocation rather than a refusal of it. With no Provider
-    installed nothing at all is allocated here, not even the resolved policy
-    the Started transition would carry.
+    installed nothing at all is allocated here.
     """
     if installed is None:
         return INERT
@@ -2423,5 +2422,5 @@ def open_transaction_root(
         return INERT
     return _LiveOuterInvocation(
         _Publisher(execution.id, installed, handler),
-        OuterInvocation(access_mode, concurrency, RetryPolicy(retries), isolation),
+        OuterInvocation(access_mode, concurrency, retry, isolation),
     )

@@ -12,10 +12,10 @@ compileEligibility:
   note: "single-connection unit-of-work boundary intent (shape:boundary)"
 given:
   databaseOptions:
-    maxRetries: 2
+    retry: {maxRetries: 2}
 when:
   uow:
-    maxRetries: 5
+    retry: {maxRetries: 5}
   boundary:
     - action: read
       note: the outer body observes the row it will write
@@ -24,10 +24,10 @@ when:
     - action: amend
       note: the joined body buffers a write onto the shared unit of work
     - action: join
-      maxRetries: 5
+      retry: {maxRetries: 5}
       note: a joining call repeating the outer invocation's resolved bound is accepted
     - action: join
-      maxRetries: 2
+      retry: {maxRetries: 2}
       note: a joining call naming the root's bound is refused — the outer call overrode it
 then:
   outcome: option-conflict
@@ -44,7 +44,7 @@ then:
               invocation: outer
               accessMode: read-write
               concurrency: optimistic
-              retries: 5
+              retry: {maxRetries: 5, backoff: {baseDelay: 0.008, maxDelay: 1.0}}
               isolation: read-committed
           - sequence: 2
             activity: 2

@@ -17,6 +17,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, MappingRow, OrderedWriteResultComplete
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     ExecutionEvent,
@@ -327,7 +328,7 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
     )
     with raises_contextualized(OptimisticLockConflictError) as raised:
         db_for(_MODEL, port).transact(
-            _loop("transaction-time"), concurrency="optimistic", max_retries=0
+            _loop("transaction-time"), concurrency="optimistic", retry=RetryPolicy(max_retries=0)
         )
     target = raised.value.target
     assert isinstance(target, MilestoneTarget)
