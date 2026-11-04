@@ -80,7 +80,9 @@ class _Cluster:
     unlocked: bool = True
     lingering: set[str] = field(default_factory=set[str])
     refusing: dict[str, int] = field(default_factory=dict[str, int])
-    tables: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    reset_states: dict[str, list[list[tuple[Any, ...]]]] = field(
+        default_factory=dict[str, list[list[tuple[Any, ...]]]]
+    )
     failing: dict[str, BaseException] = field(default_factory=dict[str, BaseException])
 
     def answer(self, session: _Session, sql: str, binds: Sequence[object]) -> list[tuple[Any, ...]]:
@@ -97,9 +99,9 @@ class _Cluster:
             return [(1 if binds[0] in self.lingering else 0,)]
         if sql == "select 1":
             return [(1,)]
-        if "pg_tables" in sql:
-            listed = self.tables.get(session.host, [])
-            return [(listed.pop(0) if len(listed) > 1 else (listed[0] if listed else "t"),)]
+        if "pg_namespace" in sql:
+            states = self.reset_states[session.host]
+            return states.pop(0) if len(states) > 1 else states[0]
         return self.cleanup_answer(sql, binds)
 
     def cleanup_answer(self, sql: str, binds: Sequence[object]) -> list[tuple[Any, ...]]:
@@ -454,14 +456,21 @@ def test_the_adapter_signs_each_route_for_its_own_endpoint_and_application_name(
     assert alone == (_WRITER, "ci_7_2", WRITER_APPLICATION, on_demand)
 
 
-def test_resetting_waits_until_every_instance_lists_the_reset_tables() -> None:
+def test_resetting_waits_for_recreated_tables_and_grants_on_every_instance() -> None:
     clock = _Clock()
+    previous = [(1, "schema grants", "rv_ledger", 2, "table grants")]
+    current = [(3, "schema grants", "rv_ledger", 4, "table grants")]
     cluster = _Cluster(
         owned=[],
-        tables={
-            _WRITER: ["rv_folio,rv_ledger"],
-            _READER_INSTANCE: ["", "rv_ledger", "rv_folio,rv_ledger"],
-            _WRITER_INSTANCE: ["rv_folio,rv_ledger"],
+        reset_states={
+            _WRITER: [current],
+            _READER_INSTANCE: [
+                previous,
+                [],
+                [(3, "schema grants", "rv_ledger", 4, None)],
+                current,
+            ],
+            _WRITER_INSTANCE: [current],
         },
     )
     run, _ = _started(cluster, clock)
@@ -474,17 +483,23 @@ def test_resetting_waits_until_every_instance_lists_the_reset_tables() -> None:
     reader_polls = [
         entry
         for entry in cluster.log
-        if entry.startswith(f"{_READER_INSTANCE}/") and "pg_tables" in entry
+        if entry.startswith(f"{_READER_INSTANCE}/") and "pg_namespace" in entry
     ]
-    assert len(reader_polls) == 3
-    assert clock.now == 2.0
+    assert len(reader_polls) == 4
+    assert clock.now == 3.0
 
 
 def test_resetting_gives_up_when_an_instance_never_catches_up() -> None:
-    cluster = _Cluster(owned=[], tables={_WRITER: ["a"], _WRITER_INSTANCE: ["b"]})
+    cluster = _Cluster(
+        owned=[],
+        reset_states={
+            _WRITER: [[(3, "schema grants", "rv_ledger", 4, "table grants")]],
+            _WRITER_INSTANCE: [[(1, "schema grants", "rv_ledger", 2, "table grants")]],
+        },
+    )
     run, _ = _started(cluster)
 
-    with pytest.raises(TimeoutError, match="parallax-ci-writer to list the reset tables"):
+    with pytest.raises(TimeoutError, match="parallax-ci-writer to see the reset schema and grants"):
         run.reset(SEEDED_MODEL, seeded_fixtures())
 
 
