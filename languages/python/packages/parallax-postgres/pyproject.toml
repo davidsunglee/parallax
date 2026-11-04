@@ -5,9 +5,10 @@ description = "Parallax Postgres database adapter: the concrete database runtime
 readme = "README.md"
 requires-python = ">=3.14"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "parallax-core",
+    "parallax-core==0.1.0",
     # The binary extra bundles libpq so the adapter installs self-contained (no
     # system libpq required); the adapter owns that capability, so a sibling
     # that imports psycopg declares it without the extra. The compiled loaders
@@ -20,6 +21,7 @@ dependencies = [
 ]
 
 [project.urls]
+Changelog = "https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/releases.md"
 Documentation = "https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/postgresql-lifecycle.md"
 Repository = "https://github.com/davidsunglee/parallax"
 
@@ -45,3 +47,6 @@ cache-keys = [
     { file = "src/**/*.pxd" },
     { file = "src/**/*.pxi" },
 ]
+
+[tool.parallax.postgresql]
+supported = ">=18.6,<19"

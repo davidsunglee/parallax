@@ -1,0 +1,38 @@
+name: Publish and verify retained release bytes
+description: Reconcile, upload only missing identical files, download and smoke-test the complete index set
+inputs:
+  index:
+    description: testpypi or pypi
+    required: true
+  bundle:
+    description: Verified release bundle directory
+    required: true
+  evidence:
+    description: Destination for index and installation evidence
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Verify protected environment configuration
+      shell: bash
+      run: python languages/python/tools/release_setup.py --output '${{ inputs.evidence }}/environments.json'
+    - name: Reconcile present files before uploading
+      id: reconcile
+      shell: bash
+      run: python languages/python/tools/release_artifacts.py reconcile --bundle '${{ inputs.bundle }}' --index '${{ inputs.index }}' --output '${{ inputs.evidence }}/before'
+    - name: Upload only missing verified bytes with publication attestations
+      if: steps.reconcile.outputs.missing_count != '0'
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: ${{ steps.reconcile.outputs.missing }}/
+        repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+        attestations: true
+        skip-existing: false
+        print-hash: true
+    - name: Download and verify every intended index file
+      id: complete
+      shell: bash
+      run: python languages/python/tools/release_artifacts.py reconcile --bundle '${{ inputs.bundle }}' --index '${{ inputs.index }}' --output '${{ inputs.evidence }}/after' --require-complete --attempts 20
+    - name: Smoke-test downloaded production distributions
+      shell: bash
+      run: python languages/python/tools/release_smoke.py --bundle '${{ inputs.bundle }}' --downloaded '${{ steps.complete.outputs.downloaded }}' --output '${{ inputs.evidence }}/smoke'

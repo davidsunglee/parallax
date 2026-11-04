@@ -86,6 +86,24 @@ def _native(target: dict[str, str], python: str) -> None:
 
 def _companions(output: Path, env: dict[str, str]) -> None:
     for package in sorted((PY_ROOT / "packages").iterdir()):
+        if package.name != "parallax-conformance":
+            _run(
+                [
+                    "uv",
+                    "build",
+                    "--project",
+                    str(PY_ROOT),
+                    "--sdist",
+                    "--package",
+                    package.name,
+                    "--python",
+                    sys.executable,
+                    "--out-dir",
+                    str(output / "sdists"),
+                ],
+                output / "setup.log",
+                env,
+            )
         if package.name == "parallax-postgres":
             continue
         _run(
@@ -201,6 +219,8 @@ def _validate(
     env: dict[str, str],
     postgres_version: str,
     container: str | None,
+    *,
+    source: bool = False,
 ) -> None:
     wheel = next((output / "wheelhouse").glob("*.whl"))
     validator = PY_ROOT / "tools/validate_wheel.py"
@@ -214,6 +234,10 @@ def _validate(
         "--postgres-version",
         postgres_version,
     ]
+    if source:
+        validator = PY_ROOT / "tools/validate_source.py"
+        arguments[:2] = ["--sdists", str(output / "sdists")]
+        arguments[arguments.index("--output") + 1] = str(output / "source")
     if target["platform"] != "linux":
         _run([sys.executable, str(validator), *arguments], output / "validation.log", env)
         return
@@ -237,7 +261,7 @@ def _validate(
             'export LD_LIBRARY_PATH=/opt/wheel-libpq/lib:${LD_LIBRARY_PATH:-}; exec "$@"',
             "sh",
             interpreter,
-            "/project/languages/python/tools/validate_wheel.py",
+            str(Path("/project") / validator.relative_to(REPO)),
             *translated,
         ],
         output / "validation.log",
@@ -246,7 +270,12 @@ def _validate(
 
 
 def build(
-    target_id: str, python: str, output: Path, postgres_version: str, companions: Path | None = None
+    target_id: str,
+    python: str,
+    output: Path,
+    postgres_version: str,
+    companions: Path | None = None,
+    sdists: Path | None = None,
 ) -> None:
     target = next(target for target in targets() if target["id"] == target_id)
     _native(target, python)
@@ -280,7 +309,10 @@ def build(
             if companions is None:
                 _companions(output, env)
             else:
+                if sdists is None:
+                    raise ValueError("shared companion wheels require their retained sdists")
                 shutil.copytree(companions, output / "companions")
+                shutil.copytree(sdists, output / "sdists")
             container = (
                 _linux_container(target, output, env, postgres_version, lifetime)
                 if target["platform"] == "linux"
@@ -294,6 +326,7 @@ def build(
             finally:
                 record["timings"]["build_repair_seconds"] = time.monotonic() - started
             _validate(target, python, output, env, postgres_version, container)
+            _validate(target, python, output, env, postgres_version, container, source=True)
             record["status"] = "passed"
     except BaseException as error:
         record["status"] = "failed"
@@ -312,6 +345,7 @@ def main() -> None:
     parser.add_argument("--newest-postgres", action="store_true")
     parser.add_argument("--prepare-companions", type=Path)
     parser.add_argument("--companions", type=Path)
+    parser.add_argument("--sdists", type=Path)
     parser.add_argument("--target", choices=[target["id"] for target in targets()])
     parser.add_argument("--python", choices=PYTHONS)
     parser.add_argument("--output", type=Path)
@@ -326,7 +360,12 @@ def main() -> None:
         _companions(args.prepare_companions.resolve(), dict(os.environ))
     elif all((args.target, args.python, args.output, args.postgres_version)):
         build(
-            args.target, args.python, args.output.resolve(), args.postgres_version, args.companions
+            args.target,
+            args.python,
+            args.output.resolve(),
+            args.postgres_version,
+            args.companions,
+            args.sdists,
         )
     else:
         parser.error("build requires --target, --python, --output and --postgres-version")

@@ -975,7 +975,7 @@ _VERDICT_INVOCATIONS = (
 )
 """The command lines that run the supervisor, as they begin."""
 
-_EVENT_CONDITION_RE = re.compile(r"^github\.event_name\s*==\s*'(?:push|pull_request)'$")
+_EVENT_CONDITION_RE = re.compile(r"^github\.event_name\s*==\s*'([a-z_]+)'$")
 _ORDINARY_TRIGGERS = frozenset({"push", "pull_request"})
 
 
@@ -1044,17 +1044,37 @@ def _invokes_verdict(tokens: Sequence[str]) -> bool:
     return any(tuple(tokens[: len(start)]) == start for start in _VERDICT_INVOCATIONS)
 
 
-def _event_conditioned(condition: str | None) -> bool:
+def _event_conditioned(condition: str | None, *, scheduled_database: bool = False) -> bool:
     if condition is None:
         return False
-    return all(_EVENT_CONDITION_RE.match(part.strip()) for part in condition.split("||"))
+    allowed = _ORDINARY_TRIGGERS | ({"schedule"} if scheduled_database else set())
+    return all(
+        (match := _EVENT_CONDITION_RE.fullmatch(part.strip())) is not None
+        and match.group(1) in allowed
+        for part in condition.split("||")
+    )
+
+
+def _scheduled_database_path(repository: _Repository) -> set[str]:
+    assert repository.workflow is not None
+    by_identifier = {job.identifier: job for job in repository.workflow.jobs}
+    pending = [job.identifier for job in _relevance_gated_jobs(repository, "db")]
+    path: set[str] = set()
+    while pending:
+        identifier = pending.pop()
+        if identifier not in path:
+            path.add(identifier)
+            job = by_identifier.get(identifier)
+            if job is not None:
+                pending.extend(job.needs)
+    return path
 
 
 def _check_relevance_gating(repository: _Repository) -> Iterator[Diagnostic]:
     """§9's relevance-gated classes: a relevance job, the class job gated on it,
     and an always-run verdict job depending on neither the class job nor the
-    other way round — and, where the workflow adds triggers only the class's path
-    serves, no other job running on them."""
+    other way round. Extra triggers run that path alone, except explicitly
+    selected scheduled database compatibility work."""
     workflow = repository.workflow
     if workflow is None:
         return
@@ -1089,13 +1109,16 @@ def _check_relevance_gating(repository: _Repository) -> Iterator[Diagnostic]:
             )
     if not path or workflow.triggers <= _ORDINARY_TRIGGERS:
         return
+    database_path = _scheduled_database_path(repository)
     for job in workflow.jobs:
-        if job.identifier not in path and not _event_conditioned(job.condition):
+        if job.identifier not in path and not _event_conditioned(
+            job.condition, scheduled_database=job.identifier in database_path
+        ):
             yield Diagnostic(
                 "unconditioned-job",
                 f"job `{job.identifier}` runs on every trigger; the workflow also triggers "
-                f"for the relevance-gated path alone, so every other job runs only on "
-                f"`github.event_name == 'push'` or `'pull_request'`",
+                f"for relevance-gated work; other jobs explicitly select push/pull-request "
+                f"events, or scheduled database compatibility work",
             )
 
 

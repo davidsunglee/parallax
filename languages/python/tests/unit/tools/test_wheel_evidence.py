@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +103,43 @@ def _target(root: Path, target: str, python: str) -> Path:
             },
             "drivers": {name: {**driver, "implementation": name} for name in ("binary", "c")},
             "companions": companions,
+        },
+    )
+    source = directory / "source"
+    shutil.copytree(directory / "wheelhouse", source / "wheelhouse")
+    shutil.copytree(directory / "companions", source / "companions")
+    shutil.copytree(directory / "validation", source / "validation")
+    sdists: list[dict[str, str]] = []
+    for member in load_workspace(WORKSPACE).members:
+        if member.name == "parallax-conformance":
+            continue
+        path = directory / "sdists" / f"{member.name.replace('-', '_')}-0.1.0.tar.gz"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"{member.name} source".encode())
+        sdists.append(
+            {"filename": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        )
+    _write(
+        source / "source.json",
+        {
+            "status": "passed",
+            "sdists": sorted(sdists, key=lambda item: item["filename"]),
+            "wheels": sorted(
+                [
+                    {
+                        "filename": wheel.name,
+                        "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                    },
+                    *[
+                        entry
+                        for entry in companions
+                        if not entry["filename"].startswith("parallax_conformance-")
+                    ],
+                ],
+                key=lambda item: item["filename"],
+            ),
+            "build_seconds": 22.5,
+            "elapsed_seconds": 52.0,
         },
     )
     return directory
@@ -260,6 +298,7 @@ def test_postgresql_versions_must_match_the_selected_version_and_each_other(
     validation = json.loads(validation_path.read_text())
     validation["postgres_version"] = "18.7"
     _write(validation_path, validation)
+    _write(path.parent / "source" / "validation" / "validation.json", validation)
     assert "different PostgreSQL versions" in " ".join(_summarize(matrix)["findings"])
 
 
@@ -347,3 +386,45 @@ def test_incomplete_companion_set_is_never_a_complete_installation_proof(
     root, _, _ = matrix
     next(root.rglob("parallax_core-*.whl")).unlink()
     assert "companion wheels do not match" in " ".join(_summarize(matrix)["findings"])
+
+
+@pytest.mark.parametrize("mutation", ["missing", "sdist", "wheel", "driver", "version"])
+def test_source_installation_proof_is_required_for_every_target(
+    matrix: tuple[Path, list[Document], Document],
+    mutation: str,
+) -> None:
+    root, _, _ = matrix
+    directory = next(root.rglob("target.json")).parent
+    if mutation == "missing":
+        (directory / "source" / "source.json").unlink()
+    elif mutation == "sdist":
+        next((directory / "sdists").glob("*.tar.gz")).write_bytes(b"different source")
+    elif mutation == "wheel":
+        next((directory / "source" / "wheelhouse").glob("*.whl")).write_bytes(b"different build")
+    else:
+        path = directory / "source" / "validation" / "validation.json"
+        validation = json.loads(path.read_text())
+        if mutation == "driver":
+            validation["drivers"]["binary"]["tests"]["skipped"] = 1
+        else:
+            validation["postgres_version"] = "18.7"
+        _write(path, validation)
+    assert _summarize(matrix)["status"] == "failed"
+
+
+def test_targets_cannot_validate_different_retained_source_inputs(
+    matrix: tuple[Path, list[Document], Document],
+) -> None:
+    root, _, _ = matrix
+    path = next(root.rglob("target.json")).parent
+    sdist = next((path / "sdists").glob("*.tar.gz"))
+    sdist.write_bytes(b"different source validated in one cell")
+    source_path = path / "source" / "source.json"
+    record = json.loads(source_path.read_text())
+    for identity in record["sdists"]:
+        if identity["filename"] == sdist.name:
+            identity["sha256"] = hashlib.sha256(sdist.read_bytes()).hexdigest()
+    _write(source_path, record)
+    summary = _summarize(matrix)
+    assert summary["status"] == "failed"
+    assert "different source distributions" in " ".join(summary["findings"])

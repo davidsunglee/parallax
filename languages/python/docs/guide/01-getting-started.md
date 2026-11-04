@@ -6,33 +6,35 @@ read. Along the way you meet the three objects every Parallax program uses: a mo
 
 ## Install
 
-Parallax needs the Python version its
-[package metadata](../../packages/parallax-snapshot/pyproject.toml) requires,
-[uv](https://docs.astral.sh/uv/) to build it, and a PostgreSQL server. It is not
-published to a package index yet, so clone the repository and build its distributions:
+Install the coordinated production distributions in your application's environment:
 
 ```bash
-git clone https://github.com/davidsunglee/parallax.git
-cd parallax/languages/python
-uv build --all-packages -o dist
-pip install --find-links dist parallax-snapshot parallax-postgres parallax-evolution parallax-descriptor
+python -m pip install parallax-snapshot==0.1.0 parallax-postgres==0.1.0 parallax-evolution==0.1.0 parallax-descriptor==0.1.0
 ```
 
-Run the `pip install` in your application's environment. It installs the distributions
-this guide imports from:
+These are the distributions this guide imports: Snapshot supplies the application
+API, PostgreSQL supplies the database adapter, Evolution generates schema changes,
+and Descriptor reads and writes model descriptors. Their exact first-party
+requirements install the matching `parallax-core`. Install only the distributions
+your application needs; `parallax-conformance` is repository development tooling
+and is not published.
 
-- `parallax-snapshot`, the API you program against. It takes its name from the snapshots
-  its reads return, the immutable values that `find` hands you inside a `Snapshot`.
-- `parallax-postgres`, the PostgreSQL adapter. It drives PostgreSQL through the psycopg
-  driver, whose binary build it installs, so you need no system libpq; the lifecycle
-  guide's [driver build](../postgresql-lifecycle.md#driver-build) section explains.
-- `parallax-evolution`, which generates schema changes from your model.
-- `parallax-descriptor`, which saves a model as a YAML descriptor and reads one back.
-- `parallax-core`, which provides the `parallax.core` modules every chapter imports.
-  `pip` takes it from the same `dist` directory, because the others depend on it.
+The [package metadata](../../packages/parallax-snapshot/pyproject.toml) owns Python
+support, the [wheel targets](../../tools/wheel_targets.json) own supported platforms,
+and the [binding contract](../../spec/execution.md#supported-postgresql) owns
+PostgreSQL support. Use wheels for normal installation. Third-party dependencies
+come from PyPI alongside the selected Parallax packages.
 
-Third-party dependencies, such as Pydantic and psycopg, come from PyPI as usual. Add
-`parallax-aws` if you authenticate to Amazon RDS with IAM.
+`parallax-postgres` installs psycopg's binary build, including libpq. For a build
+against your own libpq, follow the lifecycle guide's
+[C-driver installation](../postgresql-lifecycle.md#driver-build). Add
+`"parallax-aws[postgres]==0.1.0"` for Amazon RDS IAM authentication; it is optional
+and does not arrive with the other distributions.
+
+The distributions share the `parallax` import namespace. Do not co-install the
+unrelated PyPI distribution named `parallax`: its imports collide with this
+namespace. The [release policy](../releasing.md#compatibility-and-maintenance)
+explains coordinated upgrades and maintenance.
 
 Each chapter of this guide opens with the imports for every name it uses. This
 chapter's are:

@@ -5,10 +5,16 @@ description = "Parallax snapshot lifecycle extension: Snapshot[T] materializatio
 readme = "README.md"
 requires-python = ">=3.14"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "parallax-core",
+    "parallax-core==0.1.0",
 ]
+
+[project.urls]
+Documentation = "https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/guide/README.md"
+Repository = "https://github.com/davidsunglee/parallax"
+Changelog = "https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/releases.md"
 
 [build-system]
 requires = ["hatchling"]
@@ -18,4 +24,4 @@ build-backend = "hatchling.build"
 packages = ["src/parallax"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/parallax", "README.md"]
+include = ["src/parallax", "README.md", "LICENSE", "NOTICE"]

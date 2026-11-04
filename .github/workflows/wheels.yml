@@ -55,6 +55,7 @@ jobs:
           name: wheel-companions-${{ github.run_attempt }}
           path: |
             languages/python/reports/wheel-companions/companions/*.whl
+            languages/python/reports/wheel-companions/sdists/*.tar.gz
             languages/python/reports/wheel-companions/setup.log
           if-no-files-found: error
           retention-days: 30
@@ -88,7 +89,7 @@ jobs:
           WHEEL_POSTGRES: ${{ needs.prepare.outputs.postgres }}
         shell: bash
         run: |
-          python languages/python/tools/wheel_build.py --target "$WHEEL_TARGET" --python "$WHEEL_PYTHON" --postgres-version "$WHEEL_POSTGRES" --companions languages/python/reports/wheel-companions/companions --output languages/python/reports/wheel-cell
+          python languages/python/tools/wheel_build.py --target "$WHEEL_TARGET" --python "$WHEEL_PYTHON" --postgres-version "$WHEEL_POSTGRES" --companions languages/python/reports/wheel-companions/companions --sdists languages/python/reports/wheel-companions/sdists --output languages/python/reports/wheel-cell
       - name: Retain exact wheel and available failure evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -98,6 +99,17 @@ jobs:
           if-no-files-found: error
           path: |
             languages/python/reports/wheel-cell/target.json
+            languages/python/reports/wheel-cell/sdists/*.tar.gz
+            languages/python/reports/wheel-cell/source/source.json
+            languages/python/reports/wheel-cell/source/*.log
+            languages/python/reports/wheel-cell/source/*.seconds.json
+            languages/python/reports/wheel-cell/source/wheelhouse/*.whl
+            languages/python/reports/wheel-cell/source/companions/*.whl
+            languages/python/reports/wheel-cell/source/validation/validation.json
+            languages/python/reports/wheel-cell/source/validation/*/*.log
+            languages/python/reports/wheel-cell/source/validation/*/*.xml
+            languages/python/reports/wheel-cell/source/validation/*/*.json
+            languages/python/reports/wheel-cell/source/validation/*/timings/**
             languages/python/reports/wheel-cell/validation-container.json
             languages/python/reports/wheel-cell/*.log
             languages/python/reports/wheel-cell/postgres/*.log
@@ -159,6 +171,8 @@ jobs:
           first=$(find languages/python/reports/wheel-evidence -type d -name companions | sort | head -1)
           mkdir -p languages/python/reports/validated-wheels/companions
           cp "$first"/*.whl languages/python/reports/validated-wheels/companions/
+          mkdir -p languages/python/reports/validated-wheels/sdists
+          cp "$(dirname "$first")"/sdists/*.tar.gz languages/python/reports/validated-wheels/sdists/
           cp languages/python/reports/wheel-summary/manifest.json languages/python/reports/validated-wheels/
       - name: Retain exact validated artifacts for release
         uses: actions/upload-artifact@v7

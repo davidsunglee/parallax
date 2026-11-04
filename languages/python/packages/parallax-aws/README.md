@@ -1,11 +1,14 @@
 # parallax-aws
 
 Parallax's AWS credential providers: the sole declarer of `botocore`. See
-`languages/python/spec/python.md`.
+the [Python binding](https://github.com/davidsunglee/parallax/blob/main/languages/python/spec/python.md).
+The distribution includes Apache-2.0 `LICENSE` and `NOTICE`; see the
+[release notes](https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/releases.md)
+for publication status.
 
 ## Authenticating an RDS Postgres login with IAM
 
-Install the `postgres` extra — `pip install parallax-aws[postgres]` — and each
+Install the `postgres` extra — `python -m pip install "parallax-aws[postgres]==0.1.0"` — and each
 endpoint is one call:
 
 ```python

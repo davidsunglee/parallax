@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from email.parser import Parser
 from pathlib import Path, PurePosixPath
 
 from tests._support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR, Wheelhouse
@@ -57,6 +58,22 @@ def test_production_wheels_exclude_conformance_and_tests(wheelhouse: Wheelhouse)
         code = [n for n in names if n.startswith("parallax/") and n.endswith(".py")]
         assert code, package
         assert all(n.startswith(f"{own}/") for n in code), package
+
+
+def test_production_wheels_pin_the_release_and_ship_licence_notices(wheelhouse: Wheelhouse) -> None:
+    for package in PRODUCTION_PACKAGES:
+        with zipfile.ZipFile(wheelhouse.wheels[package]) as archive:
+            metadata_path = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+            metadata = Parser().parsestr(archive.read(metadata_path).decode())
+            assert metadata["Version"] == "0.1.0"
+            assert metadata["License-Expression"] == "Apache-2.0"
+            assert set(metadata.get_all("License-File", [])) == {"LICENSE", "NOTICE"}
+            for requirement in metadata.get_all("Requires-Dist", []):
+                if requirement.startswith("parallax-"):
+                    assert requirement.partition(";")[0].strip().endswith("==0.1.0"), requirement
+            licence_dir = metadata_path.removesuffix("METADATA") + "licenses/"
+            assert archive.read(licence_dir + "LICENSE") == (REPO_ROOT / "LICENSE").read_bytes()
+            assert b"Copyright 2026 David Lee" in archive.read(licence_dir + "NOTICE")
 
 
 def test_core_distributions_ship_normative_reserved_words(wheelhouse: Wheelhouse) -> None:
@@ -331,9 +348,9 @@ def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
     }
     unconditional = {line for line in requires if ";" not in line}
     gated = requires - unconditional
-    assert unconditional == {"parallax-core", "botocore>=1.43.99"}
+    assert unconditional == {"parallax-core==0.1.0", "botocore>=1.43.99"}
     assert {line.partition(";")[0].strip() for line in gated} == {
-        "parallax-postgres",
+        "parallax-postgres==0.1.0",
         "psycopg<3.4,>=3.3.6",
     }
     assert all('extra == "postgres"' in line.replace("'", '"') for line in gated), gated

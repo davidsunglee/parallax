@@ -329,14 +329,28 @@ def profile_run(profile: Profile) -> Iterator[Any]:
             yield run
         return
     opened = ExitStack()
+    selected = os.environ.get("PARALLAX_POSTGRES_VERSION")
+    if selected is not None:
+        from tests._support.postgres_versions import selected_postgres
+
+        opened.enter_context(selected_postgres(selected))
     try:
         run = opened.enter_context(profile.provisioned())
     except Exception as exc:
+        opened.close()
         reason = f"Testcontainers Postgres unavailable: {type(exc).__name__}: {exc}"
         record_db_skip(reason)
         pytest.skip(reason)
         return
     try:
+        if selected is not None:
+            from tests._support.postgres_versions import record_version
+
+            record_version(
+                run,
+                selected,
+                Path(os.environ.get("PARALLAX_POSTGRES_EVIDENCE", "reports/postgres-versions")),
+            )
         yield run
     finally:
         opened.close()
