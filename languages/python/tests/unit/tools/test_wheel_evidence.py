@@ -219,7 +219,7 @@ def test_modified_retained_wheel_is_refused_even_after_validation_passed(
     matrix: tuple[Path, list[Document], Document],
 ) -> None:
     root, _, _ = matrix
-    next(root.rglob("*.whl")).write_bytes(b"rebuilt bytes")
+    next(root.rglob("parallax_postgres-*.whl")).write_bytes(b"rebuilt bytes")
     summary = _summarize(matrix)
     assert summary["status"] == "failed"
     assert "retained wheel identity" in " ".join(summary["findings"])
