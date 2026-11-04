@@ -3,7 +3,12 @@
 The reusable [wheel workflow](../../../.github/workflows/wheels.yml) builds the
 [declared native targets](../tools/wheel_targets.json) for the Python minors
 selected from workspace metadata by `interpreter_matrix.supported_minors`.
-The ordinary CI workflow calls it on pull requests and main; the
+The ordinary CI workflow calls it for relevant pull requests and main pushes;
+[wheel relevance](../tools/wheel_relevance.py) owns the exact input paths.
+It covers build metadata, Python and psycopg constraints and lockfiles, native
+loader sources and conversion/loading dependencies, wheel validation tests and
+tooling, and their workflows. Unrelated Python source changes do not run it.
+An unknown comparison base runs the matrix. The
 [refresh workflow](../../../.github/workflows/wheel-refresh.yml) calls the same
 path weekly and on demand. Each run resolves the newest stable PostgreSQL 18.x
 from PostgreSQL's release feed, checks the required floor, and verifies the exact
