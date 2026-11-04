@@ -63,8 +63,8 @@
 
 - name: class-aggregate-with-a-body
   file: justfile
-  old: "python-check-db: python-test-db"
-  new: "python-check-db: python-test-db\n    @echo drift"
+  old: 'python-check-db shard="1/1": (python-test-db shard)'
+  new: "python-check-db shard=\"1/1\": (python-test-db shard)\n    @echo drift"
   code: aggregate-with-body
   message: "`python-check-db` composes other commands and carries a command body"
 
