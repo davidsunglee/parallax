@@ -574,3 +574,21 @@ def test_the_held_controls_read_a_result_shared_with_its_root_and_after_closing_
 
 if __name__ == "__main__":
     serve_one_measurement(sys.argv[1])
+
+
+@pytest.mark.parametrize(
+    "workload,cell,roots,connection",
+    [
+        ("live-read-historical-txtime", "live.typed.eager.maxMs", 199, "unused"),
+        ("live-read-historical-txtime", "live.typed.eager.maxMs", 200, None),
+        ("live-read-historical-txtime", "live.typed.page128.maxMs", 200, "unused"),
+        ("live-read-conventional-fanout", "live.wire.eager.maxMs", 200, "unused"),
+    ],
+)
+def test_representative_read_refuses_unfrozen_or_unprovisioned_requests(
+    workload: str, cell: str, roots: int, connection: str | None
+) -> None:
+    with pytest.raises(ValueError):
+        snapshot_delivery_reading._representative_live(  # pyright: ignore[reportPrivateUsage] - child request validation
+            workload, cell, roots, connection, warmups=3, measured=9
+        )

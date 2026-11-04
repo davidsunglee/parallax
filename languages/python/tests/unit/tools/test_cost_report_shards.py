@@ -143,6 +143,7 @@ def test_the_plan_splits_snapshot_by_workload_heaviest_first_and_keeps_the_other
         ("snapshot-bitemporal-current", SNAPSHOT.subject, frozenset({"bitemporal-current"})),
         ("snapshot-versioned-document", SNAPSHOT.subject, frozenset({"versioned-document"})),
         ("snapshot-controls", SNAPSHOT.subject, frozenset({CONTROL_GROUP})),
+        ("snapshot-live-reads", SNAPSHOT.subject, frozenset({"live-reads"})),
         (
             "snapshot-geometry-scalar-plan-stress",
             SNAPSHOT.subject,
@@ -178,7 +179,8 @@ def test_the_plan_covers_every_snapshot_address_on_every_supported_minor_exactly
     )
     assert shard_arguments(SHARDS[0]) == [cost_report.WORKLOAD_OPTION, "duplicate-include"]
     assert shard_arguments(SHARDS[5]) == [cost_report.WORKLOAD_OPTION, CONTROL_GROUP]
-    assert shard_arguments(SHARDS[6]) == [
+    assert shard_arguments(SHARDS[6]) == [cost_report.WORKLOAD_OPTION, "live-reads"]
+    assert shard_arguments(SHARDS[7]) == [
         cost_report.WORKLOAD_OPTION,
         GEOMETRY_GROUP,
         cost_report.WORKLOAD_OPTION,

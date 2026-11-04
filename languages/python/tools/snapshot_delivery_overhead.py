@@ -10,7 +10,7 @@ observations: an outside reading never changes this command's exit status.
 Missing or malformed readings are explicit incompleteness and errors.
 
 ``--workload`` narrows the evidence path to named contract workloads and the
-``geometry``, ``scalar``, ``plan``, and ``control`` groups: the envelope keeps
+``geometry``, ``scalar``, ``plan``, ``control``, and ``live-reads`` groups: the envelope keeps
 full provenance and completeness is judged over the addresses selected, so a
 slice of the matrix is evidence about that slice, never a diagnostic promoted
 to evidence.
@@ -59,6 +59,7 @@ from interpreter_matrix import (
     supported_minors,
     write_metadata,
 )
+from parallax.conformance import live_read_workloads
 from parallax.conformance.budget import BudgetCell, BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -117,7 +118,7 @@ WARM_PLAN_WINDOW: Final = "read-plan-reuse"
 CONTROL_DELIVERY_WINDOW: Final = "control-delivery"
 RESULT_HELD_WINDOW: Final = "result-held-metadata"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
-    LIVE_WINDOW: "a connected Wire find or stream against PostgreSQL, parsing included",
+    LIVE_WINDOW: "a connected Typed or Wire find or stream against PostgreSQL, parsing included",
     PROVIDER_FREE_WINDOW: (
         "a Wire find over already-parsed provider rows through production planning, "
         "materialization, and publication; no parsing or provider work"
@@ -182,7 +183,7 @@ class ChildReading:
 @dataclass(frozen=True, slots=True)
 class GeometryCell:
     """One address outside the Budget Contract: a geometry, scalar-type, plan, or
-    control workload's cell."""
+    control or live-read workload's cell."""
 
     workload: str
     path: str
@@ -241,6 +242,10 @@ def control_cells(contract: BudgetContract) -> tuple[GeometryCell, ...]:
         GeometryCell(workload, path)
         for workload, path in control_support.control_cells(contract.memory_scaling_root_counts)
     )
+
+
+def live_read_cells() -> tuple[GeometryCell, ...]:
+    return tuple(GeometryCell(workload, path) for workload, path in live_read_workloads.cells())
 
 
 def control_window(workload: str, path: str) -> str:
@@ -452,15 +457,21 @@ def addresses(
     *,
     controls: bool = True,
     scalar_types: bool = True,
+    live_reads: bool = True,
 ) -> tuple[Address, ...]:
     """Every (runtime, workload, cell) address a complete envelope carries,
     the scalar-type reads on the runtimes :func:`reads_scalar_types` admits alone;
     without ``scalar_types``, the matrix a capture taken before the scalar-type
     reads existed carries, and without ``controls`` as well, the one taken
-    before the control group existed."""
+    before the control group existed. Those historical matrices also omit
+    ``live_reads``, which adds only elapsed readings against PostgreSQL."""
     leading = (*expanded_cells(contract), *geometry_cells())
     scalars = scalar_cells() if scalar_types else ()
-    trailing = (*plan_cells(), *(control_cells(contract) if controls else ()))
+    trailing = (
+        *plan_cells(),
+        *(control_cells(contract) if controls else ()),
+        *(live_read_cells() if live_reads else ()),
+    )
     return tuple(
         (runtime, cell.workload, cell.path)
         for runtime in runtimes
@@ -475,11 +486,14 @@ def selected_addresses(
     *,
     controls: bool = True,
     scalar_types: bool = True,
+    live_reads: bool = True,
 ) -> tuple[Address, ...]:
     """The addresses among :func:`addresses` that ``selected`` keeps."""
     return tuple(
         address
-        for address in addresses(contract, runtimes, controls=controls, scalar_types=scalar_types)
+        for address in addresses(
+            contract, runtimes, controls=controls, scalar_types=scalar_types, live_reads=live_reads
+        )
         if selected(address[1], address[2])
     )
 
@@ -623,7 +637,8 @@ GEOMETRY_GROUP: Final = "geometry"
 SCALAR_GROUP: Final = scalar_support.READ_GROUP
 PLAN_GROUP: Final = "plan"
 CONTROL_GROUP: Final = control_support.CONTROL_GROUP
-WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, SCALAR_GROUP, PLAN_GROUP, CONTROL_GROUP)
+LIVE_READ_GROUP: Final = live_read_workloads.GROUP
+WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, SCALAR_GROUP, PLAN_GROUP, CONTROL_GROUP, LIVE_READ_GROUP)
 
 
 def workload_names(contract: BudgetContract) -> tuple[str, ...]:
@@ -635,7 +650,8 @@ def workload_names(contract: BudgetContract) -> tuple[str, ...]:
 def workload_selection(names: Iterable[str], contract: BudgetContract | None = None) -> Selection:
     """The addresses the exact workload ``names`` cover: a contract workload id
     selects its cells, ``geometry``, ``scalar``, ``plan``, and ``control`` select
-    the groups outside the contract, and no name at all selects every cell. An
+    the provider-free groups outside the contract; ``live-reads`` selects the
+    additive PostgreSQL timing cells, and no name at all selects every cell. An
     unknown name is a ``ValueError`` before any work starts."""
     active = contract if contract is not None else BudgetContract.load()
     known = workload_names(active)
@@ -647,6 +663,8 @@ def workload_selection(names: Iterable[str], contract: BudgetContract | None = N
         return every_cell
 
     def selected(workload: str, _path: str) -> bool:
+        if workload.startswith(live_read_workloads.PREFIX):
+            return LIVE_READ_GROUP in chosen
         if workload.startswith(GEOMETRY_PREFIX):
             return GEOMETRY_GROUP in chosen
         if workload.startswith(SCALAR_PREFIX):
@@ -687,6 +705,7 @@ def _measure_runtime(
                 workload_cells,
                 recorder,
             )
+    _measure_live_reads(contract, provisioner, runner, runtime, results, selected, recorder)
     for group, group_cells in (
         (GEOMETRY_GROUP, geometry_cells()),
         (SCALAR_GROUP, scalar_cells() if reads_scalar_types(runtime) else ()),
@@ -706,6 +725,47 @@ def _measure_runtime(
                     cell,
                     contract.memory_scaling_root_counts[0],
                     None,
+                )
+
+
+def _measure_live_reads(
+    contract: BudgetContract,
+    provisioner: Provisioner | None,
+    runner: ChildRunner,
+    runtime: str,
+    results: dict[Address, list[ChildResult]],
+    selected: Selection,
+    recorder: Spans,
+) -> None:
+    chosen = [cell for cell in live_read_cells() if selected(cell.workload, cell.path)]
+    for workload in live_read_workloads.WORKLOAD_IDS:
+        cells = [
+            cell for cell in chosen if cell.workload == f"{live_read_workloads.PREFIX}{workload}"
+        ]
+        if not cells:
+            continue
+        with recorder.span("workload", cells[0].workload, member=SUBJECT, runtime=runtime):
+            if provisioner is None:
+                for cell in cells:
+                    results[(runtime, cell.workload, cell.path)].append(
+                        Diagnostic(
+                            "cell-unprovisioned",
+                            f"{cell.workload}.{cell.path} needs a provisioned database",
+                        )
+                    )
+                continue
+            with recorder.span(
+                "setup",
+                "provision",
+                member=SUBJECT,
+                runtime=runtime,
+                workload=cells[0].workload,
+                roots=str(live_read_workloads.ROOTS),
+            ):
+                live_read_workloads.provision(workload, provisioner)
+            for cell in cells:
+                _read_root_count(
+                    contract, runner, runtime, results, cell, live_read_workloads.ROOTS, provisioner
                 )
 
 
@@ -876,8 +936,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[],
         help=(
-            "an exact contract workload id, or the geometry, scalar, plan, or control group, "
-            "to measure as evidence"
+            "an exact contract workload id or a geometry, scalar, plan, control, or live-reads "
+            "group to measure as evidence"
         ),
     )
     parser.add_argument(

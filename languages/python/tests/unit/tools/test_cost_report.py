@@ -1422,7 +1422,9 @@ def test_diagnostic_options_are_fenced_from_verification_and_collection(
 # --------------------------------------------------------------------------- #
 def _without_scalar_types(snapshot: dict[str, Any]) -> None:
     readings = cast("list[dict[str, Any]]", snapshot["readings"])
-    readings[:] = [r for r in readings if not str(r["workload"]).startswith("scalar-")]
+    readings[:] = [
+        r for r in readings if not str(r["workload"]).startswith(("scalar-", "live-read-"))
+    ]
 
 
 def _without_controls(snapshot: dict[str, Any]) -> None:
@@ -2167,3 +2169,27 @@ def test_a_malformed_conditions_sidecar_is_a_usage_error(
         cost_report.main(["--compare", str(base), str(head), "--require-compatible"])
     assert error.value.code == 2
     assert "does not decode" in capsys.readouterr().err
+
+
+def test_live_read_matrix_rejects_partial_or_duplicate_additions_but_reads_old_captures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    readings = cast("list[dict[str, Any]]", _snapshot_of(document)["readings"])
+    added = [reading for reading in readings if reading["workload"].startswith("live-read-")]
+    assert len(added) == 20
+    assert verify(document, required=["snapshot-delivery"]) == []
+    readings.remove(added[0])
+    assert any("matrix is not exact" in error for error in verify(document))
+    readings.append(added[0])
+    readings.append(deepcopy(added[0]))
+    assert any("duplicate" in error for error in verify(document))
+    readings[:] = [
+        reading for reading in readings if not reading["workload"].startswith("live-read-")
+    ]
+    assert verify(document) == []
+    assert any(
+        "matrix is not exact" in error for error in verify(document, required=["snapshot-delivery"])
+    )
