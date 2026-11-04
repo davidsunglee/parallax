@@ -122,8 +122,7 @@ CROSS_OBJECT_FLUSH_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
 BATCH_INSERT_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
     GateOwner(
         WRITE_MODULE,
-        f"test_the_{case.name.replace('.', '_').replace('-', '_')}"
-        "_stays_within_its_memory_gates",
+        f"test_the_{case.name.replace('.', '_').replace('-', '_')}_stays_within_its_memory_gates",
         WRITE_SUBJECT,
         _exactly(case.name),
     )
