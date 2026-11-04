@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 import sys
@@ -20,7 +21,9 @@ from wheel_build import matrix
 type Document = dict[str, Any]
 
 
-def _archive(path: Path, project: str, *, dependency: str | None = None) -> None:
+def _archive(
+    path: Path, project: str, *, dependency: str | None = None, license_text: bytes | None = None
+) -> None:
     metadata = (
         f"Metadata-Version: 2.4\nName: {project}\nVersion: 0.1.0\n"
         "License-Expression: Apache-2.0\nLicense-File: LICENSE\nLicense-File: NOTICE\n"
@@ -28,7 +31,9 @@ def _archive(path: Path, project: str, *, dependency: str | None = None) -> None
     if dependency:
         metadata += f"Requires-Dist: {dependency}\n"
     contents = {
-        "LICENSE": (release.REPO / "LICENSE").read_bytes(),
+        "LICENSE": license_text
+        if license_text is not None
+        else (release.REPO / "LICENSE").read_bytes(),
         "NOTICE": b"Parallax\nCopyright 2026 David Lee\n",
     }
     if path.suffix == ".whl":
@@ -125,6 +130,57 @@ def _change(path: Path, mutation: Callable[[Document], None]) -> None:
     document = json.loads(path.read_text())
     mutation(document)
     path.write_text(json.dumps(document))
+
+
+def _replace_license(handoff: Path, suffix: str, license_text: bytes) -> Path:
+    directory = "companions" if suffix.endswith(".whl") else "sdists"
+    path = handoff / directory / f"parallax_core-0.1.0{suffix}"
+    _archive(path, "parallax-core", license_text=license_text)
+    evidence = json.loads((handoff / "manifest.json").read_text())
+    for cell in evidence["targets"]:
+        for items in (
+            cell["companions"],
+            cell["source_install"]["companions"],
+            cell["source_install"]["sdists"],
+        ):
+            for item in items:
+                if item["filename"] == path.name:
+                    item.update(release.identity(path))
+    (handoff / "manifest.json").write_text(json.dumps(evidence))
+    return path
+
+
+@pytest.mark.parametrize("suffix", ["-py3-none-any.whl", ".tar.gz"])
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_freeze_accepts_license_line_endings_without_changing_archive_identity(
+    handoff: Path, tmp_path: Path, suffix: str, newline: bytes
+) -> None:
+    license_text = (release.REPO / "LICENSE").read_bytes().replace(b"\r\n", b"\n")
+    path = _replace_license(handoff, suffix, license_text.replace(b"\n", newline))
+    raw = path.read_bytes()
+    output = tmp_path / "legal-release"
+
+    release.freeze(handoff, output)
+    manifest = release.verify(output)
+
+    artifact = next(item for item in manifest["artifacts"] if item["filename"] == path.name)
+    assert artifact["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert path.read_bytes() == raw
+    assert (output / "dist" / path.name).read_bytes() == raw
+
+
+@pytest.mark.parametrize("suffix", ["-py3-none-any.whl", ".tar.gz"])
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_freeze_rejects_changed_license_text(
+    handoff: Path, tmp_path: Path, suffix: str, newline: bytes
+) -> None:
+    license_text = (release.REPO / "LICENSE").read_bytes().replace(b"\r\n", b"\n")
+    changed = license_text.replace(b"Apache License", b"Changed License", 1)
+    assert changed != license_text
+    _replace_license(handoff, suffix, changed.replace(b"\n", newline))
+
+    with pytest.raises(ValueError, match="invalid licence"):
+        release.freeze(handoff, tmp_path / "invalid-license")
 
 
 def test_freeze_preserves_exact_complete_set_without_publishing_conformance(
