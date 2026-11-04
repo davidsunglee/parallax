@@ -47,4 +47,6 @@ cd "postgresql-$version"
 ./configure --prefix="$prefix" --without-icu --without-readline --without-zlib
 make -j2
 make install
+make -C contrib/btree_gist -j2
+make -C contrib/btree_gist install
 "$prefix/bin/pg_config" --version
