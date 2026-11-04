@@ -27,6 +27,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wheels:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    uses: ./.github/workflows/wheels.yml
+    permissions:
+      contents: read
+      actions: read
+
   # Secret scanning: fail fast on live credentials or credentials whose verifier
   # could not conclusively determine status. GitHub secret scanning should still
   # be enabled for continuous repository monitoring where available.

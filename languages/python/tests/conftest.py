@@ -307,8 +307,7 @@ def profile() -> Profile:
 
 @pytest.fixture(scope="session")
 def profile_run(profile: Profile) -> Iterator[Any]:
-    """A session-scoped run of the declared profile over a self-managed
-    Testcontainers Postgres.
+    """A session-scoped run over Testcontainers or the wheel suite's disposable server.
 
     The profile provisions it and pairs its own reporting name with the port it
     opened, so the database-backed lane runs the declaration itself rather than a
@@ -318,7 +317,17 @@ def profile_run(profile: Profile) -> Iterator[Any]:
     Skips the database-backed lane with a reason (never silently) when Docker or
     the provider cannot be brought up; the ``python-check-db`` CI job fails on any
     such skip, so a green CI run has exercised every database-backed check.
+    A wheel suite supplies its server explicitly; an unavailable or unexpected
+    server fails that run rather than taking the Docker availability fallback.
     """
+    if "PARALLAX_WHEEL_DSN" in os.environ:
+        from tests._support.wheel_database import wheel_database
+
+        with wheel_database(
+            os.environ["PARALLAX_WHEEL_DSN"], os.environ["PARALLAX_WHEEL_POSTGRES_VERSION"]
+        ) as run:
+            yield run
+        return
     opened = ExitStack()
     try:
         run = opened.enter_context(profile.provisioned())

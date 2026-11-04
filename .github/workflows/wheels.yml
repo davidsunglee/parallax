@@ -1,0 +1,161 @@
+name: validated adapter wheels
+
+on:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Source commit to build and validate without publication
+        type: string
+        required: false
+        default: ""
+    outputs:
+      artifact:
+        description: Exact wheels and manifest; consume these bytes without rebuilding
+        value: ${{ jobs.verdict.outputs.artifact }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      postgres: ${{ steps.matrix.outputs.postgres }}
+      source: ${{ steps.matrix.outputs.source }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source-ref || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+      - uses: astral-sh/setup-uv@v7
+      - name: Select complete matrix and latest PostgreSQL 18
+        id: matrix
+        shell: bash
+        run: |
+          echo "matrix=$(python languages/python/tools/wheel_build.py --matrix)" >> "$GITHUB_OUTPUT"
+          echo "postgres=$(python languages/python/tools/wheel_build.py --newest-postgres)" >> "$GITHUB_OUTPUT"
+          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build shared companion wheels
+        run: python languages/python/tools/wheel_build.py --prepare-companions languages/python/reports/wheel-companions
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: wheel-companions-${{ github.run_attempt }}
+          path: |
+            languages/python/reports/wheel-companions/companions/*.whl
+            languages/python/reports/wheel-companions/setup.log
+          if-no-files-found: error
+          retention-days: 30
+
+  wheel:
+    name: wheel (${{ matrix.id }}, ${{ matrix.python }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel-companions-${{ github.run_attempt }}
+          path: languages/python/reports/wheel-companions
+      - name: Build repaired wheel and validate both drivers
+        env:
+          WHEEL_TARGET: ${{ matrix.id }}
+          WHEEL_PYTHON: ${{ matrix.python }}
+          WHEEL_POSTGRES: ${{ needs.prepare.outputs.postgres }}
+        shell: bash
+        run: |
+          python languages/python/tools/wheel_build.py --target "$WHEEL_TARGET" --python "$WHEEL_PYTHON" --postgres-version "$WHEEL_POSTGRES" --companions languages/python/reports/wheel-companions/companions --output languages/python/reports/wheel-cell
+      - name: Retain exact wheel and available failure evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel-cell-${{ matrix.id }}-${{ matrix.python }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            languages/python/reports/wheel-cell/target.json
+            languages/python/reports/wheel-cell/validation-container.json
+            languages/python/reports/wheel-cell/*.log
+            languages/python/reports/wheel-cell/postgres/*.log
+            languages/python/reports/wheel-cell/postgres/*.json
+            languages/python/reports/wheel-cell/wheelhouse/*.whl
+            languages/python/reports/wheel-cell/companions/*.whl
+            languages/python/reports/wheel-cell/validation/validation.json
+            languages/python/reports/wheel-cell/validation/*/*.log
+            languages/python/reports/wheel-cell/validation/*/*.xml
+            languages/python/reports/wheel-cell/validation/*/*.json
+            languages/python/reports/wheel-cell/validation/*/timings/**
+
+  verdict:
+    name: wheel-verdict
+    if: always()
+    needs: [prepare, wheel]
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact: validated-wheels-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source || inputs.source-ref || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheel-cell-*-${{ github.run_attempt }}
+          path: languages/python/reports/wheel-evidence
+      - name: Require every target and retain comparable evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source }}
+        shell: bash
+        run: |
+          python languages/python/tools/wheel_evidence.py --root languages/python/reports/wheel-evidence --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --source-sha "$SOURCE_SHA" --output languages/python/reports/wheel-summary
+      - name: Show wheel evidence
+        if: always()
+        shell: bash
+        run: |
+          if [ -f languages/python/reports/wheel-summary/summary.md ]; then
+            cat languages/python/reports/wheel-summary/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain manifest and failure summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheel-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: languages/python/reports/wheel-summary/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Assemble validated artifact handoff
+        shell: bash
+        run: |
+          mkdir -p languages/python/reports/validated-wheels
+          cp languages/python/reports/wheel-evidence/*/wheelhouse/*.whl languages/python/reports/validated-wheels/
+          first=$(find languages/python/reports/wheel-evidence -type d -name companions | sort | head -1)
+          mkdir -p languages/python/reports/validated-wheels/companions
+          cp "$first"/*.whl languages/python/reports/validated-wheels/companions/
+          cp languages/python/reports/wheel-summary/manifest.json languages/python/reports/validated-wheels/
+      - name: Retain exact validated artifacts for release
+        uses: actions/upload-artifact@v7
+        with:
+          name: validated-wheels-${{ github.run_id }}-${{ github.run_attempt }}
+          path: languages/python/reports/validated-wheels/
+          retention-days: 90
+          if-no-files-found: error
