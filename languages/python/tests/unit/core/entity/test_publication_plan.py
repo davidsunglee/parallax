@@ -251,7 +251,7 @@ def test_a_row_of_the_wrong_kind_or_width_is_refused_before_any_value_object_is_
 
 
 class _Wide(ValueObject):
-    """Nine scalars, so a full presence mask is past CPython's small-int cache."""
+    """A full presence mask beyond the supported interpreters' small-integer caches."""
 
     a: Attr[int]
     b: Attr[int]
@@ -262,15 +262,17 @@ class _Wide(ValueObject):
     g: Attr[int]
     h: Attr[int]
     i: Attr[int]
+    j: Attr[int]
+    k: Attr[int]
 
 
 def test_one_bitmap_memo_shares_one_mask_between_rows_of_one_pattern() -> None:
     def wide(bitmaps: dict[int, int]) -> list[object]:
-        return compact_row(plan_of(_Wide).template, 9, (), tuple(range(9)), bitmaps)
+        return compact_row(plan_of(_Wide).template, 11, (), tuple(range(11)), bitmaps)
 
     memo: dict[int, int] = {}
     first, second = wide(memo), wide(memo)
-    assert first == [0b111111111, *range(9)]
+    assert first == [0b11111111111, *range(11)]
     assert first[0] is second[0]
     assert wide({})[0] is not first[0]
 

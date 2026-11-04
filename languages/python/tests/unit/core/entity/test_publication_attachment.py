@@ -251,7 +251,7 @@ def test_a_value_object_refused_mid_row_leaves_the_shell_unattached(
 
 
 class _WideParcel(Entity, table="wide_parcel", name="WideParcel", namespace=_NS):
-    """Nine members, so a full presence mask is past CPython's small-int cache."""
+    """A full presence mask beyond the supported interpreters' small-integer caches."""
 
     id: Attr[int] = attr(primary_key=True)
     a: Attr[int | None]
@@ -262,17 +262,19 @@ class _WideParcel(Entity, table="wide_parcel", name="WideParcel", namespace=_NS)
     f: Attr[int | None]
     g: Attr[int | None]
     h: Attr[int | None]
+    i: Attr[int | None]
+    j: Attr[int | None]
 
 
 def test_nodes_of_one_presence_pattern_share_one_mask_within_one_publication_only() -> None:
     # The memo interning a pattern lives as long as one publication: two nodes
     # of one pattern share one mask, and a later publication's node does not —
     # so no mask is held by anything that outlives the graph that assembled it.
-    nodes = tuple((_WideParcel.identity, (key, *range(8)), ()) for key in range(2))
+    nodes = tuple((_WideParcel.identity, (key, *range(10)), ()) for key in range(2))
     construction = graph_construction_for(DomainModel(_WideParcel))
     first, second = published_nodes(construction, *nodes)
     third, _ = published_nodes(construction, *nodes)
-    assert raw_row(cast("Any", first)) == (0b111111111, 0, *range(8))
+    assert raw_row(cast("Any", first)) == (0b11111111111, 0, *range(10))
     assert (
         cast("Any", raw_row(cast("Any", first)))[0] is cast("Any", raw_row(cast("Any", second)))[0]
     )
