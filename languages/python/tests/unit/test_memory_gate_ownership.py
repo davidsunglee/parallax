@@ -124,10 +124,31 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
         for cell in ("retainedBytes", "transientBytes")
     }
     claimed_batch_addresses = {
-        (gate.subject, gate.workload, gate.cell)
-        for gate in gate_support.BATCH_INSERT_OWNER.gates(every_predicted)
+        frozenset((gate.subject, gate.workload, gate.cell) for gate in owner.gates(every_predicted))
+        for owner in gate_support.BATCH_INSERT_OWNERS
     }
-    assert claimed_batch_addresses == set(batch_addresses)
+    assert claimed_batch_addresses == {
+        frozenset(address for address in batch_addresses if address[1] == case)
+        for case in write_report.BATCH_CASE_NAMES
+    }
+
+    claimed_scalar_insert_addresses = {
+        frozenset((gate.subject, gate.workload, gate.cell) for gate in owner.gates(every_predicted))
+        for owner in gate_support.SCALAR_INSERT_OWNERS
+    }
+    assert claimed_scalar_insert_addresses == {
+        frozenset(
+            address
+            for address in predicted
+            if address[0] == gate_support.WRITE_SUBJECT
+            and address[1].startswith(f"scalar.{type_id}.")
+        )
+        for type_id in {
+            workload.split(".")[1]
+            for subject, workload, _cell in predicted
+            if subject == gate_support.WRITE_SUBJECT and workload.startswith("scalar.")
+        }
+    }
 
 
 @pytest.mark.usefixtures("committed_cost_evidence")

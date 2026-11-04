@@ -278,6 +278,7 @@ jobs:
       UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
       PARALLAX_REQUIRE_DB: "1"
+      PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/db-tests.xml --timing-report=reports/db-timings"
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
@@ -289,6 +290,16 @@ jobs:
         run: uv sync --frozen
       - name: just python-check-db
         run: just python-check-db
+
+      - name: Retain database test timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: db-test-timings-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: |
+            languages/python/reports/db-tests.xml
+            languages/python/reports/db-timings/
+          retention-days: 7
 
   # Every Python test needing an interpreter no other test shares, or the
   # committed cost evidence: the memory instruments read the whole process, so
@@ -311,7 +322,7 @@ jobs:
         shard: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]
     env:
       UV_FROZEN: "1"
-      PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/cost-tests.xml -o junit_duration_report=call"
+      PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/cost-tests.xml -o junit_duration_report=call --timing-report=reports/cost-timings"
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
@@ -329,7 +340,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: cost-test-durations-${{ github.run_attempt }}-${{ strategy.job-index }}
-          path: languages/python/reports/cost-tests.xml
+          path: |
+            languages/python/reports/cost-tests.xml
+            languages/python/reports/cost-timings/
           retention-days: 7
 
   # The cost class's confinement check, beside the tests it confines.

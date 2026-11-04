@@ -20,19 +20,24 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance.budget import MemoryGate, MemoryGates, ScalingDomain
-from parallax.conformance.workloads import SCALAR_TYPE_IDS, STRUCTURAL_LAYOUTS
+from parallax.conformance.workloads import (
+    SCALAR_CONTROL_TYPE_ID,
+    SCALAR_TYPE_IDS,
+    STRUCTURAL_LAYOUTS,
+)
 from tests.unit._workload_spelling_support import (
     GEOMETRY_PREFIX,
     GUARDED_PREFIX,
     PLAN_PREFIX,
     SCALAR_PREFIX,
 )
-from tests.unit._write_lowering_support import BATCH_PREFIX, CROSS_OBJECT_CASES
+from tests.unit._write_lowering_support import BATCH_CASES, CROSS_OBJECT_CASES
 
 __all__ = [
-    "BATCH_INSERT_OWNER",
+    "BATCH_INSERT_OWNERS",
     "CROSS_OBJECT_FLUSH_OWNERS",
     "OWNERS",
+    "SCALAR_INSERT_OWNERS",
     "SCALAR_READ_OWNERS",
     "GateOwner",
     "owner_of",
@@ -114,11 +119,25 @@ CROSS_OBJECT_FLUSH_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
     for case in CROSS_OBJECT_CASES
 )
 
-BATCH_INSERT_OWNER: Final = GateOwner(
-    WRITE_MODULE,
-    "test_the_batch_inserts_stay_within_their_memory_gates",
-    WRITE_SUBJECT,
-    _prefixed(BATCH_PREFIX),
+BATCH_INSERT_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
+    GateOwner(
+        WRITE_MODULE,
+        f"test_the_{case.name.replace('.', '_').replace('-', '_')}"
+        "_stays_within_its_memory_gates",
+        WRITE_SUBJECT,
+        _exactly(case.name),
+    )
+    for case in BATCH_CASES
+)
+
+SCALAR_INSERT_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
+    GateOwner(
+        WRITE_MODULE,
+        f"test_the_{type_id}_scalar_inserts_stay_within_their_memory_gates",
+        WRITE_SUBJECT,
+        _prefixed(f"scalar.{type_id}."),
+    )
+    for type_id in (SCALAR_CONTROL_TYPE_ID, *SCALAR_TYPE_IDS)
 )
 
 
@@ -141,12 +160,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         WRITE_SUBJECT,
         _prefixed("ancestor."),
     ),
-    GateOwner(
-        WRITE_MODULE,
-        "test_the_scalar_type_inserts_stay_within_their_memory_gates",
-        WRITE_SUBJECT,
-        _prefixed("scalar."),
-    ),
+    *SCALAR_INSERT_OWNERS,
     GateOwner(
         WRITE_MODULE,
         "test_the_prepared_model_stays_within_its_memory_gates",
@@ -154,7 +168,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         _exactly("model.prepared", "model.prepared.family"),
     ),
     *CROSS_OBJECT_FLUSH_OWNERS,
-    BATCH_INSERT_OWNER,
+    *BATCH_INSERT_OWNERS,
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_depth_reads_stay_within_their_memory_gates",

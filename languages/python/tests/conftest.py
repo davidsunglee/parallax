@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tests._support import committed_evidence, cost_durations
+from tests._support import committed_evidence, cost_durations, session_timings
 from tests._support.distributions import Wheelhouse, build_wheelhouse
 from tests._support.root_ownership import close_owned_roots
 
@@ -57,6 +57,11 @@ _DURATION_REFUSALS: list[str] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--timing-report",
+        metavar="DIR",
+        help="write per-process startup events and per-test phase timings as JSONL in DIR",
+    )
     parser.addoption(
         "--shard",
         default=_WHOLE_CLASS,
@@ -102,6 +107,7 @@ def pytest_configure(config: pytest.Config) -> None:
     _store_durations = config.getoption("--store-cost-durations") is not None and not hasattr(
         config, "workerinput"
     )
+    session_timings.configure(config)
 
 
 def _classified(item: pytest.Item) -> str:
