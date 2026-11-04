@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,9 @@ def test_timing_reports_keep_startup_and_each_test_phase_on_failure(
     )
     (tmp_path / "test_sample.py").write_text(
         "import pytest\n"
+        "import subprocess\n"
+        "import sys\n"
+        "from pathlib import Path\n"
         "@pytest.fixture\n"
         "def broken_fixture():\n"
         "    pytest.fail('setup failure')\n"
@@ -35,7 +39,11 @@ def test_timing_reports_keep_startup_and_each_test_phase_on_failure(
         "    yield\n"
         "    pytest.fail('teardown failure')\n"
         "def test_pass():\n"
-        "    pass\n"
+        "    directory = Path(__file__).parent\n"
+        "    completed = subprocess.run([sys.executable, '-m', 'pytest', '-c',\n"
+        "        str(directory / 'pytest.ini'), '--confcutdir', str(directory),\n"
+        "        '--collect-only', '-q', __file__], capture_output=True, text=True, timeout=30)\n"
+        "    assert completed.returncode == 0, completed.stdout + completed.stderr\n"
         "def test_call_failure():\n"
         "    pytest.fail('call failure')\n"
         "def test_setup_failure(broken_fixture):\n"
@@ -64,14 +72,28 @@ def test_timing_reports_keep_startup_and_each_test_phase_on_failure(
             str(tmp_path / "test_sample.py"),
         ],
         cwd=PY_ROOT,
-        env={key: value for key, value in os.environ.items() if key != "PYTEST_ADDOPTS"},
+        env={**os.environ, "PYTEST_ADDOPTS": f"--timing-report={shlex.quote(str(report_dir))}"},
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
     assert completed.returncode == 1, completed.stdout + completed.stderr
-    files = {path.stem: _events(path) for path in report_dir.glob("*.jsonl")}
+    sessions = [
+        {path.stem: _events(path) for path in directory.glob("*.jsonl")}
+        for directory in report_dir.iterdir()
+    ]
+    assert len(sessions) == 2
+    files = next(
+        session
+        for session in sessions
+        if any(row["event"] == "test-report" for row in session["controller"])
+    )
+    (nested,) = [session for session in sessions if session is not files]
+    assert set(nested) == {"controller"}
+    assert nested["controller"][-1]["event"] == "session-finish"
+    assert nested["controller"][-1]["exitstatus"] == 0
+    assert all(row["event"] != "test-report" for row in nested["controller"])
     assert set(files) == {"controller", *(f"gw{i}" for i in range(workers))}
     for events in files.values():
         assert [row["event"] for row in events[:2]] == ["configured", "session-start"]

@@ -93,11 +93,12 @@ also drops renamed or deleted items, replaces the file from the whole class
 with `uv run pytest -m cost -n auto --store-cost-durations=replace`, and writes
 nothing unless that session passes.
 
-`--timing-report DIR` writes one JSONL file per pytest process, starting at
-plugin configuration. Worker events distinguish session startup from collection;
-the controller records each item's setup, call, and teardown reports, including
-failures. Reports are flushed as they arrive, so completed phases survive a later
-failure. Parallel durations overlap and must not be summed as elapsed wall time.
+`--timing-report DIR` writes one JSONL file per pytest process under a unique
+session directory, starting at plugin configuration. Worker events distinguish
+session startup from collection; the controller records each item's setup, call,
+and teardown reports, including failures. Reports are flushed as they arrive, so
+completed phases survive a later failure. Parallel durations overlap and must not
+be summed as elapsed wall time.
 
 Use `just python-test-<surface>` for focused iteration, or select a module from
 this directory with `uv run pytest tests/<surface>/<path>`.
