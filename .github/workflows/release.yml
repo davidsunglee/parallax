@@ -1,10 +1,25 @@
 name: release
+run-name: ${{ inputs.operation == 'bootstrap' && format('Bootstrap {0} on {1}', inputs.bootstrap-project, inputs.bootstrap-index) || format('Release {0}', github.ref_name) }}
 
 on:
   push:
     branches: ['release/**']
   workflow_dispatch:
     inputs:
+      operation:
+        description: Release validated artifacts, or establish one new project's publishing access without uploading files
+        type: choice
+        options: [release, bootstrap]
+        default: release
+      bootstrap-index:
+        description: Index for setup-only ownership bootstrap
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+      bootstrap-project:
+        description: Configured project with a pending publisher (one project per bootstrap run)
+        type: string
+        default: ''
       candidate-run-id:
         description: Recover the exact archived candidate from this prior release run (blank builds a new candidate)
         type: string
@@ -20,12 +35,52 @@ permissions:
 
 # Publication is coordinated across six projects; never cancel an admitted upload.
 concurrency:
-  group: coordinated-release
+  group: ${{ inputs.operation == 'bootstrap' && format('publisher-bootstrap-{0}', inputs.bootstrap-index) || 'coordinated-release' }}
   cancel-in-progress: false
 
 jobs:
+  bootstrap:
+    name: Bootstrap one project without publishing packages
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ${{ inputs.bootstrap-index }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BOOTSTRAP_INDEX: ${{ inputs.bootstrap-index }}
+      BOOTSTRAP_PROJECT: ${{ inputs.bootstrap-project }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.15'
+      - name: Verify environment protections
+        run: python languages/python/tools/release_setup.py --output bootstrap/environments.json
+      - name: Convert one pending publisher into a real owned project
+        run: python languages/python/tools/release_bootstrap.py --index "$BOOTSTRAP_INDEX" --project "$BOOTSTRAP_PROJECT" --output bootstrap/evidence.json
+      - name: Show non-secret bootstrap evidence
+        if: always()
+        shell: bash
+        run: |
+          if [ -f bootstrap/evidence.json ]; then
+            cat bootstrap/evidence.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: publisher-bootstrap-${{ inputs.bootstrap-index }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: bootstrap/
+          retention-days: 90
+          if-no-files-found: warn
+
   wheels:
-    if: inputs.candidate-run-id == ''
+    if: inputs.operation != 'bootstrap' && inputs.candidate-run-id == ''
     uses: ./.github/workflows/wheels.yml
     with:
       source-ref: ${{ github.sha }}
@@ -34,7 +89,7 @@ jobs:
       actions: read
 
   candidate:
-    if: always() && (needs.wheels.result == 'success' || (needs.wheels.result == 'skipped' && inputs.candidate-run-id != ''))
+    if: always() && inputs.operation != 'bootstrap' && (needs.wheels.result == 'success' || (needs.wheels.result == 'skipped' && inputs.candidate-run-id != ''))
     needs: wheels
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -200,7 +255,7 @@ jobs:
       - run: gh release upload "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" testpypi-evidence.tar.gz --repo "$GITHUB_REPOSITORY"
 
   publish:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: inputs.operation != 'bootstrap' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: [candidate, rehearsal, retain-rehearsal]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
