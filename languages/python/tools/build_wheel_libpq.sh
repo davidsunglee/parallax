@@ -9,10 +9,15 @@ esac
 case "$minor" in
     ''|*[!0-9]*) echo "invalid PostgreSQL minor: $version" >&2; exit 2 ;;
 esac
-if [ "$minor" -lt 6 ] || [ "$#" -ne 1 ]; then
-    echo "expected one PostgreSQL >=18.6,<19 version" >&2
+if [ "$minor" -lt 6 ] || [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    echo "expected a PostgreSQL >=18.6,<19 version and optional installation prefix" >&2
     exit 2
 fi
+prefix=${2-/opt/wheel-libpq}
+case "$prefix" in
+    /*) ;;
+    *) echo "expected an absolute installation prefix" >&2; exit 2 ;;
+esac
 
 if command -v apk >/dev/null 2>&1; then
     apk add --no-cache ca-certificates curl build-base perl linux-headers bzip2 bison flex
@@ -31,10 +36,15 @@ archive="postgresql-$version.tar.bz2"
 source_url="https://ftp.postgresql.org/pub/source/v$version/$archive"
 curl --fail --show-error --location --retry 3 "$source_url" --output "$archive"
 curl --fail --show-error --location --retry 3 "$source_url.sha256" --output "$archive.sha256"
-sha256sum -c "$archive.sha256"
+cat "$archive.sha256"
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "$archive.sha256"
+else
+    shasum -a 256 -c "$archive.sha256"
+fi
 tar -xjf "$archive"
 cd "postgresql-$version"
-./configure --prefix=/opt/wheel-libpq --without-icu --without-readline --without-zlib
+./configure --prefix="$prefix" --without-icu --without-readline --without-zlib
 make -j2
 make install
-/opt/wheel-libpq/bin/pg_config --version
+"$prefix/bin/pg_config" --version
