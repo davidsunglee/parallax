@@ -16,7 +16,7 @@ from parallax.conformance import read_only_stories
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import ReadOnlyTxnOptions
+from parallax.core.execution import ReadOnlyTxnOptions, RetryPolicy
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
 
@@ -60,7 +60,7 @@ def test_the_documented_read_only_story_opens_one_read_only_boundary() -> None:
     report = read_only_stories.reads_run_in_one_read_only_transaction_at_a_chosen_isolation(
         port, MODELS["account"]
     )
-    assert report.options == ReadOnlyTxnOptions(max_retries=10, isolation="repeatable_read")
+    assert report.options == ReadOnlyTxnOptions(retry=RetryPolicy(), isolation="repeatable_read")
     assert report.balance == report.reread_balance == Decimal("250.00")
     assert report.read_only_join_shared_the_context
     assert report.writable_join_refused

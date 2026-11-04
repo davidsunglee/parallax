@@ -8,7 +8,7 @@ compileEligibility:
   note: "single-connection unit-of-work boundary intent (shape:boundary)"
 given:
   databaseOptions:
-    maxRetries: 2
+    retry: {maxRetries: 2}
     concurrency: locking
     isolation: repeatable-read
 when:
@@ -20,12 +20,12 @@ when:
     - action: amend
       note: the joined body buffers a write onto the shared unit of work
     - action: join
-      maxRetries: 2
+      retry: {maxRetries: 2}
       concurrency: locking
       isolation: repeatable-read
       note: a joining call repeating every resolved value is accepted
     - action: join
-      maxRetries: 3
+      retry: {maxRetries: 3}
       note: a joining call naming a different bound is refused before its callback runs
 then:
   outcome: option-conflict
@@ -42,7 +42,7 @@ then:
               invocation: outer
               accessMode: read-write
               concurrency: locking
-              retries: 2
+              retry: {maxRetries: 2, backoff: {baseDelay: 0.008, maxDelay: 1.0}}
               isolation: repeatable-read
           - sequence: 2
             activity: 2

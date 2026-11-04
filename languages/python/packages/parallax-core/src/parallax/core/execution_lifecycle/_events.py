@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import UUID
 
 from parallax.core._execution._unit_work.uow import FlushTrigger
+from parallax.core.auto_retry import RetryPolicy
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
@@ -256,18 +257,6 @@ class FlushFinished(_Event):
 
 
 @dataclass(frozen=True, slots=True)
-class RetryPolicy:
-    """The bounded-retry policy one outer invocation resolved.
-
-    ``retries`` bounds RE-EXECUTIONS rather than total attempts. Which failures
-    are eligible is fixed policy rather than a resolved option, so the bound is
-    the whole of it.
-    """
-
-    retries: int
-
-
-@dataclass(frozen=True, slots=True)
 class OuterInvocation:
     """The invocation that opened the boundary, and therefore the root activity.
 
@@ -280,12 +269,13 @@ class OuterInvocation:
     that default here would state a fact this invocation never established.
 
     ``concurrency`` is the resolved Concurrency Preference of a writable
-    invocation, and ``None`` for a read-only one, which resolves none.
+    invocation, and ``None`` for a read-only one, which resolves none. ``retry``
+    is the Retry Policy object the invocation's attempts run under.
     """
 
     access_mode: AccessMode | None
     concurrency: ConcurrencyPreference | None
-    retry_policy: RetryPolicy
+    retry: RetryPolicy
     isolation: IsolationLevel | None
 
 

@@ -232,7 +232,7 @@ section covers the ones that reach you.
   ([Writing](04-writing.md#transaction-time-only-entities)).
 - **Retries run out** when every attempt fails with something retryable. You then get the
   last attempt's failure as the `cause`, with a note naming the count, such as
-  `bounded retry exhausted after 11 attempts (retries=10)`.
+  `bounded retry exhausted after 11 attempts (max_retries=10)`.
 - **A failed precondition** means the revision a target write stated no longer matches,
   so the write raises `WritePreconditionError`. Its `expected` holds the revision you
   stated. Parallax never retries it, because a re-run would state the same revision
@@ -446,11 +446,11 @@ of an `ExecutionFailure`:
 | `InvalidPrincipalError` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
 | `RollbackOnlyError` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
 | `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
-| `OptimisticLockConflictError`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
-| `TemporalConflictError` | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
+| `OptimisticLockConflictError`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to the Retry Policy's `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
+| `TemporalConflictError` | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
-| A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out, the row overlaps current coverage, or closed history a clock stayed behind: read the coverage before writing over it, and synchronize the clocks of the servers that write the database |
+| A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out, the row overlaps current coverage, or closed history a clock stayed behind: read the coverage before writing over it, and synchronize the clocks of the servers that write the database |
 | Any other `DatabaseError` whose `category` is `"constraintViolation"` | at the statement | No | Read `constraint_name` to find the constraint, and correct the row that broke it |
 | A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |

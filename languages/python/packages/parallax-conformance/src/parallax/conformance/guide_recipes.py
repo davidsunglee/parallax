@@ -32,7 +32,7 @@ from parallax.core import (
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure, TxnOptions
+from parallax.core.execution import AdaptiveBackoff, ExecutionFailure, RetryPolicy, TxnOptions
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WritePreconditionError
 from parallax.evolution import ABSENT, evolve, schema_delta
@@ -55,6 +55,7 @@ __all__ = [
     "PostalDelivery",
     "StorePickup",
     "a_scope_for_reports",
+    "a_scope_for_slow_conflicts",
     "add_a_customer_from_json",
     "add_a_surcharge_to_every_order",
     "add_and_find_a_customer",
@@ -844,14 +845,25 @@ def add_to_an_order_once(db: ScopedDatabase, order_id: int, amount: Decimal) -> 
         order = tx.find(Order.where(Order.id == order_id)).result()
         tx.amend(order, Order.total.set(order.total + amount))
 
-    db.transact(add, max_retries=0)
+    db.transact(add, retry=RetryPolicy(max_retries=0))
 
 
 def connect_with_transaction_defaults(
     adapter: PostgresAdapter, model: DomainModel
 ) -> Database[PostgresRole]:
     """Every transaction of this root makes at most four attempts and prefers locking."""
-    return connect(adapter, model, options=TxnOptions(max_retries=3, concurrency="locking"))
+    return connect(
+        adapter,
+        model,
+        options=TxnOptions(retry=RetryPolicy(max_retries=3), concurrency="locking"),
+    )
+
+
+def a_scope_for_slow_conflicts(db: ScopedDatabase) -> ScopedDatabase:
+    """Commits here take a while to become visible, so the first waits start longer."""
+    return db.with_options(
+        retry=RetryPolicy(max_retries=5, backoff=AdaptiveBackoff(base_delay=0.05, max_delay=2.0))
+    )
 
 
 def a_scope_for_reports(db: ScopedDatabase) -> ScopedDatabase:

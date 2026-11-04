@@ -91,5 +91,5 @@ def test_writers_contending_for_one_row_all_commit_within_the_default_bound(
 
     assert final.balance == Decimal("250.00") + _WRITERS
     assert final.version == 1 + _WRITERS
-    assert max(attempts) <= _WRITERS <= TxnOptions().max_retries + 1
+    assert max(attempts) <= _WRITERS <= TxnOptions().retry.max_retries + 1
     assert sum(attempts) >= 2 * _WRITERS - 1

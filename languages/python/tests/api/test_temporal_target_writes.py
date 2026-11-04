@@ -38,7 +38,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, KeyedWriteValueError
+from parallax.core.execution import ExecutionFailure, KeyedWriteValueError, RetryPolicy
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseReadCompleted,
@@ -1003,7 +1003,9 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
         )
     ).using_database_login()
     with pytest.raises(ExecutionFailure) as failed:
-        ours.transact(lambda tx: _span_patch(tx, entity, amount=150), max_retries=0)
+        ours.transact(
+            lambda tx: _span_patch(tx, entity, amount=150), retry=RetryPolicy(max_retries=0)
+        )
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     assert [row[:2] for row in _span_rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
@@ -1021,7 +1023,7 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
         try:
             peer_db.transact(
                 lambda tx: tx.amend(_span_find(tx, entity, _FEB).edit(label="peer"), until=_APR),
-                max_retries=0,
+                retry=RetryPolicy(max_retries=0),
             )
         except BaseException as failure:
             peer_failures.append(failure)
@@ -1150,7 +1152,7 @@ def test_a_source_replacement_whose_evidence_fails_opens_nothing(
         tx.replace(found.edit(amount=300), until=_SEP)
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(fn, max_retries=0)
+        db.transact(fn, retry=RetryPolicy(max_retries=0))
     assert isinstance(failed.value.cause, OptimisticLockConflictError)
     rows = _span_rows(profile_run, entity)
     assert all(row[4] != 300 for row in rows)

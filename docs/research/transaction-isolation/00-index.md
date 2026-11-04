@@ -67,7 +67,7 @@ corpus and by the two scripts below that read statements off the real API.
 | Script | What it retains |
 |---|---|
 | `predicate_in_place.py` | COR-211's schedules on PostgreSQL for UPDATE and DELETE in the key-selecting form Parallax emits and the historical in-place form; `--compare` grades them against the table COR-211's probes recorded |
-| `lock_snapshot_trace.py` | Each witness schedule driven through the public API: the statements Parallax sent, each backend's state, wait, and snapshot horizon at every hand-off, and the outcome at `max_retries=0` and at the default bound |
+| `lock_snapshot_trace.py` | Each witness schedule driven through the public API: the statements Parallax sent, each backend's state, wait, and snapshot horizon at every hand-off, and the outcome under the disabled Retry Policy and with `retry` omitted |
 | `guard_wal.py` | WAL bytes per unchanged-milestone guard against a locking write and a changing write, and guard/guard replay cost |
 
 ## Drivers
@@ -82,12 +82,19 @@ model change cannot move a workload.
 
 | Driver | Workload |
 |---|---|
-| `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; `max_retries=0` first, then the default bound. With `--backoff-grid`, which C4 passes, the default bound once per `(base, cap)` candidate of the full-jitter backoff grid. With `--environments`, which C7 passes, both key modes in each simulated environment, the default bound once per replay policy |
+| `contention.py` | Hot and disjoint keyed writers, each invocation reading its account inside the attempt; the disabled public Retry Policy first, then the default one (four runs). With `--backoff-grid`, which C4 passes, the disabled policy and then nine adaptive policies under the default bound, one per `(base, cap)` candidate (20 runs). With `--environments`, which C7 passes, the disabled and default policies over both key modes in each simulated environment (12 runs) |
 | `stream_churn.py` | A transaction-held or standalone stream with fast or slow consumption beside writers; client memory, oldest snapshot age, dead and live tuples, relation and index size, and cleanup after release. With `--read-only`, which C1 and C5 pass, a read-only transaction-held stream as well, so one arm reports writable and read-only reads at one level |
 | `end_to_end_writes.py` | Keyed, conditional, and predicate amendments over non-temporal, Transaction-Time-Only, and bitemporal targets, each window a whole `db.transact` call with any licensing read inside it |
 | `read_retention.py` | Standalone and read-only reads, eager and streamed, Typed and Wire, of a non-temporal Column-layout account and of non-temporal, Transaction-Time-Only, and bitemporal document charters with value-object payloads; whole-read and first-root latency, traced peak and held-result bytes, and a census of the objects a held result keeps |
-| `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm. With `--environments`, which C7 passes, `guard_wal.py` runs only its guard/guard replay, in each simulated environment and once per replay policy |
+| `lock_snapshot_trace.py`, `guard_wal.py` | As above, captured per arm. With `--environments`, which C7 passes, `guard_wal.py` runs only its guard/guard replay, under the disabled and default policies in each simulated environment (six runs) |
 | Arm tool `tools/snapshot_delivery_overhead.py` | The committed delivery instrument, run from each arm's own tree |
+
+`check_retry_reports.py --smoke-dir <dir>` checks the four fixed-name reports the
+retry smokes write: `grid.json` and `environments.json` from `contention.py --smoke`,
+and `guard-normal.json` and `guard-environments.json` from `guard_wal.py --smoke`. It
+asserts their run matrices, complete policies, sample counts, attempts within each
+policy's bound, and the absence of failures of the drivers' own API use. It provisions
+nothing and judges no timing percentile or conflict count.
 
 The workloads are frozen at these digests (SHA-256). A later change to a driver
 records its new digest here with the reason; `provenance.json` records the
@@ -95,13 +102,14 @@ digests a capture actually ran.
 
 | File | SHA-256 |
 |---|---|
-| `scripts/_support.py` | `d0594ab2e6aea9d118a0946cea2daab2c8be2d5fe2595aff1fad880ed58af64f` |
+| `scripts/_support.py` | `12f3ced10c13db640a9cc3e609fb1e0f1e31675097ae044f21c2321eeaf4eeb4` |
 | `scripts/capture.py` | `3668bb53335733f67d69111be4343b77d979a65bea20892403ad014a6dc13eb1` |
-| `scripts/contention.py` | `0a9f496e13cb337b573804aa1a9b2a190c2c26fa2c67e17ff5d79c4e9767cad8` |
+| `scripts/check_retry_reports.py` | `429976b33275236a0103b50ef442dc34f2d10425269a1f53eb8baae6a30e3584` |
+| `scripts/contention.py` | `9e4a3eaa0a7bddcc83ffbf09202eefc4f02bf80e38bbbd7d04f558276e0118cd` |
 | `scripts/end_to_end_writes.py` | `015d7dc667a50fad1b6f63059755ee9ec82e0413352dd178684cced2b22f8963` |
-| `scripts/guard_wal.py` | `243345275cba7a3a92ec9ea43b2f359d0e1804072be8877bb8cbdcaddd1665ae` |
-| `scripts/lock_snapshot_trace.py` | `a06a14359b95c45b1e5b5b890394d7bbbff9300aac7dd215fcb260937832fc18` |
-| `scripts/predicate_in_place.py` | `9cd1a7fb74edd7aaa40f132996ea6525151032146c233a97c2bbc90cf751b810` |
+| `scripts/guard_wal.py` | `1fbe5a1ad1ec3e688c36d2ea849bf181ce17d9354d58db0eeb107140d07f3fb0` |
+| `scripts/lock_snapshot_trace.py` | `15d3291c95425fcf9a97e6c4bfbdc1f27e4daaada838edee1d84202919285395` |
+| `scripts/predicate_in_place.py` | `69f0043089f2ac18819984a24fa9ae59a96205efcb7ab503dfe3fda2236760cf` |
 | `scripts/read_retention.py` | `225e6e4a40e60e397a347987d723600ec8475fec5218d2fa3ea1e0d3c5481bd9` |
 | `scripts/stream_churn.py` | `16a2f0747f7f36cf965379f3a2e84497309214aa48ddff7ebd5255aa01dcfc0d` |
 
@@ -161,6 +169,26 @@ Reducing end-to-end statement counts re-froze `capture.py` after C7; no driver
 changed. An end-to-end cell's statements per invocation is retained as the
 number of invocations that sent each count, rather than one count per
 invocation, and C0, C2, and C6's retained reports were reduced again in place.
+
+The configurable Retry Policy re-froze `_support.py`, `contention.py`,
+`guard_wal.py`, `lock_snapshot_trace.py`, and `predicate_in_place.py`, and added
+`check_retry_reports.py`; `capture.py` did not change. Retry timing became a public
+value, and the drivers' private substitutions were not comparisons of it: the grid
+probed `_BASE_S` and `_CAP_S`, which the loop no longer has, and the environment
+comparison replaced the private `_window`. Every current driver
+now passes a `RetryPolicy` to `retry=` and states the complete policy on each run as
+`retry: {maxRetries, backoff: {baseDelay, maxDelay}}`, read from the value rather than
+inferred from a label or a private constant.
+
+That retires what the public policy cannot express. The immediate-replay arm, the
+fixed-only `fixed-8/25` and `fixed-8/400` arms, and the former 8/25 ms plateau are gone
+from the current drivers, and `--backoff-grid`'s candidates are adaptive policies, so
+the duration term applies to them where C4's fixed candidates had none. The
+`replayWaits` telemetry went with `_window`: no current report states a jitter window
+or a sleeper duration. The historical C4 and C7 evidence below stands as captured.
+`_support.py`'s recording and delayed connections also now forward the `read_only`
+read intent the port gained after C7, without which `lock_snapshot_trace.py`,
+`predicate_in_place.py`, and every simulated environment beyond `local` failed.
 
 ## Checkpoints
 
@@ -278,3 +306,19 @@ uv run python ../../docs/research/transaction-isolation/scripts/capture.py C0 --
 A later checkpoint names its arms, for example
 `capture.py C3 --arm <commit> --arm <commit>`; an arm takes `@repeatable_read`
 to measure at that level.
+
+Those commands run the current drivers, which need an arm with the public Retry
+Policy. Reproducing a retained capture starts in a separate checkout of the
+provenance-recorded `capture.commit` and runs that checkout's `scripts/capture.py`; no
+option selects an older capturing tree, and running current drivers against older
+packages is not a reproduction.
+
+The retry smokes run from `languages/python`, with `$SMOKE` an existing directory:
+
+```sh
+uv run python ../../docs/research/transaction-isolation/scripts/contention.py --smoke --isolation read_committed --backoff-grid --out "$SMOKE/grid.json"
+uv run python ../../docs/research/transaction-isolation/scripts/contention.py --smoke --isolation read_committed --environments --out "$SMOKE/environments.json"
+uv run python ../../docs/research/transaction-isolation/scripts/guard_wal.py --smoke --isolation repeatable_read --out "$SMOKE/guard-normal.json"
+uv run python ../../docs/research/transaction-isolation/scripts/guard_wal.py --smoke --isolation repeatable_read --environments --out "$SMOKE/guard-environments.json"
+uv run python ../../docs/research/transaction-isolation/scripts/check_retry_reports.py --smoke-dir "$SMOKE"
+```

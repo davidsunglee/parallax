@@ -64,6 +64,8 @@ MIRRORED_DEFS = frozenset(
         "lifecycleDatabaseCallFinished",
         "lifecycleInvocationStarted",
         "lifecycleInvocationFinished",
+        "retryPolicy",
+        "resolvedRetryPolicy",
         "lifecycleActivityOutcome",
         "lifecycleAttemptFinished",
         "lifecycleStreamStarted",

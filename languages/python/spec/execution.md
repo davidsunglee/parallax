@@ -113,27 +113,39 @@ Principal exists.
 field-wise patch; omission preserves the previous value and later patches win.
 Authority selection preserves options, and option derivation preserves authority.
 `connect(options=None)` and omission both select the default record, but `None`
-is invalid for an individual field. `max_retries` must be a nonnegative exact
-built-in integer, not `bool`; which failures are replayed is fixed policy
-(`m-auto-retry`), not an option. Python isolation spellings are
+is invalid for an individual field. Python isolation spellings are
 `read_committed`, `repeatable_read`, and `serializable`. Invalid field values
 raise plain `ValueError` before acquisition or observation. Defaults and other
 closed vocabularies are declared by the exported record and types.
 `ReadOnlyTxnOptions` is the resolved record of a read-only transaction:
-`max_retries` and `isolation` alone, resolved and validated as `TxnOptions`
+`retry` and `isolation` alone, resolved and validated as `TxnOptions`
 resolves and validates them.
+
+`retry` takes a `RetryPolicy`, exported with `AdaptiveBackoff` from
+`parallax.core.execution`. Both are frozen keyword-only values that compare by
+value, and `RetryPolicy(max_retries=..., backoff=AdaptiveBackoff(base_delay=...,
+max_delay=...))` maps field for field to the portable Retry Policy
+(`m-auto-retry`). Each validates on construction and refuses with plain
+`ValueError` naming the field: `max_retries` is an exact built-in `int`, so `bool`
+and `int` subclasses are refused; a delay is an `int` or `float`, not `bool`, that
+converts to a finite positive `float`, and is held as that `float`. A `retry` value
+that is not a `RetryPolicy`, `None` included, raises `ValueError` where it is
+supplied: eagerly in `with_options`, and in `transact` and `read_only` after
+re-entry refusal, ahead of any join comparison. The clock, sleeper, and random
+source behind the waits are the loop's own, not options.
 
 ## Transactions and failure boundaries
 
 `scope.transact(fn, ...)` is callback-only. The callback receives the writable
 `TxnContext` and its return value is delivered only after durable commit. Python
 offers no transaction context-manager demarcation because a retry must replay
-the body. The public retry bound is `max_retries`; no `retries` alias exists.
+the body. `retry` is the only public retry keyword: `max_retries=` and `retries=`
+raise Python's unknown-keyword `TypeError` on every entrypoint.
 After the bound is exhausted the caller receives the last attempt's own failure,
 inside `ExecutionFailure`, with its original chain and a note naming the attempt
 count.
 
-`scope.read_only(fn, *, max_retries=..., isolation=...)` is the read-only
+`scope.read_only(fn, *, retry=..., isolation=...)` is the read-only
 entrypoint, callback-only on the same terms. Its callback receives a
 `ReadOnlyTxnContext`: `find`, `stream`, `read_rows`, a `wire` that is the
 read-only `WireDatabaseView`, `edition`, and `options` — a

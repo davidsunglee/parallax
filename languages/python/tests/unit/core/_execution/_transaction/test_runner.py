@@ -50,8 +50,10 @@ from parallax.core.db_port import (
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
+    AdaptiveBackoff,
     ExecutionFailure,
     ReadOnlyTxnOptions,
+    RetryPolicy,
     ServingModel,
     TransactionAccessModeError,
     TransactionAuthorityError,
@@ -66,8 +68,10 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
+    OuterInvocation,
     RootExecution,
     TransactionAttemptFinished,
+    TransactionInvocationStarted,
 )
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
@@ -94,6 +98,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests._support.retry import TINY_BACKOFF, fast_retry
 from tests.unit.core._execution._execution_support import (
     ACCOUNT,
     account_insert,
@@ -163,7 +168,7 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
         return db.transact(
             lambda _inner: "joined",
             itself,
-            max_retries=10,
+            retry=RetryPolicy(max_retries=10),
             concurrency="optimistic",
             isolation="read_committed",
         )
@@ -230,7 +235,7 @@ def test_authority_mismatch_refuses_before_the_joining_body_and_leaves_outer_usa
 def test_root_aliases_share_ownership_while_unrelated_roots_do_not() -> None:
     port = ScriptedAdapter(Transact())
     root = owned_root(port)
-    alias = root.with_options(max_retries=3)
+    alias = root.with_options(retry=RetryPolicy(max_retries=3))
     owner = root.using_database_login()
     joining_alias = alias.using_database_login()
     foreign_root = owned_root(ScriptedAdapter())
@@ -255,13 +260,13 @@ def test_join_refusal_precedence_is_ownership_then_rollback_authority_then_optio
 
     def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(TransactionAuthorityError):
-            mismatched.transact(_must_not_run, itself, max_retries=3)
+            mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with pytest.raises(RuntimeError, match="inner failure"):
             owner.transact(_raise_inner, itself)
         with pytest.raises(TransactionOwnershipError):
-            foreign.transact(_must_not_run, itself, max_retries=3)
+            foreign.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with pytest.raises(RollbackOnlyError) as rollback_only:
-            mismatched.transact(_must_not_run, itself, max_retries=3)
+            mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         assert isinstance(rollback_only.value.__cause__, RuntimeError)
         return "withheld"
 
@@ -310,8 +315,10 @@ def test_write_planning_receives_the_original_captured_actor(
     assert seen[0].value == value
 
 
+_OTHER_BACKOFF = RetryPolicy(backoff=AdaptiveBackoff(base_delay=0.016))
 _CONFLICTING_JOINS: list[tuple[str, Callable[[ExecutionScope], object]]] = [
-    ("max_retries", lambda db: db.transact(_must_not_run, itself, max_retries=3)),
+    ("retry", lambda db: db.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))),
+    ("retry", lambda db: db.transact(_must_not_run, itself, retry=_OTHER_BACKOFF)),
     ("concurrency", lambda db: db.transact(_must_not_run, itself, concurrency="locking")),
     # The transaction these join resolved the root's Read Committed, so NAMING
     # a different level conflicts on the same terms as the other two.
@@ -567,13 +574,13 @@ def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> 
         # A foreign scope carrying a conflicting option: the doomed boundary
         # and the option conflict would each raise, and neither is the answer.
         with pytest.raises(TransactionOwnershipError):
-            foreign.transact(_must_not_run, itself, max_retries=3)
+            foreign.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         # Nothing beyond the outer boundary's own `begin` ever reached the port.
         assert port.calls == [BeginCall()]
         # Through the owner, rollback-only foreclosure answers before the
         # otherwise-conflicting option is compared.
         with pytest.raises(RollbackOnlyError):
-            owner.transact(_must_not_run, itself, max_retries=3)
+            owner.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "unreachable value"
 
     with raises_contextualized(RollbackOnlyError):
@@ -586,27 +593,25 @@ def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> 
 # --------------------------------------------------------------------------- #
 def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
-    assert scope(port).transact(lambda _tx: "ok", itself) == "ok"
+    assert scope(port).transact(lambda _tx: "ok", itself, retry=fast_retry(2)) == "ok"
     assert port.calls.count(BeginCall()) == 3
 
 
 def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
     with raises_contextualized(DatabaseError) as excinfo:
-        scope(port).transact(lambda _tx: "ok", itself, max_retries=2)
+        scope(port).transact(lambda _tx: "ok", itself, retry=fast_retry(2))
     assert port.calls.count(BeginCall()) == 3
     assert excinfo.value.is_retriable  # the surfaced error is the failure itself
-    # The core loop's own note spells the bound by its own parameter name; the
-    # public keyword that supplied the number is `max_retries`.
-    assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
+    assert "3 attempts (max_retries=2)" in "".join(excinfo.value.__notes__)
 
 
 def test_the_default_bound_is_ten_reexecutions() -> None:
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(11)))
     with raises_contextualized(DatabaseError) as excinfo:
-        scope(port).transact(lambda _tx: "ok", itself)
+        scope(port).transact(lambda _tx: "ok", itself, retry=RetryPolicy(backoff=TINY_BACKOFF))
     assert port.calls.count(BeginCall()) == 11
-    assert "11 attempts (retries=10)" in "".join(excinfo.value.__notes__)
+    assert "11 attempts (max_retries=10)" in "".join(excinfo.value.__notes__)
 
 
 @pytest.mark.parametrize(
@@ -627,23 +632,24 @@ def test_non_retriable_categories_surface_after_one_attempt(category: str, nativ
 def test_retries_zero_disables_the_loop() -> None:
     port = ScriptedAdapter(Transact(commit=deadlock()))
     with raises_contextualized(DatabaseError):
-        scope(port).transact(lambda _tx: "ok", itself, max_retries=0)
+        scope(port).transact(lambda _tx: "ok", itself, retry=RetryPolicy(max_retries=0))
     assert port.calls.count(BeginCall()) == 1
 
 
-def test_negative_retries_are_rejected_before_any_attempt() -> None:
+def test_a_value_that_is_no_policy_is_rejected_before_any_attempt() -> None:
     port = ScriptedAdapter()
-    with pytest.raises(ValueError, match="max_retries must be >= 0"):
-        scope(port).transact(lambda _tx: "ok", itself, max_retries=-1)
+    with pytest.raises(ValueError, match="retry must be a RetryPolicy"):
+        scope(port).transact(lambda _tx: "ok", itself, retry=cast("Any", 3))
     assert port.calls.count(BeginCall()) == 0
 
 
 @pytest.mark.parametrize(
     ("keyword", "value", "message"),
     [
-        ("max_retries", True, "max_retries must be a nonnegative int"),
-        ("max_retries", 1.5, "max_retries must be a nonnegative int"),
-        ("max_retries", None, "max_retries must be a nonnegative int"),
+        ("retry", True, "retry must be a RetryPolicy"),
+        ("retry", 1.5, "retry must be a RetryPolicy"),
+        ("retry", AdaptiveBackoff(), "retry must be a RetryPolicy"),
+        ("retry", None, "retry must be a RetryPolicy"),
         ("concurrency", "pessimistic", "concurrency must be one of"),
         ("concurrency", None, "concurrency must be one of"),
     ],
@@ -664,8 +670,9 @@ def test_an_explicit_value_outside_its_fields_contract_is_refused_before_any_att
 @pytest.mark.parametrize(
     ("keyword", "value", "message"),
     [
-        ("max_retries", True, "max_retries must be a nonnegative int"),
-        ("max_retries", -1, "max_retries must be >= 0"),
+        ("retry", True, "retry must be a RetryPolicy"),
+        ("retry", 3, "retry must be a RetryPolicy"),
+        ("retry", None, "retry must be a RetryPolicy"),
         ("concurrency", "pessimistic", "concurrency must be one of"),
         ("isolation", "repeatable read", "isolation must be one of"),
     ],
@@ -690,12 +697,18 @@ def test_a_joining_call_with_an_invalid_explicit_value_is_refused_as_invalid(
     assert port.calls == [BeginCall(), CommitCall()]
 
 
-def test_the_retired_retries_keyword_is_refused() -> None:
-    # `max_retries` replaced `retries` without an alias, so the old spelling is
-    # an unknown keyword rather than a bound.
+@pytest.mark.parametrize("retired", ["retries", "max_retries"])
+def test_a_retired_bound_keyword_is_refused_on_every_entrypoint(retired: str) -> None:
+    # `retry` replaced each spelling without an alias, so the old ones are
+    # unknown keywords rather than bounds.
     port = ScriptedAdapter()
-    with pytest.raises(TypeError, match="retries"):
-        scope(port).transact(_must_not_run, itself, retries=3)  # pyright: ignore[reportCallIssue] - the retired keyword's refusal is what this proves
+    keywords = cast("dict[str, Any]", {retired: 3})
+    with pytest.raises(TypeError, match=retired):
+        scope(port).transact(_must_not_run, itself, **keywords)
+    with pytest.raises(TypeError, match=retired):
+        scope(port).read_only(_must_not_run, itself, **keywords)
+    with pytest.raises(TypeError, match=retired):
+        scope(port).with_options(**keywords)
     assert port.calls == []
 
 
@@ -907,7 +920,7 @@ def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
             serving.publish(_B, expected=_A)
 
     with raises_contextualized(DatabaseError) as exhausted:
-        db.transact(body, itself, max_retries=1)
+        db.transact(body, itself, retry=fast_retry(1))
     assert exhausted.edition == "b"
     assert exhausted.value.is_retriable
 
@@ -965,8 +978,8 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
     # nothing has been adopted that a failure could be reported under.
     serving = ServingModel(_A)
     db = scope(ScriptedAdapter(Transact()), serving)
-    with pytest.raises(ValueError, match="max_retries must be >= 0"):
-        db.transact(_must_not_run, itself, max_retries=-1)
+    with pytest.raises(ValueError, match="retry must be a RetryPolicy"):
+        db.transact(_must_not_run, itself, retry=cast("Any", 3))
     with pytest.raises(ValueError, match="isolation must be one of"):
         db.transact(_must_not_run, itself, isolation=cast("Any", "read uncommitted"))
     foreign = scope(ScriptedAdapter(), serving)
@@ -975,7 +988,7 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself)
         with pytest.raises(TransactionOptionConflictError):
-            db.transact(_must_not_run, itself, max_retries=3)
+            db.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "survived"
 
     assert db.transact(outer, itself) == "survived"
@@ -1045,12 +1058,12 @@ def test_an_exhausted_conflict_surfaces_as_the_identical_failure_with_its_own_ch
             raise conflict from None
 
     with raises_contextualized(OptimisticLockConflictError) as excinfo:
-        scope(port).transact(body, itself, max_retries=1)
+        scope(port).transact(body, itself, retry=fast_retry(1))
     assert excinfo.value is raised[-1]
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__suppress_context__
     assert excinfo.value.__context__ is origin
-    assert "2 attempts (retries=1)" in "".join(excinfo.value.__notes__)
+    assert "2 attempts (max_retries=1)" in "".join(excinfo.value.__notes__)
     assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
 
 
@@ -1231,7 +1244,7 @@ def test_a_replay_starts_only_after_the_failed_attempt_rolled_back_released_and_
     port = ScriptedAdapter(*script)
     observed = _PortProgress(port)
 
-    assert scope(port, provider=observed).transact(body([]), itself) == "ok"
+    assert scope(port, provider=observed).transact(body([]), itself, retry=fast_retry(2)) == "ok"
 
     starts = [
         position
@@ -1294,7 +1307,10 @@ def test_a_replay_starts_only_after_the_failed_attempt_rolled_back_released_and_
             ),
             {},
         ),
-        (lambda: ScriptedAdapter(Transact(commit=deadlock()), Transact()), {"max_retries": 0}),
+        (
+            lambda: ScriptedAdapter(Transact(commit=deadlock()), Transact()),
+            {"retry": RetryPolicy(max_retries=0)},
+        ),
     ],
     ids=["begin", "rollback", "release", "release-interrupted", "not-retryable", "zero-bound"],
 )
@@ -1327,7 +1343,9 @@ def _chain(failure: BaseException) -> list[BaseException]:
 # against the root's TxnOptions, an explicit keyword overrides it, a join  #
 # inherits the invocation's resolved value, and `tx.options` is that record.    #
 # --------------------------------------------------------------------------- #
-_CONFIGURED = TxnOptions(max_retries=2, concurrency="locking", isolation="serializable")
+_CONFIGURED = TxnOptions(
+    retry=RetryPolicy(max_retries=2), concurrency="locking", isolation="serializable"
+)
 
 
 def _configured_db(port: DatabaseAdapter[Any], options: TxnOptions = _CONFIGURED) -> ExecutionScope:
@@ -1351,7 +1369,7 @@ def test_omitted_keywords_resolve_to_the_roots_configured_defaults() -> None:
 @pytest.mark.parametrize(
     ("keyword", "value"),
     [
-        ("max_retries", 0),
+        ("retry", RetryPolicy(max_retries=0)),
         ("concurrency", "optimistic"),
         ("isolation", "repeatable_read"),
     ],
@@ -1370,7 +1388,7 @@ def test_an_explicit_keyword_overrides_only_its_own_field(keyword: str, value: o
 
 def _fields(options: TxnOptions) -> dict[str, object]:
     return {
-        "max_retries": options.max_retries,
+        "retry": options.retry,
         "concurrency": options.concurrency,
         "isolation": options.isolation,
     }
@@ -1384,7 +1402,7 @@ def test_explicit_values_equal_to_the_defaults_reuse_the_roots_record() -> None:
     resolved = db.transact(
         lambda tx: tx.options,
         itself,
-        max_retries=2,
+        retry=RetryPolicy(max_retries=2),
         concurrency="locking",
         isolation="serializable",
     )
@@ -1405,11 +1423,84 @@ def test_every_retry_of_one_invocation_shares_one_resolved_record() -> None:
     def body(tx: TxnAttempt) -> None:
         seen.append(tx.options)
 
-    scope(port).transact(body, itself, isolation="repeatable_read", max_retries=5)
+    policy = fast_retry(5)
+    scope(port).transact(body, itself, isolation="repeatable_read", retry=policy)
     assert len(seen) == 3
     assert all(options is seen[0] for options in seen)
-    assert seen[0] == TxnOptions(max_retries=5, isolation="repeatable_read")
+    assert seen[0] == TxnOptions(retry=policy, isolation="repeatable_read")
     assert port.calls.count(BeginCall("repeatable_read")) == 3
+
+
+def test_one_resolved_policy_object_reaches_every_observer_of_an_invocation() -> None:
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    observed = _PortProgress(port)
+    db = scope(port, provider=observed)
+    policy = fast_retry(1)
+    seen: list[RetryPolicy] = []
+
+    def body(tx: TxnAttempt) -> None:
+        seen.append(tx.options.retry)
+        seen.append(db.transact(lambda inner: inner.options.retry, itself))
+
+    db.transact(body, itself, retry=policy)
+
+    assert len(seen) == 4
+    assert all(each is policy for each in seen)
+    (started, *_) = [
+        event for event in observed.events if isinstance(event, TransactionInvocationStarted)
+    ]
+    assert isinstance(started.invocation, OuterInvocation)
+    assert started.invocation.retry is policy
+
+
+def test_a_read_only_invocation_shares_its_resolved_policy_the_same_way() -> None:
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    observed = _PortProgress(port)
+    policy = fast_retry(1)
+    db = scope(port, provider=observed, options=TxnOptions(retry=policy))
+    seen: list[RetryPolicy] = []
+
+    db.read_only(lambda rtx: seen.append(rtx.options.retry), itself)
+
+    assert seen == [policy, policy]
+    assert all(each is policy for each in seen)
+    (started, *_) = [
+        event for event in observed.events if isinstance(event, TransactionInvocationStarted)
+    ]
+    assert isinstance(started.invocation, OuterInvocation)
+    assert started.invocation.retry is policy
+
+
+def test_an_explicit_policy_replaces_the_roots_whole_rather_than_merging() -> None:
+    tuned = RetryPolicy(max_retries=4, backoff=AdaptiveBackoff(base_delay=0.5, max_delay=2.0))
+    db = scope(ScriptedAdapter(Transact()), options=TxnOptions(retry=tuned))
+
+    resolved = db.transact(lambda tx: tx.options.retry, itself, retry=RetryPolicy(max_retries=1))
+
+    assert resolved == RetryPolicy(max_retries=1, backoff=AdaptiveBackoff())
+
+
+def test_a_join_equal_to_the_active_policy_by_value_is_accepted() -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+    active = RetryPolicy(max_retries=2, backoff=AdaptiveBackoff(base_delay=0.5, max_delay=2.0))
+    equal = RetryPolicy(max_retries=2, backoff=AdaptiveBackoff(base_delay=0.5, max_delay=2))
+    assert equal is not active
+
+    def outer(tx: TxnAttempt) -> bool:
+        return db.transact(lambda inner: inner.options is tx.options, itself, retry=equal)
+
+    assert db.transact(outer, itself, retry=active)
+
+
+def test_a_read_only_join_equal_to_the_active_policy_by_value_is_accepted() -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+
+    def outer(rtx: ReadOnlyTxnAttempt) -> bool:
+        return db.read_only(lambda joined: joined is rtx, itself, retry=RetryPolicy(max_retries=2))
+
+    assert db.read_only(outer, itself, retry=RetryPolicy(max_retries=2))
 
 
 def test_a_join_reads_the_same_transaction_and_the_same_record() -> None:
@@ -1425,7 +1516,7 @@ def test_a_join_reads_the_same_transaction_and_the_same_record() -> None:
 @pytest.mark.parametrize(
     ("keyword", "equal", "different"),
     [
-        ("max_retries", 0, 3),
+        ("retry", RetryPolicy(max_retries=0), RetryPolicy(max_retries=3)),
         ("concurrency", "optimistic", "locking"),
         ("isolation", "repeatable_read", "serializable"),
     ],
@@ -1477,13 +1568,15 @@ def test_the_roots_bound_admits_at_most_one_more_attempt_than_it_names() -> None
 
 
 def test_a_zero_root_bound_means_one_attempt_and_an_explicit_bound_retries() -> None:
-    zero = TxnOptions(max_retries=0)
+    zero = TxnOptions(retry=RetryPolicy(max_retries=0))
     port = ScriptedAdapter(Transact(commit=deadlock()))
     with raises_contextualized(DatabaseError):
         _configured_db(port, zero).transact(lambda _tx: "ok", itself)
     assert port.calls.count(BeginCall()) == 1
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
-    assert _configured_db(port, zero).transact(lambda _tx: "ok", itself, max_retries=1) == "ok"
+    assert (
+        _configured_db(port, zero).transact(lambda _tx: "ok", itself, retry=fast_retry(1)) == "ok"
+    )
     assert port.calls.count(BeginCall()) == 2
 
 
@@ -1526,12 +1619,19 @@ def test_a_read_only_read_takes_no_lock_even_under_a_locking_root() -> None:
 def test_read_only_options_resolve_the_bound_and_level_alone() -> None:
     port = ScriptedAdapter(Transact(), Transact())
     db = scope(
-        port, options=TxnOptions(max_retries=2, concurrency="locking", isolation="serializable")
+        port,
+        options=TxnOptions(
+            retry=RetryPolicy(max_retries=2), concurrency="locking", isolation="serializable"
+        ),
     )
     inherited = db.read_only(lambda rtx: rtx.options, itself)
     overridden = db.read_only(lambda rtx: rtx.options, itself, isolation="repeatable_read")
-    assert inherited == ReadOnlyTxnOptions(max_retries=2, isolation="serializable")
-    assert overridden == ReadOnlyTxnOptions(max_retries=2, isolation="repeatable_read")
+    assert inherited == ReadOnlyTxnOptions(
+        retry=RetryPolicy(max_retries=2), isolation="serializable"
+    )
+    assert overridden == ReadOnlyTxnOptions(
+        retry=RetryPolicy(max_retries=2), isolation="repeatable_read"
+    )
     assert not hasattr(inherited, "concurrency")
     assert port.calls[0] == BeginCall("serializable", "read_only")
 
@@ -1539,8 +1639,9 @@ def test_read_only_options_resolve_the_bound_and_level_alone() -> None:
 @pytest.mark.parametrize(
     ("keyword", "value", "message"),
     [
-        ("max_retries", -1, "max_retries must be >= 0"),
-        ("max_retries", True, "max_retries must be a nonnegative int"),
+        ("retry", 3, "retry must be a RetryPolicy"),
+        ("retry", True, "retry must be a RetryPolicy"),
+        ("retry", None, "retry must be a RetryPolicy"),
         ("isolation", "repeatable read", "isolation must be one of"),
         ("isolation", None, "isolation must be one of"),
     ],
@@ -1561,7 +1662,10 @@ def test_a_read_only_join_receives_the_same_attempt_and_inherits_its_options() -
     def outer(rtx: ReadOnlyTxnAttempt) -> tuple[bool, bool]:
         omitted = db.read_only(lambda joined: joined is rtx, itself)
         repeated = db.read_only(
-            lambda joined: joined is rtx, itself, max_retries=10, isolation="read_committed"
+            lambda joined: joined is rtx,
+            itself,
+            retry=RetryPolicy(max_retries=10),
+            isolation="read_committed",
         )
         return omitted, repeated
 
@@ -1570,7 +1674,8 @@ def test_a_read_only_join_receives_the_same_attempt_and_inherits_its_options() -
 
 
 _CONFLICTING_READ_ONLY_JOINS: list[tuple[str, Callable[[ExecutionScope], object]]] = [
-    ("max_retries", lambda db: db.read_only(_must_not_run, itself, max_retries=3)),
+    ("retry", lambda db: db.read_only(_must_not_run, itself, retry=RetryPolicy(max_retries=3))),
+    ("retry", lambda db: db.read_only(_must_not_run, itself, retry=_OTHER_BACKOFF)),
     ("isolation", lambda db: db.read_only(_must_not_run, itself, isolation="serializable")),
 ]
 
@@ -1630,16 +1735,16 @@ def test_join_admission_runs_ownership_rollback_only_authority_access_mode_then_
     def outer(_rtx: ReadOnlyTxnAttempt) -> str:
         # Authority outranks the access mode, and the access mode an option.
         with pytest.raises(TransactionAuthorityError):
-            mismatched.transact(_must_not_run, itself, max_retries=3)
+            mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with pytest.raises(TransactionAccessModeError):
-            owner.transact(_must_not_run, itself, max_retries=3)
+            owner.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with pytest.raises(RuntimeError, match="inner failure"):
             owner.read_only(_raise_inner, itself)
         # Ownership outranks rollback-only, which outranks everything after it.
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself)
         with pytest.raises(RollbackOnlyError):
-            mismatched.transact(_must_not_run, itself, max_retries=3)
+            mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "withheld"
 
     with raises_contextualized(RollbackOnlyError) as refused_commit:

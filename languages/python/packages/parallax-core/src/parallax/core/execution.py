@@ -22,10 +22,12 @@ from parallax.core._execution._transaction._runner import (
     TransactionOwnershipError,
     TransactionRollbackError,
 )
+from parallax.core.auto_retry import AdaptiveBackoff, RetryPolicy
 from parallax.core.execution_authority._authority import InvalidPrincipalError, Principal
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "AdaptiveBackoff",
     "DeferredFeatureError",
     "ExecutionFailure",
     "InvalidPrincipalError",
@@ -35,6 +37,7 @@ __all__ = [
     "PublicationConflictError",
     "QueryTargetError",
     "ReadOnlyTxnOptions",
+    "RetryPolicy",
     "ServingModel",
     "TransactionAccessModeError",
     "TransactionAuthorityError",

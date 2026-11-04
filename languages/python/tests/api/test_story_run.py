@@ -44,7 +44,7 @@ from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import TransactionTimePinReadOnlyError
+from parallax.core.execution import RetryPolicy, TransactionTimePinReadOnlyError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
@@ -194,14 +194,14 @@ class _CountingDatabase(ScopedDatabase):
         self,
         fn: Callable[[TxnContext], T],
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._counted(
             lambda: super(_CountingDatabase, self).transact(
                 fn,
-                max_retries=max_retries,
+                retry=retry,
                 concurrency=concurrency,
                 isolation=isolation,
             )

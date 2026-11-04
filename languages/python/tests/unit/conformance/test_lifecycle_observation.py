@@ -41,6 +41,7 @@ from parallax.core.db_port import (
     RoutePolicy,
 )
 from parallax.core.diagnostics import FailureDiagnostic
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -79,7 +80,6 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
-    RetryPolicy,
     RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
@@ -270,12 +270,12 @@ def test_a_call_ordered_transport_never_ran_or_left_unknown_states_only_what_is_
 
 
 def test_an_outer_invocation_states_the_policy_a_joined_one_inherits() -> None:
-    outer = OuterInvocation(None, "locking", RetryPolicy(3), None)
+    outer = OuterInvocation(None, "locking", RetryPolicy(max_retries=3), None)
     assert _transition(TransactionInvocationStarted(_EXECUTION, 1, 1, None, outer)) == {
         "transactionInvocationStarted": {
             "invocation": "outer",
             "concurrency": "locking",
-            "retries": 3,
+            "retry": {"maxRetries": 3, "backoff": {"baseDelay": 0.008, "maxDelay": 1.0}},
         }
     }
     assert _transition(
@@ -283,30 +283,44 @@ def test_an_outer_invocation_states_the_policy_a_joined_one_inherits() -> None:
     ) == {"transactionInvocationStarted": {"invocation": "joined"}}
 
 
+def test_a_tuned_policy_is_observed_whole() -> None:
+    policy = RetryPolicy(max_retries=2, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05))
+    outer = OuterInvocation(None, "locking", policy, None)
+    assert _transition(TransactionInvocationStarted(_EXECUTION, 1, 1, None, outer)) == {
+        "transactionInvocationStarted": {
+            "invocation": "outer",
+            "concurrency": "locking",
+            "retry": {"maxRetries": 2, "backoff": {"baseDelay": 0.002, "maxDelay": 0.05}},
+        }
+    }
+
+
 def test_a_requested_level_and_mode_are_observed_in_the_spelling_the_corpus_uses() -> None:
     # A case grades this against its own document, so the level and the mode
     # leave the language spelled as the corpus spells them — the inverse of the
     # conversion case ingress makes. An invocation that requested neither states
     # nothing, which the test above already pins.
-    outer = OuterInvocation("read_write", "optimistic", RetryPolicy(10), "repeatable_read")
+    outer = OuterInvocation(
+        "read_write", "optimistic", RetryPolicy(max_retries=10), "repeatable_read"
+    )
     assert _transition(TransactionInvocationStarted(_EXECUTION, 1, 1, None, outer)) == {
         "transactionInvocationStarted": {
             "invocation": "outer",
             "accessMode": "read-write",
             "concurrency": "optimistic",
-            "retries": 10,
+            "retry": {"maxRetries": 10, "backoff": {"baseDelay": 0.008, "maxDelay": 1.0}},
             "isolation": "repeatable-read",
         }
     }
 
 
 def test_a_read_only_invocation_is_observed_with_no_preference() -> None:
-    outer = OuterInvocation("read_only", None, RetryPolicy(10), "read_committed")
+    outer = OuterInvocation("read_only", None, RetryPolicy(max_retries=10), "read_committed")
     assert _transition(TransactionInvocationStarted(_EXECUTION, 1, 1, None, outer)) == {
         "transactionInvocationStarted": {
             "invocation": "outer",
             "accessMode": "read-only",
-            "retries": 10,
+            "retry": {"maxRetries": 10, "backoff": {"baseDelay": 0.008, "maxDelay": 1.0}},
             "isolation": "read-committed",
         }
     }

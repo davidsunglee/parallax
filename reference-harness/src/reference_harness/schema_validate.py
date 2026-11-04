@@ -21,7 +21,9 @@ It performs m-case-format layer 1 statically (no database needed):
   both model-aware; the Schema Delta matrix rule, which reaches across
   ``then.evolution.kind`` into ``then.schema`` and so cannot be a schema
   constraint — a unilateral Evolution MUST carry one cell per supported Dialect
-  and a coordinated one carries none (:func:`_schema_matrix_problems`); and the
+  and a coordinated one carries none (:func:`_schema_matrix_problems`); a Retry
+  Policy's finiteness and field order once its built-in values are filled
+  (:func:`~reference_harness.retry_policy_validate.retry_policy_problems`); and the
   cross-references a scenario step makes — which find a
   write settles against (:func:`_validate_settled_write`), which earlier step an
   identity observable is anchored to (:func:`_validate_identity_anchor`), and
@@ -64,6 +66,7 @@ from .predicate_write_validate import PredicateWriteValidationError, validate_pr
 from .providers import DIALECT_CATALOG
 from .query_references import collect_query_reference_classes
 from .relationship import validate_relationship_types
+from .retry_policy_validate import retry_policy_problems
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
@@ -1215,6 +1218,7 @@ def _validate_case(
     _check_compile_eligibility(case, scope.label, errors)
     if case_problem is None and isinstance(case, dict):
         errors.extend(f"{scope.label}: {problem}" for problem in validate_execution(case))
+        errors.extend(f"{scope.label}: {problem}" for problem in retry_policy_problems(case))
     # The action under test lives under `when`; a read or rejected case's
     # Object Query and each scenario/coherence step's own are canonical
     # m-object-query documents that must also validate against that schema.

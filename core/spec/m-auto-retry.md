@@ -15,9 +15,9 @@ The unit-of-work boundary **MUST** offer **bounded automatic retry**. On a
    the retry re-reads, it does not replay a stale in-memory shadow;
 3. **re-execute the closure** against that fresh state, inside a new atomic scope.
 
-The bound is **configurable** per boundary; an omitted bound resolves as
-`m-execution` *Option resolution* states, and a root's built-in bound is **10**
-re-executions. A bound of **`0` disables** the loop, so even a
+The bound is **configurable** per boundary as part of its **Retry Policy**
+(*The Retry Policy*, below); an omitted policy resolves as `m-execution` *Option
+resolution* states. A bound of **`0` disables** the loop, so even a
 retriable failure surfaces to the caller after the first attempt. A retry that
 **exhausts** the bound surfaces the failure to the caller (diagnosably — the
 surfaced error carries the attempt count). This mirrors Reladomo's
@@ -109,6 +109,31 @@ lifecycle handler's own failure, which `m-execution-lifecycle` quarantines,
 changes nothing. The error a caller receives after exhaustion, or after any
 terminal failure, is the failure itself with its own causal chain.
 
+## The Retry Policy
+
+A **Retry Policy** is one immutable value holding everything a caller configures
+about the loop:
+
+| Field | Meaning | Built-in |
+|---|---|---|
+| `maxRetries` | the bound: re-executions after the first attempt, a nonnegative integer | `10` |
+| `backoff.baseDelay` | the first attempt's fixed window, in seconds | `0.008` |
+| `backoff.maxDelay` | the longest window, in seconds | `1` |
+
+Each delay is finite and positive, and `baseDelay` **MUST NOT** exceed
+`maxDelay`. A value outside these rules is refused before anything is acquired
+or observed.
+
+A policy is **one value**. A field it omits takes the built-in above, never a
+value from a policy it replaces, so an explicit policy replaces an inherited one
+whole and two policies are equal exactly when all three fields are.
+
+The fields are what a deployment decides: how many attempts a conflict is worth,
+how long conflicts typically take to clear, and the longest single wait it
+accepts. Neither delay promises a minimum wait, because a draw may land anywhere
+down to zero. Which failures are retriable, and how a window grows, adapts, and
+is drawn from, are fixed rather than configured.
+
 ## Waiting between attempts
 
 Before each re-execution the boundary **MUST** wait a **bounded randomized
@@ -118,13 +143,34 @@ released its connection, and finished reporting, so no connection or attempt is
 held while it lasts. Nothing waits before a first attempt, after the last one,
 or after a terminal failure, and a bound of `0` never waits.
 
-The delay's scale **SHOULD** follow the measured duration of the attempt that
-just failed. How long a conflicting writer holds what it wrote depends on round
-trips, statement count, and work inside the transaction, all of which differ by
-deployment, so a delay fixed in absolute time suits only the environment it was
-measured in. The delay keeps absolute bounds whatever the attempt took. Its
-distribution, its scale, and its bounds are internal policy, chosen from
-contention evidence rather than offered as an option.
+The wait after attempt `n` (the first attempt is `1`) that took `duration` is a
+uniform draw from `[0, window]`:
+
+```text
+d      = n - 1
+fixed  = min(maxDelay, baseDelay * 2^d)
+scale  = min(8, 0.25 * 2^d)
+window = min(maxDelay, max(fixed, scale * duration))
+```
+
+The rule holds for every attempt ordinal and every valid policy, so an
+implementation **MUST** reach it without an intermediate value overflowing or
+growth stopping early. The doubling, the duration multiplier, and the full-jitter
+draw are fixed policy, chosen from contention evidence rather than offered as
+options.
+
+The duration term exists because how long a conflicting writer holds what it
+wrote depends on round trips, statement count, and work inside the transaction,
+all of which differ by deployment, so a delay fixed in absolute time suits only
+the environment it was measured in. `duration` runs from handing the attempt
+control to receiving its failure, and excludes earlier waits.
+
+The delay depends on the attempt ordinal and its duration alone, never on which
+failure occurred. A fast-failing attempt therefore waits about the doubling
+`baseDelay` windows, and a small bound can run out while a conflicting commit is
+still becoming visible. That is a limit of a small budget rather than a case the
+wait treats specially: a deployment that meets it raises `maxRetries` or
+`baseDelay`.
 
 ## Recognizing the conflict
 
@@ -150,13 +196,16 @@ the same caller revision against the same stored row.
 ## What the suite pins down
 
 The observable loop-mechanics branches (a conflict replayed away, a conflict a
-zero bound leaves unreplayed, an injected transient auto-retried away,
-`maxRetries: 0`, bound exhaustion, the callback value withheld on abort) need
+zero bound leaves unreplayed, an injected transient auto-retried away, a
+`maxRetries` of `0`, bound exhaustion, the callback value withheld on abort) need
 injected faults a single-connection harness cannot provoke, so they are authored
 as **boundary** cases on the `api-conformance` lane and satisfied by each
 language's API Conformance Suite (`m-api-conformance`). The root-owned defaults
 (`m-execution` *Options a root is configured with*) are proven the same way,
 through what the loop does under a configured root (`m-case-format` *Root
 configuration*): a zero bound on the root disables the loop for an invocation
-naming none, a conflict included, and an explicit bound overrides it; and a root
-level stands over every attempt and an explicit level overrides it.
+naming none, a conflict included, and an explicit bound overrides it; a root
+level stands over every attempt and an explicit level overrides it; a tuned
+policy is inherited and reported whole, an explicit one replaces it whole, and a
+join compares policies by value. Waits are not observable through the portable
+case format: the wait rule's own evidence belongs to each implementation's loop.

@@ -52,7 +52,7 @@ from parallax.core.base import INT64, JSON, Json
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptRolledBack,
@@ -511,7 +511,7 @@ def test_a_ranged_write_opens_every_successor_in_one_statement(profile_run: Any)
 
 def _failure(db: ScopedDatabase, write: Callable[[TxnContext], None]) -> DatabaseError:
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(write, max_retries=0)
+        db.transact(write, retry=RetryPolicy(max_retries=0))
     cause = failed.value.cause
     assert isinstance(cause, DatabaseError)
     return cause

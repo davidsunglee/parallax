@@ -30,7 +30,7 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import Database, ScopedDatabase
 from tests._support.case_corpus import case as corpus_case
@@ -317,7 +317,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
         "scenario",
         {
             "when": {
-                "uow": {"concurrency": "optimistic", "maxRetries": 0},
+                "uow": {"concurrency": "optimistic", "retry": {"maxRetries": 0}},
                 "scenario": [
                     {
                         "uow": "x",
@@ -637,8 +637,14 @@ _OPTIMISTIC_ONLY: Final = {"concurrency": "optimistic"}
     ("placement", "bound"),
     [
         ({"when": {"uow": _OPTIMISTIC_ONLY}}, 10),
-        ({"when": {"uow": {**_OPTIMISTIC_ONLY, "maxRetries": 1}}}, 1),
-        ({"given": {"databaseOptions": {"maxRetries": 3}}, "when": {"uow": _OPTIMISTIC_ONLY}}, 3),
+        ({"when": {"uow": {**_OPTIMISTIC_ONLY, "retry": {"maxRetries": 1}}}}, 1),
+        (
+            {
+                "given": {"databaseOptions": {"retry": {"maxRetries": 3}}},
+                "when": {"uow": _OPTIMISTIC_ONLY},
+            },
+            3,
+        ),
     ],
 )
 def test_an_interleaved_case_grading_a_conflict_abort_under_a_positive_bound_is_refused(
@@ -661,7 +667,10 @@ def test_an_interleaved_case_grading_a_conflict_abort_under_a_positive_bound_is_
     "placement",
     [
         {},
-        {"given": {"databaseOptions": {"maxRetries": 0}}, "when": {"uow": _OPTIMISTIC_ONLY}},
+        {
+            "given": {"databaseOptions": {"retry": {"maxRetries": 0}}},
+            "when": {"uow": _OPTIMISTIC_ONLY},
+        },
     ],
     ids=["requested", "root"],
 )
@@ -698,7 +707,9 @@ def test_a_group_production_replays_fails_rather_than_re_running_its_steps() -> 
     # admits a replay: production enters the group's callback a second time,
     # past a turnstile that already passed its steps, and the lane refuses that
     # attempt instead of waiting on it.
-    case = _with_option_placement({"when": {"uow": {**_OPTIMISTIC_ONLY, "maxRetries": 1}}})
+    case = _with_option_placement(
+        {"when": {"uow": {**_OPTIMISTIC_ONLY, "retry": {"maxRetries": 1}}}}
+    )
     then = cast("dict[str, Any]", case.document["then"])
     then["units"] = {}
     row_v1: MappingRow = {
@@ -726,7 +737,7 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
     document = dict(case.document)
     document["given"] = {
         **cast("Mapping[str, Any]", document.get("given") or {}),
-        "databaseOptions": {"isolation": "serializable", "maxRetries": 0},
+        "databaseOptions": {"isolation": "serializable", "retry": {"maxRetries": 0}},
     }
     rooted = dataclasses.replace(case, document=document)
     row_v1: MappingRow = {
@@ -743,7 +754,7 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
     run_interleaved_scenario_case(rooted, caller_port, executions)
 
     expected = case_format.database_options(rooted)
-    assert expected == TxnOptions(isolation="serializable", max_retries=0)
+    assert expected == TxnOptions(isolation="serializable", retry=RetryPolicy(max_retries=0))
     assert [execution.options for execution in executions.opened] == [expected, expected]
     assert ours_port.levels == ["serializable"]
     assert peer_port.levels == ["serializable"]

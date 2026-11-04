@@ -13,12 +13,13 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.object_query import deserialize
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
+from tests._support.retry import fast_retry
 
 type _AuthorityMode = Literal["database-login", "principal"]
 
@@ -62,7 +63,7 @@ def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
     assert shape.login_balance == Decimal("250.00")
     assert shape.principal_balance == Decimal("250.00")
     assert shape.joined_same_transaction
-    assert shape.options == TxnOptions(max_retries=1, isolation="serializable")
+    assert shape.options == TxnOptions(retry=RetryPolicy(max_retries=1), isolation="serializable")
 
 
 @pytest.mark.parametrize("mode", ["database-login", "principal"])
@@ -96,7 +97,7 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
             tx.amend(changed)
             return changed.balance
 
-        assert scoped.transact(update, max_retries=1) == Decimal("251.00")
+        assert scoped.transact(update, retry=fast_retry(1)) == Decimal("251.00")
         assert scoped.find(query).result().balance == Decimal("251.00")
 
     attempts = sum(

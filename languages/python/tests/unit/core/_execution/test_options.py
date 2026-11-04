@@ -14,19 +14,19 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 
 
 def test_the_built_in_record_is_ten_optimistic_and_read_committed() -> None:
     options = TxnOptions()
-    assert options.max_retries == 10
+    assert options.retry == RetryPolicy()
     assert options.concurrency == "optimistic"
     assert options.isolation == "read_committed"
 
 
 def test_the_optimistic_conflict_opt_in_is_no_field() -> None:
     assert [field.name for field in dataclasses.fields(TxnOptions)] == [
-        "max_retries",
+        "retry",
         "concurrency",
         "isolation",
     ]
@@ -37,18 +37,18 @@ def test_the_optimistic_conflict_opt_in_is_no_field() -> None:
 def test_the_record_is_frozen_and_slotted() -> None:
     options = TxnOptions()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        options.max_retries = 3  # pyright: ignore[reportAttributeAccessIssue] - the refusal is what this proves
+        options.retry = RetryPolicy(max_retries=3)  # pyright: ignore[reportAttributeAccessIssue] - the refusal is what this proves
     assert not hasattr(options, "__dict__")
 
 
 def test_every_field_is_configurable_and_compares_by_value() -> None:
     configured = TxnOptions(
-        max_retries=0,
+        retry=RetryPolicy(max_retries=0),
         concurrency="locking",
         isolation="serializable",
     )
     assert configured == TxnOptions(
-        max_retries=0,
+        retry=RetryPolicy(max_retries=0),
         concurrency="locking",
         isolation="serializable",
     )
@@ -58,11 +58,10 @@ def test_every_field_is_configurable_and_compares_by_value() -> None:
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("max_retries", -1, "max_retries must be >= 0"),
-        ("max_retries", True, "max_retries must be a nonnegative int"),
-        ("max_retries", 1.0, "max_retries must be a nonnegative int"),
-        ("max_retries", "10", "max_retries must be a nonnegative int"),
-        ("max_retries", None, "max_retries must be a nonnegative int"),
+        ("retry", 10, "retry must be a RetryPolicy"),
+        ("retry", True, "retry must be a RetryPolicy"),
+        ("retry", AdaptiveBackoff(), "retry must be a RetryPolicy"),
+        ("retry", None, "retry must be a RetryPolicy"),
         ("concurrency", "pessimistic", r"concurrency must be one of \['locking', 'optimistic'\]"),
         ("concurrency", None, "concurrency must be one of"),
         ("isolation", "read uncommitted", "isolation must be one of"),
@@ -92,8 +91,14 @@ def test_an_accepted_vocabulary_value_is_stored_as_its_canonical_spelling() -> N
     assert {options.concurrency: 1, options.isolation: 2}
 
 
-def test_zero_retries_is_a_value_rather_than_an_omission() -> None:
-    assert TxnOptions(max_retries=0).max_retries == 0
+def test_the_retired_bound_is_no_field_of_either_record() -> None:
+    with pytest.raises(TypeError, match="max_retries"):
+        TxnOptions(max_retries=3)  # pyright: ignore[reportCallIssue] - the removed field's refusal is what this proves
+
+
+def test_a_record_holds_the_policy_it_was_given() -> None:
+    policy = RetryPolicy(max_retries=0)
+    assert TxnOptions(retry=policy).retry is policy
 
 
 def test_the_omission_marker_is_one_slotted_value_that_names_itself() -> None:

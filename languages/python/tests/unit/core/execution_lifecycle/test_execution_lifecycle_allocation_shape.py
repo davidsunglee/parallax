@@ -35,6 +35,7 @@ from typing import Final
 from uuid import uuid4
 
 import parallax.core.execution_lifecycle._activity as _activity
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -68,6 +69,7 @@ from tests.unit.memory_instruments import (
 
 ROWS: Final = rows(1_000)
 EDITION: Final = "edition"
+RETRY: Final = RetryPolicy()
 
 
 class _DecliningProvider:
@@ -136,7 +138,7 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
             None,
             access_mode="read_write",
             concurrency="optimistic",
-            retries=10,
+            retry=RETRY,
             isolation=None,
         ) as invocation,
         invocation.attempt("edition") as attempt,

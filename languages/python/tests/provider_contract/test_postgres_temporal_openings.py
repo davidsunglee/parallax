@@ -40,7 +40,7 @@ from parallax.core._execution._unit_work import write_settlement
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallFailed,
@@ -52,6 +52,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
 
@@ -276,7 +277,7 @@ def _failed(
     before = _rows(profile_run, ColumnsSpan)
     edit = _conflicting_amendment(profile_run, ColumnsSpan, then)
     with pytest.raises(ExecutionFailure) as escaped:
-        db.transact(edit, max_retries=2)
+        db.transact(edit, retry=fast_retry(2))
     events = _events(provider)
     rows = _rows(profile_run, ColumnsSpan)
     assert rows == before
@@ -402,7 +403,7 @@ def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
     db = _ledgers(profile_run, provider)
     before = _ledger_rows(profile_run)
     with pytest.raises(ExecutionFailure) as escaped:
-        db.transact(_amend_ledgers({1: 150, 2: 150, 3: 150}), max_retries=2)
+        db.transact(_amend_ledgers({1: 150, 2: 150, 3: 150}), retry=fast_retry(2))
 
     cause = escaped.value.cause
     assert isinstance(cause, DatabaseError)
@@ -458,7 +459,9 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
         if not grouped:
             patched.setattr(write_settlement, "_GROUP_WRITES", 1)
         with pytest.raises(ExecutionFailure) as escaped:
-            db.transact(_amend_ledgers({1: 150, 2: 160}, advance_two), max_retries=0)
+            db.transact(
+                _amend_ledgers({1: 150, 2: 160}, advance_two), retry=RetryPolicy(max_retries=0)
+            )
 
     cause = escaped.value.cause
     writes = _writes(_events(provider))

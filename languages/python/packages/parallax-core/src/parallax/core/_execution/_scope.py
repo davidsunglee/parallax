@@ -23,6 +23,7 @@ from parallax.core._execution._routing import OperationRouting, resolved_read_po
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.evidence import ReadEvidence
+from parallax.core.auto_retry import RetryPolicy
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
 from parallax.core.execution_authority._authority import ExecutionAuthority
@@ -118,7 +119,7 @@ class ExecutionScope:
     def with_options(
         self,
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ExecutionScope:
@@ -127,7 +128,7 @@ class ExecutionScope:
         return self._derived(
             patch_options(
                 self._options,
-                max_retries=max_retries,
+                retry=retry,
                 concurrency=concurrency,
                 isolation=isolation,
             ),
@@ -231,7 +232,7 @@ class ExecutionScope:
         context_for: Callable[[TxnAttempt], Tx],
         /,
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
@@ -247,7 +248,7 @@ class ExecutionScope:
             context_for,
             authority=self._authority,
             defaults=self._options,
-            max_retries=max_retries,
+            retry=retry,
             concurrency=concurrency,
             isolation=isolation,
         )
@@ -258,13 +259,13 @@ class ExecutionScope:
         context_for: Callable[[ReadOnlyTxnAttempt], Tx],
         /,
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         """Run ``fn`` in a read-only transaction under this scope's authority,
         joining the active one where this root opened it read-only.
 
-        The retry bound and isolation resolve exactly as :meth:`transact`'s do;
+        The Retry Policy and isolation resolve exactly as :meth:`transact`'s do;
         this scope's Concurrency Preference has nothing to apply to.
         """
         return self._runner.read_only(
@@ -274,6 +275,6 @@ class ExecutionScope:
             defaults=self._options,
             read_policy=self._read_policy,
             routes=self._routes,
-            max_retries=max_retries,
+            retry=retry,
             isolation=isolation,
         )

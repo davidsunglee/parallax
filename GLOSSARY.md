@@ -43,6 +43,7 @@ contract owners; this index does not add requirements.
 | Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Temporal writes](core/spec/m-temporal-write.md) |
 | Temporal Conflict | A close the attempt's Transaction Instant cannot follow, because the row it would end starts at or after that instant: refused and retried at a fresh instant, never clamped, and distinct from an Optimistic Lock Conflict's moved gate | [Temporal writes](core/spec/m-temporal-write.md) |
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Concurrency policy](core/spec/m-concurrency.md#strategy-derivation) |
+| Retry Policy | The retry bound and the backoff, one immutable value resolved whole | [Bounded retry](core/spec/m-auto-retry.md#the-retry-policy) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
 | Read Delivery | Turning a validated read into a judged Page, delivered whole or streamed | [Read delivery](core/spec/m-read-delivery.md) |
 | Page / Entity State | One read's bounded fetched-row table, and the judged member row it holds for one logical row | [Read delivery](core/spec/m-read-delivery.md) |

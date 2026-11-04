@@ -16,9 +16,9 @@ changes, so attempts per committed invocation measure the guard's replay cost.
 
 With ``--environments`` only the replay section runs, in every simulated
 environment of ``_support.ENVIRONMENTS``, with the application work between
-each read and its amendment, and its default-bound run repeats once per
-replay policy of ``_support.REPLAY_POLICIES``, as ``contention.py`` runs them,
-after a discarded warm-up run.
+each read and its amendment, under each public policy of
+``_support.REPLAY_POLICIES``, after a discarded warm-up run. Every replay run
+states the complete policy it passed to ``retry=``.
 """
 
 import threading
@@ -31,7 +31,6 @@ from _support import (
     REPLAY_POLICIES,
     WARM_UP_INVOCATIONS,
     Balance,
-    Waits,
     arguments,
     conditions,
     delayed,
@@ -44,11 +43,13 @@ from _support import (
     percentiles,
     pooled,
     provisioned,
-    replay_policy,
+    reported_policy,
     reset,
     scalar,
     scoped,
 )
+
+from parallax.core.execution import RetryPolicy
 
 WAL_MODES: dict[str, dict[str, object]] = {
     "guard": {"concurrency": "optimistic", "change": False},
@@ -102,7 +103,8 @@ def guard_replay(
     writers: int,
     invocations: int,
     isolation: str,
-    retries: int | None,
+    label: str,
+    policy: RetryPolicy,
     think_s: float = 0.0,
 ) -> dict[str, object]:
     samples: list[dict[str, object]] = []
@@ -121,12 +123,9 @@ def guard_replay(
                     pause(think_s)
                 tx.amend(current.edit(value=current.value))
 
-            options: dict[str, object] = {"isolation": isolation}
-            if retries is not None:
-                options["max_retries"] = retries
             started = time.perf_counter()
             try:
-                db.transact(body, **options)
+                db.transact(body, isolation=isolation, retry=policy)
                 outcome: object = "committed"
             except Exception as exc:
                 outcome = failure(exc)
@@ -151,7 +150,8 @@ def guard_replay(
     committed = [sample for sample in samples if sample["outcome"] == "committed"]
     attempts = sum(int(sample["attempts"]) for sample in samples)  # type: ignore[arg-type]
     return {
-        "maxRetries": "default" if retries is None else retries,
+        "policy": label,
+        "retry": reported_policy(policy),
         "summary": {
             "invocations": len(samples),
             "committed": len(committed),
@@ -166,32 +166,24 @@ def guard_replay(
 def environment_replays(
     run: Any, rows: Any, writers: int, invocations: int, isolation: str
 ) -> list[dict[str, object]]:
-    """The guard/guard replay in every environment: at ``max_retries=0`` once,
-    then at the default bound once per replay policy."""
+    """The guard/guard replay in every environment, once per replay policy."""
     replay: list[dict[str, object]] = []
     reset(run, rows)
     with scoped(pooled(run, writers)) as db:
-        guard_replay(db, writers, WARM_UP_INVOCATIONS, isolation, None)
+        guard_replay(
+            db, writers, WARM_UP_INVOCATIONS, isolation, "default", REPLAY_POLICIES["default"]
+        )
     for environment in ENVIRONMENTS:
         adapter, latency = delayed(pooled(run, writers), environment)
-        for retries in (0, None):
-            for policy in ["scaled"] if retries == 0 else list(REPLAY_POLICIES):
-                reset(run, rows)
-                waits = Waits()
-                latency.take()
-                with scoped(adapter) as db, replay_policy(policy, waits):
-                    measured = guard_replay(
-                        db, writers, invocations, isolation, retries, environment.think_s
-                    )
-                measured.update(
-                    {
-                        "environment": environment.name,
-                        "backoff": policy,
-                        "latency": latency.take(),
-                        "replayWaits": waits.take(),
-                    }
+        for label, policy in REPLAY_POLICIES.items():
+            reset(run, rows)
+            latency.take()
+            with scoped(adapter) as db:
+                measured = guard_replay(
+                    db, writers, invocations, isolation, label, policy, environment.think_s
                 )
-                replay.append(measured)
+            measured.update({"environment": environment.name, "latency": latency.take()})
+            replay.append(measured)
     return replay
 
 
@@ -200,7 +192,7 @@ def main() -> None:
         parser.add_argument(
             "--environments",
             action="store_true",
-            help="run only the replay, in every simulated environment and replay policy",
+            help="run only the replay, in every simulated environment and public policy",
         )
 
     args = arguments(__doc__ or "", extra=extra)
@@ -217,9 +209,11 @@ def main() -> None:
                 for mode in WAL_MODES:
                     reset(run, rows)
                     wal.append(wal_mode(db, control, keys, mode, args.isolation))
-                for retries in (0, None):
+                for label, policy in REPLAY_POLICIES.items():
                     reset(run, rows)
-                    replay.append(guard_replay(db, writers, invocations, args.isolation, retries))
+                    replay.append(
+                        guard_replay(db, writers, invocations, args.isolation, label, policy)
+                    )
         report = {
             "driver": "guard_wal",
             "conditions": conditions(

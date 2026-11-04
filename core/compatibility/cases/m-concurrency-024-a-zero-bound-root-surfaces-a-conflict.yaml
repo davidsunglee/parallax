@@ -9,7 +9,7 @@ compileEligibility:
 given:
   fault: optimistic-lock-conflict
   databaseOptions:
-    maxRetries: 0
+    retry: {maxRetries: 0}
 when:
   boundary:
     - action: read

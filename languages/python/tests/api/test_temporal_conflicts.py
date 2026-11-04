@@ -24,10 +24,11 @@ import pytest
 from parallax.conformance.scripted_clock import FixedClock, ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, attr
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import RollbackOnlyError, TemporalConflictError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
 
@@ -202,7 +203,7 @@ def test_a_transaction_time_close_at_or_before_its_stored_start_is_refused(
             _terminate(tx, observed, representation)
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(change, concurrency=concurrency, max_retries=0)
+        db.transact(change, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     refusal = _refused(failed)
     assert refusal.entity == _identity(entity)
     assert (refusal.instant, refusal.stored_bound) == (instant, _SEEDED)
@@ -227,7 +228,7 @@ def test_a_bounded_bitemporal_amendment_behind_its_stored_start_opens_no_piece(
         db.transact(
             lambda tx: _amend_until(tx, _find(tx, entity, representation), representation),
             concurrency=concurrency,
-            max_retries=0,
+            retry=RetryPolicy(max_retries=0),
         )
     assert _refused(failed).stored_bound == _SEEDED
     assert _span_rows(profile_run, entity) == [(_SEEDED, None, _JAN, None, 100)]
@@ -272,9 +273,11 @@ def test_a_clock_that_stays_behind_exhausts_the_bound_with_the_conflict_as_cause
         _amend(tx, _find(tx, entity, "typed"), "typed", "first")
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(change, max_retries=2)
+        db.transact(change, retry=fast_retry(2))
     assert len(attempts) == 3
-    assert _refused(failed).__notes__ == ["bounded retry exhausted after 3 attempts (retries=2)"]
+    assert _refused(failed).__notes__ == [
+        "bounded retry exhausted after 3 attempts (max_retries=2)"
+    ]
     assert _log_rows(profile_run, entity) == [(_SEEDED, None, "seeded")]
 
 
@@ -301,7 +304,7 @@ def test_a_caught_refusal_of_a_held_row_still_fails_the_attempt(
         return "withheld"
 
     with pytest.raises(ExecutionFailure) as failed:
-        db.transact(change, concurrency=concurrency, max_retries=0)
+        db.transact(change, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     assert len(caught) == 1
     assert _refused(failed).stored_bound == _SEEDED
     assert _log_rows(profile_run, entity) == [(_SEEDED, None, "seeded")]

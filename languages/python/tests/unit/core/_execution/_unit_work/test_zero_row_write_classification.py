@@ -35,7 +35,13 @@ from decimal import Decimal
 import pytest
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.auto_retry import RetryCandidate, RetryTiming, retry_eligible, run_with_retry
+from parallax.core.auto_retry import (
+    RetryCandidate,
+    RetryPolicy,
+    RetryTiming,
+    retry_eligible,
+    run_with_retry,
+)
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
@@ -161,7 +167,7 @@ def test_a_non_retriable_shortfall_surfaces_after_one_attempt_with_budget_left(
     assert not retry_eligible(error)
     attempt, attempts = _raising(error)
     with pytest.raises(type(error)):
-        run_with_retry(attempt, retries=10, timing=_WITHOUT_WAITING)
+        run_with_retry(attempt, policy=RetryPolicy(), timing=_WITHOUT_WAITING)
     assert len(attempts) == 1
 
 
@@ -172,6 +178,6 @@ def test_the_retriable_conflict_is_the_one_shortfall_the_loop_can_re_execute() -
     assert retry_eligible(conflict)
     attempt, attempts = _raising(conflict)
     with pytest.raises(OptimisticLockConflictError) as surfaced:
-        run_with_retry(attempt, retries=2, timing=_WITHOUT_WAITING)
+        run_with_retry(attempt, policy=RetryPolicy(max_retries=2), timing=_WITHOUT_WAITING)
     assert surfaced.value is conflict
     assert len(attempts) == 3  # the first attempt plus its two re-executions

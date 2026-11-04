@@ -23,7 +23,7 @@ import pytest
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, attr, index
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.execution import ServingModel, TxnOptions, prepare_model
+from parallax.core.execution import RetryPolicy, ServingModel, TxnOptions, prepare_model
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     MissingTargetError,
@@ -45,6 +45,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -131,7 +132,9 @@ def test_an_optimistic_conflict_surfaces_after_one_attempt_under_a_zero_bound() 
         )
     )
     with raises_contextualized(OptimisticLockConflictError):
-        account_db(port).transact(_observe_and_update, concurrency="optimistic", max_retries=0)
+        account_db(port).transact(
+            _observe_and_update, concurrency="optimistic", retry=RetryPolicy(max_retries=0)
+        )
     assert port.calls.count(BeginCall()) == 1
 
 
@@ -154,9 +157,11 @@ def test_an_optimistic_conflict_exhausts_its_bound() -> None:
         )  # every attempt conflicts
     )
     with raises_contextualized(OptimisticLockConflictError) as excinfo:
-        account_db(port).transact(_observe_and_update, concurrency="optimistic", max_retries=2)
+        account_db(port).transact(
+            _observe_and_update, concurrency="optimistic", retry=fast_retry(2)
+        )
     assert port.calls.count(BeginCall()) == 3
-    assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
+    assert "3 attempts (max_retries=2)" in "".join(excinfo.value.__notes__)
 
 
 def test_the_removed_conflict_opt_in_is_an_unknown_keyword() -> None:
@@ -270,7 +275,9 @@ def test_a_caught_dependent_read_flush_failure_refuses_further_work_and_the_comm
     refusals: list[BaseException] = []
     with raises_contextualized(RollbackOnlyError) as failure:
         account_db(port).transact(
-            _update_force_flush_and_catch(refusals), concurrency="optimistic", max_retries=0
+            _update_force_flush_and_catch(refusals),
+            concurrency="optimistic",
+            retry=RetryPolicy(max_retries=0),
         )
     assert isinstance(failure.value.__cause__, OptimisticLockConflictError)
     (refusal,) = refusals
@@ -314,7 +321,9 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
             tx.amend(current.edit(balance=Decimal("30.00")))
 
     with raises_contextualized(OptimisticLockConflictError) as raised:
-        account_db(port).transact(callback, concurrency="optimistic", max_retries=0)
+        account_db(port).transact(
+            callback, concurrency="optimistic", retry=RetryPolicy(max_retries=0)
+        )
     assert raised.value.target.key_values == ((3,),)
     writes = [call for call in port.calls if isinstance(call, ReadCall | WriteCall)][1:]
     assert len(writes) == 1
@@ -322,7 +331,7 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
 
 def test_a_zero_bound_root_surfaces_a_conflict_and_an_explicit_bound_replays_it() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    zero = TxnOptions(max_retries=0)
+    zero = TxnOptions(retry=RetryPolicy(max_retries=0))
     port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
     with raises_contextualized(OptimisticLockConflictError):
         _configured_db(port, zero).transact(_observe_and_update)
@@ -330,7 +339,7 @@ def test_a_zero_bound_root_surfaces_a_conflict_and_an_explicit_bound_replays_it(
     port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
     )
-    _configured_db(port, zero).transact(_observe_and_update, max_retries=1)
+    _configured_db(port, zero).transact(_observe_and_update, retry=fast_retry(1))
     assert port.calls.count(BeginCall()) == 2
 
 

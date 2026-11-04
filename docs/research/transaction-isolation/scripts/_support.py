@@ -4,7 +4,9 @@ A driver runs inside one arm's Python workspace (``capture.py`` starts it with
 ``uv run --project <arm>/languages/python``), so everything here must exist in
 every arm a checkpoint measures. The measured work goes through the public
 Snapshot API; provisioning and SQL recording use the conformance tooling the
-corpus runners already rely on.
+corpus runners already rely on. These drivers configure replay through the
+public Retry Policy, so an arm predating it needs the drivers of the checkout
+that captured it.
 """
 
 import argparse
@@ -38,6 +40,7 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, connect
 
 ISOLATIONS = ("read_committed", "repeatable_read")
@@ -237,14 +240,21 @@ class _RecordingConnection:
     def ordered_write_transport(self) -> Any:
         return self._transport
 
-    def execute(self, sql: str, binds: Sequence[Any], document_reads: Sequence[Any] = ()) -> Any:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Any],
+        document_reads: Sequence[Any] = (),
+        *,
+        read_only: bool = False,
+    ) -> Any:
         self._recording.record("read", sql, binds)
-        return self._inner.execute(sql, binds, document_reads)
+        return self._inner.execute(sql, binds, document_reads, read_only=read_only)
 
-    def execute_pipeline(self, statements: Sequence[Any]) -> Any:
+    def execute_pipeline(self, statements: Sequence[Any], *, read_only: bool = False) -> Any:
         for statement in statements:
             self._recording.record("read", statement.sql, statement.binds)
-        return self._inner.execute_pipeline(statements)
+        return self._inner.execute_pipeline(statements, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
         self._recording.record("write", sql, binds)
@@ -369,13 +379,20 @@ class _DelayedConnection:
     def ordered_write_transport(self) -> Any:
         return self._transport
 
-    def execute(self, sql: str, binds: Sequence[Any], document_reads: Sequence[Any] = ()) -> Any:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Any],
+        document_reads: Sequence[Any] = (),
+        *,
+        read_only: bool = False,
+    ) -> Any:
         with self._latency.round_trip():
-            return self._inner.execute(sql, binds, document_reads)
+            return self._inner.execute(sql, binds, document_reads, read_only=read_only)
 
-    def execute_pipeline(self, statements: Sequence[Any]) -> Any:
+    def execute_pipeline(self, statements: Sequence[Any], *, read_only: bool = False) -> Any:
         with self._latency.round_trip():
-            return self._inner.execute_pipeline(statements)
+            return self._inner.execute_pipeline(statements, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
         with self._latency.round_trip():
@@ -421,35 +438,25 @@ def delayed(adapter: Any, environment: Environment) -> tuple[Any, Latency]:
     return DecoratingAdapter(adapter, decorate), latency
 
 
-# ---------------------------------------------------------------- backoffs
+# ----------------------------------------------------------------- policies
 
-# The replay policies a portability checkpoint compares in every environment,
-# each substituted for the arm's own window: no wait, the fixed full-jitter
-# windows `min(cap, base * 2**(attempt - 1))` as (base, cap) in seconds, and the
-# arm's own window scaled by the failed attempt's duration.
-REPLAY_POLICIES: dict[str, tuple[float, float] | None] = {
-    "immediate": (0.0, 0.0),
-    "fixed-8/25": (0.008, 0.025),
-    "fixed-8/400": (0.008, 0.4),
-    "scaled": None,
-}
+# The public Retry Policies every current driver's replay comparison runs: the
+# first attempt's physical outcome alone, then the built-in policy. Each is
+# passed through `retry=` and reported from the value itself.
+DISABLED_POLICY = RetryPolicy(max_retries=0)
+DEFAULT_POLICY = RetryPolicy()
+REPLAY_POLICIES: dict[str, RetryPolicy] = {"disabled": DISABLED_POLICY, "default": DEFAULT_POLICY}
 
 
-def scaled_policy() -> dict[str, float] | None:
-    """The arm's own duration-scaled window constants, or ``None`` for an arm
-    whose replay window does not scale."""
-    from parallax.core import auto_retry
-
-    names = {
-        "floorFirstS": "_FLOOR_FIRST_S",
-        "floorLimitS": "_FLOOR_LIMIT_S",
-        "scaleFirst": "_SCALE_FIRST",
-        "scaleLimit": "_SCALE_LIMIT",
-        "ceilingS": "_CEILING_S",
+def reported_policy(policy: RetryPolicy) -> dict[str, object]:
+    """``policy`` as a report states it, in the portable spelling."""
+    return {
+        "maxRetries": policy.max_retries,
+        "backoff": {
+            "baseDelay": policy.backoff.base_delay,
+            "maxDelay": policy.backoff.max_delay,
+        },
     }
-    if not hasattr(auto_retry, "_window"):
-        return None
-    return {key: getattr(auto_retry, name) for key, name in names.items()}
 
 
 # Discarded invocations per writer before the first measured run of an
@@ -459,63 +466,14 @@ WARM_UP_INVOCATIONS = 50
 
 
 def environment_conditions() -> dict[str, object]:
-    """The environments and replay policies a ``--environments`` report ran."""
+    """The environments and policies a ``--environments`` report ran."""
     return {
         "warmUpInvocationsPerWriter": WARM_UP_INVOCATIONS,
         "environments": [environment.describe() for environment in ENVIRONMENTS],
         "replayPolicies": {
-            name: "the arm's own" if fixed is None else list(fixed)
-            for name, fixed in REPLAY_POLICIES.items()
+            name: reported_policy(policy) for name, policy in REPLAY_POLICIES.items()
         },
-        "scaledPolicy": scaled_policy(),
     }
-
-
-class Waits:
-    """Each replay wait's failed-attempt duration and window, as the arm's loop
-    computed them."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._waits: list[tuple[float, float]] = []
-
-    def record(self, elapsed: float, window: float) -> None:
-        with self._lock:
-            self._waits.append((elapsed, window))
-
-    def take(self) -> dict[str, object]:
-        with self._lock:
-            waits, self._waits = self._waits, []
-        return {
-            "waits": len(waits),
-            "failedAttemptMs": percentiles([elapsed * 1000 for elapsed, _ in waits]),
-            "windowMs": percentiles([window * 1000 for _, window in waits]),
-        }
-
-
-@contextmanager
-def replay_policy(name: str, waits: Waits) -> Iterator[None]:
-    """Run with the replay policy ``name`` in place of the arm's own window,
-    recording every wait into ``waits``."""
-    from parallax.core import auto_retry
-
-    own = auto_retry._window
-    fixed = REPLAY_POLICIES[name]
-
-    def window(attempt: int, elapsed: float) -> float:
-        if fixed is None:
-            chosen = own(attempt, elapsed)
-        else:
-            base, cap = fixed
-            chosen = min(cap, base * 2 ** min(attempt - 1, 32))
-        waits.record(elapsed, chosen)
-        return chosen
-
-    auto_retry._window = window
-    try:
-        yield
-    finally:
-        auto_retry._window = own
 
 
 # ---------------------------------------------------------------- observing

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 import sys
 from pathlib import Path
 from typing import cast
@@ -13,7 +14,7 @@ import yaml
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
 from parallax.core.base import FLOAT32, FLOAT64, INT32, INT64, ManagedValue, matches_neutral_type
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.wire import (
     WireDecodingError,
     WireEncodingError,
@@ -102,7 +103,7 @@ def test_every_authored_field_projects_under_its_python_name() -> None:
         {
             "when": {
                 "uow": {
-                    "maxRetries": 2,
+                    "retry": {"maxRetries": 2},
                     "concurrency": "locking",
                     "isolation": "repeatable-read",
                 }
@@ -110,7 +111,7 @@ def test_every_authored_field_projects_under_its_python_name() -> None:
         }
     )
     assert case_format.transaction_keywords(case) == {
-        "max_retries": 2,
+        "retry": RetryPolicy(max_retries=2),
         "concurrency": "locking",
         "isolation": "repeatable_read",
     }
@@ -120,9 +121,9 @@ def test_an_authored_zero_survives_and_absent_keys_stay_absent() -> None:
     # `0` is a value the case wrote, distinguishable from omission by presence
     # alone: it is not dropped as falsy, and the two fields the case did not
     # write are not filled from any default.
-    case = _isolation_case({"when": {"uow": {"maxRetries": 0}}})
+    case = _isolation_case({"when": {"uow": {"retry": {"maxRetries": 0}}}})
     keywords = case_format.transaction_keywords(case)
-    assert keywords == {"max_retries": 0}
+    assert keywords == {"retry": RetryPolicy(max_retries=0)}
     assert "concurrency" not in keywords
     assert "isolation" not in keywords
 
@@ -130,12 +131,21 @@ def test_an_authored_zero_survives_and_absent_keys_stay_absent() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("maxRetries", None),
         ("concurrency", None),
         ("isolation", None),
-        ("maxRetries", True),
-        ("maxRetries", -1),
-        ("maxRetries", "2"),
+        ("retry", None),
+        ("retry", 2),
+        ("retry", {"maxRetries": True}),
+        ("retry", {"maxRetries": -1}),
+        ("retry", {"maxRetries": "2"}),
+        ("retry", {"maxRetries": 1.0}),
+        ("retry", {"backoff": None}),
+        ("retry", {"backoff": {"baseDelay": 0}}),
+        ("retry", {"backoff": {"maxDelay": math.inf}}),
+        ("retry", {"backoff": {"baseDelay": math.nan}}),
+        ("retry", {"backoff": {"baseDelay": 2.0}}),
+        ("retry", {"backoff": {"maxDelay": 0.001}}),
+        ("retry", {"backoff": {"baseDelay": 0.5, "maxDelay": 0.25}}),
         ("concurrency", "pessimistic"),
         ("isolation", "read_committed"),
     ],
@@ -150,10 +160,81 @@ def test_a_null_or_malformed_request_field_is_refused_at_ingress(field: str, val
         case_format.transaction_keywords(case)
 
 
-@pytest.mark.parametrize("retired", ["retries", "retryOptimisticConflicts"])
+@pytest.mark.parametrize("retired", ["maxRetries", "retries", "retryOptimisticConflicts"])
 def test_a_retired_request_key_is_refused(retired: str) -> None:
     case = _isolation_case({"when": {"uow": {retired: 2}}})
     with pytest.raises(ValueError, match=retired):
+        case_format.transaction_keywords(case)
+
+
+def test_a_policy_decodes_field_for_field_in_seconds() -> None:
+    authored = {"maxRetries": 2, "backoff": {"baseDelay": 0.002, "maxDelay": 0.05}}
+    case = _isolation_case({"when": {"uow": {"retry": authored}}})
+    assert case_format.transaction_keywords(case) == {
+        "retry": RetryPolicy(
+            max_retries=2, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05)
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("authored", "policy"),
+    [
+        ({}, RetryPolicy()),
+        ({"maxRetries": 3}, RetryPolicy(max_retries=3)),
+        ({"backoff": {}}, RetryPolicy()),
+        (
+            {"backoff": {"baseDelay": 0.5}},
+            RetryPolicy(backoff=AdaptiveBackoff(base_delay=0.5)),
+        ),
+        (
+            {"backoff": {"maxDelay": 0.5}},
+            RetryPolicy(backoff=AdaptiveBackoff(max_delay=0.5)),
+        ),
+    ],
+    ids=["empty", "bound-only", "empty-backoff", "base-only", "maximum-only"],
+)
+def test_a_field_a_policy_omits_takes_its_built_in_value(
+    authored: dict[str, object], policy: RetryPolicy
+) -> None:
+    case = _isolation_case(
+        {
+            "given": {"databaseOptions": {"retry": {"maxRetries": 7}}},
+            "when": {"uow": {"retry": authored}},
+        }
+    )
+    assert case_format.effective_options(case).retry == policy
+
+
+def test_a_policy_read_from_a_case_file_is_a_plain_value() -> None:
+    # The corpus reader keeps each number's authored digits on a subclass, which
+    # an exact-type bound would otherwise refuse.
+    document = cast(
+        "dict[str, object]",
+        case_format.safe_load_yaml(
+            "retry: {maxRetries: 2, backoff: {baseDelay: 0.002, maxDelay: 1}}\n"
+        ),
+    )
+    keywords = case_format.request_keywords(document, where="when.uow")
+    assert keywords == {
+        "retry": RetryPolicy(
+            max_retries=2, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=1.0)
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    "authored",
+    [
+        {"max_retries": 2},
+        {"retries": 2},
+        {"backoff": {"base_delay": 0.1}},
+    ],
+    ids=["snake-case-bound", "retired-bound", "snake-case-delay"],
+)
+def test_a_policy_names_only_its_own_fields(authored: dict[str, object]) -> None:
+    case = _isolation_case({"when": {"uow": {"retry": authored}}})
+    with pytest.raises(ValueError, match=r"when\.uow\.retry"):
         case_format.transaction_keywords(case)
 
 
@@ -176,13 +257,13 @@ def test_a_join_step_projects_through_the_same_decoder() -> None:
     step = {
         "action": "join",
         "isolation": "serializable",
-        "maxRetries": 0,
+        "retry": {"maxRetries": 0},
         "concurrency": "locking",
         "note": "x",
     }
     assert case_format.request_keywords(step, where="join") == {
         "isolation": "serializable",
-        "max_retries": 0,
+        "retry": RetryPolicy(max_retries=0),
         "concurrency": "locking",
     }
 
@@ -224,8 +305,10 @@ def test_an_invocation_is_read_write_unless_its_case_selects_read_only(
 
 
 def test_the_access_mode_travels_beside_the_request_rather_than_in_it() -> None:
-    case = _isolation_case({"when": {"uow": {"accessMode": "read-only", "maxRetries": 1}}})
-    assert case_format.transaction_keywords(case) == {"max_retries": 1}
+    case = _isolation_case(
+        {"when": {"uow": {"accessMode": "read-only", "retry": {"maxRetries": 1}}}}
+    )
+    assert case_format.transaction_keywords(case) == {"retry": RetryPolicy(max_retries=1)}
     with pytest.raises(ValueError, match=r"when\.uow\.accessMode: accessMode must be one of"):
         case_format.access_mode(_isolation_case({"when": {"uow": {"accessMode": "rw"}}}))
 
@@ -252,8 +335,8 @@ def test_a_join_step_names_its_own_entrypoint_or_inherits_the_outer_one() -> Non
 def test_a_read_only_request_keeps_its_bound_and_level_and_refuses_writable_options() -> None:
     assert case_format.read_only_keywords({}, where="when.uow") == {}
     assert case_format.read_only_keywords(
-        {"max_retries": 2, "isolation": "serializable"}, where="when.uow"
-    ) == {"max_retries": 2, "isolation": "serializable"}
+        {"retry": RetryPolicy(max_retries=2), "isolation": "serializable"}, where="when.uow"
+    ) == {"retry": RetryPolicy(max_retries=2), "isolation": "serializable"}
     with pytest.raises(
         ValueError, match=r"when\.uow names writable-only options \['concurrency'\]"
     ):
@@ -270,7 +353,7 @@ def test_a_read_only_request_keeps_its_bound_and_level_and_refuses_writable_opti
         {"given": {}},
         {"given": {"fixtures": True}},
         {"given": {"databaseOptions": {}}},
-        {"when": {"uow": {"isolation": "serializable", "maxRetries": 0}}},
+        {"when": {"uow": {"isolation": "serializable", "retry": {"maxRetries": 0}}}},
     ],
 )
 def test_an_unconfigured_root_is_the_records_own_defaults(document: dict[str, object]) -> None:
@@ -282,16 +365,16 @@ def test_an_unconfigured_root_is_the_records_own_defaults(document: dict[str, ob
 
 def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_in() -> None:
     case = _isolation_case(
-        {"given": {"databaseOptions": {"maxRetries": 0, "isolation": "repeatable-read"}}}
+        {"given": {"databaseOptions": {"retry": {"maxRetries": 0}, "isolation": "repeatable-read"}}}
     )
     assert case_format.database_options(case) == TxnOptions(
-        max_retries=0, isolation="repeatable_read"
+        retry=RetryPolicy(max_retries=0), isolation="repeatable_read"
     )
     fully = _isolation_case(
         {
             "given": {
                 "databaseOptions": {
-                    "maxRetries": 2,
+                    "retry": {"maxRetries": 2},
                     "concurrency": "locking",
                     "isolation": "serializable",
                 }
@@ -299,7 +382,7 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
         }
     )
     assert case_format.database_options(fully) == TxnOptions(
-        max_retries=2,
+        retry=RetryPolicy(max_retries=2),
         concurrency="locking",
         isolation="serializable",
     )
@@ -308,11 +391,12 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("maxRetries", None),
+        ("retry", None),
         ("concurrency", None),
         ("isolation", None),
-        ("maxRetries", -1),
-        ("maxRetries", True),
+        ("retry", {"maxRetries": -1}),
+        ("retry", {"maxRetries": True}),
+        ("retry", {"backoff": {"maxDelay": 0.001}}),
         ("concurrency", "pessimistic"),
         ("isolation", "read-uncommitted"),
     ],
@@ -327,11 +411,12 @@ def test_a_null_or_malformed_root_field_is_refused_at_ingress(field: str, value:
     assert "when.uow" not in str(refused.value)
 
 
-def test_a_root_naming_the_retired_retries_key_or_no_mapping_is_refused() -> None:
-    with pytest.raises(ValueError, match="retries"):
-        case_format.database_options(
-            _isolation_case({"given": {"databaseOptions": {"retries": 2}}})
-        )
+def test_a_root_naming_a_retired_bound_key_or_no_mapping_is_refused() -> None:
+    for retired in ("maxRetries", "retries"):
+        with pytest.raises(ValueError, match=retired):
+            case_format.database_options(
+                _isolation_case({"given": {"databaseOptions": {retired: 2}}})
+            )
     with pytest.raises(ValueError, match=r"given\.databaseOptions must be a mapping"):
         case_format.database_options(_isolation_case({"given": {"databaseOptions": "locking"}}))
 
@@ -342,16 +427,18 @@ def test_effective_options_lay_the_authored_request_over_the_root() -> None:
     # only what the case configured, and the request only what it authored.
     case = _isolation_case(
         {
-            "given": {"databaseOptions": {"maxRetries": 2, "concurrency": "locking"}},
-            "when": {"uow": {"maxRetries": 5, "isolation": "serializable"}},
+            "given": {"databaseOptions": {"retry": {"maxRetries": 2}, "concurrency": "locking"}},
+            "when": {"uow": {"retry": {"maxRetries": 5}, "isolation": "serializable"}},
         }
     )
     assert case_format.effective_options(case) == TxnOptions(
-        max_retries=5, concurrency="locking", isolation="serializable"
+        retry=RetryPolicy(max_retries=5), concurrency="locking", isolation="serializable"
     )
-    assert case_format.database_options(case) == TxnOptions(max_retries=2, concurrency="locking")
+    assert case_format.database_options(case) == TxnOptions(
+        retry=RetryPolicy(max_retries=2), concurrency="locking"
+    )
     assert case_format.transaction_keywords(case) == {
-        "max_retries": 5,
+        "retry": RetryPolicy(max_retries=5),
         "isolation": "serializable",
     }
 
@@ -359,11 +446,11 @@ def test_effective_options_lay_the_authored_request_over_the_root() -> None:
 def test_an_authored_zero_overrides_a_configured_root() -> None:
     case = _isolation_case(
         {
-            "given": {"databaseOptions": {"maxRetries": 3}},
-            "when": {"uow": {"maxRetries": 0}},
+            "given": {"databaseOptions": {"retry": {"maxRetries": 3}}},
+            "when": {"uow": {"retry": {"maxRetries": 0}}},
         }
     )
-    assert case_format.effective_options(case) == TxnOptions(max_retries=0)
+    assert case_format.effective_options(case) == TxnOptions(retry=RetryPolicy(max_retries=0))
 
 
 def test_effective_options_of_an_unconfigured_unrequesting_case_are_the_built_ins() -> None:

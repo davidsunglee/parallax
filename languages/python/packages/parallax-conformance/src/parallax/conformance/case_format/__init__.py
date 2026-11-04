@@ -11,7 +11,7 @@ import yaml
 
 from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import AccessMode, IsolationLevel
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.wire._json import authored_number
 
 __all__ = [
@@ -424,7 +424,7 @@ class TransactionKeywords(TypedDict, total=False):
     complete record, so the omission lands on the record's own built-in.
     """
 
-    max_retries: int
+    retry: RetryPolicy
     concurrency: ConcurrencyPreference
     isolation: IsolationLevel
 
@@ -433,26 +433,26 @@ class ReadOnlyKeywords(TypedDict, total=False):
     """The two option fields a read-only invocation's request may author: a
     read-only transaction resolves no Concurrency Preference."""
 
-    max_retries: int
+    retry: RetryPolicy
     isolation: IsolationLevel
 
 
 def read_only_keywords(keywords: TransactionKeywords, *, where: str) -> ReadOnlyKeywords:
     """``keywords`` as a read-only invocation's request, refusing a field only
     a writable invocation takes."""
-    writable = sorted(set(keywords) - {"max_retries", "isolation"})
+    writable = sorted(set(keywords) - {"retry", "isolation"})
     if writable:
         raise ValueError(f"{where} names writable-only options {writable} on a read-only call")
     projected: ReadOnlyKeywords = {}
-    if "max_retries" in keywords:
-        projected["max_retries"] = keywords["max_retries"]
+    if "retry" in keywords:
+        projected["retry"] = keywords["retry"]
     if "isolation" in keywords:
         projected["isolation"] = keywords["isolation"]
     return projected
 
 
 _REQUEST_KEYS: Final[tuple[str, ...]] = (
-    "maxRetries",
+    "retry",
     "concurrency",
     "isolation",
 )
@@ -469,11 +469,8 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
     is reported at, a vocabulary refusal included.
     """
     keywords: TransactionKeywords = {}
-    if "maxRetries" in request:
-        bound = request["maxRetries"]
-        if isinstance(bound, bool) or not isinstance(bound, int) or bound < 0:
-            raise ValueError(f"{where}.maxRetries must be a nonnegative integer, got {bound!r}")
-        keywords["max_retries"] = bound
+    if "retry" in request:
+        keywords["retry"] = _retry_policy(request["retry"], f"{where}.retry")
     if "concurrency" in request:
         keywords["concurrency"] = _vocabulary_member(
             concurrency_preference, request["concurrency"], f"{where}.concurrency"
@@ -483,6 +480,44 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
             isolation_literal, request["isolation"], f"{where}.isolation"
         )
     return keywords
+
+
+def _retry_policy(authored: object, where: str) -> RetryPolicy:
+    """``authored`` constructed as the policy it spells, a field it omits at the
+    policy's own built-in value; what the value rules refuse is re-raised at
+    ``where``."""
+    policy = _closed_mapping(authored, ("maxRetries", "backoff"), where)
+    arguments: dict[str, Any] = {}
+    if "maxRetries" in policy:
+        bound = policy["maxRetries"]
+        # A corpus integer is an int subclass carrying its authored digits.
+        arguments["max_retries"] = (
+            int(bound) if isinstance(bound, int) and not isinstance(bound, bool) else bound
+        )
+    try:
+        if "backoff" in policy:
+            backoff = _closed_mapping(
+                policy["backoff"], ("baseDelay", "maxDelay"), f"{where}.backoff"
+            )
+            delays: dict[str, Any] = {}
+            if "baseDelay" in backoff:
+                delays["base_delay"] = backoff["baseDelay"]
+            if "maxDelay" in backoff:
+                delays["max_delay"] = backoff["maxDelay"]
+            arguments["backoff"] = AdaptiveBackoff(**delays)
+        return RetryPolicy(**arguments)
+    except ValueError as exc:
+        raise ValueError(f"{where}: {exc}") from None
+
+
+def _closed_mapping(authored: object, keys: tuple[str, ...], where: str) -> Mapping[str, object]:
+    if not isinstance(authored, Mapping):
+        raise ValueError(f"{where} must be a mapping, got {authored!r}")
+    mapping = cast("Mapping[str, object]", authored)
+    unknown = sorted(set(mapping) - set(keys))
+    if unknown:
+        raise ValueError(f"{where} names no key {unknown}; its keys are {list(keys)}")
+    return mapping
 
 
 def transaction_keywords(case: Case) -> TransactionKeywords:

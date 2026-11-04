@@ -11,6 +11,7 @@ from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._routing import check_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.clock import Clock
+from parallax.core.auto_retry import RetryPolicy
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.entity import DomainModel
@@ -82,13 +83,13 @@ class ScopedDatabase:
     def with_options(
         self,
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ScopedDatabase:
         return self.create(
             self._execution.with_options(
-                max_retries=max_retries,
+                retry=retry,
                 concurrency=concurrency,
                 isolation=isolation,
             )
@@ -128,14 +129,14 @@ class ScopedDatabase:
         fn: Callable[[TxnContext], T],
         /,
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._execution.transact(
             fn,
             transaction_for,
-            max_retries=max_retries,
+            retry=retry,
             concurrency=concurrency,
             isolation=isolation,
         )
@@ -145,11 +146,11 @@ class ScopedDatabase:
         fn: Callable[[ReadOnlyTxnContext], T],
         /,
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._execution.read_only(
-            fn, read_only_context_for, max_retries=max_retries, isolation=isolation
+            fn, read_only_context_for, retry=retry, isolation=isolation
         )
 
 

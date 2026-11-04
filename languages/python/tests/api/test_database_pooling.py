@@ -53,6 +53,7 @@ from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.snapshot import TxnContext, connect
 from tests._support.ended_sessions import end_backend, named_backend
 from tests._support.query_probes import canonical_document
+from tests._support.retry import fast_retry
 
 _ACCOUNT = MODELS["account"]
 
@@ -134,7 +135,7 @@ def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> 
         raise RuntimeError("this attempt fails after the handle closed")
 
     with pytest.raises(ExecutionFailure):
-        db.transact(body, max_retries=3)
+        db.transact(body, retry=fast_retry(3))
 
     assert attempts == [1]
 

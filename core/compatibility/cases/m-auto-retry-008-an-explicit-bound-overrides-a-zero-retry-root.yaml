@@ -1,5 +1,5 @@
 # Boundary case (m-auto-retry, m-case-format root configuration): an explicit
-# `maxRetries` at the call overrides the Database Root's `maxRetries: 0`, so the
+# `retry` at the call overrides the Database Root's `retry: {maxRetries: 0}`, so the
 # injected transient is retried away — `api-conformance` lane.
 model: models/account.yaml
 tags: [m-auto-retry, m-concurrency, m-api-conformance, transient, database-options, slice-snapshot-1, slice-managed-1]
@@ -12,10 +12,10 @@ compileEligibility:
 given:
   fault: serialization-failure
   databaseOptions:
-    maxRetries: 0
+    retry: {maxRetries: 0}
 when:
   uow:
-    maxRetries: 1
+    retry: {maxRetries: 1}
   boundary:
     - action: read
       note: observe the versioned row

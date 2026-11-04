@@ -2482,7 +2482,7 @@ def _refuse_a_bound_short_of_the_authored_attempts(case: case_format.Case, autho
     attempt. A bound of ``N`` admits ``N + 1`` attempts, so a sequence longer
     than that describes replays production would never make.
     """
-    bound = case_format.effective_options(case).max_retries
+    bound = case_format.effective_options(case).retry.max_retries
     if bound + 1 >= authored:
         return
     raise EngineError(

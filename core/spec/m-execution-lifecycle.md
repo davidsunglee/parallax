@@ -303,7 +303,7 @@ events, the same attempt topology, and the same outcomes. Its Started transition
 carries exactly one invocation value:
 
 ```text
-OuterInvocation(accessMode, concurrency, retryPolicy, isolation)
+OuterInvocation(accessMode, concurrency, retry, isolation)
 JoinedInvocation()
 ```
 

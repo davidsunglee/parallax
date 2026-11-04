@@ -66,6 +66,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import (
+    RetryPolicy,
     ServingModel,
     TransactionTimePinReadOnlyError,
     prepare_model,
@@ -801,7 +802,7 @@ class _RecordingDatabase(ScopedDatabase):
         self,
         fn: Callable[[TxnContext], T],
         *,
-        max_retries: int | Omitted = OMITTED,
+        retry: RetryPolicy | Omitted = OMITTED,
         concurrency: ConcurrencyPreference | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
@@ -811,7 +812,7 @@ class _RecordingDatabase(ScopedDatabase):
         body: Callable[[TxnContext], T] = recording if self._group_finds else fn
         return super().transact(
             body,
-            max_retries=max_retries,
+            retry=retry,
             concurrency=concurrency,
             isolation=isolation,
         )

@@ -17,11 +17,14 @@ from parallax.conformance import database_options_stories
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
 _story = (
     database_options_stories.a_root_default_is_overridden_per_call_and_a_join_inherits_the_override
+)
+_retry_story = (
+    database_options_stories.a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole
 )
 
 
@@ -60,13 +63,15 @@ class _AccountPort(ConnectsAsItself):
 def test_the_documented_root_options_story_resolves_each_call_as_it_states() -> None:
     port = _AccountPort()
     shape = _story(port, MODELS["account"])
-    root = TxnOptions(isolation="repeatable_read", max_retries=2)
+    root = TxnOptions(isolation="repeatable_read", retry=RetryPolicy(max_retries=2))
     # The call that requested nothing ran under the root's own record; the call
     # that overrode one field kept the other three; and both joins answered the
     # OUTER call's resolved record — never the root's — while the join naming
     # the root's level was refused.
     assert shape.inherited == root
-    assert shape.overridden == TxnOptions(isolation="serializable", max_retries=2)
+    assert shape.overridden == TxnOptions(
+        isolation="serializable", retry=RetryPolicy(max_retries=2)
+    )
     assert shape.joined == shape.overridden
     assert shape.repeated == shape.overridden
     assert shape.root_level_refused_on_join
@@ -83,3 +88,14 @@ def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
     assert "tx.options" in snippet
     assert 'isolation="serializable"' in snippet
     assert "TransactionOptionConflictError" in snippet
+
+
+def test_the_retry_policy_story_inherits_a_tuned_policy_until_a_call_replaces_it_whole() -> None:
+    shape = _retry_story(_AccountPort(), MODELS["account"])
+
+    assert shape.inherited == RetryPolicy(
+        max_retries=3, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05)
+    )
+    assert shape.replaced == RetryPolicy(max_retries=1)
+    assert shape.equal_policy_joined == shape.replaced
+    assert shape.other_backoff_refused_on_join

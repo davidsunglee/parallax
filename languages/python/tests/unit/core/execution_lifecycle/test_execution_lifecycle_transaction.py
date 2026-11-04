@@ -43,6 +43,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import (
+    RetryPolicy,
     ServingModel,
     TransactionRollbackError,
     prepare_model,
@@ -71,7 +72,6 @@ from parallax.core.execution_lifecycle import (
     ReadFailed,
     ReadFinished,
     ReadStarted,
-    RetryPolicy,
     TransactionAttemptFinished,
     TransactionAttemptOutcome,
     TransactionAttemptStarted,
@@ -96,6 +96,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -193,7 +194,7 @@ def test_one_invocation_roots_its_attempt_its_flushes_and_its_read() -> None:
     started = root.events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "read_write", "optimistic", RetryPolicy(10), "read_committed"
+        "read_write", "optimistic", RetryPolicy(max_retries=10), "read_committed"
     )
     assert _finished(root) == OuterInvocationCommitted()
     assert _attempt_outcomes(root) == [AttemptCommitted()]
@@ -241,7 +242,7 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
     recorder = RecordingLifecycleProvider()
     _db(ScriptedAdapter(Transact()), recorder).transact(
         lambda _tx: None,
-        max_retries=3,
+        retry=RetryPolicy(max_retries=3),
         concurrency="locking",
         isolation="serializable",
     )
@@ -249,7 +250,7 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "read_write", "locking", RetryPolicy(3), "serializable"
+        "read_write", "locking", RetryPolicy(max_retries=3), "serializable"
     )
 
 
@@ -265,7 +266,7 @@ def test_an_invocation_naming_no_level_reports_the_roots_resolved_default() -> N
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
-        "read_write", "optimistic", RetryPolicy(10), "read_committed"
+        "read_write", "optimistic", RetryPolicy(max_retries=10), "read_committed"
     )
 
 
@@ -283,7 +284,7 @@ def test_a_joined_invocation_states_no_level_of_its_own() -> None:
         if isinstance(event, TransactionInvocationStarted)
     ]
     assert joined == [
-        OuterInvocation("read_write", "optimistic", RetryPolicy(10), "repeatable_read"),
+        OuterInvocation("read_write", "optimistic", RetryPolicy(max_retries=10), "repeatable_read"),
         JoinedInvocation(),
     ]
 
@@ -377,7 +378,7 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
 
     with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(lambda _tx: None, max_retries=2)
+        _db(port, recorder).transact(lambda _tx: None, retry=fast_retry(2))
 
     root = _only(recorder)
     outcomes = _attempt_outcomes(root)
@@ -428,7 +429,7 @@ def test_a_conflict_a_zero_bound_leaves_unreplayed_is_still_reported_eligible() 
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance, max_retries=0)
+        _db(port, recorder).transact(_increase_balance, retry=RetryPolicy(max_retries=0))
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
@@ -528,7 +529,7 @@ def test_a_failure_in_the_final_flush_is_the_pre_commit_phase() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance, max_retries=0)
+        _db(port, recorder).transact(_increase_balance, retry=RetryPolicy(max_retries=0))
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
@@ -547,7 +548,7 @@ def test_a_failure_in_a_dependency_flush_is_still_the_callback_phase() -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(body, max_retries=0)
+        _db(port, recorder).transact(body, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     flush = next(event for event in root.events if isinstance(event, FlushStarted))
@@ -689,7 +690,7 @@ def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
     with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance, max_retries=0)
+        _db(port, recorder).transact(_increase_balance, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     flush_finished = next(event for event in root.events if isinstance(event, FlushFinished))
@@ -707,7 +708,8 @@ def test_a_read_that_failed_is_what_its_attempt_names() -> None:
 
     with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(
-            lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result(), max_retries=0
+            lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result(),
+            retry=RetryPolicy(max_retries=0),
         )
 
     root = _only(recorder)
@@ -740,7 +742,7 @@ def test_the_higher_numbered_read_reporting_one_value_is_what_the_attempt_names(
         tx.find(mm.Account.where(mm.Account.id == 8)).result()
 
     with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(body, max_retries=0)
+        _db(port, recorder).transact(body, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     handled, escaping = (event for event in root.events if isinstance(event, ReadFinished))
@@ -768,7 +770,7 @@ def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_i
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(DatabaseError):
-        db.transact(lambda _outer: db.transact(inner), max_retries=0)
+        db.transact(lambda _outer: db.transact(inner), retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     assert _tree(root.events) == [
@@ -823,7 +825,8 @@ def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
 
     with raises_contextualized(DatabaseError):
         db.transact(
-            lambda _outer: db.transact(lambda _middle: db.transact(innermost)), max_retries=0
+            lambda _outer: db.transact(lambda _middle: db.transact(innermost)),
+            retry=RetryPolicy(max_retries=0),
         )
 
     root = _only(recorder)
@@ -861,7 +864,7 @@ def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> N
         raise caught.value
 
     with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(body, max_retries=0)
+        _db(port, recorder).transact(body, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     failed_read, _later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -915,7 +918,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
                 clock=FixedClock(FIXED),
                 lifecycle_provider=recorder,
             )
-        ).using_database_login().transact(body, max_retries=0)
+        ).using_database_login().transact(body, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     first_read, later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -958,7 +961,7 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
         raise stashed.value
 
     with raises_contextualized(DatabaseError, match="the stashed failure"):
-        _db(port, recorder).transact(body, max_retries=0)
+        _db(port, recorder).transact(body, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     stashed_read, _later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -1007,7 +1010,7 @@ def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() 
         raise first.value
 
     with raises_contextualized(DatabaseError, match="the re-raised failure"):
-        db.transact(lambda _outer: db.transact(inner), max_retries=0)
+        db.transact(lambda _outer: db.transact(inner), retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)
     joined = next(
@@ -1140,7 +1143,7 @@ def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> Non
             assert [index for index, held in enumerate(watched) if held() is not None] == [1]
         tx.insert(new_account())
 
-    _db(port, recorder).transact(body, max_retries=2)
+    _db(port, recorder).transact(body, retry=fast_retry(2))
 
     assert attempts == 3
     assert _finished(_only(recorder)) == OuterInvocationCommitted()
@@ -1286,7 +1289,9 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     db = _db(ScriptedAdapter(Transact()), recorder)
 
     with raises_contextualized(Exception, match="cannot join the active transaction"):
-        db.transact(lambda _outer: db.transact(lambda _inner: None, max_retries=99))
+        db.transact(
+            lambda _outer: db.transact(lambda _inner: None, retry=RetryPolicy(max_retries=99))
+        )
 
     root = _only(recorder)
     assert _transitions(root.events) == [
@@ -1301,8 +1306,8 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     ]
 
 
-def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> None:
-    # `max_retries` is a public argument, so its bound belongs to the deterministic
+def test_an_invalid_retry_option_creates_no_root_and_reaches_no_provider() -> None:
+    # `retry` is a public argument, so its check belongs to the deterministic
     # preflight that precedes Root Execution creation: refusing it only at the
     # retry loop would call the Provider and publish the invocation's Started and
     # Finished first, and a Provider that fails on `open` would replace the
@@ -1310,8 +1315,8 @@ def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> Non
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter()
 
-    with pytest.raises(ValueError, match="max_retries must be >= 0"):
-        _db(port, recorder).transact(_increase_balance, max_retries=-1)
+    with pytest.raises(ValueError, match="retry must be a RetryPolicy"):
+        _db(port, recorder).transact(_increase_balance, retry=cast("Any", 3))
 
     assert recorder.roots == ()
     assert port.calls == []
@@ -1347,7 +1352,7 @@ def test_a_retry_reports_each_attempts_own_edition_and_the_failure_names_the_las
             serving.publish(b, expected=a)
 
     with raises_contextualized(DatabaseError) as exhausted:
-        db.transact(body, max_retries=1)
+        db.transact(body, retry=fast_retry(1))
 
     assert seen == ["a", "b"]
     assert exhausted.edition == "b"

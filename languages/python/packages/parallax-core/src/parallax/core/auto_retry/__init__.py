@@ -13,6 +13,7 @@ import random
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from math import frexp, isfinite, ldexp
 from typing import Final
 
 from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
@@ -20,32 +21,116 @@ from parallax.core._execution._unit_work.uow import RollbackOnlyError
 from parallax.core.db_error import DatabaseError
 from parallax.core.temporal_write import TemporalConflictError
 
-__all__ = ["RetryCandidate", "RetryTiming", "check_retry_bound", "retry_eligible", "run_with_retry"]
+__all__ = [
+    "AdaptiveBackoff",
+    "RetryCandidate",
+    "RetryPolicy",
+    "RetryTiming",
+    "retry_eligible",
+    "retry_policy",
+    "run_with_retry",
+]
 
-_FLOOR_FIRST_S: Final = 0.008
-_FLOOR_LIMIT_S: Final = 0.025
-"""The shortest full-jitter window, in seconds: the first attempt's, doubled
-per attempt up to the limit. These are the constants contention evidence
-selected where attempts take a few milliseconds."""
-
-_SCALE_FIRST: Final = 0.25
-_SCALE_LIMIT: Final = 8.0
-"""The window a slower failed attempt calls for instead, in multiples of that
-attempt's own measured duration: the first attempt's, doubled per attempt up to
-the limit. How long a conflicting writer holds its rows depends on round trips
-and application work that fixed delays cannot anticipate, and the failed
-attempt's duration measures them where it ran. A window that stays shorter than
-an attempt lets replays land inside the next conflicting one, while one that
-starts long leaves a contended row idle."""
-
-_CEILING_S: Final = 1.0
-"""The longest window, in seconds, however long the failed attempt took."""
+_DURATION_SCALE_START: Final = 0.25
+_DURATION_SCALE_LIMIT: Final = 8.0
+"""The window a slower failed attempt calls for, in multiples of that attempt's
+own measured duration: the first attempt's, doubled per attempt up to the limit.
+How long a conflicting writer holds its rows depends on round trips and
+application work that fixed delays cannot anticipate, and the failed attempt's
+duration measures them where it ran. A window that stays shorter than an attempt
+lets replays land inside the next conflicting one, while one that starts long
+leaves a contended row idle."""
 
 _RANDOM: Final = random.Random()
 
 
 def _full_jitter(window: float) -> float:
     return _RANDOM.uniform(0.0, window)
+
+
+def _doubled(value: float, doublings: int, *, limit: float) -> float:
+    """``value`` doubled ``doublings`` times, saturating at ``limit``.
+
+    Comparing binary exponents first keeps the cost constant and every
+    intermediate finite for any attempt ordinal, across every positive finite
+    ``value`` and ``limit``.
+    """
+    if frexp(value)[1] + doublings > frexp(limit)[1]:
+        return limit
+    return min(limit, ldexp(value, doublings))
+
+
+def _positive_seconds(field: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{field} must be a finite positive number of seconds, got {value!r}")
+    try:
+        seconds = float(value)
+    except OverflowError:
+        raise ValueError(f"{field} must be a finite number of seconds, got {value!r}") from None
+    if not isfinite(seconds) or seconds <= 0.0:
+        raise ValueError(f"{field} must be a finite positive number of seconds, got {value!r}")
+    return seconds
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AdaptiveBackoff:
+    """The two timing inputs of the wait before each re-execution, in seconds.
+
+    ``base_delay`` is the first window, doubled per attempt, and ``max_delay``
+    is the longest window however long the failed attempt took. Each only
+    bounds a full-jitter draw from above, which may land anywhere down to zero.
+    Either may be an ``int`` and is held as a ``float``; an invalid value, a
+    ``base_delay`` above ``max_delay`` included, raises ``ValueError``.
+    """
+
+    base_delay: float = 0.008
+    max_delay: float = 1.0
+
+    def __post_init__(self) -> None:
+        base_delay = _positive_seconds("base_delay", self.base_delay)
+        max_delay = _positive_seconds("max_delay", self.max_delay)
+        if base_delay > max_delay:
+            raise ValueError(f"base_delay {base_delay} must not exceed max_delay {max_delay}")
+        object.__setattr__(self, "base_delay", base_delay)
+        object.__setattr__(self, "max_delay", max_delay)
+
+    def _window(self, failed_attempt: int, duration: float) -> float:
+        doublings = failed_attempt - 1
+        fixed = _doubled(self.base_delay, doublings, limit=self.max_delay)
+        scale = _doubled(_DURATION_SCALE_START, doublings, limit=_DURATION_SCALE_LIMIT)
+        return min(self.max_delay, max(fixed, scale * duration))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RetryPolicy:
+    """The complete retry configuration of an invocation.
+
+    ``max_retries`` bounds re-executions rather than attempts: ``0`` runs the
+    callback once and ``N`` admits at most ``N + 1`` attempts. It is an exact
+    built-in ``int``. A policy is one value: naming one replaces an inherited
+    policy whole, and its omitted fields take these built-in values rather than
+    the inherited ones. An invalid value raises ``ValueError``.
+    """
+
+    max_retries: int = 10
+    backoff: AdaptiveBackoff = AdaptiveBackoff()
+
+    def __post_init__(self) -> None:
+        if type(self.max_retries) is not int or self.max_retries < 0:
+            raise ValueError(f"max_retries must be a nonnegative int, got {self.max_retries!r}")
+        _check_backoff(self.backoff)
+
+
+def _check_backoff(value: object) -> None:
+    if not isinstance(value, AdaptiveBackoff):
+        raise ValueError(f"backoff must be an AdaptiveBackoff, got {value!r}")
+
+
+def retry_policy(value: object) -> RetryPolicy:
+    """``value`` as a retry policy, or ``ValueError``."""
+    if not isinstance(value, RetryPolicy):
+        raise ValueError(f"retry must be a RetryPolicy, got {value!r}")
+    return value
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -63,12 +148,6 @@ class RetryTiming:
 
 
 _SYSTEM_TIMING: Final = RetryTiming()
-
-
-def check_retry_bound(retries: int, /) -> None:
-    """Validate before opening a transaction or an observation scope."""
-    if retries < 0:
-        raise ValueError(f"retries must be >= 0, got {retries}")
 
 
 def retry_eligible(
@@ -105,17 +184,16 @@ class RetryCandidate(Exception):
 
 
 def run_with_retry[T](
-    attempt: Callable[[], T], *, retries: int, timing: RetryTiming = _SYSTEM_TIMING
+    attempt: Callable[[], T], *, policy: RetryPolicy, timing: RetryTiming = _SYSTEM_TIMING
 ) -> T:
-    """``retries`` counts re-executions after the first attempt.
+    """Run ``attempt``, re-executing eligible candidates up to the policy's bound.
 
-    Before each re-execution the loop sleeps a full-jitter delay. Its window
-    grows with the attempts already made and is the longer of a fixed window
-    and one scaled by how long the failed attempt took, from handing it control
-    to receiving its candidate, under an absolute ceiling. Exhaustion re-raises
-    the original failure with the attempt count in a note, and sleeps no more.
+    Before each re-execution the loop sleeps a full-jitter delay. Its window is
+    the longer of the doubling base delay and a doubling multiple of how long
+    the failed attempt took, from handing it control to receiving its candidate,
+    under the policy's maximum delay. Exhaustion re-raises the original failure
+    with the attempt count in a note, and sleeps no more.
     """
-    check_retry_bound(retries)
     attempts = 0
     while True:
         attempts += 1
@@ -124,18 +202,12 @@ def run_with_retry[T](
             return attempt()
         except RetryCandidate as candidate:
             failure = candidate.failure
-        elapsed = timing.monotonic() - started
-        if attempts > retries:
+        duration = timing.monotonic() - started
+        if attempts > policy.max_retries:
             failure.add_note(
-                f"bounded retry exhausted after {attempts} attempts (retries={retries})"
+                f"bounded retry exhausted after {attempts} attempts "
+                f"(max_retries={policy.max_retries})"
             )
             raise failure
-        timing.sleep(timing.jitter(_window(attempts, elapsed)))
-
-
-def _window(attempt: int, elapsed: float) -> float:
-    # Doubling stops long past either limit, so a large bound never overflows a float.
-    doublings = min(attempt - 1, 32)
-    floor = min(_FLOOR_LIMIT_S, _FLOOR_FIRST_S * 2**doublings)
-    scaled = min(_SCALE_FIRST * 2**doublings, _SCALE_LIMIT) * elapsed
-    return min(_CEILING_S, max(floor, scaled))
+        window = policy.backoff._window(attempts, duration)  # pyright: ignore[reportPrivateUsage] - the loop shares the backoff's module
+        timing.sleep(timing.jitter(window))

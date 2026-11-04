@@ -5,9 +5,9 @@ Each schedule drives two real ``db.transact`` callbacks through the public API,
 handing control between them at named checkpoints. At every checkpoint the
 observer records each backend's state, wait event, and snapshot horizon
 (``age(backend_xmin)``); the recording connection records every statement in
-the order it reached the database. Each schedule runs with ``max_retries=0``
-first, so the first attempt's physical outcome is visible, and then with the
-default bound, so any replay is too.
+the order it reached the database. Each schedule runs under the disabled Retry
+Policy first, so the first attempt's physical outcome is visible, and then with
+``retry`` omitted, so the default policy resolves and any replay is visible too.
 """
 
 import datetime as dt
@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 from _support import (
+    DISABLED_POLICY,
     Account,
     Balance,
     Gate,
@@ -36,6 +37,8 @@ from _support import (
     reset,
     scoped,
 )
+
+from parallax.core.execution import RetryPolicy
 
 ORDERS = [{"id": 1, "name": "Ada"}, {"id": 2, "name": "Linus"}]
 ITEMS = [{"id": 11, "orderId": 1, "sku": "A-100"}, {"id": 12, "orderId": 1, "sku": "B-200"}]
@@ -58,7 +61,7 @@ class Trace:
 
 
 def _transaction(
-    db: Any, body: Callable[[Any], object], retries: int | None, isolation: str
+    db: Any, body: Callable[[Any], object], policy: RetryPolicy | None, isolation: str
 ) -> Callable[[], object]:
     calls = {"attempts": 0}
 
@@ -68,8 +71,8 @@ def _transaction(
 
     def run() -> object:
         options: dict[str, object] = {"isolation": isolation}
-        if retries is not None:
-            options["max_retries"] = retries
+        if policy is not None:
+            options["retry"] = policy
         try:
             db.transact(counted, **options)
         except Exception as exc:
@@ -80,7 +83,7 @@ def _transaction(
 
 
 def gate_race(
-    db: Any, gate: Gate, trace: Trace, retries: int | None, isolation: str
+    db: Any, gate: Gate, trace: Trace, policy: RetryPolicy | None, isolation: str
 ) -> list[Callable[[], object]]:
     """B reads account 1; A amends it and commits; B then amends from its read."""
 
@@ -97,16 +100,16 @@ def gate_race(
         tx.amend(current.edit(balance=current.balance + Decimal("10.00")))
 
     def a_then_signal() -> object:
-        result = _transaction(db, a, retries, isolation)()
+        result = _transaction(db, a, policy, isolation)()
         trace.checkpoint("a-committed")
         gate.open("a-done")
         return result
 
-    return [_transaction(db, b, retries, isolation), a_then_signal]
+    return [_transaction(db, b, policy, isolation), a_then_signal]
 
 
 def fixed_revision(
-    db: Any, gate: Gate, trace: Trace, retries: int | None, isolation: str
+    db: Any, gate: Gate, trace: Trace, policy: RetryPolicy | None, isolation: str
 ) -> list[Callable[[], object]]:
     """B's snapshot predates A's change; B then states the revision A replaced."""
 
@@ -123,12 +126,12 @@ def fixed_revision(
         tx.amend(current.edit(balance=Decimal("999.00")))
 
     def a_then_signal() -> object:
-        result = _transaction(db, a, retries, isolation)()
+        result = _transaction(db, a, policy, isolation)()
         trace.checkpoint("a-committed")
         gate.open("a-done")
         return result
 
-    return [_transaction(db, b, retries, isolation), a_then_signal]
+    return [_transaction(db, b, policy, isolation), a_then_signal]
 
 
 def _holding(
@@ -159,7 +162,7 @@ def _releaser(control: Any, gate: Gate, trace: Trace) -> Callable[[], object]:
 
 
 def key_selecting_delete(
-    db: Any, gate: Gate, trace: Trace, retries: int | None, isolation: str, control: Any
+    db: Any, gate: Gate, trace: Trace, policy: RetryPolicy | None, isolation: str, control: Any
 ) -> list[Callable[[], object]]:
     """A moves item 11 to order 2 and holds; B deletes Ada's items by key selection."""
 
@@ -173,14 +176,14 @@ def key_selecting_delete(
 
     a = _holding(gate, trace, change, lambda tx: tx.find(OrderItem.where(OrderItem.id == 0)))
     return [
-        _transaction(db, a, retries, isolation),
-        _transaction(db, b, retries, isolation),
+        _transaction(db, a, policy, isolation),
+        _transaction(db, b, policy, isolation),
         _releaser(control, gate, trace),
     ]
 
 
 def guard_then_write(
-    db: Any, gate: Gate, trace: Trace, retries: int | None, isolation: str, control: Any
+    db: Any, gate: Gate, trace: Trace, policy: RetryPolicy | None, isolation: str, control: Any
 ) -> list[Callable[[], object]]:
     """A's unchanged amendment guards balance 1 and holds; B closes the milestone."""
 
@@ -195,8 +198,8 @@ def guard_then_write(
 
     a = _holding(gate, trace, change, lambda tx: tx.find(Balance.where(Balance.id == 0)))
     return [
-        _transaction(db, a, retries, isolation),
-        _transaction(db, b, retries, isolation),
+        _transaction(db, a, policy, isolation),
+        _transaction(db, b, policy, isolation),
         _releaser(control, gate, trace),
     ]
 
@@ -235,19 +238,19 @@ def main() -> None:
     with provisioned(rows) as run, observer(run) as control:
         adapter, recording = recorded(pooled(run, 4))
         for name, (schedule, needs_control) in SCHEDULES.items():
-            for retries in (0, None):
+            for policy in (DISABLED_POLICY, None):
                 reset(run, rows)
                 recording.take()
                 gate = Gate()
                 trace = Trace(control)
                 with scoped(adapter) as db:
                     extra = (control,) if needs_control else ()
-                    bodies = schedule(db, gate, trace, retries, args.isolation, *extra)
+                    bodies = schedule(db, gate, trace, policy, args.isolation, *extra)
                     results = concurrently(*bodies)
                 traces.append(
                     {
                         "schedule": name,
-                        "maxRetries": "default" if retries is None else retries,
+                        "maxRetries": "default" if policy is None else policy.max_retries,
                         "results": [
                             r if not isinstance(r, BaseException) else failure(r) for r in results
                         ],
