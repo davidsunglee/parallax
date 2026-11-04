@@ -59,7 +59,6 @@ from interpreter_matrix import (
     supported_minors,
     write_metadata,
 )
-from parallax.conformance import live_read_workloads
 from parallax.conformance.budget import BudgetCell, BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -86,14 +85,20 @@ WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
 CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
 SCALAR_MODULE: Final = WORKSPACE / "tests" / "unit" / "_scalar_type_support.py"
+LIVE_READ_MODULE: Final = WORKSPACE / "tests" / "_support" / "live_read_workloads.py"
 sys.path.insert(0, str(WORKSPACE))
 
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
 # what the E402 suppression each one carries records.
+from tests._support import live_read_workloads  # noqa: E402
 from tests.unit import _delivery_control_support as control_support  # noqa: E402
 from tests.unit import _scalar_type_support as scalar_support  # noqa: E402
 
-for module, expected_file in ((control_support, CONTROL_MODULE), (scalar_support, SCALAR_MODULE)):
+for module, expected_file in (
+    (control_support, CONTROL_MODULE),
+    (scalar_support, SCALAR_MODULE),
+    (live_read_workloads, LIVE_READ_MODULE),
+):
     if Path(module.__file__ or "").resolve() != expected_file:
         raise ImportError(
             f"this report expands its matrix from {expected_file}, but resolved {module.__file__}"

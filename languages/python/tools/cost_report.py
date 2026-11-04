@@ -233,7 +233,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tests/unit/_structural_geometry_support.py",
             "tests/unit/_scalar_type_support.py",
             "tests/unit/_delivery_control_support.py",
-            "packages/parallax-conformance/src/parallax/conformance/live_read_workloads.py",
+            "tests/_support/live_read_workloads.py",
             "tests/unit/_workload_spelling_support.py",
         ),
     ),

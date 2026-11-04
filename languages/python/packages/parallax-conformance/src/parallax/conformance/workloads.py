@@ -501,7 +501,9 @@ def workload_digest(
             digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
     digest.update(scalar_type_digest().encode("utf-8"))
-    live_source = text_of(Path(__file__).with_name("live_read_workloads.py"))
+    live_source = text_of(
+        case_format.find_repo_root() / "languages/python/tests/_support/live_read_workloads.py"
+    )
     digest.update(ast.dump(ast.parse(live_source), include_attributes=False).encode("utf-8"))
     return digest.hexdigest()
 
