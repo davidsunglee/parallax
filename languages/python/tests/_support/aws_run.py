@@ -99,9 +99,11 @@ _DROP_BLOCKERS = (
 _STATEMENT_TIMEOUT = "select current_setting('statement_timeout')"
 _SET_TIMEOUT = "select set_config('statement_timeout', %s, false)"
 _ANSWER = "select 1"
-_TABLES = (
-    "select coalesce(string_agg(tablename, ',' order by tablename), '') "
-    "from pg_tables where schemaname = 'public'"
+_RESET_STATE = (
+    "select n.oid, n.nspacl::text, c.relname, c.oid, c.relacl::text "
+    "from pg_namespace n left join pg_class c "
+    "on c.relnamespace = n.oid and c.relkind in ('r', 'p') "
+    "where n.nspname = 'public' order by c.relname"
 )
 
 
@@ -393,17 +395,18 @@ class AwsRun:
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
         """Reset the run database's schema and fixtures on the writer, then wait
-        until every instance lists the same tables."""
+        until every instance sees the recreated schema, tables, and grants."""
         if self._administration is None:
             raise CloudRunError("the run has not started")
         administration = self._administration
         reset_database(administration, model, fixtures)
-        expected = _single(administration, _TABLES, [])
+        # Names can still match the previous reset while a reader has not replayed its DROP.
+        expected = administration.execute(_RESET_STATE, [])
         for instance in self.environment.instances:
             inspected = self.session(instance.host)
             self.wait_until(
-                lambda inspected=inspected: _single(inspected, _TABLES, []) == expected,
-                f"{instance.identifier} to list the reset tables",
+                lambda inspected=inspected: inspected.execute(_RESET_STATE, []) == expected,
+                f"{instance.identifier} to see the reset schema and grants",
             )
 
     def wait_until(self, condition: Callable[[], bool], what: str) -> None:
