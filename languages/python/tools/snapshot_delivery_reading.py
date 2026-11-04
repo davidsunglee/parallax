@@ -372,6 +372,48 @@ def _page_size(path: str) -> int:
     raise ValueError(f"{path}: no page size")
 
 
+def _verify_live(connection_info: str, workload: str) -> None:
+    from parallax.conformance import live_read_workloads
+    from parallax.conformance._lifecycle_observation import LifecycleObservation
+
+    observation = LifecycleObservation()
+    with Database.connect(
+        PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
+        live_read_workloads.domain_model(workload),
+        lifecycle_provider=observation.provider,
+    ) as root:
+        live_read_workloads.verify(root.using_database_login(), workload, observation)
+
+
+def _representative_live(
+    workload: str,
+    path: str,
+    roots: int,
+    connection_info: str | None,
+    *,
+    warmups: int,
+    measured: int,
+) -> tuple[float, str, tuple[float, ...]]:
+    from parallax.conformance import live_read_workloads
+
+    address = live_read_workloads.address(workload, path)
+    if address is None or roots != live_read_workloads.ROOTS or connection_info is None:
+        raise ValueError("live reads require a frozen address, 200 roots, and a live connection")
+    subject, lane, form = address
+    _verify_live(connection_info, subject)
+    with Database.connect(
+        PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
+        live_read_workloads.domain_model(subject),
+    ) as root:
+        database = root.using_database_login()
+        samples = _timed(
+            lambda: live_read_workloads.read(database, subject, lane, form),
+            warmups=warmups,
+            measured=measured,
+        )
+    return float(sorted(samples)[len(samples) // 2]), "ms", samples
+
+
 def _live_timing(
     workload: Workload,
     path: str,
@@ -381,6 +423,8 @@ def _live_timing(
     warmups: int,
     measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
+    if workload.id == "conventional-fanout" and path in {"live.eager.maxMs", "live.page32.maxMs"}:
+        _verify_live(connection_info, workload.id)
     with Database.connect(
         PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
         workload.domain_model,
@@ -1101,7 +1145,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (KeyError, ValueError) as error:
         parser.error(str(error))
     require_source_origins()
-    if geometry is not None:
+    if args.workload.startswith("live-read-"):
+        value, reading_unit, samples = _representative_live(
+            args.workload,
+            args.cell,
+            args.roots,
+            args.connection_info,
+            warmups=args.warmups,
+            measured=args.measured,
+        )
+    elif geometry is not None:
         level, layout, metric = geometry
         value, reading_unit, samples = _geometry(
             level, layout, metric, warmups=args.warmups, measured=args.measured

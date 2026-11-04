@@ -44,6 +44,7 @@ from snapshot_delivery_overhead import (
     expected_readings,
     geometry_cells,
     is_memory_cell,
+    live_read_cells,
     plan_cells,
     scalar_cells,
     selection,
@@ -124,6 +125,7 @@ def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> Non
         + len(geometry_cells())
         + len(plan_cells())
         + len(control_cells(contract))
+        + len(live_read_cells())
     )
     assert len(set(expected)) == len(expected)
     assert {
@@ -346,6 +348,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
         for runtime in ("3.13", "3.14")
         for name in (
             *contract.workload_ids,
+            *(f"live-read-{name}" for name in report.live_read_workloads.WORKLOAD_IDS),
             GEOMETRY_GROUP,
             *((SCALAR_GROUP,) if runtime == "3.14" else ()),
             PLAN_GROUP,
@@ -359,7 +362,9 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
     live_workloads = {
         cell.workload for cell in expanded_cells(contract) if report.needs_database(cell.path)
     }
-    assert {workload for workload, _roots in provisioned} == live_workloads
+    assert {workload for workload, _roots in provisioned} == live_workloads | {
+        cell.workload for cell in live_read_cells()
+    }
     assert {roots for _workload, roots in provisioned} == {
         str(roots) for roots in contract.memory_scaling_root_counts
     }
@@ -412,6 +417,7 @@ def test_workload_selection_names_exact_contract_ids_and_the_groups() -> None:
         SCALAR_GROUP,
         PLAN_GROUP,
         CONTROL_GROUP,
+        report.LIVE_READ_GROUP,
     )
 
 
@@ -680,3 +686,46 @@ def test_control_cells_expand_the_control_matrix_in_their_windows_and_units() ->
         report.CONTROL_DELIVERY_WINDOW,
         report.RESULT_HELD_WINDOW,
     }
+
+
+def test_live_reads_add_only_the_twenty_missing_advisory_addresses() -> None:
+    contract = BudgetContract.load()
+    selected = workload_selection([report.LIVE_READ_GROUP], contract)
+    added = report.selected_addresses(contract, ("3.14", "3.15"), selected)
+    assert len(added) == len(set(added)) == 20
+    assert not any(
+        workload == "live-read-conventional-fanout" and ".wire." in path
+        for _, workload, path in added
+    )
+    assert all(
+        window_of(path, workload) == LIVE_WINDOW and unit(path) == "ms"
+        for _, workload, path in added
+    )
+    assert not any(is_memory_cell(path) for _, _, path in added)
+
+
+def test_live_reads_provision_frozen_roots_and_forward_the_connection() -> None:
+    contract = BudgetContract.load()
+    asked: list[ChildRequest] = []
+    provisioner = _FakeProvisioner()
+
+    def runner(request: ChildRequest) -> ChildReading:
+        asked.append(request)
+        return ChildReading(1.0, "ms", (1.0,) * contract.timing_measured)
+
+    envelope = report.measure(
+        contract,
+        cast("Provisioner", provisioner),
+        runner,
+        ("3.14", "3.15"),
+        selected=workload_selection([report.LIVE_READ_GROUP], contract),
+    )
+    assert not envelope.errors and not envelope.incomplete
+    assert len(asked) == 20
+    assert all(
+        request.roots == 200
+        and request.connection_info == provisioner.connection_info
+        and request.connection_secret == provisioner.credentials.secret
+        for request in asked
+    )
+    assert len(provisioner.resets) == 6

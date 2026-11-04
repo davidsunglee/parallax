@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -480,7 +481,8 @@ def workload_digest(
     """The SHA-256 digest of what ``workloads`` measure: each workload's id, the
     canonical JSON of its fixture's measured sections and of its parsed model,
     every number keeping its authored meaning, the generated-key offset, and the
-    structural and scalar-type manifests.
+    structural and scalar-type manifests, and the executable live-read fixture
+    and query definitions.
     Comments, formatting, and fixture keys outside the measured sections leave
     it unchanged.
 
@@ -499,6 +501,8 @@ def workload_digest(
             digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
     digest.update(scalar_type_digest().encode("utf-8"))
+    live_source = text_of(Path(__file__).with_name("live_read_workloads.py"))
+    digest.update(ast.dump(ast.parse(live_source), include_attributes=False).encode("utf-8"))
     return digest.hexdigest()
 
 

@@ -106,6 +106,7 @@ from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     ENVIRONMENT_NAMESPACE,
     GEOMETRY_GROUP,
+    LIVE_READ_GROUP,
     PLAN_GROUP,
     SCALAR_GROUP,
     Selection,
@@ -232,6 +233,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tests/unit/_structural_geometry_support.py",
             "tests/unit/_scalar_type_support.py",
             "tests/unit/_delivery_control_support.py",
+            "packages/parallax-conformance/src/parallax/conformance/live_read_workloads.py",
             "tests/unit/_workload_spelling_support.py",
         ),
     ),
@@ -441,17 +443,21 @@ def validate_snapshot_matrix(
     supported runtime among the addresses ``selected``, with comparisons of the
     selected contract cells on the authority runtime alone.
 
-    The matrix is exact with the scalar-type reads and the control group, without
-    the scalar-type reads as a capture taken before they existed is, or without
-    either as a capture taken before the control group existed is; ``current``
-    accepts the current matrix alone."""
+    The matrix is exact at one of its historical generations: before live reads,
+    before scalar types, or before controls. Partial additions never form a
+    generation; ``current`` accepts the complete current matrix alone."""
     minors = tuple(runtimes) if runtimes is not None else supported_minors()
     expected = selected_addresses(contract, minors, selected)
     readings = _indexed(_readings(document), label="Snapshot reading")
     if not current and set(readings) != set(expected):
-        for controls in (True, False):
+        for controls, scalars in ((True, True), (True, False), (False, False)):
             earlier = selected_addresses(
-                contract, minors, selected, controls=controls, scalar_types=False
+                contract,
+                minors,
+                selected,
+                controls=controls,
+                scalar_types=scalars,
+                live_reads=False,
             )
             if set(readings) == set(earlier):
                 expected = earlier
@@ -2470,6 +2476,7 @@ SHARDS: Final[tuple[Shard, ...]] = (
     _snapshot_shard("bitemporal-current", "bitemporal-current"),
     _snapshot_shard("versioned-document", "versioned-document"),
     _snapshot_shard("controls", CONTROL_GROUP),
+    _snapshot_shard("live-reads", LIVE_READ_GROUP),
     _snapshot_shard(
         "geometry-scalar-plan-stress",
         GEOMETRY_GROUP,

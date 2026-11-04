@@ -448,3 +448,15 @@ def test_the_plan_levels_are_a_frozen_structural_selection_in_the_digest(
     monkeypatch.setattr(workloads, "PLAN_LEVEL_IDS", ("depth-1",))
     assert structural_digest() != original
     assert [level.id for level in plan_levels()] == ["depth-1"]
+
+
+def test_live_history_and_query_coordinates_belong_to_the_workload_digest() -> None:
+    def read(path: Path) -> str:
+        text = path.read_text()
+        return (
+            text.replace("dt.datetime(2024, 5, 1", "dt.datetime(2024, 8, 1")
+            if path.name == "live_read_workloads.py"
+            else text
+        )
+
+    assert workload_digest(read=read) != workload_digest()
