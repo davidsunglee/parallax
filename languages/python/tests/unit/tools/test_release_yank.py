@@ -18,7 +18,11 @@ def release(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             {"project": "parallax-snapshot", "filename": "snapshot.whl", "sha256": "def"},
         ],
     }
-    monkeypatch.setattr(release_yank, "verify", lambda _: manifest)
+
+    def verified(_bundle: Path) -> dict[str, Any]:
+        return manifest
+
+    monkeypatch.setattr(release_yank, "verify", verified)
     return manifest
 
 
@@ -54,7 +58,10 @@ def test_plan_refuses_index_conflicts(
     monkeypatch: pytest.MonkeyPatch,
     item: dict[str, Any],
 ) -> None:
-    monkeypatch.setattr(release_yank, "index_files", lambda *_: [item])
+    def listing(_host: str, _project: str, _version: str) -> list[dict[str, Any]]:
+        return [item]
+
+    monkeypatch.setattr(release_yank, "index_files", listing)
     with pytest.raises(ValueError, match="index differs"):
         release_yank.yank_plan(Path("candidate"), "Use 0.1.1")
 
@@ -74,10 +81,8 @@ def test_verify_requires_every_published_file_and_exact_reason(
     reason: str | None,
     passes: bool,
 ) -> None:
-    monkeypatch.setattr(
-        release_yank,
-        "index_files",
-        lambda host, project, version: [
+    def listing(_host: str, project: str, _version: str) -> list[dict[str, Any]]:
+        return [
             {
                 "filename": a["filename"],
                 "digests": {"sha256": a["sha256"]},
@@ -86,8 +91,9 @@ def test_verify_requires_every_published_file_and_exact_reason(
             }
             for a in release["artifacts"]
             if a["project"] == project
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(release_yank, "index_files", listing)
     if passes:
         assert (
             release_yank.yank_plan(Path("candidate"), "Use 0.1.1", check=True)["status"]

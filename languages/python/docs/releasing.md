@@ -112,7 +112,13 @@ For a new release, dispatch `release.yml` on `main` without a candidate run ID.
 Preparation builds once, waits for successful source CI and checks retained
 PostgreSQL observations. The complete TestPyPI upload and download/install proof
 then precede the protected production job. A push under `release/` can rehearse
-a candidate before merge; it never enters the production job.
+a candidate before merge; it never enters the production job. Production requires
+its original source revision to be an ancestor of `main`, or its entire repository
+tree to match a commit reachable from `main` after a squash or rebase merge. The
+workflow fetches that original commit by SHA, so branch deletion does not remove
+the local proof input. This preserves recovery after later commits advance
+`main`. The original source
+revision, manifest and rehearsed artifact bytes remain unchanged in either case.
 
 Each candidate has a durable draft GitHub release named
 `release-candidate-RUN_ID-ATTEMPT`. Its `candidate.tar.gz` retains the original
@@ -126,8 +132,11 @@ release evidence.
 To recover an interrupted upload, dispatch the same `release.yml` on `main`,
 setting `candidate-run-id` and `candidate-attempt` to the **original build run**
 that archived the candidate. The workflow verifies the archive's attestation,
-its equality to that build run's source SHA, its manifest and source CI. It
-rehearses the exact bytes again, then requests Dave's production approval.
+its equality to that build run's source SHA, its manifest and retained source
+CI. Recovery rechecks the captured run/check results and the hashes and complete
+PostgreSQL observations in the archived evidence; it does not download expiring
+CI artifacts again. It rehearses the exact bytes again, then requests Dave's
+production approval.
 It does not rebuild. Always reference the original build run when recovering,
 including after a recovery run itself is interrupted. Recovery works after
 workflow artifacts expire because it downloads the durable draft release asset.
