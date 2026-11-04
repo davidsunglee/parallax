@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import json
 import types
 import zipfile
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -117,3 +120,55 @@ def test_junit_keeps_skips_errors_and_failures_distinct(tmp_path: Path) -> None:
         "failed": 1,
         "errors": 1,
     }
+
+
+def test_windows_registers_system_libpq_until_the_installed_driver_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wheel = _wheel(tmp_path / "adapter.whl", {})
+    companions = tmp_path / "companions"
+    companions.mkdir()
+    binary = tmp_path / "postgres" / "bin"
+    events: list[str] = []
+
+    @contextmanager
+    def directory(path: str) -> Generator[None]:
+        assert path == str(binary)
+        events.append("registered")
+        try:
+            yield
+        finally:
+            events.append("closed")
+
+    def exercise(args: argparse.Namespace) -> int:
+        assert args.driver == "c"
+        assert events == ["registered"]
+        events.append("driver imported and tested")
+        return 0
+
+    def pg_config(_command: str) -> str:
+        return str(binary / "pg_config.exe")
+
+    monkeypatch.setattr(validate_wheel, "sys", types.SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(validate_wheel.shutil, "which", pg_config)
+    monkeypatch.setattr(validate_wheel.os, "add_dll_directory", directory, raising=False)
+    monkeypatch.setattr(validate_wheel, "_exercise", exercise)
+
+    assert (
+        validate_wheel.main(
+            [
+                "--wheel",
+                str(wheel),
+                "--companions",
+                str(companions),
+                "--output",
+                str(tmp_path / "out"),
+                "--postgres-version",
+                "18.6",
+                "--driver",
+                "c",
+            ]
+        )
+        == 0
+    )
+    assert events == ["registered", "driver imported and tested", "closed"]

@@ -146,6 +146,21 @@ def _linux_container(
         text=True,
     ).strip()
     lifetime.callback(_run, ["docker", "rm", "--force", container], output / "setup.log", env)
+    retained_output = Path("/project") / output.relative_to(REPO)
+    lifetime.callback(
+        _run,
+        [
+            "docker",
+            "exec",
+            container,
+            "chown",
+            "-R",
+            f"{os.getuid()}:{os.getgid()}",
+            str(retained_output),
+        ],
+        output / "setup.log",
+        env,
+    )
     _run(
         [
             "docker",
@@ -269,6 +284,7 @@ def build(
         record["error"] = f"{type(error).__name__}: {error}"
         raise
     finally:
+        record["timings"].setdefault("setup_seconds", time.monotonic() - start)
         record["timings"]["total_seconds"] = time.monotonic() - start
         record["completed_at"] = datetime.now(UTC).isoformat()
         (output / "target.json").write_text(json.dumps(record, indent=2) + "\n")
