@@ -19,16 +19,17 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
 
 from check_resource_access import RESOURCE_CLASSES
-from tests._support import committed_evidence, cost_durations
+from tests._support import committed_evidence, shards
 from tests._support.repo import PY_ROOT, REPO_ROOT
-from tests.unit._session_selection_support import WHOLE_CLASS, selections
+from tests.unit._session_selection_support import WHOLE_CLASS, selection
 from tests.unit.memory_instruments import takes_its_own_interpreter
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cloud", "cost"})
@@ -151,70 +152,100 @@ def test_only_the_derivation_names_a_scheduling_class() -> None:
     assert offenders == {}
 
 
-def _cost_job() -> Any:
-    """The `python-test-cost` job as the CI workflow declares it."""
+def _deployed_cells(job: str) -> list[str]:
     workflow: Any = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
-    return workflow["jobs"][COST_JOB]
+    return [str(cell) for cell in workflow["jobs"][job]["strategy"]["matrix"]["shard"]]
 
 
-def _deployed_cells() -> list[str]:
-    """The shard each cell of that job runs, in the order the matrix names them."""
-    return [str(cell) for cell in _cost_job()["strategy"]["matrix"]["shard"]]
-
-
-def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() -> None:
-    # The cells are every index of one count, parsed as the hook parses `--shard`.
-    # Their parts, computed in process from what the hook computes them from — the
-    # whole class in collection order, the stored durations, and the cell count —
-    # hold every cost item exactly once and none is empty (§9). One real sharded
-    # session pins the prediction: its cost items are its cell's part, and its
-    # other items are exactly an unsharded session's, which is what confines
-    # `--shard` to the class CI splits.
-    cells = _deployed_cells()
-    parsed = [cost_durations.index_and_count(cell) for cell in cells]
-    assert sorted(parsed) == [(index, len(cells)) for index in range(1, len(cells) + 1)]
-
-    # Halfway along the vector: neither the first nor the last cell, so a hook
-    # that ran one end of the vector whatever cell it was given fails here.
-    spot_checked = cells[len(cells) // 2]
-    cost_session, sharded_session, unsharded_session = selections(
-        [("cost", WHOLE_CLASS), (None, spot_checked), (None, WHOLE_CLASS)]
+def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole() -> None:
+    variants = (
+        ("cost", _deployed_cells(COST_JOB), "--shard", shards.COST_DURATIONS),
+        ("db", _deployed_cells("python-check-db"), "--db-shard", shards.DB_DURATIONS),
     )
-    cost_class = cost_session.selected
-    whole = cost_session.collected
-    under_one_cell = sharded_session.selected
-    shard_of = cost_durations.shard_of_each(
-        cost_durations.weights(cost_class, cost_durations.known()), len(cells)
-    )
-    predicted = {
-        cell: [item for item, shard in zip(cost_class, shard_of, strict=True) if shard == index]
-        for cell, (index, _) in zip(cells, parsed, strict=True)
-    }
-    assert all(predicted.values())
-    assert sorted(item for part in predicted.values() for item in part) == sorted(cost_class)
+    with ThreadPoolExecutor(max_workers=3) as sessions:
+        unsharded = sessions.submit(selection, None, WHOLE_CLASS)
+        narrowed = {
+            scheduling_class: sessions.submit(
+                selection, None, cells[len(cells) // 2], option=option
+            )
+            for scheduling_class, cells, option, _path in variants
+        }
+        whole = unsharded.result()
+        selected = {name: future.result().selected for name, future in narrowed.items()}
+    for scheduling_class, cells, option, path in variants:
+        parsed = [shards.index_and_count(cell, option=option) for cell in cells]
+        assert sorted(parsed) == [(index, len(cells)) for index in range(1, len(cells) + 1)]
+        members = [item for item in whole.selected if whole.classes[item] == scheduling_class]
+        known = shards.known(path)
+        if scheduling_class == "db":
+            assignment = shards.shard_of_groups(members, whole.groups, known, len(cells))
+        else:
+            assignment = shards.shard_of_each(shards.weights(members, known), len(cells))
+        predicted = {
+            cell: [item for item, shard in zip(members, assignment, strict=True) if shard == index]
+            for cell, (index, _) in zip(cells, parsed, strict=True)
+        }
+        assert all(predicted.values())
+        assert sorted(item for part in predicted.values() for item in part) == sorted(members)
+        spot_checked = cells[len(cells) // 2]
+        actual = selected[scheduling_class]
+        assert [item for item in actual if whole.classes[item] == scheduling_class] == predicted[
+            spot_checked
+        ]
+        assert [item for item in actual if whole.classes[item] != scheduling_class] == [
+            item for item in whole.selected if whole.classes[item] != scheduling_class
+        ]
+        if scheduling_class == "db":
+            placement = dict(zip(members, assignment, strict=True))
+            for group in set(whole.groups.values()):
+                assert (
+                    len({placement[item] for item in members if whole.groups.get(item) == group})
+                    <= 1
+                )
 
-    in_class = set(cost_class)
-    assert [item for item in under_one_cell if item in in_class] == predicted[spot_checked]
-    assert [item for item in under_one_cell if item not in in_class] == [
-        item for item in unsharded_session.selected if item not in in_class
-    ]
-    assert [item for item in whole if item in in_class] == list(cost_class)
+
+def test_database_groups_are_indivisible_and_use_unsuffixed_weights() -> None:
+    nodeids = ["a::first", "b::second", "c::heavy", "d::small"]
+    groups = {"a::first": "shared", "b::second": "shared"}
+    known = dict(zip(nodeids, (4.0, 4.0, 7.0, 1.0), strict=True))
+    assert shards.shard_of_groups(nodeids, groups, known, 2) == [1, 1, 2, 2]
+    suffixed = [f"{nodeid}@shared" if nodeid in groups else nodeid for nodeid in nodeids]
+    assert shards.shard_of_groups(
+        suffixed, {f"{nodeid}@shared": group for nodeid, group in groups.items()}, known, 2
+    ) == [1, 1, 2, 2]
+    assert shards.shard_of_groups([*nodeids, "e::unknown"], groups, known, 2) == [1, 1, 2, 1, 2]
 
 
+def test_database_group_names_follow_xdist_composite_marker_rules() -> None:
+    class Item:
+        def iter_markers(self, name: str) -> list[pytest.Mark]:
+            assert name == "xdist_group"
+            return [
+                pytest.mark.xdist_group("z").mark,
+                pytest.mark.xdist_group(name="a").mark,
+                pytest.mark.xdist_group("z").mark,
+                pytest.mark.xdist_group().mark,
+            ]
+
+    assert shards.group_of(cast("pytest.Item", Item())) == "a_default_z"
+
+
+@pytest.mark.parametrize("option", ["--shard", "--db-shard"])
 @pytest.mark.parametrize("shard", ["", "1", "1/", "0/4", "5/4", "a/4"])
-def test_a_malformed_shard_is_the_options_usage_error(shard: str) -> None:
-    with pytest.raises(pytest.UsageError, match="--shard expects I/N"):
-        cost_durations.index_and_count(shard)
+def test_a_malformed_shard_is_the_options_usage_error(shard: str, option: str) -> None:
+    with pytest.raises(pytest.UsageError, match=f"{option} expects I/N"):
+        shards.index_and_count(shard, option=option)
 
 
-def test_a_session_given_a_malformed_shard_stops_with_the_usage_error() -> None:
+@pytest.mark.parametrize("option", ["--shard", "--db-shard"])
+def test_a_session_given_a_malformed_shard_stops_with_the_usage_error(option: str) -> None:
     completed = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
             str(Path(__file__)),
-            "--shard",
+            option,
             "0/4",
             "--collect-only",
             "-q",
@@ -227,7 +258,7 @@ def test_a_session_given_a_malformed_shard_stops_with_the_usage_error() -> None:
         check=False,
     )
     assert completed.returncode == pytest.ExitCode.USAGE_ERROR
-    assert "--shard expects I/N" in completed.stderr
+    assert f"{option} expects I/N" in completed.stderr
 
 
 # --------------------------------------------------------------------------
@@ -245,9 +276,9 @@ def test_the_shards_are_balanced_by_the_stored_durations() -> None:
     # Graded over the stored items through the assignment the hook calls; that
     # the hook reads the file at all is what the partition test's real session
     # pins, since a hook weighing everything alike would predict other cells.
-    known = cost_durations.known()
+    known = shards.known()
     stored = sorted(known)
-    shard_of = cost_durations.shard_of_each(cost_durations.weights(stored, known), 2)
+    shard_of = shards.shard_of_each(shards.weights(stored, known), 2)
     halves = [
         [item for item, shard in zip(stored, shard_of, strict=True) if shard == index]
         for index in (1, 2)
@@ -264,14 +295,15 @@ def test_an_item_weighs_its_stored_duration_and_an_unknown_one_the_mean() -> Non
     # would still partition the class, and still leave every cell's predicted
     # part matching what the hook produced from the same regression.
     known = {"a::light": 1.0, "a::heavy": 4.0, "a::middling": 4.0}
-    assert cost_durations.weights(["a::heavy", "a::light", "a::unstored"], known) == [4.0, 1.0, 3.0]
+    assert shards.weights(["a::heavy", "a::light", "a::unstored"], known) == [4.0, 1.0, 3.0]
 
 
 def test_the_stored_durations_are_the_contract_the_shards_read_them_under() -> None:
     # The tracked file is an input to every sharded session, so what it holds is
     # graded here rather than only where a malformed entry would silently skew a
     # shard.
-    assert cost_durations.known()
+    assert shards.known()
+    assert shards.known(shards.DB_DURATIONS)
 
 
 def test_durations_that_do_not_arrive_at_all_are_a_usage_error(tmp_path: Path) -> None:
@@ -284,7 +316,7 @@ def test_durations_that_do_not_arrive_at_all_are_a_usage_error(tmp_path: Path) -
     undecodable.write_bytes(b'{"a::b": 1.0}\xff')
     for path in (tmp_path / "never-stored.json", undecodable, tmp_path):
         with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
-            cost_durations.known(path)
+            shards.known(path)
 
 
 @pytest.mark.parametrize(
@@ -310,15 +342,15 @@ def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
     path = tmp_path / "cost_durations.json"
     path.write_text(payload, encoding="utf-8")
     with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
-        cost_durations.known(path)
+        shards.known(path)
 
 
 def _stored_over_two_entries(path: Path, *, replace: bool) -> dict[str, float]:
     """A file holding a renamed and a kept item after a store of one observation
     of the kept one over it."""
     path.write_text('{"a::renamed": 5.0, "a::kept": 2.0}\n', encoding="utf-8")
-    cost_durations.store({"a::kept": 3.04}, replace=replace, path=path)
-    return cost_durations.known(path)
+    shards.store({"a::kept": 3.04}, replace=replace, path=path)
+    return shards.known(path)
 
 
 def test_a_replacing_store_drops_every_item_it_did_not_observe(tmp_path: Path) -> None:
@@ -393,10 +425,10 @@ def test_the_replication_proofs_share_one_worker_and_so_one_standby_pair() -> No
         proof.name: "replication" for proof in proofs
     }
     justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
-    match = re.search(r"^python-test-db:\n((?:    .*\n)+)", justfile, re.MULTILINE)
+    match = re.search(r'^python-test-db shard="1/1":\n((?:    .*\n)+)', justfile, re.MULTILINE)
     assert match is not None
     (invocation,) = match.group(1).strip().splitlines()
-    assert invocation.endswith("uv run pytest -m db -n 4 --dist loadgroup")
+    assert invocation.endswith("uv run pytest -m db -n 4 --dist loadgroup --db-shard {{shard}}")
 
 
 # --------------------------------------------------------------------------

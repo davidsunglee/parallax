@@ -274,6 +274,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.14.10", "3.15.2"]
+        shard: ["1/2", "2/2"]
     env:
       UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
@@ -289,7 +290,7 @@ jobs:
         working-directory: languages/python
         run: uv sync --frozen
       - name: just python-check-db
-        run: just python-check-db
+        run: just python-check-db ${{ matrix.shard }}
 
       - name: Retain database test timings
         if: always()

@@ -8,11 +8,13 @@ import sys
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
 
+from tests._support import shards
 from tests._support.repo import PY_ROOT
 
 WHOLE_CLASS = "1/1"
@@ -22,6 +24,8 @@ WHOLE_CLASS = "1/1"
 class SessionSelection:
     collected: list[str]
     selected: list[str]
+    classes: dict[str, str]
+    groups: dict[str, str]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -41,13 +45,26 @@ def pytest_collection_modifyitems(
                 {
                     "collected": [item.nodeid for item in collected],
                     "selected": [item.nodeid for item in items],
+                    "classes": {
+                        item.nodeid: next(
+                            mark.name
+                            for mark in item.iter_markers()
+                            if mark.name in {"cost", "db", "dbfree", "cloud"}
+                        )
+                        for item in collected
+                    },
+                    "groups": {
+                        item.nodeid: group
+                        for item in collected
+                        if (group := shards.group_of(item)) is not None
+                    },
                 }
             ),
             encoding="utf-8",
         )
 
 
-def selection(expression: str | None, shard: str) -> SessionSelection:
+def selection(expression: str | None, shard: str, *, option: str = "--shard") -> SessionSelection:
     """Collect the real tree and record its selection under the given options."""
     narrowing = [] if expression is None else ["-m", expression]
     with TemporaryDirectory(prefix="parallax-selection-") as temporary:
@@ -58,7 +75,7 @@ def selection(expression: str | None, shard: str) -> SessionSelection:
                 "-m",
                 "pytest",
                 *narrowing,
-                "--shard",
+                option,
                 shard,
                 "--collect-only",
                 "-q",
@@ -75,11 +92,13 @@ def selection(expression: str | None, shard: str) -> SessionSelection:
             check=True,
         )
         document = json.loads(snapshot.read_text(encoding="utf-8"))
-    return SessionSelection(collected=document["collected"], selected=document["selected"])
+    return SessionSelection(**document)
 
 
-def selections(requests: Sequence[tuple[str | None, str]]) -> list[SessionSelection]:
+def selections(
+    requests: Sequence[tuple[str | None, str]], *, option: str = "--shard"
+) -> list[SessionSelection]:
     expressions = [expression for expression, _ in requests]
     shards = [shard for _, shard in requests]
     with ThreadPoolExecutor(max_workers=len(requests)) as sessions:
-        return list(sessions.map(selection, expressions, shards))
+        return list(sessions.map(partial(selection, option=option), expressions, shards))

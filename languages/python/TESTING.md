@@ -93,6 +93,10 @@ also drops renamed or deleted items, replaces the file from the whole class
 with `uv run pytest -m cost -n auto --store-cost-durations=replace`, and writes
 nothing unless that session passes.
 
+`--db-shard I/N` partitions only the database class using
+[db_durations.json](tests/_support/db_durations.json), keeping every `xdist_group`
+on one shard. The default selects the whole class.
+
 `--timing-report DIR` writes one JSONL file per pytest process under a unique
 session directory, starting at plugin configuration. Worker events distinguish
 session startup from collection; the controller records each item's setup, call,
