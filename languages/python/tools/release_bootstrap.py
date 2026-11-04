@@ -23,15 +23,7 @@ class BootstrapError(Exception):
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: Any,
-        code: int,
-        msg: str,
-        headers: Any,
-        newurl: str,
-    ) -> None:
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
         return None
 
 
