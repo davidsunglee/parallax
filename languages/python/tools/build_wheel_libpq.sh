@@ -16,6 +16,10 @@ fi
 
 if command -v apk >/dev/null 2>&1; then
     apk add --no-cache ca-certificates curl build-base perl linux-headers bzip2 bison flex
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y flex bison perl
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y flex bison perl
 fi
 
 build_root=$(mktemp -d)

@@ -21,6 +21,7 @@ import venv
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -290,7 +291,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.driver is not None:
-        return _exercise(args)
+        with ExitStack() as libraries:
+            if sys.platform == "win32":
+                pg_config = shutil.which("pg_config")
+                if pg_config is None:
+                    raise RuntimeError("pg_config must identify the system libpq DLL directory")
+                libraries.enter_context(os.add_dll_directory(str(Path(pg_config).resolve().parent)))
+            return _exercise(args)
     result: dict[str, Any] = {
         "status": "failed",
         "wheel": {"filename": args.wheel.name, "sha256": digest(args.wheel)},

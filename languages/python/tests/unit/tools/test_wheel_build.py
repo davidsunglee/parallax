@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+from pathlib import Path
 
 import pytest
 
@@ -29,9 +30,10 @@ def test_every_supported_runtime_has_the_complete_native_platform_matrix() -> No
 
 def test_an_emulated_linux_arm_build_is_refused_before_building(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(platform, "machine", lambda: "x86_64")
     target = next(target for target in wheel_build.targets() if target["id"] == "musllinux-aarch64")
     with pytest.raises(ValueError, match="native aarch64 runner required"):
-        wheel_build._native(target, "3.15")
+        wheel_build.build(target["id"], "3.15", tmp_path / "cell", "18.6")
