@@ -18,9 +18,10 @@ candidate wheel's dependency metadata.
 ## Build and validation
 
 Run on the native target runner with its CPython minor, Docker on Linux,
-Homebrew on macOS, and the Windows C build toolchain on Windows. The setup tool
-downloads the published EDB PostgreSQL archive on Windows. For example, from the
-repository root on native Linux ARM:
+Homebrew on ARM macOS, a C compiler on Intel macOS, and the Windows C build
+toolchain on Windows. Intel macOS provisions PostgreSQL from the exact release
+source with its published checksum; Windows uses the published EDB archive.
+For example, from the repository root on native Linux ARM:
 
 ```bash
 python languages/python/tools/wheel_build.py --target manylinux_2_28-aarch64 \
