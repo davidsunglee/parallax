@@ -38,6 +38,18 @@ The wheel matrix uses the newest tested version without multiplying platform
 cells by database versions. A new PostgreSQL major needs a separate support
 decision.
 
+## First project setup
+
+Establish the configured index projects before publication using the
+[account setup](../../../.github/release/README.md). New pending publishers
+sharing one GitHub identity must be consumed one project at a time. The workflow's
+`bootstrap` operation creates a project through OIDC and discards the temporary
+token without uploading any distribution files; Dave confirms the actual Owner
+role in the index account. This setup is separate from release publication.
+The upload path requires every project to exist, so an incomplete bootstrap
+cannot accidentally consume a pending entry during publication. Public existence
+alone does not verify ownership.
+
 ## Prepare, rehearse and approve
 
 1. Choose a source revision whose required CI checks pass. Prepare one complete

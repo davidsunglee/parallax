@@ -16,6 +16,9 @@ runs:
     - name: Verify protected environment configuration
       shell: bash
       run: python languages/python/tools/release_setup.py --output '${{ inputs.evidence }}/environments.json'
+    - name: Require projects to exist before publication
+      shell: bash
+      run: python languages/python/tools/release_bootstrap.py --index '${{ inputs.index }}' --check-projects --output '${{ inputs.evidence }}/projects.json'
     - name: Reconcile present files before uploading
       id: reconcile
       shell: bash
