@@ -1,0 +1,14 @@
+name: refresh adapter wheel proof
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  wheels:
+    uses: ./.github/workflows/wheels.yml

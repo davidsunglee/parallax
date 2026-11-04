@@ -1,0 +1,9 @@
+[
+  {"id": "manylinux2014-x86_64", "runner": "ubuntu-24.04", "arch": "x86_64", "platform": "linux", "image": "quay.io/pypa/manylinux2014_x86_64:latest", "build": "manylinux_x86_64"},
+  {"id": "manylinux_2_28-aarch64", "runner": "ubuntu-24.04-arm", "arch": "aarch64", "platform": "linux", "image": "quay.io/pypa/manylinux_2_28_aarch64:latest", "build": "manylinux_aarch64"},
+  {"id": "musllinux-x86_64", "runner": "ubuntu-24.04", "arch": "x86_64", "platform": "linux", "image": "quay.io/pypa/musllinux_1_2_x86_64:latest", "build": "musllinux_x86_64"},
+  {"id": "musllinux-aarch64", "runner": "ubuntu-24.04-arm", "arch": "aarch64", "platform": "linux", "image": "quay.io/pypa/musllinux_1_2_aarch64:latest", "build": "musllinux_aarch64"},
+  {"id": "macos-arm64", "runner": "macos-15", "arch": "arm64", "platform": "macos", "build": "macosx_arm64"},
+  {"id": "macos-x86_64", "runner": "macos-15-intel", "arch": "x86_64", "platform": "macos", "build": "macosx_x86_64"},
+  {"id": "windows-amd64", "runner": "windows-2025", "arch": "AMD64", "platform": "windows", "build": "win_amd64"}
+]
