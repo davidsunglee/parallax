@@ -344,3 +344,31 @@ with the current one. A shallow clone may need those revisions fetched first.
 The remaining working-tree files alone do not reproduce those historical views.
 The complete retired measurement account remains in
 [Git history](https://github.com/davidsunglee/parallax/blob/c7dd36498c31aed00647126bd9c6c99a8c9c5cc7/languages/python/docs/structural-metadata-envelope/README.md).
+
+## Deferred-plan gate warmups
+
+A diagnostic on 2026-11-04 measured the
+`cross-object.bitemporal.deferred-32x32.columns.typed` gate with 200, 100, 50 and
+20 retained-memory warmups. On the same Mac17,4 host, under the machine-wide
+measurement lock, the retained stage took 74.72s of the 76.45s Python 3.15.2
+baseline. All six byte readings were identical at each screened count. The
+200-warmup baseline took 72.08s on Python 3.14.10; three fresh-child baseline
+readings at 20 warmups had medians of about 9.5s and 9.1s respectively.
+
+Across 19 fresh-child measurements, including three baseline/seed pairs per
+runtime at 20 warmups, normal plan retention was 25,288 bytes. A seeded duplicate
+registry of real settled-plan entries raised it to 34,254–34,304 bytes and failed
+both plan-retention ceilings at 20 and 200 warmups. Within each runtime, repeated peak readings varied
+by about 50 bytes. The gate therefore uses 20 retained warmups
+only for this workload, preserving its geometry, work assertions, all ceilings,
+three peak samples and both retained sampler runs. The benchmark reader and CLI
+still default to 200. These local timings do not predict CI execution time or
+establish convergence for other workloads.
+
+Raw diagnostic scripts, source digests and readings are retained outside Git at
+`~/.local/share/parallax/evidence/ci-follow-up/warmup-proof-20261104.tar.gz`,
+SHA-256 `87b473c3bc445a6c570056a7e44a8bde64f102c4358d656cea9cbc54b363ee51`.
+The accepted capture envelopes and workload inputs remain unchanged. The explicit
+warmup option changes recorded instrument source hashes; strict compatibility
+checks still reject comparisons between old and new instrument sources, even
+when both captures use the unchanged default protocol.

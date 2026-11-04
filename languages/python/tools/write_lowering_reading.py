@@ -549,14 +549,16 @@ def _regional_peaks(driver: _FlushDriver) -> tuple[int, int]:
     return binding.highest, execution.highest
 
 
-def _plan_kept(driver: _FlushDriver) -> int:
+def _plan_kept(driver: _FlushDriver, *, warmups: int) -> int:
     def checkpoint(sample: Sampler) -> None:
         driver.marked(planning=sample, planned=sample)
 
-    return max(0, retained_increment(checkpoint))
+    return max(0, retained_increment(checkpoint, warmups=warmups))
 
 
-def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, object]:
+def _measure_flush(
+    name: str, *, warmups: int, measured: int, retained_warmups: int
+) -> dict[str, object]:
     case = lowering_support.cross_object_case_named(name)
     with _flush_driver_for(case) as driver:
         with untraced():
@@ -578,7 +580,7 @@ def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, objec
                     bound, executed = _regional_peaks(driver)
                     binding.append(bound)
                     transient.append(executed)
-            kept = _plan_kept(driver)
+            kept = _plan_kept(driver, warmups=retained_warmups)
         finally:
             tracemalloc.stop()
 
@@ -608,17 +610,28 @@ def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, objec
         "calls": {},
         "warmups": warmups,
         "measured": measured,
-        "retainedWarmups": RETAINED_WARMUPS,
+        "retainedWarmups": retained_warmups,
     }
 
 
-def measure(name: str, *, warmups: int, measured: int) -> dict[str, object]:
-    """One case's per-unit samples over its window, and its pass observations."""
+def measure(
+    name: str, *, warmups: int, measured: int, retained_warmups: int = RETAINED_WARMUPS
+) -> dict[str, object]:
+    """One case's per-unit samples over its window, and its pass observations.
+
+    Only cross-object flushes accept a nondefault retained warm-up count.
+    """
     if warmups < 0 or measured <= 0:
         raise ValueError("warmups must be non-negative and measured must be positive")
+    if retained_warmups < 0:
+        raise ValueError("retained_warmups must be non-negative")
     window = WINDOWS[name]
     if window == FLUSH_WINDOW:
-        return _measure_flush(name, warmups=warmups, measured=measured)
+        return _measure_flush(
+            name, warmups=warmups, measured=measured, retained_warmups=retained_warmups
+        )
+    if retained_warmups != RETAINED_WARMUPS:
+        raise ValueError("retained_warmups is configurable only for cross-object flushes")
     observe = window == KEYED_WINDOW
 
     with driver_for(name) as driver:
