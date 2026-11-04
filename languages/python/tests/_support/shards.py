@@ -111,7 +111,7 @@ def shard_of_groups(
     stored weight always names the original pytest item.
     """
     units: dict[tuple[bool, str], list[int]] = {}
-    canonical = []
+    canonical: list[str] = []
     for position, nodeid in enumerate(nodeids):
         group = groups.get(nodeid)
         key = (True, group) if group is not None else (False, nodeid)
