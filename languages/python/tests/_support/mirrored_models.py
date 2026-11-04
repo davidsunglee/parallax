@@ -543,6 +543,36 @@ class DocumentCashPayment(
     detail: Attr[Decimal] = attr(precision=18, scale=2)
 
 
+class DocumentVersionedPayment(
+    Entity,
+    name="VersionedPayment",
+    table="versioned_payment_document",
+    namespace=_NS,
+    layout=Document(),
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class DocumentVersionedCardPayment(
+    DocumentVersionedPayment,
+    name="VersionedCardPayment",
+    namespace=_NS,
+    inheritance=ConcreteSubtype(tag_value="versioned-card"),
+):
+    detail: Attr[str] = attr(max_length=64)
+
+
+class DocumentVersionedCashPayment(
+    DocumentVersionedPayment,
+    name="VersionedCashPayment",
+    namespace=_NS,
+    inheritance=ConcreteSubtype(tag_value="versioned-cash"),
+):
+    detail: Attr[Decimal] = attr(precision=18, scale=2)
+
+
 class DocumentPublication(
     Entity,
     name="Publication",
@@ -622,6 +652,12 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("scalar-collection-layout-twin-columns", SCALAR_COLLECTION_COLUMNS_MODEL),
     ("scalar-collection-layout-twin-document", SCALAR_COLLECTION_DOCUMENT_MODEL),
     ("document-layout", DOCUMENT_LAYOUT_MODEL),
+    (
+        "versioned-payment-document",
+        DomainModel(
+            DocumentVersionedPayment, DocumentVersionedCardPayment, DocumentVersionedCashPayment
+        ),
+    ),
     ("note", NOTE_MODEL),
     ("composed-beast-reader", COMPOSED_BEAST_READER),
     ("composed-beast-document-reader", COMPOSED_BEAST_DOCUMENT_READER),

@@ -70,6 +70,7 @@ _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
         "m-concurrency-064",
         "m-concurrency-068",
         "m-concurrency-069",
+        "m-concurrency-070",
     }
 )
 _DESCRIPTOR_DEFAULT_COLUMN_READS: Final[frozenset[str]] = frozenset({"m-descriptor-002"})

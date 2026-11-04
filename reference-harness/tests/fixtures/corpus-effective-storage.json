@@ -4991,6 +4991,34 @@
       "valueObject": {}
     }
   },
+  "models/versioned-payment-document.yaml": {
+    "parallax.compatibility.VersionedCardPayment": {
+      "attribute": {
+        "detail": "detail"
+      },
+      "documentPath": {
+        "detail": "payload:detail"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.VersionedCashPayment": {
+      "attribute": {
+        "detail": "detail"
+      },
+      "documentPath": {
+        "detail": "payload:detail"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.VersionedPayment": {
+      "attribute": {
+        "id": "id",
+        "version": "version"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/wallet.yaml": {
     "parallax.compatibility.Wallet": {
       "attribute": {

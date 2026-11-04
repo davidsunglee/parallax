@@ -1,0 +1,37 @@
+entities:
+  - name: VersionedPayment
+    namespace: parallax.compatibility
+    table: versioned_payment_document
+    layout:
+      document:
+        column: payload
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag: { column: kind }
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: version
+        type: int32
+        optimisticLocking: true
+  - name: VersionedCardPayment
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.VersionedPayment
+      tagValue: versioned-card
+    attributes:
+      - name: detail
+        type: string
+        maxLength: 64
+  - name: VersionedCashPayment
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.VersionedPayment
+      tagValue: versioned-cash
+    attributes:
+      - name: detail
+        type: decimal(18,2)
