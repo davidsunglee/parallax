@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 import yaml
 
+from parallax.core.base import FLOAT64, matches_neutral_type
 from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import AccessMode, IsolationLevel
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
@@ -489,11 +490,7 @@ def _retry_policy(authored: object, where: str) -> RetryPolicy:
     policy = _closed_mapping(authored, ("maxRetries", "backoff"), where)
     arguments: dict[str, Any] = {}
     if "maxRetries" in policy:
-        bound = policy["maxRetries"]
-        # A corpus integer is an int subclass carrying its authored digits.
-        arguments["max_retries"] = (
-            int(bound) if isinstance(bound, int) and not isinstance(bound, bool) else bound
-        )
+        arguments["max_retries"] = _exact_bound(policy["maxRetries"])
     try:
         if "backoff" in policy:
             backoff = _closed_mapping(
@@ -508,6 +505,20 @@ def _retry_policy(authored: object, where: str) -> RetryPolicy:
         return RetryPolicy(**arguments)
     except ValueError as exc:
         raise ValueError(f"{where}: {exc}") from None
+
+
+def _exact_bound(authored: object) -> object:
+    """``authored`` as the exact ``int`` a policy takes wherever the case schema
+    reads an integer, which an ``int`` subclass carrying its digits and ``1.0``
+    both are. A number too large for a float reads as zero on its carrier, so
+    only a member of the float space is judged by its value."""
+    if isinstance(authored, bool) or not isinstance(authored, int | float):
+        return authored
+    if isinstance(authored, int) or (
+        matches_neutral_type(authored, FLOAT64) and authored.is_integer()
+    ):
+        return int(authored)
+    return authored
 
 
 def _closed_mapping(authored: object, keys: tuple[str, ...], where: str) -> Mapping[str, object]:

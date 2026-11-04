@@ -175,10 +175,12 @@ The configurable Retry Policy re-froze `_support.py`, `contention.py`,
 `check_retry_reports.py`; `capture.py` did not change. Retry timing became a public
 value, and the drivers' private substitutions were not comparisons of it: the grid
 probed `_BASE_S` and `_CAP_S`, which the loop no longer has, and the environment
-comparison replaced the private `_window`. Every current driver
-now passes a `RetryPolicy` to `retry=` and states the complete policy on each run as
+comparison replaced the private `_window`. `contention.py` and `guard_wal.py` now pass
+a `RetryPolicy` to `retry=` and state the complete policy on each run as
 `retry: {maxRetries, backoff: {baseDelay, maxDelay}}`, read from the value rather than
-inferred from a label or a private constant.
+inferred from a label or a private constant. `lock_snapshot_trace.py` keeps its
+`maxRetries` field, the disabled policy's bound or `default` where it omits `retry`, and
+`predicate_in_place.py` passes the disabled policy and reports none.
 
 That retires what the public policy cannot express. The immediate-replay arm, the
 fixed-only `fixed-8/25` and `fixed-8/400` arms, and the former 8/25 ms plateau are gone

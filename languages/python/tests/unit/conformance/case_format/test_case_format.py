@@ -138,7 +138,7 @@ def test_an_authored_zero_survives_and_absent_keys_stay_absent() -> None:
         ("retry", {"maxRetries": True}),
         ("retry", {"maxRetries": -1}),
         ("retry", {"maxRetries": "2"}),
-        ("retry", {"maxRetries": 1.0}),
+        ("retry", {"maxRetries": 1.5}),
         ("retry", {"backoff": None}),
         ("retry", {"backoff": {"baseDelay": 0}}),
         ("retry", {"backoff": {"maxDelay": math.inf}}),
@@ -221,6 +221,32 @@ def test_a_policy_read_from_a_case_file_is_a_plain_value() -> None:
             max_retries=2, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=1.0)
         )
     }
+
+
+@pytest.mark.parametrize(("authored", "bound"), [("1.0", 1), ("1e0", 1), ("0.0", 0), ("-0.0", 0)])
+def test_a_bound_the_schema_reads_as_an_integer_decodes_to_that_integer(
+    authored: str, bound: int
+) -> None:
+    document = cast(
+        "dict[str, object]", case_format.safe_load_yaml(f"retry: {{maxRetries: {authored}}}\n")
+    )
+    expected = RetryPolicy(max_retries=bound)
+    assert case_format.request_keywords(document, where="when.uow") == {"retry": expected}
+    root = _isolation_case({"given": {"databaseOptions": document}})
+    assert case_format.database_options(root).retry == expected
+
+
+@pytest.mark.parametrize(
+    "authored",
+    ["1.5", "-1.0", ".inf", ".nan", "1e400"],
+    ids=["fractional", "negative", "inf", "nan", "beyond-binary64"],
+)
+def test_a_bound_the_schema_refuses_stays_refused_on_every_carrier(authored: str) -> None:
+    document = cast(
+        "dict[str, object]", case_format.safe_load_yaml(f"retry: {{maxRetries: {authored}}}\n")
+    )
+    with pytest.raises(ValueError, match=r"when\.uow\.retry"):
+        case_format.request_keywords(document, where="when.uow")
 
 
 @pytest.mark.parametrize(
