@@ -68,7 +68,11 @@ def _metadata(path: Path) -> Message:
         metadata.get_all("License-File", [])
     ) != {"LICENSE", "NOTICE"}:
         raise ValueError(f"{path.name}: expected Apache-2.0 licence and declared legal files")
-    if legal["LICENSE"] != (REPO / "LICENSE").read_bytes() or not legal["NOTICE"].strip():
+    if (
+        legal["LICENSE"].replace(b"\r\n", b"\n")
+        != (REPO / "LICENSE").read_bytes().replace(b"\r\n", b"\n")
+        or not legal["NOTICE"].strip()
+    ):
         raise ValueError(f"{path.name}: invalid licence or empty notice")
     return metadata
 
