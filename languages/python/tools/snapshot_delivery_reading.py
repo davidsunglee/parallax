@@ -373,8 +373,8 @@ def _page_size(path: str) -> int:
 
 
 def _verify_live(connection_info: str, workload: str) -> None:
-    from parallax.conformance import live_read_workloads
     from parallax.conformance._lifecycle_observation import LifecycleObservation
+    from tests._support import live_read_workloads
 
     observation = LifecycleObservation()
     with Database.connect(
@@ -394,7 +394,7 @@ def _representative_live(
     warmups: int,
     measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
-    from parallax.conformance import live_read_workloads
+    from tests._support import live_read_workloads
 
     address = live_read_workloads.address(workload, path)
     if address is None or roots != live_read_workloads.ROOTS or connection_info is None:

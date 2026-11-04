@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
-from parallax.conformance import live_read_workloads as workloads
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import LATEST
 from parallax.snapshot import Database
+from tests._support import live_read_workloads as workloads
 
 
 @pytest.mark.parametrize("workload", workloads.WORKLOAD_IDS)
