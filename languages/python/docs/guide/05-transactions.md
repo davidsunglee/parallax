@@ -438,11 +438,13 @@ or a serialization failure, that cause is a `DatabaseError` whose `category` is
 history for longer than the retries took. A temporal overlap that outlasts every attempt
 is usually permanent, such as an insert over coverage that is already current: every
 attempt is refused again, so the error arrives only after every retry and the waits
-between them, up to about 4 seconds at the default. A transaction that expects such a
-refusal can pass a lower `max_retries` to see it sooner, but can't take it to mean the
-coverage is current: an insert by a clock behind closed history is refused the same way,
-and only a retry recovers it. To answer for current coverage, read it before inserting,
-as [Errors](08-errors.md#failures-the-database-reports) shows.
+between them. At the default those waits add up to at most about 4 seconds when attempts
+fail quickly and at most 10 seconds when they're slow, on top of the attempts themselves.
+A transaction that expects such a refusal can pass a lower `max_retries` to see it
+sooner, but can't take it to mean the coverage is current: an insert by a clock behind
+closed history is refused the same way, and only a retry recovers it. To answer for
+current coverage, read it before inserting, as
+[Errors](08-errors.md#failures-the-database-reports) shows.
 `RetryPolicy(max_retries=0)` turns retries off, and the callback runs once:
 
 <!-- example: make-a-single-attempt -->
