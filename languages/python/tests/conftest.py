@@ -9,11 +9,12 @@ import os
 import sys
 from collections.abc import Iterator
 from contextlib import ExitStack
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from tests._support import committed_evidence, cost_durations, session_timings
+from tests._support import committed_evidence, session_timings, shards
 from tests._support.distributions import Wheelhouse, build_wheelhouse
 from tests._support.root_ownership import close_owned_roots
 
@@ -68,6 +69,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="I/N",
         help="run the I-th of N shards of the cost class; every other class is unaffected",
     )
+    parser.addoption(
+        "--db-shard",
+        default=_WHOLE_CLASS,
+        metavar="I/N",
+        help="run the I-th of N database shards, preserving xdist groups; other classes unaffected",
+    )
     # Bare to merge, `=replace` to replace. The value is optional, so a path
     # argument following the bare flag is taken as the value; `choices` makes
     # that the option's usage error rather than a silently dropped path.
@@ -80,7 +87,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="replace",
         help=(
             f"after the run, record every cost item's call duration in "
-            f"{cost_durations.COST_DURATIONS.name}, merged into what is stored; "
+            f"{shards.COST_DURATIONS.name}, merged into what is stored; "
             f"`--store-cost-durations=replace` instead replaces the file, and only when "
             f"the session passed"
         ),
@@ -156,7 +163,7 @@ def _provider_of(item: pytest.Item) -> str | None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Assign each collected item its scheduling class, keep the cloud items of
-    the selected providers, then keep the cost class's requested shard.
+    the selected providers, then keep each class's requested shard.
 
     The class is read off what the item requires — its resolved fixture closure
     for a database, for a provider-hosted environment, or for the committed cost
@@ -176,11 +183,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     does: collected everywhere, it is deselected unless a CI cell names its
     provider, so no other selection can reach the provider by accident.
 
-    A shard is one of N sets the cost class is balanced into by what each item
-    last cost, in a deterministic order over the stable collection order, so the
-    N shards partition the class and their union is the whole of it
-    (core/spec/language-testing.md §9); `--shard` never touches another class,
-    and the default keeps everything.
+    Each shard option partitions only its own class, balanced over measured
+    durations. Database groups stay together across shards as well as workers.
+    Both options default to the whole class (core/spec/language-testing.md §9).
     """
     for item in items:
         item.add_marker(getattr(pytest.mark, _classified(item)))
@@ -196,20 +201,35 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         dropped = set(unselected)
         items[:] = [item for item in items if item not in dropped]
 
-    index, count = cost_durations.index_and_count(str(config.getoption("--shard")))
-    if count > 1:
-        cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
-        known = cost_durations.known()
-        shard_of = cost_durations.shard_of_each(
-            cost_durations.weights([item.nodeid for item in cost_items], known), count
-        )
-        deselected = [
-            item for item, shard in zip(cost_items, shard_of, strict=True) if shard != index
-        ]
-        if deselected:
-            config.hook.pytest_deselected(items=deselected)
-            excluded = set(deselected)
-            items[:] = [item for item in items if item not in excluded]
+    _select_shard(config, items, "cost", "--shard", shards.COST_DURATIONS)
+    _select_shard(config, items, "db", "--db-shard", shards.DB_DURATIONS)
+
+
+def _select_shard(
+    config: pytest.Config, items: list[pytest.Item], scheduling_class: str, option: str, path: Path
+) -> None:
+    index, count = shards.index_and_count(str(config.getoption(option)), option=option)
+    if count == 1:
+        return
+    candidates = [item for item in items if item.get_closest_marker(scheduling_class) is not None]
+    nodeids = [item.nodeid for item in candidates]
+    known = shards.known(path)
+    if scheduling_class == "db":
+        groups = {
+            item.nodeid: group
+            for item in candidates
+            if (group := shards.group_of(item)) is not None
+        }
+        assignment = shards.shard_of_groups(nodeids, groups, known, count)
+    else:
+        assignment = shards.shard_of_each(shards.weights(nodeids, known), count)
+    deselected = [
+        item for item, shard in zip(candidates, assignment, strict=True) if shard != index
+    ]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        excluded = set(deselected)
+        items[:] = [item for item in items if item not in excluded]
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
@@ -234,11 +254,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     replace = session.config.getoption("--store-cost-durations") == _REPLACE
     if replace and exitstatus != pytest.ExitCode.OK:
         _DURATION_REFUSALS.append(
-            f"{cost_durations.COST_DURATIONS.name} left unchanged: the session did not pass "
+            f"{shards.COST_DURATIONS.name} left unchanged: the session did not pass "
             f"(exit status {int(exitstatus)})"
         )
         return
-    cost_durations.store(_recorded_durations, replace=replace)
+    shards.store(_recorded_durations, replace=replace)
 
 
 def record_db_skip(reason: str) -> None:

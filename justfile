@@ -410,7 +410,7 @@ python-check: python-check-dbfree python-check-db python-check-cost python-check
 python-check-dbfree: python-check-static python-check-coverage
 
 [doc("Every Python check that needs a live database (Docker).")]
-python-check-db: python-test-db
+python-check-db shard="1/1": (python-test-db shard)
 
 [doc("Every Python check needing an interpreter no other test shares, or the committed cost evidence.")]
 python-check-cost shard="1/1": python-check-instrument-access python-check-evidence (python-test-cost shard)
@@ -436,8 +436,8 @@ python-test-dbfree:
 # primary/standby pair that worker opens; ungrouped tests distribute as `load`.
 [metadata("runtime:slow", "scheduling:db")]
 [doc("Every Python test whose fixture closure reaches a database (Testcontainers; Docker).")]
-python-test-db:
-    cd {{python}} && uv run pytest -m db -n 4 --dist loadgroup
+python-test-db shard="1/1":
+    cd {{python}} && uv run pytest -m db -n 4 --dist loadgroup --db-shard {{shard}}
 
 # No coverage here. Every reading is taken in a child interpreter the parent does
 # not trace, so what this selects contributes nothing to a coverage report; the
