@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from urllib.error import URLError
@@ -111,3 +112,35 @@ def test_workflow_preparation_stops_before_publishing_an_empty_postgres_version(
     )
     assert result.returncode == 23
     assert not output.exists()
+
+
+def test_shared_preparation_builds_six_production_sdists_and_keeps_conformance_wheel_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[list[str]] = []
+
+    def record(command: list[str], log: Path, env: dict[str, str]) -> None:
+        commands.append(command)
+
+    monkeypatch.setattr(wheel_build, "_run", record)
+    monkeypatch.setattr(
+        sys, "argv", ["wheel_build", "--prepare-companions", str(tmp_path / "prepared")]
+    )
+    wheel_build.main()
+    sources = [
+        command[command.index("--package") + 1] for command in commands if "--sdist" in command
+    ]
+    wheels = [
+        command[command.index("--package") + 1] for command in commands if "--wheel" in command
+    ]
+    assert set(sources) == {
+        "parallax-core",
+        "parallax-descriptor",
+        "parallax-snapshot",
+        "parallax-evolution",
+        "parallax-postgres",
+        "parallax-aws",
+    }
+    assert "parallax-conformance" in wheels
+    assert "parallax-postgres" not in wheels

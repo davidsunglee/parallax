@@ -31,8 +31,8 @@ python languages/python/tools/wheel_build.py --target manylinux_2_28-aarch64 \
 
 Use `--newest-postgres` to select the version for a new run, rather than copying
 an old invocation's version. `--matrix` emits the workflow matrix. The workflow
-builds shared companion wheels once and supplies their directory through
-`--companions`; standalone builds create their own companions. Build and repair
+builds shared companion wheels and the six production sdists once, supplying
+them through `--companions` and `--sdists`; standalone builds prepare both. Build and repair
 run through cibuildwheel. Linux validation runs in the same policy image on the
 native host; macOS and Windows validate on the native runner.
 
@@ -53,15 +53,24 @@ driver explicitly, builds psycopg-c from source against system libpq, and runs
 the existing compiled-loader differential, refusal, timestamp-delivery and
 open-bound tests. Missing database infrastructure, wrong server versions,
 skips, and empty test results fail. The normal workspace test fixture and its
-timing instrumentation remain in use.
+timing instrumentation remain in use. Every cell also builds all six production
+wheels from the exact shared sdists with isolated builds and no wheel cache,
+then installs those wheels in fresh environments and runs the same two-driver
+validation. Each supplied distribution is imported and its installed package
+files are checked against its candidate wheel. Source builds run inside the
+same native policy environment; they need a C compiler and Cython (resolved from
+the sdist build requirements). Their wheels are proof artifacts, not publication
+replacements.
 
 ## Artifact handoff
 
 A release workflow can call `wheels.yml` with `source-ref` fixed to its source
 commit and read the workflow's `artifact` output. Download that artifact from
 the same run: it contains the exact validated adapter wheels, companion wheels
-under `companions/`, and `manifest.json` with source/run/attempt identities,
-filenames, SHA-256 hashes, driver observations and results. The companion
+under `companions/`, the six production sdists under `sdists/`, and `manifest.json` with source/run/attempt identities,
+filenames, SHA-256 hashes, driver observations and results. Each target
+additionally binds its `source_install` proof to the retained sdist identities,
+source-built wheel identities, both driver results and build/validation timing. The companion
 `parallax-conformance` wheel is development tooling used by the tests and must
 never be published. This path performs no publication.
 
@@ -78,6 +87,8 @@ Each target records setup (tool installation, PostgreSQL provisioning and
 companion preparation), cibuildwheel build/repair, and each driver's clean
 installation and validation. Setup excludes checkout and tool setup actions;
 the GitHub job's runner time includes those actions and artifact transfer.
+The separate source-install stage records source build duration and each
+driver installation/validation duration in addition to its total elapsed time.
 Linux setup includes building system libpq; its log is retained separately.
 The manifest also retains GitHub job queue and execution times. Queue delay is
 unknown if the API supplies no job creation timestamp; workflow creation is

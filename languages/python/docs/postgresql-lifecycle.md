@@ -17,6 +17,15 @@ snippet that has never executed. Every other block is import lines, whose names
 the same guard resolves. The prose around them has no such guard: where it and a
 specification disagree, the specification is right.
 
+## Installation and supported servers
+
+Install `parallax-postgres` with `parallax-snapshot` as shown in
+[Getting started](guide/01-getting-started.md#install). The
+[binding contract](../spec/execution.md#supported-postgresql) owns the supported
+PostgreSQL range; the package metadata and wheel targets linked from that guide
+own Python and platform support. Install `parallax-aws` with its `postgres` extra
+when using RDS IAM credentials. Keep the selected first-party versions equal.
+
 ## What you build, and what owns it
 
 ```python
@@ -840,6 +849,32 @@ example, with `PSYCOPG_IMPL=python` — importing `parallax.postgres` raises
 `ImportError` naming that implementation, before any connection exists. There
 is no slower fallback to run instead.
 
+Install the supported C implementation against your system libpq with a C compiler,
+Python development headers, and `pg_config` on `PATH`:
+
+```bash
+python -m pip install --no-binary psycopg-c "psycopg[c]" parallax-postgres==0.1.0 parallax-snapshot==0.1.0
+```
+
+Set `PSYCOPG_IMPL=c` in the application's environment before Python starts. The
+adapter's binary dependency remains installed, but psycopg selects the C build
+explicitly. Its version must satisfy the adapter's
+[driver requirement](../packages/parallax-postgres/pyproject.toml). Without an
+explicit selection, the presence of a C build can affect psycopg's implementation
+selection; set `PSYCOPG_IMPL=binary` when that is the intended deployment.
+
+For a Parallax source installation, select its sdist explicitly:
+
+```bash
+python -m pip install --no-binary parallax-postgres parallax-postgres==0.1.0 parallax-snapshot==0.1.0
+```
+
+The adapter sdist carries its Cython sources and requires a C compiler and the
+Cython build dependency declared in its metadata. Normal build isolation installs
+that dependency. Both compiled loader variants must be present at runtime;
+startup refuses a missing or unloadable selected variant. Source publication does
+not extend the supported platform set.
+
 ### Execution authority and session affinity
 
 Each runtime authenticates every physical connection as the login named by its
@@ -979,8 +1014,8 @@ Until then, the exclusion's index build still reads the version of each row from
 before your corrections, because an older transaction might see it, and fails with
 `22000` on an inverted one although the queries above find nothing. Then rename the
 primary key, which PostgreSQL named
-`position_pkey` when an earlier release created the table, add the checks, install the
-prerequisite, and add the exclusion:
+`position_pkey` when an earlier development checkout created the table, add the
+checks, install the prerequisite, and add the exclusion:
 
 ```sql
 alter table position rename constraint position_pkey to pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d;
@@ -1021,7 +1056,8 @@ and insert its successor. What each shape does and does not guarantee is
 
 ### Adopting the indices on an existing table
 
-A release before this rule created those indices over the declared columns alone,
+A development checkout before this rule created those indices over the declared
+columns alone,
 under names derived from those columns. A later delta changes neither: both model
 editions it compares are compiled under the current rule, so equal editions give
 an empty delta, and it never reads the catalog. Until you migrate, an amend that
@@ -1102,7 +1138,7 @@ resource reporting by naming one logger. It is a floor rather than a second
 export path: a cleanup problem reaches exactly one of a Handler and this log,
 never both and never neither.
 
-## Migrating from the earlier surface
+## Migrating from a development checkout
 
 | Before | Now |
 |---|---|
@@ -1116,8 +1152,8 @@ never both and never neither.
 | `DbPort` | `DatabaseConnection` |
 | `from parallax.core.execution_lifecycle import FailureDiagnostic` | `from parallax.core.diagnostics import FailureDiagnostic` |
 
-A handle previously held one connection forever and released nothing; it now
-owns a runtime and must be closed. Nothing else about a read, a stream, or a
+Earlier development checkouts held one connection forever and released nothing.
+The current handle owns a runtime and must be closed. Nothing else about a read, a stream, or a
 transaction changes: the same verbs, the same results, and the same transaction
 outcomes.
 

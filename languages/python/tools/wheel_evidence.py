@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from interpreter_matrix import WORKSPACE, supported_minors
 from python_workspace import load_workspace
+from validate_source import identities, production_paths
 
 _TARGETS = Path(__file__).with_name("wheel_targets.json")
 _DRIVERS = ("binary", "c")
@@ -172,6 +173,43 @@ def _companions(directory: Path, validation: Document) -> list[Document]:
     return identities
 
 
+def _source_install(directory: Path, version: str) -> Document:
+    source = directory / "source"
+    record = _document(source / "source.json")
+    if record.get("status") != "passed":
+        raise ValueError("source installation did not pass")
+    sdists = identities(production_paths(directory / "sdists", "*.tar.gz"))
+    if record.get("sdists") != sdists:
+        raise ValueError("retained sdists differ from the source-install inputs")
+    validation = _document(source / "validation" / "validation.json")
+    if validation.get("status") != "passed" or validation.get("postgres_version") != version:
+        raise ValueError("source installation did not validate the selected PostgreSQL version")
+    wheel = _validated_wheel(source, validation)
+    companions = _companions(source, validation)
+    wheels = sorted(
+        [
+            wheel,
+            *[
+                entry
+                for entry in companions
+                if not entry["filename"].startswith("parallax_conformance-")
+            ],
+        ],
+        key=lambda entry: entry["filename"],
+    )
+    if record.get("wheels") != wheels:
+        raise ValueError("source-built wheels differ from the source-build record")
+    return {
+        "status": "passed",
+        "sdists": sdists,
+        "wheel": wheel,
+        "companions": companions,
+        "drivers": {name: _driver_result(name, validation["drivers"][name]) for name in _DRIVERS},
+        "build_seconds": _seconds(record.get("build_seconds"), "source build"),
+        "elapsed_seconds": _seconds(record.get("elapsed_seconds"), "source installation"),
+    }
+
+
 def _cell_record(
     path: Path, expected: Mapping[str, object], jobs: Sequence[Document], observed_at: str
 ) -> Document:
@@ -197,6 +235,7 @@ def _cell_record(
         **record,
         "wheel": _validated_wheel(path.parent, validation),
         "companions": _companions(path.parent, validation),
+        "source_install": _source_install(path.parent, version),
         "evidence_path": str(path.parent),
         "drivers": drivers,
         "postgres_version": version,
@@ -230,6 +269,8 @@ def _failed_evidence(path: Path, root: Path, target: str, python: str) -> Docume
     for field, file in (
         ("reported_target", path),
         ("reported_validation", path.parent / "validation" / "validation.json"),
+        ("reported_source", path.parent / "source" / "source.json"),
+        ("reported_source_validation", path.parent / "source" / "validation" / "validation.json"),
     ):
         try:
             result[field] = _document(file)
@@ -278,6 +319,9 @@ def summarize(
     companion_sets = {json.dumps(cell["companions"], sort_keys=True) for cell in cells}
     if len(companion_sets) > 1:
         findings.append("wheel targets used different companion artifacts")
+    source_sets = {json.dumps(cell["source_install"]["sdists"], sort_keys=True) for cell in cells}
+    if len(source_sets) > 1:
+        findings.append("wheel targets used different source distributions")
     versions = {cell["postgres_version"] for cell in cells}
     if len(versions) > 1:
         findings.append(f"wheel targets used different PostgreSQL versions: {sorted(versions)}")
@@ -331,8 +375,8 @@ def render(summary: Document) -> str:
         f"attempt {summary['run_attempt']}.",
         "",
         "| Target | Python | Setup (s) | Build/repair (s) | Binary (s) | C (s) | "
-        "Queue (s) | Runner (s) |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
+        "Source build (s) | Source binary (s) | Source C (s) | Queue (s) | Runner (s) |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for cell in summary.get("targets", []):
         phases = cell["timings"]
@@ -342,6 +386,9 @@ def render(summary: Document) -> str:
             phases["build_repair_seconds"],
             drivers["binary"]["elapsed_seconds"],
             drivers["c"]["elapsed_seconds"],
+            cell["source_install"]["build_seconds"],
+            cell["source_install"]["drivers"]["binary"]["elapsed_seconds"],
+            cell["source_install"]["drivers"]["c"]["elapsed_seconds"],
             job["queue_seconds"],
             job["runner_seconds"],
         ]

@@ -1,0 +1,51 @@
+{
+  "repository": "davidsunglee/parallax",
+  "workflow": "release.yml",
+  "owner": {
+    "login": "davidsunglee",
+    "id": 24470
+  },
+  "environments": {
+    "testpypi": {
+      "wait_timer": 0,
+      "prevent_self_review": false,
+      "reviewers": [],
+      "deployment_branch_policy": {
+        "protected_branches": false,
+        "custom_branch_policies": true
+      }
+    },
+    "pypi": {
+      "wait_timer": 0,
+      "prevent_self_review": false,
+      "reviewers": [
+        {
+          "type": "User",
+          "id": 24470
+        }
+      ],
+      "can_admins_bypass": false,
+      "deployment_branch_policy": {
+        "protected_branches": false,
+        "custom_branch_policies": true
+      }
+    }
+  },
+  "branches": {
+    "testpypi": [
+      "main",
+      "release/**"
+    ],
+    "pypi": [
+      "main"
+    ]
+  },
+  "projects": [
+    "parallax-core",
+    "parallax-descriptor",
+    "parallax-snapshot",
+    "parallax-postgres",
+    "parallax-evolution",
+    "parallax-aws"
+  ]
+}

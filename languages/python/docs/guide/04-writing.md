@@ -250,7 +250,7 @@ whose `constraint_name` is the table's exclusion, with a note counting the attem
 insert over a key's current coverage is such a case, and so is an insert by a clock that
 stays behind the history it overlaps. The two are refused alike, so
 [Errors](08-errors.md#failures-the-database-reports) reads the coverage before inserting
-over it. A table Parallax didn't create, such as one from before this release that you
+over it. A table Parallax didn't create, such as one provisioned independently or from a development checkout that you
 haven't migrated, refuses none of this.
 
 <!-- example: change-a-credit-limit -->

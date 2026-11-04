@@ -457,8 +457,11 @@ it to finish, and it fails on anything else — a failed or cancelled relevance
 job, a cell absent or unstarted at its deadline, a cell that did not succeed, a
 cell recorded twice, or a record it cannot read. A cell's success in an earlier
 attempt of the run is not this attempt's. The verdict needs no permission to
-change the run, and a scheduled or manual run triggers only the class's path,
-never the rest of the job set.
+change the run. A manual run triggers only the class's path. A scheduled run
+may additionally exercise database compatibility checks and their preparation
+jobs when each job explicitly selects the scheduled event. Other jobs remain
+restricted to push and pull-request events; an absent condition does not select
+a scheduled compatibility check.
 
 ## Why this shape
 

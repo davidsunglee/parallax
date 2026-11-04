@@ -495,3 +495,19 @@
   code: unconditioned-job
   message: "job `commitlint` runs on every trigger"
   problems: 1
+
+- name: scheduled-database-job-without-an-explicit-event-condition
+  file: .github/workflows/ci.yml
+  old: "  python-check-db:\n    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'\n"
+  new: "  python-check-db:\n"
+  code: unconditioned-job
+  message: "job `python-check-db` runs on every trigger"
+  problems: 1
+
+- name: scheduled-database-job-widened-to-manual-cloud-dispatch
+  file: .github/workflows/ci.yml
+  old: "  python-check-db:\n    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'\n"
+  new: "  python-check-db:\n    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'\n"
+  code: unconditioned-job
+  message: "job `python-check-db` runs on every trigger"
+  problems: 1

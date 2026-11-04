@@ -1,0 +1,266 @@
+name: release
+
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+    inputs:
+      candidate-run-id:
+        description: Recover the exact archived candidate from this prior release run (blank builds a new candidate)
+        type: string
+        default: ''
+      candidate-attempt:
+        description: Attempt that retained the archived candidate
+        type: string
+        default: '1'
+
+permissions:
+  contents: read
+  actions: read
+
+# Publication is coordinated across six projects; never cancel an admitted upload.
+concurrency:
+  group: coordinated-release
+  cancel-in-progress: false
+
+jobs:
+  wheels:
+    if: inputs.candidate-run-id == ''
+    uses: ./.github/workflows/wheels.yml
+    with:
+      source-ref: ${{ github.sha }}
+    permissions:
+      contents: read
+      actions: read
+
+  candidate:
+    if: always() && (needs.wheels.result == 'success' || (needs.wheels.result == 'skipped' && inputs.candidate-run-id != ''))
+    needs: wheels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    outputs:
+      source: ${{ steps.identity.outputs.source }}
+      version: ${{ steps.identity.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE_RUN: ${{ inputs.candidate-run-id }}
+      CANDIDATE_ATTEMPT: ${{ inputs.candidate-attempt || '1' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.15'
+      - if: inputs.candidate-run-id == ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.wheels.outputs.artifact }}
+          path: handoff
+      - name: Freeze the exact validated production set
+        if: inputs.candidate-run-id == ''
+        run: python languages/python/tools/release_artifacts.py freeze --handoff handoff --output candidate
+      - name: Recover attested archived bytes without rebuilding
+        if: inputs.candidate-run-id != ''
+        shell: bash
+        run: |
+          [[ "$CANDIDATE_RUN" =~ ^[0-9]+$ && "$CANDIDATE_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml" --jq .id)
+          original=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN/attempts/$CANDIDATE_ATTEMPT")
+          test "$(jq -r .workflow_id <<< "$original")" = "$workflow"
+          source=$(jq -r .head_sha <<< "$original")
+          gh release download "release-candidate-$CANDIDATE_RUN-$CANDIDATE_ATTEMPT" --pattern candidate.tar.gz --dir recovered
+          gh attestation verify recovered/candidate.tar.gz --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-digest "$source" --deny-self-hosted-runners --format json > recovered/provenance.json
+          python - <<'PY'
+          import tarfile
+          with tarfile.open('recovered/candidate.tar.gz') as archive:
+              archive.extractall('.', filter='data')
+          PY
+          test "$(jq -r .source_sha candidate/release-manifest.json)" = "$source"
+          python languages/python/tools/release_artifacts.py verify --bundle candidate
+      - name: Require source CI and actual PostgreSQL floor/latest evidence
+        run: python languages/python/tools/release_ci.py --repository "$GITHUB_REPOSITORY" --bundle candidate
+      - name: Retain native validation records and timing evidence
+        if: inputs.candidate-run-id == ''
+        shell: bash
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "wheel-cell-*-$GITHUB_RUN_ATTEMPT" --dir candidate/validation
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "wheel-summary-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --dir candidate/wheel-summary
+      - name: Identify and archive the candidate
+        id: identity
+        shell: bash
+        run: |
+          echo "source=$(jq -r .source_sha candidate/release-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version candidate/release-manifest.json)" >> "$GITHUB_OUTPUT"
+          tar -czf candidate.tar.gz candidate
+      - name: Attest archived candidate provenance
+        id: provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: candidate.tar.gz
+      - name: Retain candidate durably before any index upload
+        shell: bash
+        env:
+          SOURCE: ${{ steps.identity.outputs.source }}
+          ATTESTATION: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          cp "$ATTESTATION" candidate-provenance.json
+          gh release create "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" candidate.tar.gz candidate-provenance.json --draft --target "$SOURCE" --title "Release candidate $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" --notes "Retained validated bytes and evidence; this draft is not a production release."
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate/
+          retention-days: 90
+          if-no-files-found: error
+      - name: Retain candidate failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-preparation-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            candidate/
+            recovered/provenance.json
+          retention-days: 90
+
+  rehearsal:
+    needs: candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: testpypi
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.15'
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - uses: ./.github/actions/release-index
+        with:
+          index: testpypi
+          bundle: candidate
+          evidence: rehearsal
+      - name: Present concrete candidate for Dave's approval
+        env:
+          SOURCE: ${{ needs.candidate.outputs.source }}
+          VERSION: ${{ needs.candidate.outputs.version }}
+        shell: bash
+        run: |
+          {
+            echo "## Production approval: Parallax $VERSION"
+            echo "Source: $SOURCE"
+            echo "Release manifest SHA-256: $(sha256sum candidate/release-manifest.json | cut -d ' ' -f 1)"
+            echo "CI: $(jq -r .run.html_url candidate/ci.json)"
+            echo "All 25 artifact downloads match; all six distributions passed the TestPyPI installation smoke test."
+            echo "Full validation, PostgreSQL, provenance and timing evidence is retained in the candidate draft release and workflow artifacts."
+            echo 'Production requires Dave’s explicit approval of the protected pypi environment.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: testpypi-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rehearsal/
+          retention-days: 90
+          if-no-files-found: error
+
+  retain-rehearsal:
+    needs: [candidate, rehearsal]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: testpypi-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rehearsal
+      - run: tar -czf testpypi-evidence.tar.gz rehearsal
+      - run: gh release upload "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" testpypi-evidence.tar.gz --repo "$GITHUB_REPOSITORY"
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [candidate, rehearsal, retain-rehearsal]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: pypi
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ needs.candidate.outputs.source }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.15'
+      - uses: astral-sh/setup-uv@v7
+      - name: Require candidate source to be merged into main
+        run: git merge-base --is-ancestor "$SOURCE" origin/main
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - uses: ./.github/actions/release-index
+        with:
+          index: pypi
+          bundle: candidate
+          evidence: production
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pypi-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production/
+          retention-days: 90
+          if-no-files-found: error
+
+  announce:
+    needs: [candidate, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ needs.candidate.outputs.source }}
+      VERSION: ${{ needs.candidate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - uses: actions/download-artifact@v8
+        with:
+          name: pypi-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: production
+      - name: Retain production verification and publish the verified release
+        shell: bash
+        run: |
+          tar -czf pypi-evidence.tar.gz production
+          gh release upload "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" pypi-evidence.tar.gz
+          gh release create "v$VERSION" candidate/dist/* candidate/release-manifest.json candidate/wheel-manifest.json candidate/ci.json pypi-evidence.tar.gz --target "$SOURCE" --title "Parallax $VERSION" --notes-file languages/python/docs/releases.md

@@ -8,6 +8,12 @@ Portable execution rules belong to [Execution](../../../core/spec/m-execution.md
 [Execution Lifecycle](../../../core/spec/m-execution-lifecycle.md).
 This page owns Python composition and failure choices.
 
+## Supported PostgreSQL
+
+The adapter supports the PostgreSQL release range declared in its
+[package configuration](../packages/parallax-postgres/pyproject.toml).
+Supporting a new PostgreSQL major requires a separate compatibility decision.
+
 ## Models, roots, and scopes
 
 `prepare_model(model, edition=...)` returns a complete immutable `ModelSelection`

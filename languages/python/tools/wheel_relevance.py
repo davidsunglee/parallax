@@ -48,6 +48,8 @@ INPUTS = (
     "languages/python/tests/unit/tools/test_validate_wheel.py",
     "languages/python/tests/unit/tools/test_wheel*.py",
     "languages/python/tools/validate_wheel.py",
+    "languages/python/tools/validate_source.py",
+    "languages/python/tests/unit/tools/test_validate_source.py",
     "languages/python/tools/wheel*.py",
     "languages/python/tools/wheel_targets.json",
     "languages/python/tools/build_wheel_libpq.sh",

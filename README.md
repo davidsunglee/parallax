@@ -4,8 +4,10 @@ Parallax is an object-relational mapper for applications whose data must stay co
 under concurrent writes and whose history matters. You declare your domain as typed
 entity classes. Parallax reads complete, immutable object graphs, writes only inside
 explicit transactions, and can keep a full record of how your data changed: when the
-database learned each fact, and when each fact is true in the world. It ships today for
-**Python with PostgreSQL**.
+database learned each fact, and when each fact is true in the world. Its first
+production release is prepared for
+**Python with PostgreSQL**; publication status and changes are recorded in the
+[release documentation](languages/python/docs/releasing.md).
 
 ## Why Parallax
 
@@ -44,6 +46,19 @@ database learned each fact, and when each fact is true in the world. It ships to
   specification and a compatibility corpus define the behaviour, and the Python
   implementation is tested against them on a real database. See
   [Implementing Parallax](IMPLEMENTING.md).
+
+## Installation
+
+The production installation command is:
+
+```bash
+python -m pip install parallax-snapshot==0.1.0 parallax-postgres==0.1.0
+```
+
+[Getting started](languages/python/docs/guide/01-getting-started.md#install) adds
+model evolution and descriptor interchange, explains optional RDS IAM support,
+and links the authoritative environment support declarations. The
+[release documentation](languages/python/docs/releasing.md) record publication status.
 
 ## A 60-second tour
 
@@ -197,6 +212,20 @@ commands run through [just](https://github.com/casey/just), a command runner, af
 ```bash
 just check
 ```
+
+To build distributions from a checkout instead of installing a published release,
+use [uv](https://docs.astral.sh/uv/) and a C compiler for the adapter:
+
+```bash
+git clone https://github.com/davidsunglee/parallax.git
+cd parallax/languages/python
+uv build --all-packages -o dist
+python -m pip install --find-links dist parallax-snapshot parallax-postgres parallax-evolution parallax-descriptor
+```
+
+`--all-packages` also builds the development-only conformance distribution; it
+is not part of the production release. Release builds use the
+[release workflow](languages/python/docs/releasing.md).
 
 Database-backed checks require Docker. `just --list` lists the available
 commands; use the testing map for focused iteration.

@@ -4,8 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The scheduled and dispatched runs exist for the cloud path alone: every
-  # other job runs only on a push or a pull request.
   schedule:
     - cron: "0 7 * * 1"
   workflow_dispatch:
@@ -294,26 +292,62 @@ jobs:
           PYTEST_ADDOPTS: "--no-cov"
         run: just python-test-dbfree
 
+  postgres-versions:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.versions.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+      - name: Select PostgreSQL floor and latest
+        id: versions
+        shell: bash
+        run: |
+          versions=$(python languages/python/tools/postgres_matrix.py --output postgres-matrix.json)
+          echo "versions=$versions" >> "$GITHUB_OUTPUT"
+          echo "PostgreSQL main-suite versions: $versions" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: postgres-matrix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: postgres-matrix.json
+          retention-days: 90
+
   # Every Python check that needs a live database: provisions Testcontainers
   # Postgres and runs the pg-full run sweep, provider contract, adapter smoke,
   # and API conformance. Docker is available on GitHub-hosted ubuntu runners, so
   # PARALLAX_REQUIRE_DB turns a provider skip into a failure here — a green run
   # has therefore exercised every database-backed check, never skipped one.
   python-check-db:
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
+    needs: postgres-versions
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.14.10", "3.15.2"]
         shard: ["1/2", "2/2"]
+        postgres-version: ${{ fromJSON(needs.postgres-versions.outputs.versions) }}
     env:
+      PARALLAX_DB_SHARD: ${{ matrix.shard }}
+      PARALLAX_POSTGRES_VERSION: ${{ matrix.postgres-version }}
+      PARALLAX_POSTGRES_EVIDENCE: reports/postgres-versions
       UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
       PARALLAX_REQUIRE_DB: "1"
       PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/db-tests.xml --timing-report=reports/db-timings"
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Identify database test source
+        shell: bash
+        run: echo "PARALLAX_SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
@@ -332,7 +366,8 @@ jobs:
           path: |
             languages/python/reports/db-tests.xml
             languages/python/reports/db-timings/
-          retention-days: 7
+            languages/python/reports/postgres-versions/
+          retention-days: 90
 
   # Every Python test needing an interpreter no other test shares, or the
   # committed cost evidence: the memory instruments read the whole process, so

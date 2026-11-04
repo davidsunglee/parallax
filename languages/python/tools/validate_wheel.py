@@ -61,7 +61,7 @@ def driver_requirement(wheel: Path, driver: str) -> str:
     raise RuntimeError("candidate wheel does not declare its psycopg constraint")
 
 
-def _run(command: Sequence[str], log: Path, environment: Mapping[str, str]) -> float:
+def run_logged(command: Sequence[str], log: Path, environment: Mapping[str, str]) -> float:
     started = time.monotonic()
     try:
         with log.open("w", encoding="utf-8") as stream:
@@ -154,6 +154,9 @@ def _exercise(args: argparse.Namespace) -> int:
     if psycopg.pq.__impl__ != args.driver:
         raise RuntimeError(f"selected {psycopg.pq.__impl__!r}, expected {args.driver!r}")
     wheels = [args.wheel, *sorted(args.companions.glob("*.whl"))]
+    for wheel in wheels:
+        distribution = wheel.name.split("-", 1)[0]
+        importlib.import_module(distribution.replace("_", ".", 1))
     installed_origins(wheels)
     observations = {
         "implementation": psycopg.pq.__impl__,
@@ -215,7 +218,7 @@ def _driver(args: argparse.Namespace, driver: str) -> dict[str, Any]:
         if not companions:
             raise RuntimeError("no companion wheels supplied")
         requirement = driver_requirement(args.wheel, driver)
-        result["install_seconds"] = _run(
+        result["install_seconds"] = run_logged(
             [
                 str(python),
                 "-I",
@@ -236,7 +239,7 @@ def _driver(args: argparse.Namespace, driver: str) -> dict[str, Any]:
             result["pg_config_version"] = subprocess.check_output(
                 ["pg_config", "--version"], env=environment, text=True
             ).strip()
-        result["test_seconds"] = _run(
+        result["test_seconds"] = run_logged(
             [
                 str(python),
                 "-I",
