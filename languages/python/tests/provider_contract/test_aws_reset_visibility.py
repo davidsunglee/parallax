@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 
-from tests._support.aws_run import _RESET_STATE
+from tests._support.aws_run import (
+    _RESET_STATE,  # pyright: ignore[reportPrivateUsage] - the cloud readiness query is graded on a local server
+)
 from tests._support.routed_reads import SEEDED_MODEL, seeded_fixtures
 
 
