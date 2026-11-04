@@ -300,10 +300,11 @@ def _retains_nothing(seam: Seam, layout: Layout) -> None:
     No threshold in either direction: one entry anything keeps of a run's rows or
     of its execution fails the comparison.
     """
+    control = _generating(layout)
     tracemalloc.start()
     try:
         converted = retained(seam)
-        generated = retained(_generating(layout))
+        generated = retained(control)
     finally:
         tracemalloc.stop()
     assert converted == generated, (layout, converted, generated)
