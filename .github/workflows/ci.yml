@@ -27,9 +27,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wheel-relevance:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.relevance.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+      - name: Decide wheel relevance
+        id: relevance
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          relevant=$(python languages/python/tools/wheel_relevance.py --base "$BASE")
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
   wheels:
+    needs: wheel-relevance
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     uses: ./.github/workflows/wheels.yml
+    with:
+      validate: ${{ needs.wheel-relevance.outputs.relevant == 'true' }}
     permissions:
       contents: read
       actions: read
