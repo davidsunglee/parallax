@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -15,15 +16,24 @@ def configure(config: pytest.Config) -> None:
     if directory is not None:
         worker_input = cast("dict[str, str]", getattr(config, "workerinput", {}))
         worker = worker_input.get("workerid", "controller")
-        config.pluginmanager.register(_SessionTimings(Path(directory), worker))
+        if worker == "controller":
+            Path(directory).mkdir(parents=True, exist_ok=True)
+            session_directory = tempfile.mkdtemp(prefix="session-", dir=directory)
+        else:
+            session_directory = worker_input["parallax_timing_directory"]
+        config.pluginmanager.register(_SessionTimings(Path(session_directory), worker))
 
 
 class _SessionTimings:
     def __init__(self, directory: Path, worker: str) -> None:
-        directory.mkdir(parents=True, exist_ok=True)
+        self._directory = directory
         self._stream = (directory / f"{worker}.jsonl").open("w", encoding="utf-8")
         self._controller = worker == "controller"
         self._write("configured")
+
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_configure_node(self, node: Any) -> None:
+        node.workerinput["parallax_timing_directory"] = str(self._directory)
 
     def _write(self, event: str, **fields: object) -> None:
         self._stream.write(json.dumps({"event": event, "time": time.time(), **fields}) + "\n")
