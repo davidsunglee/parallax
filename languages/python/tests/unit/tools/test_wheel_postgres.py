@@ -142,6 +142,87 @@ def test_cleanup_failure_preserves_the_validation_failure(
     assert "daemon refused" in (tmp_path / "setup.log").read_text()
 
 
+def _macos_commands(
+    monkeypatch: pytest.MonkeyPatch, architecture: str, *, actual: str = "180006"
+) -> list[list[str]]:
+    invoked: list[list[str]] = []
+
+    def run(arguments: Sequence[str], **options: Any) -> subprocess.CompletedProcess[str]:
+        invoked.append(list(arguments))
+        output = ""
+        if arguments[-1] == "show server_version_num":
+            output = actual
+        elif arguments[-1] == "show server_version":
+            output = "18.6"
+        elif arguments[0].endswith("pg_config"):
+            output = "PostgreSQL 18.6"
+        elif arguments[:2] == ["brew", "--prefix"]:
+            output = "/opt/homebrew/opt/postgresql@18"
+        options["stdout"].write(output)
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(postgres.sys, "platform", "darwin")
+    monkeypatch.setattr(postgres.platform, "machine", lambda: architecture)
+    monkeypatch.setattr(postgres.subprocess, "run", run)
+    return invoked
+
+
+def test_intel_macos_builds_the_exact_source_and_uses_its_server_and_libpq(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands = _macos_commands(monkeypatch, "x86_64")
+    output = tmp_path / "postgres with spaces"
+
+    with postgres.provision("18.6", output) as setup:
+        prefix = output.resolve() / "install"
+        assert commands[0] == [
+            "sh",
+            str(Path(postgres.__file__).with_name("build_wheel_libpq.sh")),
+            "18.6",
+            str(prefix),
+        ]
+        assert not any(command[0] == "brew" for command in commands)
+        assert setup.env["PG_CONFIG"] == str(prefix / "bin" / "pg_config")
+        assert setup.env["PATH"].split(":")[0] == str(prefix / "bin")
+        assert setup.observations["provisioning"] == "source"
+        assert setup.observations["source_url"].endswith("/v18.6/postgresql-18.6.tar.bz2")
+        assert setup.observations["server_version_num"] == 180006
+        assert setup.observations["pg_config"] == "PostgreSQL 18.6"
+
+    assert commands[-1][0] == str(prefix / "bin" / "pg_ctl")
+    assert commands[-1][-1] == "stop"
+
+
+def test_arm_macos_keeps_the_native_homebrew_server_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands = _macos_commands(monkeypatch, "arm64")
+
+    with postgres.provision("18.6", tmp_path) as setup:
+        assert commands[:3] == [
+            ["brew", "update"],
+            ["brew", "install", "postgresql@18"],
+            ["brew", "upgrade", "postgresql@18"],
+        ]
+        assert setup.env["PG_CONFIG"] == "/opt/homebrew/opt/postgresql@18/bin/pg_config"
+
+    assert commands[-1][-1] == "stop"
+
+
+def test_intel_source_provisioning_still_refuses_an_incorrect_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands = _macos_commands(monkeypatch, "x86_64", actual="180005")
+
+    with (
+        pytest.raises(ValueError, match=r"expected exact 18\.6"),
+        postgres.provision("18.6", tmp_path),
+    ):
+        pytest.fail("incorrect server was accepted")
+
+    assert commands[-1][-1] == "stop"
+
+
 def test_command_capture_returns_while_the_server_descendant_keeps_stdout_open(
     tmp_path: Path,
 ) -> None:
