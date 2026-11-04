@@ -54,6 +54,32 @@ def shard_of_each(weights: Sequence[float], count: int) -> list[int]:
     return shard
 
 
+def order_for_workers(
+    weights: Sequence[float], worker_count: int, max_chunk: int | None = None
+) -> list[int]:
+    """Spread heavy items across xdist load's initial batches, then longest first.
+
+    Load sends consecutive batches of at least two items. Each batch starts
+    with one of the heaviest items and fills with the lightest remaining ones,
+    so a worker does not reserve another long item behind its first.
+    """
+    if worker_count <= 1:
+        return list(range(len(weights)))
+    descending = sorted(range(len(weights)), key=lambda position: -weights[position])
+    if len(weights) < 2 * worker_count:
+        return descending
+    chunk = max(
+        2, min(len(weights) // worker_count // 4, len(weights) if max_chunk is None else max_chunk)
+    )
+    filler_count = worker_count * (chunk - 1)
+    lightest = descending[-filler_count:][::-1]
+    initial: list[int] = []
+    for worker, heavy in enumerate(descending[:worker_count]):
+        initial.append(heavy)
+        initial.extend(lightest[worker * (chunk - 1) : (worker + 1) * (chunk - 1)])
+    return initial + descending[worker_count:-filler_count]
+
+
 def known(path: Path = COST_DURATIONS) -> dict[str, float]:
     """Measured seconds by node id.
 
