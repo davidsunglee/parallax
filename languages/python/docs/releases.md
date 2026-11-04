@@ -1,10 +1,11 @@
 # Release notes
 
-## 0.1.0 — prepared, publication pending
+## 0.1.0
 
-The first coordinated production release is prepared for early adopters.
-Production publication remains pending validation, a complete TestPyPI rehearsal
-and Dave's explicit approval. This entry does not establish index availability.
+These notes describe the first coordinated production release for early adopters.
+Availability and publication evidence are recorded by the
+[release workflow](../../../.github/workflows/release.yml); this entry alone does
+not establish index availability.
 
 The release includes the common runtime, Snapshot application API, PostgreSQL
 adapter, model evolution and schema deltas, descriptor interchange, and optional
