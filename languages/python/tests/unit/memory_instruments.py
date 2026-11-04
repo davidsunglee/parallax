@@ -320,7 +320,7 @@ def retained(seam: Seam) -> int:
     return sampled[1] - before
 
 
-def retained_increment(seam: Seam) -> int:
+def retained_increment(seam: Seam, *, warmups: int = WARMUP) -> int:
     """Bytes reachable at ``seam``'s second sample point that were not reachable
     at its first.
 
@@ -335,6 +335,8 @@ def retained_increment(seam: Seam) -> int:
     no list growth lands between the two.
     """
     require_own_interpreter("retained_increment")
+    if warmups < 0:
+        raise ValueError("warmups must be non-negative")
     sampled: list[int] = []
 
     def sample() -> None:
@@ -342,7 +344,7 @@ def retained_increment(seam: Seam) -> int:
         sampled.append(tracemalloc.get_traced_memory()[0])
 
     with untraced():
-        for _ in range(WARMUP):
+        for _ in range(warmups):
             seam(_unsampled)
         seam(sample)
         seam(sample)

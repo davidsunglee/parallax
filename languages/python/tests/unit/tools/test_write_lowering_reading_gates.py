@@ -5,9 +5,10 @@ the retained capture it names as its basis took over a window
 :data:`parallax.conformance.budget.GATED_WINDOWS` gates, so a case that capture
 has not read has no gate for its family to grade. Each family below reads its
 gated cases through the same child the report measures with —
-:func:`write_lowering_reading.measure`, the identical windows, roots, and
-warm-ups — and grades each gated reading against its gate, and the per-unit
-readings of any scaling domain its workloads form against that domain's order.
+:func:`write_lowering_reading.measure`, the identical windows and roots, with
+workload-specific retained warm-ups. Each gated reading is graded against its
+gate, and the per-unit readings of any scaling domain its workloads form against
+that domain's order.
 
 Beside the gates, seeded regressions prove what each one detects. A retained
 duplication is seeded at the preparation seam as a per-instruction registry
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import fields
 from itertools import pairwise
 from statistics import median
 from typing import Any, Final, cast
@@ -39,6 +41,7 @@ import pytest
 import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import JsonDocument
@@ -48,10 +51,11 @@ from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_meas
 
 WARMUPS: Final = 1
 MEASURED: Final = 3
-"""The sampling a gate reading takes. The retained checkpoint is one sample after
-the child's own two hundred warm-ups whatever these say, and the high-water mark
-is exact per run, so three measured runs settle a median; the report's nine are
-for timing, which nothing here grades."""
+"""Three measured runs settle a peak median; retained sampler warming is separate.
+The report's nine measured runs are for advisory timing."""
+
+DEFERRED_PLAN_CASE: Final = "cross-object.bitemporal.deferred-32x32.columns.typed"
+DEFERRED_PLAN_WARMUPS: Final = 20
 
 RETAINED: Final = "retainedBytes"
 TRANSIENT: Final = "transientBytes"
@@ -100,7 +104,14 @@ class _Reading:
     __slots__ = ("calls", "values")
 
     def __init__(self, workload: str) -> None:
-        reading = write_lowering_reading.measure(workload, warmups=WARMUPS, measured=MEASURED)
+        retained_warmups = (
+            DEFERRED_PLAN_WARMUPS
+            if workload == DEFERRED_PLAN_CASE
+            else write_lowering_reading.RETAINED_WARMUPS
+        )
+        reading = write_lowering_reading.measure(
+            workload, warmups=WARMUPS, measured=MEASURED, retained_warmups=retained_warmups
+        )
         samples = cast("Mapping[str, Sequence[float]]", reading["samples"])
         self.values: dict[str, float] = {cell: median(taken) for cell, taken in samples.items()}
         self.calls: Mapping[str, float] = cast("Mapping[str, float]", reading["calls"])
@@ -256,6 +267,29 @@ def test_a_seeded_retained_duplicate_of_every_prepared_row_trips_the_retained_ga
             reading = _Reading(workload)
             assert len(_REGISTRY.kept) > kept, (workload, "the seed duplicated no prepared row")
             assert _outside(workload, RETAINED, reading), workload
+    _REGISTRY.clear()
+
+
+@in_a_child_interpreter
+def test_a_seeded_duplicate_plan_registry_trips_the_deferred_plan_retention_gate() -> None:
+    finalize = WritePlanner.finalize
+
+    def duplicated(planner: Any, request: Any) -> Any:
+        plan = finalize(planner, request)
+        _REGISTRY.keep(
+            [
+                {field.name: getattr(entry, field.name) for field in fields(entry)}
+                for entry in plan.entries
+            ]
+        )
+        return plan
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(WritePlanner, "finalize", duplicated)
+        reading = _Reading(DEFERRED_PLAN_CASE)
+        assert _REGISTRY.kept
+        assert _outside(DEFERRED_PLAN_CASE, "plan.retainedBytes", reading)
+        assert _outside(DEFERRED_PLAN_CASE, "plan.retainedBytesPerObject", reading)
     _REGISTRY.clear()
 
 

@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import tracemalloc
+from collections.abc import Callable
 from contextlib import redirect_stdout
 from dataclasses import replace
 from typing import cast
@@ -24,6 +25,7 @@ from parallax.core.metamodel import Multiplicity
 from parallax.core.write_payload import _storage as payload_storage
 from production_origins import ORIGINS_FIELD, reported_origins
 from tests.unit import _write_lowering_support as lowering_support
+from tests.unit import memory_instruments
 from tests.unit.memory_instruments import (
     OWN_INTERPRETER_VARIABLE,
     in_a_child_interpreter,
@@ -243,8 +245,17 @@ def _assert_reading(name: str, *, units: int) -> None:
         assert calls == {}
 
 
-def _assert_flush_reading(name: str) -> None:
-    reading = _reading(name)
+def _assert_flush_reading(name: str, *, retained_warmups: int | None = None) -> None:
+    reading = (
+        _reading(name)
+        if retained_warmups is None
+        else write_lowering_reading.measure(
+            name, warmups=1, measured=2, retained_warmups=retained_warmups
+        )
+    )
+    assert reading["retainedWarmups"] == (
+        write_lowering_reading.RETAINED_WARMUPS if retained_warmups is None else retained_warmups
+    )
     case = lowering_support.cross_object_case_named(name)
     assert reading["window"] == write_lowering_reading.FLUSH_WINDOW
     assert reading["units"] == case.objects
@@ -277,6 +288,25 @@ def _assert_flush_reading(name: str) -> None:
 @in_a_child_interpreter
 def test_a_cross_object_flush_reads_its_planning_and_group_execution_regions() -> None:
     _assert_flush_reading(lowering_support.CROSS_OBJECT_CASES[0].name)
+    _assert_flush_reading(lowering_support.CROSS_OBJECT_CASES[0].name, retained_warmups=2)
+    sampled_runs: list[None] = []
+
+    def checkpoint(sample: Callable[[], None]) -> None:
+        sampled_runs.append(None)
+        sample()
+        sample()
+
+    tracemalloc.start()
+    try:
+        memory_instruments.retained_increment(checkpoint)
+        assert len(sampled_runs) == memory_instruments.WARMUP + 2
+        sampled_runs.clear()
+        memory_instruments.retained_increment(checkpoint, warmups=2)
+        assert len(sampled_runs) == 4
+        with pytest.raises(ValueError, match="warmups must be non-negative"):
+            memory_instruments.retained_increment(checkpoint, warmups=-1)
+    finally:
+        tracemalloc.stop()
 
 
 @in_a_child_interpreter
@@ -287,6 +317,17 @@ def test_a_deferred_span_flush_reads_its_range_binding_advances_and_coverage_rea
 @in_a_child_interpreter
 def test_a_typed_opening_insert_reads_its_keyed_window() -> None:
     _assert_reading("txtime.opening.columns.typed", units=1)
+    with pytest.raises(ValueError, match="only for cross-object flushes"):
+        write_lowering_reading.measure(
+            "txtime.opening.columns.typed", warmups=1, measured=3, retained_warmups=20
+        )
+    with pytest.raises(ValueError, match="retained_warmups must be non-negative"):
+        write_lowering_reading.measure(
+            lowering_support.CROSS_OBJECT_CASES[0].name,
+            warmups=1,
+            measured=3,
+            retained_warmups=-1,
+        )
 
 
 @in_a_child_interpreter
