@@ -1,6 +1,9 @@
-name: Publish and verify retained release bytes
-description: Reconcile, upload only missing identical files, download and smoke-test the complete index set
+name: Prepare or verify retained release bytes
+description: Prepare missing verified files for publication, or verify and smoke-test the complete index set
 inputs:
+  phase:
+    description: prepare before publication or verify after publication
+    required: true
   index:
     description: testpypi or pypi
     required: true
@@ -10,32 +13,40 @@ inputs:
   evidence:
     description: Destination for index and installation evidence
     required: true
+outputs:
+  missing:
+    description: Directory containing only missing verified files
+    value: ${{ steps.reconcile.outputs.missing }}
+  missing_count:
+    description: Number of files requiring publication
+    value: ${{ steps.reconcile.outputs.missing_count }}
 runs:
   using: composite
   steps:
+    - name: Require a supported release phase
+      shell: bash
+      env:
+        PHASE: ${{ inputs.phase }}
+      run: 'case "$PHASE" in prepare|verify) ;; *) exit 1 ;; esac'
     - name: Verify protected environment configuration
+      if: inputs.phase == 'prepare'
       shell: bash
       run: python languages/python/tools/release_setup.py --output '${{ inputs.evidence }}/environments.json'
     - name: Require projects to exist before publication
+      if: inputs.phase == 'prepare'
       shell: bash
       run: python languages/python/tools/release_bootstrap.py --index '${{ inputs.index }}' --check-projects --output '${{ inputs.evidence }}/projects.json'
     - name: Reconcile present files before uploading
+      if: inputs.phase == 'prepare'
       id: reconcile
       shell: bash
       run: python languages/python/tools/release_artifacts.py reconcile --bundle '${{ inputs.bundle }}' --index '${{ inputs.index }}' --output '${{ inputs.evidence }}/before'
-    - name: Upload only missing verified bytes with publication attestations
-      if: steps.reconcile.outputs.missing_count != '0'
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        packages-dir: ${{ steps.reconcile.outputs.missing }}/
-        repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
-        attestations: true
-        skip-existing: false
-        print-hash: true
     - name: Download and verify every intended index file
+      if: inputs.phase == 'verify'
       id: complete
       shell: bash
       run: python languages/python/tools/release_artifacts.py reconcile --bundle '${{ inputs.bundle }}' --index '${{ inputs.index }}' --output '${{ inputs.evidence }}/after' --require-complete --attempts 20
     - name: Smoke-test downloaded production distributions
+      if: inputs.phase == 'verify'
       shell: bash
       run: python languages/python/tools/release_smoke.py --bundle '${{ inputs.bundle }}' --downloaded '${{ steps.complete.outputs.downloaded }}' --output '${{ inputs.evidence }}/smoke'

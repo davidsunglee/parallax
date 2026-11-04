@@ -211,7 +211,24 @@ jobs:
           name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate
       - uses: ./.github/actions/release-index
+        id: prepare
         with:
+          phase: prepare
+          index: testpypi
+          bundle: candidate
+          evidence: rehearsal
+      - name: Upload only missing verified bytes with publication attestations
+        if: steps.prepare.outputs.missing_count != '0'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ steps.prepare.outputs.missing }}/
+          repository-url: https://test.pypi.org/legacy/
+          attestations: true
+          skip-existing: false
+          print-hash: true
+      - uses: ./.github/actions/release-index
+        with:
+          phase: verify
           index: testpypi
           bundle: candidate
           evidence: rehearsal
@@ -290,7 +307,24 @@ jobs:
           name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: candidate
       - uses: ./.github/actions/release-index
+        id: prepare
         with:
+          phase: prepare
+          index: pypi
+          bundle: candidate
+          evidence: production
+      - name: Upload only missing verified bytes with publication attestations
+        if: steps.prepare.outputs.missing_count != '0'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ steps.prepare.outputs.missing }}/
+          repository-url: https://upload.pypi.org/legacy/
+          attestations: true
+          skip-existing: false
+          print-hash: true
+      - uses: ./.github/actions/release-index
+        with:
+          phase: verify
           index: pypi
           bundle: candidate
           evidence: production
