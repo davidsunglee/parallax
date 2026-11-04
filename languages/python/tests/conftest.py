@@ -117,6 +117,12 @@ def pytest_configure(config: pytest.Config) -> None:
     session_timings.configure(config)
 
 
+@pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node: Any) -> None:
+    # xdist resets the worker's dist option before collection.
+    node.workerinput["parallax_cost_load"] = node.config.getoption("dist") == "load"
+
+
 def _classified(item: pytest.Item) -> str:
     """The one scheduling class *item*'s requirements put it in."""
     function = item if isinstance(item, pytest.Function) else None
@@ -161,7 +167,10 @@ def _provider_of(item: pytest.Item) -> str | None:
     return next((_CLOUD_PROVIDERS[name] for name in names if name in _CLOUD_PROVIDERS), None)
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+@pytest.hookimpl(wrapper=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> Iterator[None]:
     """Assign each collected item its scheduling class, keep the cloud items of
     the selected providers, then keep each class's requested shard.
 
@@ -203,6 +212,23 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     _select_shard(config, items, "cost", "--shard", shards.COST_DURATIONS)
     _select_shard(config, items, "db", "--db-shard", shards.DB_DURATIONS)
+    yield
+    _order_cost_items(config, items)
+
+
+def _order_cost_items(config: pytest.Config, items: list[pytest.Item]) -> None:
+    worker_input = cast("dict[str, Any]", getattr(config, "workerinput", {}))
+    worker_count = int(worker_input.get("workercount", 0))
+    if (
+        worker_count <= 1
+        or worker_input.get("parallax_cost_load") is not True
+        or not items
+        or any(item.get_closest_marker("cost") is None for item in items)
+    ):
+        return
+    measured = shards.weights([item.nodeid for item in items], shards.known())
+    order = shards.order_for_workers(measured, worker_count, config.getoption("maxschedchunk"))
+    items[:] = [items[position] for position in order]
 
 
 def _select_shard(
