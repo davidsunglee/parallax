@@ -618,8 +618,7 @@ def _first_child(root: object) -> object:
     return items[0]
 
 
-@in_a_child_interpreter
-def test_pages_do_not_accumulate_with_the_result() -> None:
+def _pages_do_not_accumulate_with_the_result(namespace: _Namespace) -> None:
     # The headline claim, in arithmetic, in both namespaces. The per-root price
     # comes from the retaining variant rather than from a constant, so the comparison
     # is against what one root of THIS shape actually costs on THIS interpreter —
@@ -635,27 +634,36 @@ def test_pages_do_not_accumulate_with_the_result() -> None:
     # generator, whose frame is dropped the moment it returns.
     tracemalloc.start()
     try:
-        for namespace in _NAMESPACES:
-            paused = _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
-            bigger = retained(
-                _paused(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
-            ) - retained(paused)
-            later = retained(
-                _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER)
-            ) - retained(paused)
-            drained = retained(_draining(namespace, _LARGE, retaining=False)) - retained(
-                _draining(namespace, _SMALL, retaining=False)
-            )
-            retaining = retained(_draining(namespace, _LARGE, retaining=True)) - retained(
-                _draining(namespace, _SMALL, retaining=True)
-            )
-            per_root = retaining // (_LARGE - _SMALL)
-            assert per_root > 0, namespace.name
-            assert abs(bigger) < per_root, (namespace.name, bigger, per_root)
-            assert abs(later) < per_root, (namespace.name, later, per_root)
-            assert abs(drained) < per_root, (namespace.name, drained, per_root)
+        paused = _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+        bigger = retained(
+            _paused(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+        ) - retained(paused)
+        later = retained(
+            _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER)
+        ) - retained(paused)
+        drained = retained(_draining(namespace, _LARGE, retaining=False)) - retained(
+            _draining(namespace, _SMALL, retaining=False)
+        )
+        retaining = retained(_draining(namespace, _LARGE, retaining=True)) - retained(
+            _draining(namespace, _SMALL, retaining=True)
+        )
+        per_root = retaining // (_LARGE - _SMALL)
+        assert per_root > 0, namespace.name
+        assert abs(bigger) < per_root, (namespace.name, bigger, per_root)
+        assert abs(later) < per_root, (namespace.name, later, per_root)
+        assert abs(drained) < per_root, (namespace.name, drained, per_root)
     finally:
         tracemalloc.stop()
+
+
+@in_a_child_interpreter
+def test_pages_do_not_accumulate_with_the_result_typed() -> None:
+    _pages_do_not_accumulate_with_the_result(_TYPED)
+
+
+@in_a_child_interpreter
+def test_pages_do_not_accumulate_with_the_result_wire() -> None:
+    _pages_do_not_accumulate_with_the_result(_WIRE)
 
 
 @in_a_child_interpreter
@@ -771,8 +779,9 @@ def test_a_wide_continuation_order_costs_the_plan_once_and_retains_fixed_boundar
     assert larger == counts[wide, widest], (larger, counts[wide, widest])
 
 
-@in_a_child_interpreter
-def test_publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_pages() -> None:
+def _publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_pages(
+    namespace: _Namespace,
+) -> None:
     # The middle layer, priced at its PEAK rather than at its release. Everything
     # the census can say about Root View work is that it is gone by the time a sample
     # can be taken between two roots; how far the process ever rose while it
@@ -807,55 +816,59 @@ def test_publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_page
     # passes; `_PEAK_FANOUTS` records where that resolution sits.
     tracemalloc.start()
     try:
-        for namespace in _NAMESPACES:
-            near = high_water(
-                _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+        near = high_water(_advancing(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
+        larger = high_water(
+            _advancing(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+        )
+        further = high_water(
+            _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER)
+        )
+        assert abs(near - larger) <= 256, (namespace.name, near, larger)
+        assert abs(near - further) <= 256, (namespace.name, near, further)
+        by_page = [
+            high_water(
+                _advancing(namespace, _PEAK_ROOTS, batch_size=batch_size, fanout=_FANOUT, at=_EARLY)
             )
-            larger = high_water(
-                _advancing(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+            for batch_size in _PEAK_PAGES
+        ]
+        assert max(by_page) - min(by_page) <= 16 * 1024, (
+            namespace.name,
+            _PEAK_PAGES,
+            by_page,
+        )
+        by_fanout = [
+            high_water(
+                _advancing(namespace, _PEAK_ROOTS, batch_size=_BATCH, fanout=fanout, at=_EARLY)
             )
-            further = high_water(
-                _advancing(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER)
-            )
-            assert abs(near - larger) <= 256, (namespace.name, near, larger)
-            assert abs(near - further) <= 256, (namespace.name, near, further)
-            by_page = [
-                high_water(
-                    _advancing(
-                        namespace, _PEAK_ROOTS, batch_size=batch_size, fanout=_FANOUT, at=_EARLY
-                    )
-                )
-                for batch_size in _PEAK_PAGES
-            ]
-            assert max(by_page) - min(by_page) <= 16 * 1024, (
-                namespace.name,
-                _PEAK_PAGES,
-                by_page,
-            )
-            by_fanout = [
-                high_water(
-                    _advancing(namespace, _PEAK_ROOTS, batch_size=_BATCH, fanout=fanout, at=_EARLY)
-                )
-                for fanout in _PEAK_FANOUTS
-            ]
-            assert all(later + 1024 > earlier for earlier, later in pairwise(by_fanout)), (
-                namespace.name,
-                by_fanout,
-            )
-            per_node = [
-                peak / (1 + fanout) for peak, fanout in zip(by_fanout, _PEAK_FANOUTS, strict=True)
-            ]
-            assert all(later <= earlier * 1.10 for earlier, later in pairwise(per_node)), (
-                namespace.name,
-                by_fanout,
-                per_node,
-            )
+            for fanout in _PEAK_FANOUTS
+        ]
+        assert all(later + 1024 > earlier for earlier, later in pairwise(by_fanout)), (
+            namespace.name,
+            by_fanout,
+        )
+        per_node = [
+            peak / (1 + fanout) for peak, fanout in zip(by_fanout, _PEAK_FANOUTS, strict=True)
+        ]
+        assert all(later <= earlier * 1.10 for earlier, later in pairwise(per_node)), (
+            namespace.name,
+            by_fanout,
+            per_node,
+        )
     finally:
         tracemalloc.stop()
 
 
 @in_a_child_interpreter
-def test_retaining_every_root_reproduces_the_growth_the_bound_excludes() -> None:
+def test_publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_pages_typed() -> None:
+    _publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_pages(_TYPED)
+
+
+@in_a_child_interpreter
+def test_publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_pages_wire() -> None:
+    _publishing_one_root_peaks_at_that_roots_reachable_nodes_not_at_the_pages(_WIRE)
+
+
+def _retaining_every_root_reproduces_the_growth_the_bound_excludes(namespace: _Namespace) -> None:
     # The first exclusion, demonstrated rather than asserted. A caller that keeps
     # what it was handed is outside the bound on purpose, and this is what that
     # costs: growth proportional to the result, read as the ratio of two
@@ -864,15 +877,24 @@ def test_retaining_every_root_reproduces_the_growth_the_bound_excludes() -> None
     # proves the delivery itself does not.
     tracemalloc.start()
     try:
-        for namespace in _NAMESPACES:
-            base = retained(_draining(namespace, _SMALL, retaining=True))
-            middle = retained(_draining(namespace, _MID, retaining=True)) - base
-            largest = retained(_draining(namespace, _LARGE, retaining=True)) - base
-            roots = (_LARGE - _SMALL) / (_MID - _SMALL)
-            assert middle > 0, namespace.name
-            assert abs(largest / middle - roots) < 0.5, (namespace.name, largest, middle)
+        base = retained(_draining(namespace, _SMALL, retaining=True))
+        middle = retained(_draining(namespace, _MID, retaining=True)) - base
+        largest = retained(_draining(namespace, _LARGE, retaining=True)) - base
+        roots = (_LARGE - _SMALL) / (_MID - _SMALL)
+        assert middle > 0, namespace.name
+        assert abs(largest / middle - roots) < 0.5, (namespace.name, largest, middle)
     finally:
         tracemalloc.stop()
+
+
+@in_a_child_interpreter
+def test_retaining_every_root_reproduces_the_growth_the_bound_excludes_typed() -> None:
+    _retaining_every_root_reproduces_the_growth_the_bound_excludes(_TYPED)
+
+
+@in_a_child_interpreter
+def test_retaining_every_root_reproduces_the_growth_the_bound_excludes_wire() -> None:
+    _retaining_every_root_reproduces_the_growth_the_bound_excludes(_WIRE)
 
 
 @in_a_child_interpreter

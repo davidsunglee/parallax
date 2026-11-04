@@ -217,33 +217,28 @@ def test_the_changed_ancestor_successors_stay_within_their_memory_gates() -> Non
 
 
 @in_a_child_interpreter
-def test_the_scalar_type_inserts_stay_within_their_memory_gates() -> None:
-    _within_gates(
-        gate_support.owner_of(test_the_scalar_type_inserts_stay_within_their_memory_gates)
-    )
-
-
-@in_a_child_interpreter
 def test_the_prepared_model_stays_within_its_memory_gates() -> None:
     _within_gates(gate_support.owner_of(test_the_prepared_model_stays_within_its_memory_gates))
 
 
-def _cross_object_flush(owner: gate_support.GateOwner) -> Callable[[], None]:
-    def flush() -> None:
+def _gated_workloads(owner: gate_support.GateOwner) -> Callable[[], None]:
+    def check() -> None:
         _within_gates(owner)
 
-    flush.__name__ = flush.__qualname__ = owner.test
-    return in_a_child_interpreter(flush)
+    check.__name__ = check.__qualname__ = owner.test
+    return in_a_child_interpreter(check)
 
 
 globals().update(
-    {owner.test: _cross_object_flush(owner) for owner in gate_support.CROSS_OBJECT_FLUSH_OWNERS}
+    {
+        owner.test: _gated_workloads(owner)
+        for owner in (
+            *gate_support.CROSS_OBJECT_FLUSH_OWNERS,
+            *gate_support.BATCH_INSERT_OWNERS,
+            *gate_support.SCALAR_INSERT_OWNERS,
+        )
+    }
 )
-
-
-@in_a_child_interpreter
-def test_the_batch_inserts_stay_within_their_memory_gates() -> None:
-    _within_gates(gate_support.owner_of(test_the_batch_inserts_stay_within_their_memory_gates))
 
 
 @in_a_child_interpreter
