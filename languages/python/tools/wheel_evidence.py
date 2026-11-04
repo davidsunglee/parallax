@@ -57,6 +57,7 @@ def _between(start: object, end: object) -> float | None:
 
 def job_timings(job: Mapping[str, Any], observed_at: str) -> Document:
     completed = job.get("status") == "completed"
+    skipped = completed and job.get("conclusion") == "skipped"
     end = job.get("completed_at") if completed else observed_at
     return {
         "id": job.get("id"),
@@ -69,9 +70,11 @@ def job_timings(job: Mapping[str, Any], observed_at: str) -> Document:
         "created_at": job.get("created_at"),
         "started_at": job.get("started_at"),
         "completed_at": job.get("completed_at"),
-        "queue_seconds": _between(job.get("created_at"), job.get("started_at")),
-        "runner_seconds": _between(job.get("started_at"), end),
-        "runner_seconds_final": completed and job.get("completed_at") is not None,
+        "queue_seconds": None
+        if skipped
+        else _between(job.get("created_at"), job.get("started_at")),
+        "runner_seconds": 0.0 if skipped else _between(job.get("started_at"), end),
+        "runner_seconds_final": skipped or (completed and job.get("completed_at") is not None),
     }
 
 

@@ -195,10 +195,40 @@ def test_job_without_its_own_creation_timestamp_has_unknown_queue_time() -> None
     assert evidence.job_timings(job, _OBSERVED)["queue_seconds"] is None
 
 
+def test_skipped_job_has_no_runner_time_despite_synthetic_reversed_timestamps(
+    matrix: tuple[Path, list[Document], Document],
+) -> None:
+    _, jobs, _ = matrix
+    skipped = {
+        **_job("bootstrap", "3.15"),
+        "conclusion": "skipped",
+        "started_at": "2026-11-04T12:00:10Z",
+        "completed_at": "2026-11-04T12:00:09Z",
+    }
+    jobs.append(skipped)
+    summary = _summarize(matrix)
+    assert summary["status"] == "passed"
+    execution = summary["execution"]
+    assert execution["aggregate_runner_seconds"] == 14 * 120
+    timing = execution["jobs"][-1]
+    assert timing["started_at"] == skipped["started_at"]
+    assert timing["completed_at"] == skipped["completed_at"]
+    assert timing["queue_seconds"] is None
+    assert timing["runner_seconds"] == 0
+    assert timing["runner_seconds_final"] is True
+
+
+def test_executed_job_with_reversed_timestamps_is_still_rejected() -> None:
+    job = {**_job("native", "3.14"), "completed_at": "2026-11-04T12:00:09Z"}
+    with pytest.raises(ValueError, match="timestamp interval must be finite and nonnegative"):
+        evidence.job_timings(job, _OBSERVED)
+
+
 def test_running_aggregation_reports_observed_elapsed_without_fabricating_final_totals() -> None:
     run = {**_run(), "status": "in_progress"}
     job = {**_job("native", "3.14"), "status": "in_progress", "completed_at": None}
-    timing = evidence.execution_timings([job], run, _OBSERVED)
+    skipped = {**_job("bootstrap", "3.15"), "conclusion": "skipped"}
+    timing = evidence.execution_timings([job, skipped], run, _OBSERVED)
     assert timing["workflow_elapsed_seconds"] is None
     assert timing["aggregate_runner_seconds"] is None
     assert timing["workflow_elapsed_observed_seconds"] == 600
