@@ -7,18 +7,8 @@
       "labels": {
         "member": "snapshot-delivery"
       },
-      "startedAt": "2026-10-31T19:08:50.220392+00:00",
-      "seconds": 2969.4477334169205
-    },
-    {
-      "scope": "setup",
-      "name": "identity",
-      "labels": {
-        "member": "snapshot-delivery",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:08:50.536915+00:00",
-      "seconds": 0.45251920889131725
+      "startedAt": "2026-11-04T07:16:38.650650+00:00",
+      "seconds": 2815.739777208073
     },
     {
       "scope": "setup",
@@ -27,8 +17,18 @@
         "member": "snapshot-delivery",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:08:50.989585+00:00",
-      "seconds": 0.24616645788773894
+      "startedAt": "2026-11-04T07:16:38.944147+00:00",
+      "seconds": 0.24713837495073676
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T07:16:39.191442+00:00",
+      "seconds": 0.22180429194122553
     },
     {
       "scope": "setup",
@@ -36,458 +36,590 @@
       "labels": {
         "member": "snapshot-delivery"
       },
-      "startedAt": "2026-10-31T19:08:51.235786+00:00",
-      "seconds": 3.019175915978849
+      "startedAt": "2026-11-04T07:16:39.413281+00:00",
+      "seconds": 3.230998083949089
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "conventional-fanout",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:08:54.257403+00:00",
-      "seconds": 3.2870117500424385
+      "startedAt": "2026-11-04T07:16:42.655312+00:00",
+      "seconds": 4.285767292138189
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "conventional-fanout",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:09:16.022410+00:00",
-      "seconds": 31.45787087478675
+      "startedAt": "2026-11-04T07:17:05.219314+00:00",
+      "seconds": 40.37013916601427
     },
     {
       "scope": "workload",
       "name": "conventional-fanout",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:08:54.257391+00:00",
-      "seconds": 117.90617979201488
+      "startedAt": "2026-11-04T07:16:42.655301+00:00",
+      "seconds": 134.50179758295417
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "duplicate-include",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:10:52.164095+00:00",
-      "seconds": 3.7580263749696314
+      "startedAt": "2026-11-04T07:18:57.157586+00:00",
+      "seconds": 4.362548625096679
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "duplicate-include",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:11:15.929776+00:00",
-      "seconds": 31.95996604114771
+      "startedAt": "2026-11-04T07:19:21.007554+00:00",
+      "seconds": 34.004029707983136
     },
     {
       "scope": "workload",
       "name": "duplicate-include",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:10:52.164064+00:00",
-      "seconds": 128.12679191608913
+      "startedAt": "2026-11-04T07:18:57.157550+00:00",
+      "seconds": 136.02313470793888
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "document-heavy",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:13:00.291428+00:00",
-      "seconds": 1.0041654577944428
+      "startedAt": "2026-11-04T07:21:13.181181+00:00",
+      "seconds": 0.932890750002116
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "document-heavy",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:13:21.398748+00:00",
-      "seconds": 6.865320082986727
+      "startedAt": "2026-11-04T07:21:34.056148+00:00",
+      "seconds": 8.69825733313337
     },
     {
       "scope": "workload",
       "name": "document-heavy",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:13:00.291398+00:00",
-      "seconds": 99.25437791598961
+      "startedAt": "2026-11-04T07:21:13.181151+00:00",
+      "seconds": 107.75332283391617
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "versioned-document",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:14:39.546233+00:00",
-      "seconds": 0.24091533292084932
+      "startedAt": "2026-11-04T07:23:00.934879+00:00",
+      "seconds": 0.24987220810726285
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "versioned-document",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:14:58.047112+00:00",
-      "seconds": 1.205686166184023
+      "startedAt": "2026-11-04T07:23:18.093862+00:00",
+      "seconds": 1.9325247500091791
     },
     {
       "scope": "workload",
       "name": "versioned-document",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:14:39.546203+00:00",
-      "seconds": 77.17601804086007
+      "startedAt": "2026-11-04T07:23:00.934849+00:00",
+      "seconds": 82.33253516699187
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "bitemporal-current",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:15:56.722591+00:00",
-      "seconds": 0.32089141686446965
+      "startedAt": "2026-11-04T07:24:23.267712+00:00",
+      "seconds": 0.31314333295449615
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "workload": "bitemporal-current",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:16:14.763180+00:00",
-      "seconds": 1.9806662499904633
+      "startedAt": "2026-11-04T07:24:40.617275+00:00",
+      "seconds": 1.5279892501421273
     },
     {
       "scope": "workload",
       "name": "bitemporal-current",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:15:56.722562+00:00",
-      "seconds": 77.61584949982353
+      "startedAt": "2026-11-04T07:24:23.267680+00:00",
+      "seconds": 83.2795210420154
     },
     {
       "scope": "workload",
       "name": "stress-columns",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:17:14.338754+00:00",
-      "seconds": 10.044271083781496
+      "startedAt": "2026-11-04T07:25:46.547511+00:00",
+      "seconds": 8.164101958973333
     },
     {
       "scope": "workload",
       "name": "stress-document",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:17:24.383102+00:00",
-      "seconds": 11.062469166936353
+      "startedAt": "2026-11-04T07:25:54.711680+00:00",
+      "seconds": 8.542438959004357
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "live-read-conventional-fanout",
+        "roots": "200"
+      },
+      "startedAt": "2026-11-04T07:26:03.254237+00:00",
+      "seconds": 4.374989999923855
+    },
+    {
+      "scope": "workload",
+      "name": "live-read-conventional-fanout",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-11-04T07:26:03.254223+00:00",
+      "seconds": 5.694085916038603
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "live-read-historical-txtime",
+        "roots": "200"
+      },
+      "startedAt": "2026-11-04T07:26:08.948389+00:00",
+      "seconds": 0.4511093751061708
+    },
+    {
+      "scope": "workload",
+      "name": "live-read-historical-txtime",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-11-04T07:26:08.948373+00:00",
+      "seconds": 2.3860073750838637
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "live-read-historical-bitemporal",
+        "roots": "200"
+      },
+      "startedAt": "2026-11-04T07:26:11.334448+00:00",
+      "seconds": 0.9047517499420792
+    },
+    {
+      "scope": "workload",
+      "name": "live-read-historical-bitemporal",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-11-04T07:26:11.334433+00:00",
+      "seconds": 3.006034000078216
     },
     {
       "scope": "workload",
       "name": "geometry",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:17:35.445768+00:00",
-      "seconds": 161.37847150000744
+      "startedAt": "2026-11-04T07:26:14.340657+00:00",
+      "seconds": 124.69656225014478
     },
     {
       "scope": "workload",
       "name": "plan",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:20:16.824912+00:00",
-      "seconds": 22.294769458007067
+      "startedAt": "2026-11-04T07:28:19.037654+00:00",
+      "seconds": 18.185451541095972
     },
     {
       "scope": "workload",
       "name": "control",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.13"
+        "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:20:39.119819+00:00",
-      "seconds": 172.24294733302668
+      "startedAt": "2026-11-04T07:28:37.223211+00:00",
+      "seconds": 135.22408095817082
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "conventional-fanout",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:23:31.365352+00:00",
-      "seconds": 5.644671957939863
+      "startedAt": "2026-11-04T07:30:52.456956+00:00",
+      "seconds": 4.37047112500295
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "conventional-fanout",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:23:56.351217+00:00",
-      "seconds": 38.919537500012666
+      "startedAt": "2026-11-04T07:31:15.117404+00:00",
+      "seconds": 42.30637691705488
     },
     {
       "scope": "workload",
       "name": "conventional-fanout",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:23:31.365326+00:00",
-      "seconds": 144.49672900000587
+      "startedAt": "2026-11-04T07:30:52.456931+00:00",
+      "seconds": 135.6977270420175
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "duplicate-include",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:25:55.864676+00:00",
-      "seconds": 3.802291792118922
+      "startedAt": "2026-11-04T07:33:08.155164+00:00",
+      "seconds": 4.306649915874004
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "duplicate-include",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:26:20.445527+00:00",
-      "seconds": 36.491684125037864
+      "startedAt": "2026-11-04T07:33:32.100330+00:00",
+      "seconds": 40.74198383279145
     },
     {
       "scope": "workload",
       "name": "duplicate-include",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:25:55.864639+00:00",
-      "seconds": 151.339011750184
+      "startedAt": "2026-11-04T07:33:08.155132+00:00",
+      "seconds": 142.25788375013508
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "document-heavy",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:28:27.205930+00:00",
-      "seconds": 0.6835487501230091
+      "startedAt": "2026-11-04T07:35:30.413552+00:00",
+      "seconds": 1.1869706250727177
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "document-heavy",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:28:47.822420+00:00",
-      "seconds": 6.624098875094205
+      "startedAt": "2026-11-04T07:35:51.340236+00:00",
+      "seconds": 8.465708875097334
     },
     {
       "scope": "workload",
       "name": "document-heavy",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:28:27.205899+00:00",
-      "seconds": 114.42585033294745
+      "startedAt": "2026-11-04T07:35:30.413520+00:00",
+      "seconds": 106.19830275001004
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "versioned-document",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:30:21.632394+00:00",
-      "seconds": 0.31204537488520145
+      "startedAt": "2026-11-04T07:37:16.612231+00:00",
+      "seconds": 0.3237723750062287
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "versioned-document",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:30:39.159218+00:00",
-      "seconds": 1.125487833051011
+      "startedAt": "2026-11-04T07:37:33.660570+00:00",
+      "seconds": 1.8783253750298172
     },
     {
       "scope": "workload",
       "name": "versioned-document",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:30:21.632364+00:00",
-      "seconds": 86.06892495905049
+      "startedAt": "2026-11-04T07:37:16.612201+00:00",
+      "seconds": 80.19071729201823
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "bitemporal-current",
         "roots": "200"
       },
-      "startedAt": "2026-10-31T19:31:47.701788+00:00",
-      "seconds": 0.32783083291724324
+      "startedAt": "2026-11-04T07:38:36.803257+00:00",
+      "seconds": 0.27832233416847885
     },
     {
       "scope": "setup",
       "name": "provision",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "workload": "bitemporal-current",
         "roots": "2000"
       },
-      "startedAt": "2026-10-31T19:32:05.675924+00:00",
-      "seconds": 1.448054292006418
+      "startedAt": "2026-11-04T07:38:54.050247+00:00",
+      "seconds": 2.542657457990572
     },
     {
       "scope": "workload",
       "name": "bitemporal-current",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:31:47.701757+00:00",
-      "seconds": 89.25526687502861
+      "startedAt": "2026-11-04T07:38:36.803227+00:00",
+      "seconds": 81.83459958294407
     },
     {
       "scope": "workload",
       "name": "stress-columns",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:33:16.957514+00:00",
-      "seconds": 9.143087290925905
+      "startedAt": "2026-11-04T07:39:58.638152+00:00",
+      "seconds": 8.447650542017072
     },
     {
       "scope": "workload",
       "name": "stress-document",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:33:26.100691+00:00",
-      "seconds": 9.25105212512426
+      "startedAt": "2026-11-04T07:40:07.085907+00:00",
+      "seconds": 8.821900665992871
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15",
+        "workload": "live-read-conventional-fanout",
+        "roots": "200"
+      },
+      "startedAt": "2026-11-04T07:40:15.907940+00:00",
+      "seconds": 4.817961415974423
+    },
+    {
+      "scope": "workload",
+      "name": "live-read-conventional-fanout",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T07:40:15.907926+00:00",
+      "seconds": 6.072422333061695
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15",
+        "workload": "live-read-historical-txtime",
+        "roots": "200"
+      },
+      "startedAt": "2026-11-04T07:40:21.980439+00:00",
+      "seconds": 0.4161649171728641
+    },
+    {
+      "scope": "workload",
+      "name": "live-read-historical-txtime",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T07:40:21.980425+00:00",
+      "seconds": 2.297507999930531
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15",
+        "workload": "live-read-historical-bitemporal",
+        "roots": "200"
+      },
+      "startedAt": "2026-11-04T07:40:24.278025+00:00",
+      "seconds": 0.8878810841124505
+    },
+    {
+      "scope": "workload",
+      "name": "live-read-historical-bitemporal",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T07:40:24.278007+00:00",
+      "seconds": 2.8415091671049595
     },
     {
       "scope": "workload",
       "name": "geometry",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:33:35.352061+00:00",
-      "seconds": 133.4650333749596
+      "startedAt": "2026-11-04T07:40:27.119736+00:00",
+      "seconds": 135.64643316692673
     },
     {
       "scope": "workload",
       "name": "scalar",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:35:48.817807+00:00",
-      "seconds": 1187.1524224169552
+      "startedAt": "2026-11-04T07:42:42.766669+00:00",
+      "seconds": 1102.2795527500566
     },
     {
       "scope": "workload",
       "name": "plan",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:55:35.974362+00:00",
-      "seconds": 18.533475291915238
+      "startedAt": "2026-11-04T08:01:05.052219+00:00",
+      "seconds": 17.51396133308299
     },
     {
       "scope": "workload",
       "name": "control",
       "labels": {
         "member": "snapshot-delivery",
-        "runtime": "3.14"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:55:54.507970+00:00",
-      "seconds": 144.67539129196666
+      "startedAt": "2026-11-04T08:01:22.566314+00:00",
+      "seconds": 131.1931385421194
     },
     {
       "scope": "setup",
@@ -495,8 +627,8 @@
       "labels": {
         "member": "snapshot-delivery"
       },
-      "startedAt": "2026-10-31T19:58:19.272541+00:00",
-      "seconds": 0.2031244169920683
+      "startedAt": "2026-11-04T08:03:33.888573+00:00",
+      "seconds": 0.22673875000327826
     },
     {
       "scope": "member",
@@ -504,8 +636,8 @@
       "labels": {
         "member": "lifecycle-overhead"
       },
-      "startedAt": "2026-10-31T19:58:19.711766+00:00",
-      "seconds": 10.295515334000811
+      "startedAt": "2026-11-04T08:03:34.435637+00:00",
+      "seconds": 9.430755084147677
     },
     {
       "scope": "member",
@@ -513,18 +645,8 @@
       "labels": {
         "member": "instance-state"
       },
-      "startedAt": "2026-10-31T19:58:30.010311+00:00",
-      "seconds": 14.356650458881631
-    },
-    {
-      "scope": "setup",
-      "name": "identity",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:30.272146+00:00",
-      "seconds": 0.40665166708640754
+      "startedAt": "2026-11-04T08:03:43.874370+00:00",
+      "seconds": 12.62524679186754
     },
     {
       "scope": "setup",
@@ -533,78 +655,18 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:30.678936+00:00",
-      "seconds": 0.2533287920523435
+      "startedAt": "2026-11-04T08:03:44.101969+00:00",
+      "seconds": 0.2515114170964807
     },
     {
-      "scope": "scenario",
-      "name": "shallow",
+      "scope": "setup",
+      "name": "identity",
       "labels": {
         "member": "instance-state",
-        "runtime": "3.13"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T19:58:30.932309+00:00",
-      "seconds": 0.9257662501186132
-    },
-    {
-      "scope": "scenario",
-      "name": "wide",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:31.858112+00:00",
-      "seconds": 1.0166097078472376
-    },
-    {
-      "scope": "scenario",
-      "name": "nested",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:32.874761+00:00",
-      "seconds": 1.5060020829550922
-    },
-    {
-      "scope": "scenario",
-      "name": "nullable",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:34.380802+00:00",
-      "seconds": 0.8853136252146214
-    },
-    {
-      "scope": "scenario",
-      "name": "partial",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:35.266154+00:00",
-      "seconds": 0.8725882500875741
-    },
-    {
-      "scope": "scenario",
-      "name": "polymorphic",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:36.138780+00:00",
-      "seconds": 0.8574645000044256
-    },
-    {
-      "scope": "scenario",
-      "name": "warmed",
-      "labels": {
-        "member": "instance-state",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:36.996283+00:00",
-      "seconds": 0.8505881670862436
+      "startedAt": "2026-11-04T08:03:44.353639+00:00",
+      "seconds": 0.2281177081167698
     },
     {
       "scope": "scenario",
@@ -613,8 +675,8 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:37.846911+00:00",
-      "seconds": 0.781235583126545
+      "startedAt": "2026-11-04T08:03:44.581797+00:00",
+      "seconds": 0.9698277090210468
     },
     {
       "scope": "scenario",
@@ -623,8 +685,8 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:38.628184+00:00",
-      "seconds": 0.9096940418239683
+      "startedAt": "2026-11-04T08:03:45.551667+00:00",
+      "seconds": 0.8432178338989615
     },
     {
       "scope": "scenario",
@@ -633,8 +695,8 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:39.537916+00:00",
-      "seconds": 1.3991468749009073
+      "startedAt": "2026-11-04T08:03:46.394921+00:00",
+      "seconds": 1.277314207982272
     },
     {
       "scope": "scenario",
@@ -643,8 +705,8 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:40.937102+00:00",
-      "seconds": 0.8528648749925196
+      "startedAt": "2026-11-04T08:03:47.672286+00:00",
+      "seconds": 0.7621352919377387
     },
     {
       "scope": "scenario",
@@ -653,8 +715,8 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:41.790056+00:00",
-      "seconds": 0.8734278748743236
+      "startedAt": "2026-11-04T08:03:48.434472+00:00",
+      "seconds": 0.7530432080384344
     },
     {
       "scope": "scenario",
@@ -663,8 +725,8 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:42.663539+00:00",
-      "seconds": 0.8107936249580234
+      "startedAt": "2026-11-04T08:03:49.187566+00:00",
+      "seconds": 0.7384269579779357
     },
     {
       "scope": "scenario",
@@ -673,8 +735,78 @@
         "member": "instance-state",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:43.474372+00:00",
-      "seconds": 0.790052416967228
+      "startedAt": "2026-11-04T08:03:49.926048+00:00",
+      "seconds": 0.7230565408244729
+    },
+    {
+      "scope": "scenario",
+      "name": "shallow",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:50.649161+00:00",
+      "seconds": 0.6931837920565158
+    },
+    {
+      "scope": "scenario",
+      "name": "wide",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:51.342399+00:00",
+      "seconds": 0.8303644577972591
+    },
+    {
+      "scope": "scenario",
+      "name": "nested",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:52.172818+00:00",
+      "seconds": 1.252592165954411
+    },
+    {
+      "scope": "scenario",
+      "name": "nullable",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:53.425463+00:00",
+      "seconds": 0.749937541782856
+    },
+    {
+      "scope": "scenario",
+      "name": "partial",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:54.175450+00:00",
+      "seconds": 0.7351862909272313
+    },
+    {
+      "scope": "scenario",
+      "name": "polymorphic",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:54.910697+00:00",
+      "seconds": 0.7290912501048297
+    },
+    {
+      "scope": "scenario",
+      "name": "warmed",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:55.639841+00:00",
+      "seconds": 0.7087272501084954
     },
     {
       "scope": "member",
@@ -682,18 +814,8 @@
       "labels": {
         "member": "write-lowering"
       },
-      "startedAt": "2026-10-31T19:58:44.379315+00:00",
-      "seconds": 880.7852497079875
-    },
-    {
-      "scope": "setup",
-      "name": "identity",
-      "labels": {
-        "member": "write-lowering",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T19:58:44.820010+00:00",
-      "seconds": 0.3062688750214875
+      "startedAt": "2026-11-04T08:03:56.516264+00:00",
+      "seconds": 797.4651642499957
     },
     {
       "scope": "setup",
@@ -702,2142 +824,2152 @@
         "member": "write-lowering",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T19:58:45.126414+00:00",
-      "seconds": 0.25873125018551946
+      "startedAt": "2026-11-04T08:03:56.926080+00:00",
+      "seconds": 0.25405616592615843
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.15"
+      },
+      "startedAt": "2026-11-04T08:03:57.180290+00:00",
+      "seconds": 0.22809000010602176
     },
     {
       "scope": "case",
       "name": "txtime.opening.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:45.385258+00:00",
-      "seconds": 1.1001929170452058
+      "startedAt": "2026-11-04T08:03:57.408483+00:00",
+      "seconds": 1.1597649999894202
     },
     {
       "scope": "case",
       "name": "txtime.changed.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:46.485486+00:00",
-      "seconds": 1.276507749920711
+      "startedAt": "2026-11-04T08:03:58.568288+00:00",
+      "seconds": 1.1505945830140263
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:47.762042+00:00",
-      "seconds": 1.1282999999821186
+      "startedAt": "2026-11-04T08:03:59.718923+00:00",
+      "seconds": 1.0561627079732716
     },
     {
       "scope": "case",
       "name": "plain.changed.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:48.890393+00:00",
-      "seconds": 1.197657125070691
+      "startedAt": "2026-11-04T08:04:00.775123+00:00",
+      "seconds": 1.2258099580649287
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:50.088097+00:00",
-      "seconds": 1.3950200830586255
+      "startedAt": "2026-11-04T08:04:02.000969+00:00",
+      "seconds": 1.2068185000680387
     },
     {
       "scope": "case",
       "name": "txtime.opening.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:51.483169+00:00",
-      "seconds": 1.0535807921551168
+      "startedAt": "2026-11-04T08:04:03.207826+00:00",
+      "seconds": 0.9457861669361591
     },
     {
       "scope": "case",
       "name": "txtime.changed.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:52.536795+00:00",
-      "seconds": 1.261882625054568
+      "startedAt": "2026-11-04T08:04:04.153650+00:00",
+      "seconds": 1.1189138749614358
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:53.798723+00:00",
-      "seconds": 1.132865000050515
+      "startedAt": "2026-11-04T08:04:05.272602+00:00",
+      "seconds": 1.012365625007078
     },
     {
       "scope": "case",
       "name": "plain.changed.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:54.931635+00:00",
-      "seconds": 1.1558040000963956
+      "startedAt": "2026-11-04T08:04:06.285005+00:00",
+      "seconds": 1.0429125418886542
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:56.087486+00:00",
-      "seconds": 1.4461211659945548
+      "startedAt": "2026-11-04T08:04:07.327953+00:00",
+      "seconds": 1.1984158749692142
     },
     {
       "scope": "case",
       "name": "txtime.opening.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:57.533656+00:00",
-      "seconds": 1.073421125067398
+      "startedAt": "2026-11-04T08:04:08.526405+00:00",
+      "seconds": 0.9167969161644578
     },
     {
       "scope": "case",
       "name": "txtime.changed.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:58.607120+00:00",
-      "seconds": 1.2895932919345796
+      "startedAt": "2026-11-04T08:04:09.443247+00:00",
+      "seconds": 1.129442083183676
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:58:59.896757+00:00",
-      "seconds": 1.1297681669238955
+      "startedAt": "2026-11-04T08:04:10.572724+00:00",
+      "seconds": 0.984889707993716
     },
     {
       "scope": "case",
       "name": "plain.changed.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:01.026570+00:00",
-      "seconds": 1.2177116249222308
+      "startedAt": "2026-11-04T08:04:11.557653+00:00",
+      "seconds": 1.0583745420444757
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:02.244328+00:00",
-      "seconds": 1.4600500841625035
+      "startedAt": "2026-11-04T08:04:12.616063+00:00",
+      "seconds": 1.1877704169601202
     },
     {
       "scope": "case",
       "name": "txtime.opening.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:03.704425+00:00",
-      "seconds": 1.1196611248888075
+      "startedAt": "2026-11-04T08:04:13.803869+00:00",
+      "seconds": 0.9419133327901363
     },
     {
       "scope": "case",
       "name": "txtime.changed.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:04.824134+00:00",
-      "seconds": 1.5082314158789814
+      "startedAt": "2026-11-04T08:04:14.745817+00:00",
+      "seconds": 1.1072781248949468
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:06.332415+00:00",
-      "seconds": 1.2639558331575245
+      "startedAt": "2026-11-04T08:04:15.853130+00:00",
+      "seconds": 0.9976685419678688
     },
     {
       "scope": "case",
       "name": "plain.changed.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:07.596415+00:00",
-      "seconds": 1.172856125049293
+      "startedAt": "2026-11-04T08:04:16.850834+00:00",
+      "seconds": 1.0353598329238594
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:08.769316+00:00",
-      "seconds": 1.3177034999243915
+      "startedAt": "2026-11-04T08:04:17.886230+00:00",
+      "seconds": 1.1994031248614192
     },
     {
       "scope": "case",
       "name": "geometry.depth-1.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:10.087067+00:00",
-      "seconds": 1.0494486661627889
+      "startedAt": "2026-11-04T08:04:19.085669+00:00",
+      "seconds": 0.9495659170206636
     },
     {
       "scope": "case",
       "name": "geometry.depth-1.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:11.136560+00:00",
-      "seconds": 1.137438208097592
+      "startedAt": "2026-11-04T08:04:20.035275+00:00",
+      "seconds": 1.1780487499199808
     },
     {
       "scope": "case",
       "name": "geometry.depth-4.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:12.274041+00:00",
-      "seconds": 1.097804709104821
+      "startedAt": "2026-11-04T08:04:21.213361+00:00",
+      "seconds": 0.9351879998575896
     },
     {
       "scope": "case",
       "name": "geometry.depth-4.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:13.371889+00:00",
-      "seconds": 1.0757741660345346
+      "startedAt": "2026-11-04T08:04:22.148584+00:00",
+      "seconds": 0.9426165418699384
     },
     {
       "scope": "case",
       "name": "geometry.depth-8.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:14.447713+00:00",
-      "seconds": 1.0892330829519778
+      "startedAt": "2026-11-04T08:04:23.091238+00:00",
+      "seconds": 0.9638303329702467
     },
     {
       "scope": "case",
       "name": "geometry.depth-8.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:15.537000+00:00",
-      "seconds": 1.0798980419058353
+      "startedAt": "2026-11-04T08:04:24.055104+00:00",
+      "seconds": 0.9658632501959801
     },
     {
       "scope": "case",
       "name": "geometry.many-0.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:16.616943+00:00",
-      "seconds": 1.0235893330536783
+      "startedAt": "2026-11-04T08:04:25.021005+00:00",
+      "seconds": 0.9036560000386089
     },
     {
       "scope": "case",
       "name": "geometry.many-0.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:17.640574+00:00",
-      "seconds": 1.0286277919076383
+      "startedAt": "2026-11-04T08:04:25.924696+00:00",
+      "seconds": 0.9069254170171916
     },
     {
       "scope": "case",
       "name": "geometry.many-8.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:18.669252+00:00",
-      "seconds": 1.1495987081434578
+      "startedAt": "2026-11-04T08:04:26.831656+00:00",
+      "seconds": 0.9452433749102056
     },
     {
       "scope": "case",
       "name": "geometry.many-8.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:19.818895+00:00",
-      "seconds": 1.0901012080721557
+      "startedAt": "2026-11-04T08:04:27.776934+00:00",
+      "seconds": 1.004204000113532
     },
     {
       "scope": "case",
       "name": "geometry.many-32.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:20.909042+00:00",
-      "seconds": 1.2401837080251426
+      "startedAt": "2026-11-04T08:04:28.781176+00:00",
+      "seconds": 1.0837449999526143
     },
     {
       "scope": "case",
       "name": "geometry.many-32.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:22.149272+00:00",
-      "seconds": 1.22401462495327
+      "startedAt": "2026-11-04T08:04:29.864957+00:00",
+      "seconds": 1.0754632079042494
     },
     {
       "scope": "case",
       "name": "geometry.width-16.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:23.373333+00:00",
-      "seconds": 1.0677607080433518
+      "startedAt": "2026-11-04T08:04:30.940461+00:00",
+      "seconds": 0.9589783330447972
     },
     {
       "scope": "case",
       "name": "geometry.width-16.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:24.441137+00:00",
-      "seconds": 1.0659368329215795
+      "startedAt": "2026-11-04T08:04:31.899474+00:00",
+      "seconds": 0.9487820421345532
     },
     {
       "scope": "case",
       "name": "geometry.width-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:25.507117+00:00",
-      "seconds": 1.1905157919973135
+      "startedAt": "2026-11-04T08:04:32.848292+00:00",
+      "seconds": 1.056439708918333
     },
     {
       "scope": "case",
       "name": "geometry.width-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:26.697677+00:00",
-      "seconds": 1.2933316670823842
+      "startedAt": "2026-11-04T08:04:33.904768+00:00",
+      "seconds": 1.0476872080471367
     },
     {
       "scope": "case",
       "name": "geometry.sparse-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:27.991054+00:00",
-      "seconds": 1.0883401250466704
+      "startedAt": "2026-11-04T08:04:34.952493+00:00",
+      "seconds": 0.9438467919826508
     },
     {
       "scope": "case",
       "name": "geometry.sparse-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:29.079439+00:00",
-      "seconds": 1.0730645840521902
+      "startedAt": "2026-11-04T08:04:35.896374+00:00",
+      "seconds": 0.9411297501064837
     },
     {
       "scope": "case",
       "name": "ancestor.depth-1.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:30.152545+00:00",
-      "seconds": 1.2605515408795327
+      "startedAt": "2026-11-04T08:04:36.837539+00:00",
+      "seconds": 1.1784816668368876
     },
     {
       "scope": "case",
       "name": "ancestor.depth-1.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:31.413141+00:00",
-      "seconds": 1.2523444581311196
+      "startedAt": "2026-11-04T08:04:38.016060+00:00",
+      "seconds": 1.1301531251519918
     },
     {
       "scope": "case",
       "name": "ancestor.width-16.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:32.665531+00:00",
-      "seconds": 1.298062042100355
+      "startedAt": "2026-11-04T08:04:39.146252+00:00",
+      "seconds": 1.3193422500044107
     },
     {
       "scope": "case",
       "name": "ancestor.width-16.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:33.963636+00:00",
-      "seconds": 1.2816306659951806
+      "startedAt": "2026-11-04T08:04:40.465634+00:00",
+      "seconds": 1.1423692079260945
     },
     {
       "scope": "case",
       "name": "ancestor.width-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:35.245317+00:00",
-      "seconds": 1.5144782909192145
+      "startedAt": "2026-11-04T08:04:41.608042+00:00",
+      "seconds": 1.295567249879241
     },
     {
       "scope": "case",
       "name": "ancestor.width-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:36.759841+00:00",
-      "seconds": 1.4401630838401616
+      "startedAt": "2026-11-04T08:04:42.903647+00:00",
+      "seconds": 1.279286541044712
     },
     {
       "scope": "case",
       "name": "ancestor.sparse-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:38.200052+00:00",
-      "seconds": 1.341071124887094
+      "startedAt": "2026-11-04T08:04:44.182977+00:00",
+      "seconds": 1.1557254160288721
     },
     {
       "scope": "case",
       "name": "ancestor.sparse-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:39.541173+00:00",
-      "seconds": 1.344972499879077
+      "startedAt": "2026-11-04T08:04:45.338742+00:00",
+      "seconds": 1.1675561661832035
     },
     {
       "scope": "case",
       "name": "txtime.target-patch.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:40.886195+00:00",
-      "seconds": 1.448716624872759
+      "startedAt": "2026-11-04T08:04:46.506335+00:00",
+      "seconds": 1.181325624929741
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:42.334958+00:00",
-      "seconds": 1.375488542020321
+      "startedAt": "2026-11-04T08:04:47.687698+00:00",
+      "seconds": 1.1768804579041898
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:43.710492+00:00",
-      "seconds": 1.3440260828938335
+      "startedAt": "2026-11-04T08:04:48.864616+00:00",
+      "seconds": 1.1763912502210587
     },
     {
       "scope": "case",
       "name": "txtime.target-patch.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:45.054565+00:00",
-      "seconds": 1.3367023749742657
+      "startedAt": "2026-11-04T08:04:50.041044+00:00",
+      "seconds": 1.1739931250922382
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:46.391312+00:00",
-      "seconds": 1.323482041945681
+      "startedAt": "2026-11-04T08:04:51.215076+00:00",
+      "seconds": 1.1830619578249753
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:47.714841+00:00",
-      "seconds": 1.336649167118594
+      "startedAt": "2026-11-04T08:04:52.398174+00:00",
+      "seconds": 1.1956530001480132
     },
     {
       "scope": "case",
       "name": "bitemporal.target-patch.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:49.051535+00:00",
-      "seconds": 1.4407514999620616
+      "startedAt": "2026-11-04T08:04:53.593861+00:00",
+      "seconds": 1.28090012492612
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:50.492331+00:00",
-      "seconds": 1.4662042919080704
+      "startedAt": "2026-11-04T08:04:54.874795+00:00",
+      "seconds": 1.2797723340336233
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:51.958580+00:00",
-      "seconds": 1.4444674160331488
+      "startedAt": "2026-11-04T08:04:56.154601+00:00",
+      "seconds": 1.2746122078970075
     },
     {
       "scope": "case",
       "name": "bitemporal.target-patch.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:53.403080+00:00",
-      "seconds": 1.4241347920615226
+      "startedAt": "2026-11-04T08:04:57.429248+00:00",
+      "seconds": 1.2563580831047148
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:54.827260+00:00",
-      "seconds": 1.5717645830009133
+      "startedAt": "2026-11-04T08:04:58.685645+00:00",
+      "seconds": 1.2547902080696076
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T19:59:56.399073+00:00",
-      "seconds": 1.509458125103265
+      "startedAt": "2026-11-04T08:04:59.940475+00:00",
+      "seconds": 1.2618612919468433
     },
     {
       "scope": "case",
       "name": "response.insert.family.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "wire-insert-response"
       },
-      "startedAt": "2026-10-31T19:59:57.908576+00:00",
-      "seconds": 1.0675827080849558
+      "startedAt": "2026-11-04T08:05:01.202375+00:00",
+      "seconds": 0.9397951250430197
     },
     {
       "scope": "case",
       "name": "model.prepared",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "model-preparation"
       },
-      "startedAt": "2026-10-31T19:59:58.976203+00:00",
-      "seconds": 5.709427791880444
+      "startedAt": "2026-11-04T08:05:02.142204+00:00",
+      "seconds": 4.384776709135622
     },
     {
       "scope": "case",
       "name": "model.prepared.family",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "model-preparation"
       },
-      "startedAt": "2026-10-31T20:00:04.685694+00:00",
-      "seconds": 1.3782753329724073
+      "startedAt": "2026-11-04T08:05:06.527029+00:00",
+      "seconds": 1.256145500112325
     },
     {
       "scope": "case",
       "name": "cross-object.txtime.changed-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:00:06.064016+00:00",
-      "seconds": 11.032106042141095
+      "startedAt": "2026-11-04T08:05:07.783209+00:00",
+      "seconds": 9.043268207926303
     },
     {
       "scope": "case",
       "name": "cross-object.txtime.changed-130.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:00:17.096215+00:00",
-      "seconds": 21.066139958100393
+      "startedAt": "2026-11-04T08:05:16.826542+00:00",
+      "seconds": 17.091872958932072
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.interior-64.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:00:38.162488+00:00",
-      "seconds": 13.495578750036657
+      "startedAt": "2026-11-04T08:05:33.918511+00:00",
+      "seconds": 11.227641250006855
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.deferred-32x4.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:00:51.658167+00:00",
-      "seconds": 16.080507332924753
+      "startedAt": "2026-11-04T08:05:45.146226+00:00",
+      "seconds": 13.77207729103975
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.deferred-32x12.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:01:07.738793+00:00",
-      "seconds": 39.997155874967575
+      "startedAt": "2026-11-04T08:05:58.918386+00:00",
+      "seconds": 34.08820970891975
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.requesting-32x12.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:01:47.736168+00:00",
-      "seconds": 41.40697270887904
+      "startedAt": "2026-11-04T08:06:33.006757+00:00",
+      "seconds": 36.06497920816764
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.deferred-32x32.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:02:29.143367+00:00",
-      "seconds": 84.01360691711307
+      "startedAt": "2026-11-04T08:07:09.071905+00:00",
+      "seconds": 74.35167816700414
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.partial-3x66.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:03:53.157393+00:00",
-      "seconds": 23.079016833100468
+      "startedAt": "2026-11-04T08:08:23.423896+00:00",
+      "seconds": 19.335392917040735
     },
     {
       "scope": "case",
       "name": "batch.insert.2.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:04:16.236556+00:00",
-      "seconds": 1.0605456670746207
+      "startedAt": "2026-11-04T08:08:42.759397+00:00",
+      "seconds": 0.9395971659105271
     },
     {
       "scope": "case",
       "name": "batch.insert.8.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:04:17.297157+00:00",
-      "seconds": 1.1949489589314908
+      "startedAt": "2026-11-04T08:08:43.699032+00:00",
+      "seconds": 1.0457264580763876
     },
     {
       "scope": "case",
       "name": "batch.insert.1000.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:04:18.492150+00:00",
-      "seconds": 23.54090908402577
+      "startedAt": "2026-11-04T08:08:44.744795+00:00",
+      "seconds": 20.13237979216501
     },
     {
       "scope": "case",
       "name": "batch.insert.1000.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:04:42.033208+00:00",
-      "seconds": 28.81878591608256
+      "startedAt": "2026-11-04T08:09:04.877284+00:00",
+      "seconds": 21.63886508415453
     },
     {
       "scope": "case",
       "name": "batch.insert.1000.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.13",
+        "runtime": "3.14",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:05:10.852176+00:00",
-      "seconds": 32.91813362506218
+      "startedAt": "2026-11-04T08:09:26.516268+00:00",
+      "seconds": 27.13083141692914
     },
     {
       "scope": "case",
       "name": "txtime.opening.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:43.770529+00:00",
-      "seconds": 1.0920613328926265
+      "startedAt": "2026-11-04T08:09:53.647260+00:00",
+      "seconds": 1.0227331251371652
     },
     {
       "scope": "case",
       "name": "txtime.changed.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:44.862636+00:00",
-      "seconds": 1.2092004590667784
+      "startedAt": "2026-11-04T08:09:54.670032+00:00",
+      "seconds": 1.1986276670359075
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:46.071885+00:00",
-      "seconds": 1.0931928749196231
+      "startedAt": "2026-11-04T08:09:55.868697+00:00",
+      "seconds": 1.0670990420039743
     },
     {
       "scope": "case",
       "name": "plain.changed.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:47.165125+00:00",
-      "seconds": 1.132435749983415
+      "startedAt": "2026-11-04T08:09:56.935830+00:00",
+      "seconds": 1.1199709998909384
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:48.297607+00:00",
-      "seconds": 1.3002275410108268
+      "startedAt": "2026-11-04T08:09:58.055838+00:00",
+      "seconds": 1.2785957921296358
     },
     {
       "scope": "case",
       "name": "txtime.opening.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:49.597880+00:00",
-      "seconds": 1.0173082910478115
+      "startedAt": "2026-11-04T08:09:59.334468+00:00",
+      "seconds": 0.9873037920333445
     },
     {
       "scope": "case",
       "name": "txtime.changed.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:50.615232+00:00",
-      "seconds": 1.2237439171876758
+      "startedAt": "2026-11-04T08:10:00.321806+00:00",
+      "seconds": 1.178299207938835
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:51.839021+00:00",
-      "seconds": 1.1087635839357972
+      "startedAt": "2026-11-04T08:10:01.500139+00:00",
+      "seconds": 1.0750427909661084
     },
     {
       "scope": "case",
       "name": "plain.changed.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:52.947830+00:00",
-      "seconds": 1.1375181248877198
+      "startedAt": "2026-11-04T08:10:02.575219+00:00",
+      "seconds": 1.0918885841965675
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:54.085396+00:00",
-      "seconds": 1.279050000011921
+      "startedAt": "2026-11-04T08:10:03.667142+00:00",
+      "seconds": 1.2687872918322682
     },
     {
       "scope": "case",
       "name": "txtime.opening.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:55.364492+00:00",
-      "seconds": 1.017893958138302
+      "startedAt": "2026-11-04T08:10:04.935965+00:00",
+      "seconds": 0.9720317919272929
     },
     {
       "scope": "case",
       "name": "txtime.changed.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:56.382431+00:00",
-      "seconds": 1.2326344579923898
+      "startedAt": "2026-11-04T08:10:05.908032+00:00",
+      "seconds": 1.1866517921444029
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:57.615112+00:00",
-      "seconds": 1.0869035001378506
+      "startedAt": "2026-11-04T08:10:07.094718+00:00",
+      "seconds": 1.0436989169102162
     },
     {
       "scope": "case",
       "name": "plain.changed.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:58.702061+00:00",
-      "seconds": 1.2269101671408862
+      "startedAt": "2026-11-04T08:10:08.138452+00:00",
+      "seconds": 1.109914500033483
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:05:59.929017+00:00",
-      "seconds": 1.3021675830241293
+      "startedAt": "2026-11-04T08:10:09.248403+00:00",
+      "seconds": 1.2648415830917656
     },
     {
       "scope": "case",
       "name": "txtime.opening.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:01.231254+00:00",
-      "seconds": 1.0212388329673558
+      "startedAt": "2026-11-04T08:10:10.513280+00:00",
+      "seconds": 0.9732991249766201
     },
     {
       "scope": "case",
       "name": "txtime.changed.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:02.252544+00:00",
-      "seconds": 1.2222577498760074
+      "startedAt": "2026-11-04T08:10:11.486613+00:00",
+      "seconds": 1.1700799169484526
     },
     {
       "scope": "case",
       "name": "txtime.unchanged.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:03.474856+00:00",
-      "seconds": 1.1014134159777313
+      "startedAt": "2026-11-04T08:10:12.656729+00:00",
+      "seconds": 1.044380750041455
     },
     {
       "scope": "case",
       "name": "plain.changed.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:04.576316+00:00",
-      "seconds": 1.1243334168102592
+      "startedAt": "2026-11-04T08:10:13.701147+00:00",
+      "seconds": 1.102972875116393
     },
     {
       "scope": "case",
       "name": "bitemporal.interior.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:05.700694+00:00",
-      "seconds": 1.3841377499047667
+      "startedAt": "2026-11-04T08:10:14.804157+00:00",
+      "seconds": 1.250157207949087
     },
     {
       "scope": "case",
       "name": "geometry.depth-1.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:07.084884+00:00",
-      "seconds": 1.0274188751354814
+      "startedAt": "2026-11-04T08:10:16.054355+00:00",
+      "seconds": 0.9653442921116948
     },
     {
       "scope": "case",
       "name": "geometry.depth-1.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:08.112351+00:00",
-      "seconds": 1.019311249954626
+      "startedAt": "2026-11-04T08:10:17.019742+00:00",
+      "seconds": 0.97709179087542
     },
     {
       "scope": "case",
       "name": "geometry.depth-4.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:09.131711+00:00",
-      "seconds": 1.026070541003719
+      "startedAt": "2026-11-04T08:10:17.996871+00:00",
+      "seconds": 0.9919437910430133
     },
     {
       "scope": "case",
       "name": "geometry.depth-4.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:10.157828+00:00",
-      "seconds": 1.020777832949534
+      "startedAt": "2026-11-04T08:10:18.988849+00:00",
+      "seconds": 0.9967278749682009
     },
     {
       "scope": "case",
       "name": "geometry.depth-8.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:11.178655+00:00",
-      "seconds": 1.1113668750040233
+      "startedAt": "2026-11-04T08:10:19.985616+00:00",
+      "seconds": 1.0054583749733865
     },
     {
       "scope": "case",
       "name": "geometry.depth-8.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:12.290067+00:00",
-      "seconds": 1.0581180828157812
+      "startedAt": "2026-11-04T08:10:20.991110+00:00",
+      "seconds": 1.0516087911091745
     },
     {
       "scope": "case",
       "name": "geometry.many-0.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:13.348232+00:00",
-      "seconds": 1.0133459998760372
+      "startedAt": "2026-11-04T08:10:22.042754+00:00",
+      "seconds": 0.9454904589802027
     },
     {
       "scope": "case",
       "name": "geometry.many-0.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:14.361624+00:00",
-      "seconds": 1.038512707920745
+      "startedAt": "2026-11-04T08:10:22.988279+00:00",
+      "seconds": 0.9504184999968857
     },
     {
       "scope": "case",
       "name": "geometry.many-8.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:15.400181+00:00",
-      "seconds": 1.0452711670659482
+      "startedAt": "2026-11-04T08:10:23.938734+00:00",
+      "seconds": 0.9730547079816461
     },
     {
       "scope": "case",
       "name": "geometry.many-8.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:16.445499+00:00",
-      "seconds": 1.033221999881789
+      "startedAt": "2026-11-04T08:10:24.911826+00:00",
+      "seconds": 0.9371690419502556
     },
     {
       "scope": "case",
       "name": "geometry.many-32.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:17.478770+00:00",
-      "seconds": 1.158949458040297
+      "startedAt": "2026-11-04T08:10:25.849033+00:00",
+      "seconds": 1.0394299170002341
     },
     {
       "scope": "case",
       "name": "geometry.many-32.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:18.637766+00:00",
-      "seconds": 1.1719564590603113
+      "startedAt": "2026-11-04T08:10:26.888500+00:00",
+      "seconds": 1.0423237080685794
     },
     {
       "scope": "case",
       "name": "geometry.width-16.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:19.809769+00:00",
-      "seconds": 1.0269065001048148
+      "startedAt": "2026-11-04T08:10:27.930860+00:00",
+      "seconds": 0.928511125035584
     },
     {
       "scope": "case",
       "name": "geometry.width-16.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:20.836725+00:00",
-      "seconds": 1.0716938329860568
+      "startedAt": "2026-11-04T08:10:28.859410+00:00",
+      "seconds": 0.9358474588952959
     },
     {
       "scope": "case",
       "name": "geometry.width-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:21.908470+00:00",
-      "seconds": 1.1628204160369933
+      "startedAt": "2026-11-04T08:10:29.795294+00:00",
+      "seconds": 0.9989645830355585
     },
     {
       "scope": "case",
       "name": "geometry.width-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:23.071346+00:00",
-      "seconds": 1.1791239590384066
+      "startedAt": "2026-11-04T08:10:30.794296+00:00",
+      "seconds": 1.001123582944274
     },
     {
       "scope": "case",
       "name": "geometry.sparse-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:24.250517+00:00",
-      "seconds": 1.0702890001703054
+      "startedAt": "2026-11-04T08:10:31.795457+00:00",
+      "seconds": 0.9333283749874681
     },
     {
       "scope": "case",
       "name": "geometry.sparse-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:25.320859+00:00",
-      "seconds": 1.085947582963854
+      "startedAt": "2026-11-04T08:10:32.728822+00:00",
+      "seconds": 0.9894312920514494
     },
     {
       "scope": "case",
       "name": "ancestor.depth-1.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:26.406855+00:00",
-      "seconds": 1.2470044170040637
+      "startedAt": "2026-11-04T08:10:33.718291+00:00",
+      "seconds": 1.0994331249967217
     },
     {
       "scope": "case",
       "name": "ancestor.depth-1.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:27.653907+00:00",
-      "seconds": 1.2063359580934048
+      "startedAt": "2026-11-04T08:10:34.817765+00:00",
+      "seconds": 1.0944037910085171
     },
     {
       "scope": "case",
       "name": "ancestor.width-16.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:28.860287+00:00",
-      "seconds": 1.3080424999352545
+      "startedAt": "2026-11-04T08:10:35.912209+00:00",
+      "seconds": 1.133790166117251
     },
     {
       "scope": "case",
       "name": "ancestor.width-16.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:30.168376+00:00",
-      "seconds": 1.2330545410513878
+      "startedAt": "2026-11-04T08:10:37.046038+00:00",
+      "seconds": 1.1312983341049403
     },
     {
       "scope": "case",
       "name": "ancestor.width-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:31.401479+00:00",
-      "seconds": 1.3817662079818547
+      "startedAt": "2026-11-04T08:10:38.177374+00:00",
+      "seconds": 1.2689905839506537
     },
     {
       "scope": "case",
       "name": "ancestor.width-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:32.783294+00:00",
-      "seconds": 1.407266791909933
+      "startedAt": "2026-11-04T08:10:39.446403+00:00",
+      "seconds": 1.2661719580646604
     },
     {
       "scope": "case",
       "name": "ancestor.sparse-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:34.190609+00:00",
-      "seconds": 1.2713647079654038
+      "startedAt": "2026-11-04T08:10:40.712615+00:00",
+      "seconds": 1.1761846248991787
     },
     {
       "scope": "case",
       "name": "ancestor.sparse-64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:35.462019+00:00",
-      "seconds": 1.2942680828273296
+      "startedAt": "2026-11-04T08:10:41.888840+00:00",
+      "seconds": 1.1693675408605486
     },
     {
       "scope": "case",
       "name": "scalar.string.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:36.756336+00:00",
-      "seconds": 1.4437218750827014
+      "startedAt": "2026-11-04T08:10:43.058245+00:00",
+      "seconds": 1.0978807921055704
     },
     {
       "scope": "case",
       "name": "scalar.string.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:38.200112+00:00",
-      "seconds": 1.39988954202272
+      "startedAt": "2026-11-04T08:10:44.156162+00:00",
+      "seconds": 1.0959464590996504
     },
     {
       "scope": "case",
       "name": "scalar.boolean.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:39.600052+00:00",
-      "seconds": 1.1907909580040723
+      "startedAt": "2026-11-04T08:10:45.252145+00:00",
+      "seconds": 0.9935390411410481
     },
     {
       "scope": "case",
       "name": "scalar.boolean.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:40.790895+00:00",
-      "seconds": 1.2411896248813719
+      "startedAt": "2026-11-04T08:10:46.245722+00:00",
+      "seconds": 1.0750780841335654
     },
     {
       "scope": "case",
       "name": "scalar.boolean.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:42.032136+00:00",
-      "seconds": 1.1250362088903785
+      "startedAt": "2026-11-04T08:10:47.320837+00:00",
+      "seconds": 0.9864107079338282
     },
     {
       "scope": "case",
       "name": "scalar.boolean.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:43.157218+00:00",
-      "seconds": 1.183374874992296
+      "startedAt": "2026-11-04T08:10:48.307287+00:00",
+      "seconds": 1.059323332970962
     },
     {
       "scope": "case",
       "name": "scalar.int32.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:44.340639+00:00",
-      "seconds": 1.1887517501600087
+      "startedAt": "2026-11-04T08:10:49.366649+00:00",
+      "seconds": 1.023053500102833
     },
     {
       "scope": "case",
       "name": "scalar.int32.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:45.529439+00:00",
-      "seconds": 1.2978495000861585
+      "startedAt": "2026-11-04T08:10:50.389742+00:00",
+      "seconds": 1.195886833127588
     },
     {
       "scope": "case",
       "name": "scalar.int32.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:46.827345+00:00",
-      "seconds": 1.1381221250630915
+      "startedAt": "2026-11-04T08:10:51.585668+00:00",
+      "seconds": 1.0246404591016471
     },
     {
       "scope": "case",
       "name": "scalar.int32.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:47.965513+00:00",
-      "seconds": 1.2811297080479562
+      "startedAt": "2026-11-04T08:10:52.610345+00:00",
+      "seconds": 1.1953618749976158
     },
     {
       "scope": "case",
       "name": "scalar.int64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:49.246692+00:00",
-      "seconds": 1.1277829168830067
+      "startedAt": "2026-11-04T08:10:53.805744+00:00",
+      "seconds": 1.0179149170871824
     },
     {
       "scope": "case",
       "name": "scalar.int64.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:50.374525+00:00",
-      "seconds": 1.2925657499581575
+      "startedAt": "2026-11-04T08:10:54.823698+00:00",
+      "seconds": 1.209579166956246
     },
     {
       "scope": "case",
       "name": "scalar.int64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:51.667139+00:00",
-      "seconds": 1.1438625000882894
+      "startedAt": "2026-11-04T08:10:56.033315+00:00",
+      "seconds": 1.0129850830417126
     },
     {
       "scope": "case",
       "name": "scalar.int64.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:52.811048+00:00",
-      "seconds": 1.2998167499899864
+      "startedAt": "2026-11-04T08:10:57.046338+00:00",
+      "seconds": 1.2124664159491658
     },
     {
       "scope": "case",
       "name": "scalar.float32.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:54.110912+00:00",
-      "seconds": 1.6736744169611484
+      "startedAt": "2026-11-04T08:10:58.258844+00:00",
+      "seconds": 1.594815209042281
     },
     {
       "scope": "case",
       "name": "scalar.float32.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:55.784638+00:00",
-      "seconds": 2.193974749883637
+      "startedAt": "2026-11-04T08:10:59.853700+00:00",
+      "seconds": 2.1753256251104176
     },
     {
       "scope": "case",
       "name": "scalar.float32.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:57.978667+00:00",
-      "seconds": 1.740521082887426
+      "startedAt": "2026-11-04T08:11:02.029066+00:00",
+      "seconds": 1.5611440839711577
     },
     {
       "scope": "case",
       "name": "scalar.float32.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:06:59.719239+00:00",
-      "seconds": 2.257077374961227
+      "startedAt": "2026-11-04T08:11:03.590249+00:00",
+      "seconds": 2.129446124890819
     },
     {
       "scope": "case",
       "name": "scalar.float64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:01.976357+00:00",
-      "seconds": 1.161500624846667
+      "startedAt": "2026-11-04T08:11:05.719740+00:00",
+      "seconds": 1.046262624906376
     },
     {
       "scope": "case",
       "name": "scalar.float64.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:03.137899+00:00",
-      "seconds": 1.2997024580836296
+      "startedAt": "2026-11-04T08:11:06.766041+00:00",
+      "seconds": 1.1744322078302503
     },
     {
       "scope": "case",
       "name": "scalar.float64.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:04.437650+00:00",
-      "seconds": 1.174071833025664
+      "startedAt": "2026-11-04T08:11:07.940511+00:00",
+      "seconds": 1.048564957920462
     },
     {
       "scope": "case",
       "name": "scalar.float64.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:05.611758+00:00",
-      "seconds": 1.3835137079004198
+      "startedAt": "2026-11-04T08:11:08.989116+00:00",
+      "seconds": 1.153740500099957
     },
     {
       "scope": "case",
       "name": "scalar.decimal.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:06.995311+00:00",
-      "seconds": 1.920789625030011
+      "startedAt": "2026-11-04T08:11:10.142892+00:00",
+      "seconds": 1.7479357079137117
     },
     {
       "scope": "case",
       "name": "scalar.decimal.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:08.916142+00:00",
-      "seconds": 3.197376624913886
+      "startedAt": "2026-11-04T08:11:11.890867+00:00",
+      "seconds": 3.0972536669578403
     },
     {
       "scope": "case",
       "name": "scalar.decimal.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:12.113565+00:00",
-      "seconds": 1.890856915852055
+      "startedAt": "2026-11-04T08:11:14.988167+00:00",
+      "seconds": 1.8083875000011176
     },
     {
       "scope": "case",
       "name": "scalar.decimal.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:14.004463+00:00",
-      "seconds": 3.2124659582041204
+      "startedAt": "2026-11-04T08:11:16.796597+00:00",
+      "seconds": 2.9830915411002934
     },
     {
       "scope": "case",
       "name": "scalar.bytes.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:17.216977+00:00",
-      "seconds": 1.243068709038198
+      "startedAt": "2026-11-04T08:11:19.779732+00:00",
+      "seconds": 1.0366225000470877
     },
     {
       "scope": "case",
       "name": "scalar.bytes.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:18.460085+00:00",
-      "seconds": 1.5210742910858244
+      "startedAt": "2026-11-04T08:11:20.816398+00:00",
+      "seconds": 1.2659211251884699
     },
     {
       "scope": "case",
       "name": "scalar.bytes.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:19.981196+00:00",
-      "seconds": 1.2381456249859184
+      "startedAt": "2026-11-04T08:11:22.082360+00:00",
+      "seconds": 1.0270362091250718
     },
     {
       "scope": "case",
       "name": "scalar.bytes.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:21.219382+00:00",
-      "seconds": 1.5173867081757635
+      "startedAt": "2026-11-04T08:11:23.109437+00:00",
+      "seconds": 1.2563730841502547
     },
     {
       "scope": "case",
       "name": "scalar.date.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:22.736807+00:00",
-      "seconds": 1.3487110841087997
+      "startedAt": "2026-11-04T08:11:24.365847+00:00",
+      "seconds": 1.1183604588732123
     },
     {
       "scope": "case",
       "name": "scalar.date.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:24.085556+00:00",
-      "seconds": 1.8122352499049157
+      "startedAt": "2026-11-04T08:11:25.484247+00:00",
+      "seconds": 1.5022670831531286
     },
     {
       "scope": "case",
       "name": "scalar.date.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:25.897831+00:00",
-      "seconds": 1.359096708940342
+      "startedAt": "2026-11-04T08:11:26.986553+00:00",
+      "seconds": 1.1153520420193672
     },
     {
       "scope": "case",
       "name": "scalar.date.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:27.256966+00:00",
-      "seconds": 1.8274160828441381
+      "startedAt": "2026-11-04T08:11:28.101942+00:00",
+      "seconds": 1.4966962921898812
     },
     {
       "scope": "case",
       "name": "scalar.time.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:29.084421+00:00",
-      "seconds": 1.3792929591145366
+      "startedAt": "2026-11-04T08:11:29.598680+00:00",
+      "seconds": 1.1086905421689153
     },
     {
       "scope": "case",
       "name": "scalar.time.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:30.463753+00:00",
-      "seconds": 1.7661724998615682
+      "startedAt": "2026-11-04T08:11:30.707408+00:00",
+      "seconds": 1.4490001250524074
     },
     {
       "scope": "case",
       "name": "scalar.time.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:32.229963+00:00",
-      "seconds": 1.3236039578914642
+      "startedAt": "2026-11-04T08:11:32.156446+00:00",
+      "seconds": 1.093430875102058
     },
     {
       "scope": "case",
       "name": "scalar.time.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:33.553606+00:00",
-      "seconds": 1.773048291914165
+      "startedAt": "2026-11-04T08:11:33.249915+00:00",
+      "seconds": 1.4798097910825163
     },
     {
       "scope": "case",
       "name": "scalar.timestamp.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:35.326695+00:00",
-      "seconds": 2.1755321251694113
+      "startedAt": "2026-11-04T08:11:34.729764+00:00",
+      "seconds": 1.9055337910540402
     },
     {
       "scope": "case",
       "name": "scalar.timestamp.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:37.502269+00:00",
-      "seconds": 3.4869559998624027
+      "startedAt": "2026-11-04T08:11:36.635338+00:00",
+      "seconds": 3.123777624918148
     },
     {
       "scope": "case",
       "name": "scalar.timestamp.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:40.989273+00:00",
-      "seconds": 2.1979575830046088
+      "startedAt": "2026-11-04T08:11:39.759163+00:00",
+      "seconds": 1.8973285828251392
     },
     {
       "scope": "case",
       "name": "scalar.timestamp.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:43.187273+00:00",
-      "seconds": 3.5906604998745024
+      "startedAt": "2026-11-04T08:11:41.656533+00:00",
+      "seconds": 3.2124545841943473
     },
     {
       "scope": "case",
       "name": "scalar.uuid.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:46.777981+00:00",
-      "seconds": 1.5153989579994231
+      "startedAt": "2026-11-04T08:11:44.869035+00:00",
+      "seconds": 1.2866149579640478
     },
     {
       "scope": "case",
       "name": "scalar.uuid.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:48.293420+00:00",
-      "seconds": 2.2014090409502387
+      "startedAt": "2026-11-04T08:11:46.155689+00:00",
+      "seconds": 1.931006500031799
     },
     {
       "scope": "case",
       "name": "scalar.uuid.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:50.494873+00:00",
-      "seconds": 1.51438216608949
+      "startedAt": "2026-11-04T08:11:48.086738+00:00",
+      "seconds": 1.3011192919220775
     },
     {
       "scope": "case",
       "name": "scalar.uuid.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:52.009293+00:00",
-      "seconds": 2.1765691249165684
+      "startedAt": "2026-11-04T08:11:49.387896+00:00",
+      "seconds": 1.9090007091872394
     },
     {
       "scope": "case",
       "name": "txtime.target-patch.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:54.185915+00:00",
-      "seconds": 1.314658208983019
+      "startedAt": "2026-11-04T08:11:51.296939+00:00",
+      "seconds": 1.1858374159783125
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:55.500611+00:00",
-      "seconds": 1.3178196668159217
+      "startedAt": "2026-11-04T08:11:52.482817+00:00",
+      "seconds": 1.1688433340750635
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:56.818467+00:00",
-      "seconds": 1.3169248329941183
+      "startedAt": "2026-11-04T08:11:53.651700+00:00",
+      "seconds": 1.176326542161405
     },
     {
       "scope": "case",
       "name": "txtime.target-patch.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:58.135429+00:00",
-      "seconds": 1.3234831248410046
+      "startedAt": "2026-11-04T08:11:54.828067+00:00",
+      "seconds": 1.1725862079765648
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:07:59.458948+00:00",
-      "seconds": 1.3821582079399377
+      "startedAt": "2026-11-04T08:11:56.000692+00:00",
+      "seconds": 1.1667989171110094
     },
     {
       "scope": "case",
       "name": "txtime.target-replace.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:00.841146+00:00",
-      "seconds": 1.2862699581310153
+      "startedAt": "2026-11-04T08:11:57.167533+00:00",
+      "seconds": 1.16861991584301
     },
     {
       "scope": "case",
       "name": "bitemporal.target-patch.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:02.127453+00:00",
-      "seconds": 1.3752674169372767
+      "startedAt": "2026-11-04T08:11:58.336201+00:00",
+      "seconds": 1.2602532079908997
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:03.502758+00:00",
-      "seconds": 1.3918428751640022
+      "startedAt": "2026-11-04T08:11:59.596496+00:00",
+      "seconds": 1.2714901249855757
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:04.894639+00:00",
-      "seconds": 1.428346375003457
+      "startedAt": "2026-11-04T08:12:00.868027+00:00",
+      "seconds": 1.2867333751637489
     },
     {
       "scope": "case",
       "name": "bitemporal.target-patch.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:06.323035+00:00",
-      "seconds": 1.395374541869387
+      "startedAt": "2026-11-04T08:12:02.154801+00:00",
+      "seconds": 1.2473102919757366
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:07.718458+00:00",
-      "seconds": 1.34809795813635
+      "startedAt": "2026-11-04T08:12:03.402152+00:00",
+      "seconds": 1.263531125150621
     },
     {
       "scope": "case",
       "name": "bitemporal.target-replace.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "keyed-write"
       },
-      "startedAt": "2026-10-31T20:08:09.066604+00:00",
-      "seconds": 1.341125249862671
+      "startedAt": "2026-11-04T08:12:04.665724+00:00",
+      "seconds": 1.2526226250920445
     },
     {
       "scope": "case",
       "name": "response.insert.family.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "wire-insert-response"
       },
-      "startedAt": "2026-10-31T20:08:10.407776+00:00",
-      "seconds": 1.0016294999513775
+      "startedAt": "2026-11-04T08:12:05.918386+00:00",
+      "seconds": 0.9115729159675539
     },
     {
       "scope": "case",
       "name": "model.prepared",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "model-preparation"
       },
-      "startedAt": "2026-10-31T20:08:11.409455+00:00",
-      "seconds": 4.810399124864489
+      "startedAt": "2026-11-04T08:12:06.830000+00:00",
+      "seconds": 4.797406000085175
     },
     {
       "scope": "case",
       "name": "model.prepared.family",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "model-preparation"
       },
-      "startedAt": "2026-10-31T20:08:16.219917+00:00",
-      "seconds": 1.2593440408818424
+      "startedAt": "2026-11-04T08:12:11.627458+00:00",
+      "seconds": 1.1745622910093516
     },
     {
       "scope": "case",
       "name": "cross-object.txtime.changed-64.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:08:17.479308+00:00",
-      "seconds": 9.38544425019063
+      "startedAt": "2026-11-04T08:12:12.802060+00:00",
+      "seconds": 9.386616959003732
     },
     {
       "scope": "case",
       "name": "cross-object.txtime.changed-130.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:08:26.864836+00:00",
-      "seconds": 18.353933499893174
+      "startedAt": "2026-11-04T08:12:22.188746+00:00",
+      "seconds": 18.16661554109305
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.interior-64.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:08:45.218899+00:00",
-      "seconds": 11.888179499888793
+      "startedAt": "2026-11-04T08:12:40.355465+00:00",
+      "seconds": 11.578022125177085
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.deferred-32x4.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:08:57.107173+00:00",
-      "seconds": 15.362235292093828
+      "startedAt": "2026-11-04T08:12:51.933565+00:00",
+      "seconds": 14.883199208183214
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.deferred-32x12.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:09:12.469520+00:00",
-      "seconds": 37.860489750048146
+      "startedAt": "2026-11-04T08:13:06.816854+00:00",
+      "seconds": 35.23915037512779
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.requesting-32x12.document.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:09:50.330233+00:00",
-      "seconds": 38.59660666692071
+      "startedAt": "2026-11-04T08:13:42.056170+00:00",
+      "seconds": 37.55685833399184
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.deferred-32x32.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:10:28.927060+00:00",
-      "seconds": 79.59165395796299
+      "startedAt": "2026-11-04T08:14:19.613204+00:00",
+      "seconds": 78.58168033300899
     },
     {
       "scope": "case",
       "name": "cross-object.bitemporal.partial-3x66.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "cross-object-flush"
       },
-      "startedAt": "2026-10-31T20:11:48.519115+00:00",
-      "seconds": 20.84218066581525
+      "startedAt": "2026-11-04T08:15:38.195214+00:00",
+      "seconds": 20.161172250052914
     },
     {
       "scope": "case",
       "name": "batch.insert.2.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:12:09.361435+00:00",
-      "seconds": 1.0653286250308156
+      "startedAt": "2026-11-04T08:15:58.356497+00:00",
+      "seconds": 0.9379428748507053
     },
     {
       "scope": "case",
       "name": "batch.insert.8.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:12:10.426811+00:00",
-      "seconds": 1.1821141249965876
+      "startedAt": "2026-11-04T08:15:59.294480+00:00",
+      "seconds": 1.0545594999566674
     },
     {
       "scope": "case",
       "name": "batch.insert.1000.columns.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:12:11.608969+00:00",
-      "seconds": 21.42164795799181
+      "startedAt": "2026-11-04T08:16:00.349077+00:00",
+      "seconds": 21.35877004219219
     },
     {
       "scope": "case",
       "name": "batch.insert.1000.document.typed",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:12:33.030754+00:00",
-      "seconds": 23.507413791958243
+      "startedAt": "2026-11-04T08:16:21.707964+00:00",
+      "seconds": 23.110822333022952
     },
     {
       "scope": "case",
       "name": "batch.insert.1000.columns.wire",
       "labels": {
         "member": "write-lowering",
-        "runtime": "3.14",
+        "runtime": "3.15",
         "window": "batch-insert"
       },
-      "startedAt": "2026-10-31T20:12:56.538316+00:00",
-      "seconds": 28.427571333013475
+      "startedAt": "2026-11-04T08:16:44.818909+00:00",
+      "seconds": 28.97192891710438
     },
     {
       "scope": "member",
@@ -2845,18 +2977,8 @@
       "labels": {
         "member": "feature-boundary"
       },
-      "startedAt": "2026-10-31T20:13:25.212058+00:00",
-      "seconds": 28.69644970796071
-    },
-    {
-      "scope": "setup",
-      "name": "identity",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13"
-      },
-      "startedAt": "2026-10-31T20:13:25.453702+00:00",
-      "seconds": 0.32105516688898206
+      "startedAt": "2026-11-04T08:17:14.032981+00:00",
+      "seconds": 23.981161375064403
     },
     {
       "scope": "setup",
@@ -2865,338 +2987,18 @@
         "member": "feature-boundary",
         "runtime": "3.14"
       },
-      "startedAt": "2026-10-31T20:13:25.774902+00:00",
-      "seconds": 0.2616540831513703
+      "startedAt": "2026-11-04T08:17:14.245446+00:00",
+      "seconds": 0.2509581670165062
     },
     {
-      "scope": "case",
-      "name": "predicate.shallow-scalar.binding",
+      "scope": "setup",
+      "name": "identity",
       "labels": {
         "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-predicate-binding"
+        "runtime": "3.15"
       },
-      "startedAt": "2026-10-31T20:13:26.036608+00:00",
-      "seconds": 0.42340804100967944
-    },
-    {
-      "scope": "case",
-      "name": "predicate.shallow-scalar.cold-plan",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-cold-plan"
-      },
-      "startedAt": "2026-10-31T20:13:26.460054+00:00",
-      "seconds": 0.5898763751611114
-    },
-    {
-      "scope": "case",
-      "name": "predicate.scalar-any.binding",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-predicate-binding"
-      },
-      "startedAt": "2026-10-31T20:13:27.049967+00:00",
-      "seconds": 0.43713191617280245
-    },
-    {
-      "scope": "case",
-      "name": "predicate.scalar-any.cold-plan",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-cold-plan"
-      },
-      "startedAt": "2026-10-31T20:13:27.487135+00:00",
-      "seconds": 0.587004833156243
-    },
-    {
-      "scope": "case",
-      "name": "predicate.nested-all.binding",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-predicate-binding"
-      },
-      "startedAt": "2026-10-31T20:13:28.074178+00:00",
-      "seconds": 0.43882575002498925
-    },
-    {
-      "scope": "case",
-      "name": "predicate.nested-all.cold-plan",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-cold-plan"
-      },
-      "startedAt": "2026-10-31T20:13:28.513039+00:00",
-      "seconds": 0.6051698329392821
-    },
-    {
-      "scope": "case",
-      "name": "predicate.two-hop-to-one.binding",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-predicate-binding"
-      },
-      "startedAt": "2026-10-31T20:13:29.118252+00:00",
-      "seconds": 0.43343962519429624
-    },
-    {
-      "scope": "case",
-      "name": "predicate.two-hop-to-one.cold-plan",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-cold-plan"
-      },
-      "startedAt": "2026-10-31T20:13:29.551727+00:00",
-      "seconds": 0.6315703750588
-    },
-    {
-      "scope": "case",
-      "name": "predicate.quantifier-through-to-one.binding",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-predicate-binding"
-      },
-      "startedAt": "2026-10-31T20:13:30.183332+00:00",
-      "seconds": 0.42267262493260205
-    },
-    {
-      "scope": "case",
-      "name": "predicate.quantifier-through-to-one.cold-plan",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-cold-plan"
-      },
-      "startedAt": "2026-10-31T20:13:30.606040+00:00",
-      "seconds": 0.635554458014667
-    },
-    {
-      "scope": "case",
-      "name": "predicate.subtype-narrowing.binding",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-predicate-binding"
-      },
-      "startedAt": "2026-10-31T20:13:31.241630+00:00",
-      "seconds": 0.4294435419142246
-    },
-    {
-      "scope": "case",
-      "name": "predicate.subtype-narrowing.cold-plan",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "typed-cold-plan"
-      },
-      "startedAt": "2026-10-31T20:13:31.671109+00:00",
-      "seconds": 0.6209017089568079
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.integer.size-0.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:32.292046+00:00",
-      "seconds": 0.42851904197596014
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.integer.size-0.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:32.720599+00:00",
-      "seconds": 0.4112955001182854
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.integer.size-8.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:33.131929+00:00",
-      "seconds": 0.41743358387611806
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.integer.size-8.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:33.549399+00:00",
-      "seconds": 0.4180348750669509
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.integer.size-128.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:33.967467+00:00",
-      "seconds": 0.49648099998012185
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.integer.size-128.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:34.463988+00:00",
-      "seconds": 0.4431812500115484
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.string.size-0.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:34.907205+00:00",
-      "seconds": 0.41062479210086167
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.string.size-0.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:35.317863+00:00",
-      "seconds": 0.4066748342011124
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.string.size-8.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:35.724572+00:00",
-      "seconds": 0.4167736249510199
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.string.size-8.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:36.141381+00:00",
-      "seconds": 0.4137104998808354
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.string.size-128.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:36.555125+00:00",
-      "seconds": 0.4535972911398858
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.string.size-128.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:37.008758+00:00",
-      "seconds": 0.4225089999381453
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.decimal.size-0.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:37.431300+00:00",
-      "seconds": 0.4022957088891417
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.decimal.size-0.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:37.833629+00:00",
-      "seconds": 0.4083844581618905
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.decimal.size-8.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:38.242049+00:00",
-      "seconds": 0.4370087918359786
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.decimal.size-8.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:38.679093+00:00",
-      "seconds": 0.4322485839948058
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.decimal.size-128.encode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-encode"
-      },
-      "startedAt": "2026-10-31T20:13:39.111382+00:00",
-      "seconds": 0.7845292091369629
-    },
-    {
-      "scope": "case",
-      "name": "scalar-collection.decimal.size-128.decode",
-      "labels": {
-        "member": "feature-boundary",
-        "runtime": "3.13",
-        "window": "scalar-collection-decode"
-      },
-      "startedAt": "2026-10-31T20:13:39.895951+00:00",
-      "seconds": 0.772659958107397
+      "startedAt": "2026-11-04T08:17:14.496567+00:00",
+      "seconds": 0.22692708391696215
     },
     {
       "scope": "case",
@@ -3206,8 +3008,8 @@
         "runtime": "3.14",
         "window": "typed-predicate-binding"
       },
-      "startedAt": "2026-10-31T20:13:40.668655+00:00",
-      "seconds": 0.3799198749475181
+      "startedAt": "2026-11-04T08:17:14.723536+00:00",
+      "seconds": 0.35387095902115107
     },
     {
       "scope": "case",
@@ -3217,8 +3019,8 @@
         "runtime": "3.14",
         "window": "typed-cold-plan"
       },
-      "startedAt": "2026-10-31T20:13:41.048607+00:00",
-      "seconds": 0.5090356669388711
+      "startedAt": "2026-11-04T08:17:15.077445+00:00",
+      "seconds": 0.4783052920829505
     },
     {
       "scope": "case",
@@ -3228,8 +3030,8 @@
         "runtime": "3.14",
         "window": "typed-predicate-binding"
       },
-      "startedAt": "2026-10-31T20:13:41.557676+00:00",
-      "seconds": 0.41159854200668633
+      "startedAt": "2026-11-04T08:17:15.555789+00:00",
+      "seconds": 0.35012516588903964
     },
     {
       "scope": "case",
@@ -3239,8 +3041,8 @@
         "runtime": "3.14",
         "window": "typed-cold-plan"
       },
-      "startedAt": "2026-10-31T20:13:41.969310+00:00",
-      "seconds": 0.5276003750041127
+      "startedAt": "2026-11-04T08:17:15.905951+00:00",
+      "seconds": 0.4830490001477301
     },
     {
       "scope": "case",
@@ -3250,8 +3052,8 @@
         "runtime": "3.14",
         "window": "typed-predicate-binding"
       },
-      "startedAt": "2026-10-31T20:13:42.496948+00:00",
-      "seconds": 0.3847333330195397
+      "startedAt": "2026-11-04T08:17:16.389038+00:00",
+      "seconds": 0.3505058749578893
     },
     {
       "scope": "case",
@@ -3261,8 +3063,8 @@
         "runtime": "3.14",
         "window": "typed-cold-plan"
       },
-      "startedAt": "2026-10-31T20:13:42.881714+00:00",
-      "seconds": 0.5297412080690265
+      "startedAt": "2026-11-04T08:17:16.739579+00:00",
+      "seconds": 0.49393599992617965
     },
     {
       "scope": "case",
@@ -3272,8 +3074,8 @@
         "runtime": "3.14",
         "window": "typed-predicate-binding"
       },
-      "startedAt": "2026-10-31T20:13:43.411492+00:00",
-      "seconds": 0.38801887515001
+      "startedAt": "2026-11-04T08:17:17.233551+00:00",
+      "seconds": 0.36056137504056096
     },
     {
       "scope": "case",
@@ -3283,8 +3085,8 @@
         "runtime": "3.14",
         "window": "typed-cold-plan"
       },
-      "startedAt": "2026-10-31T20:13:43.799544+00:00",
-      "seconds": 0.5383792920038104
+      "startedAt": "2026-11-04T08:17:17.594148+00:00",
+      "seconds": 0.5049465419724584
     },
     {
       "scope": "case",
@@ -3294,8 +3096,8 @@
         "runtime": "3.14",
         "window": "typed-predicate-binding"
       },
-      "startedAt": "2026-10-31T20:13:44.337958+00:00",
-      "seconds": 0.3878725829999894
+      "startedAt": "2026-11-04T08:17:18.099133+00:00",
+      "seconds": 0.3559425000566989
     },
     {
       "scope": "case",
@@ -3305,8 +3107,8 @@
         "runtime": "3.14",
         "window": "typed-cold-plan"
       },
-      "startedAt": "2026-10-31T20:13:44.725866+00:00",
-      "seconds": 0.556460415944457
+      "startedAt": "2026-11-04T08:17:18.455111+00:00",
+      "seconds": 0.5156615420710295
     },
     {
       "scope": "case",
@@ -3316,8 +3118,8 @@
         "runtime": "3.14",
         "window": "typed-predicate-binding"
       },
-      "startedAt": "2026-10-31T20:13:45.282361+00:00",
-      "seconds": 0.3942200839519501
+      "startedAt": "2026-11-04T08:17:18.970808+00:00",
+      "seconds": 0.3576667921151966
     },
     {
       "scope": "case",
@@ -3327,8 +3129,8 @@
         "runtime": "3.14",
         "window": "typed-cold-plan"
       },
-      "startedAt": "2026-10-31T20:13:45.676618+00:00",
-      "seconds": 0.574522125069052
+      "startedAt": "2026-11-04T08:17:19.328514+00:00",
+      "seconds": 0.512155125150457
     },
     {
       "scope": "case",
@@ -3338,8 +3140,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:46.251177+00:00",
-      "seconds": 0.3689633330795914
+      "startedAt": "2026-11-04T08:17:19.840705+00:00",
+      "seconds": 0.34302500006742775
     },
     {
       "scope": "case",
@@ -3349,8 +3151,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:46.620177+00:00",
-      "seconds": 0.3794172080233693
+      "startedAt": "2026-11-04T08:17:20.183769+00:00",
+      "seconds": 0.3406787500716746
     },
     {
       "scope": "case",
@@ -3360,8 +3162,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:46.999629+00:00",
-      "seconds": 0.38443670817650855
+      "startedAt": "2026-11-04T08:17:20.524486+00:00",
+      "seconds": 0.34116083406843245
     },
     {
       "scope": "case",
@@ -3371,8 +3173,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:47.384101+00:00",
-      "seconds": 0.40124666690826416
+      "startedAt": "2026-11-04T08:17:20.865684+00:00",
+      "seconds": 0.3408442090731114
     },
     {
       "scope": "case",
@@ -3382,8 +3184,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:47.785383+00:00",
-      "seconds": 0.3978199998382479
+      "startedAt": "2026-11-04T08:17:21.206567+00:00",
+      "seconds": 0.36812254204414785
     },
     {
       "scope": "case",
@@ -3393,8 +3195,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:48.183238+00:00",
-      "seconds": 0.3790075830183923
+      "startedAt": "2026-11-04T08:17:21.574726+00:00",
+      "seconds": 0.3530927498359233
     },
     {
       "scope": "case",
@@ -3404,8 +3206,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:48.562281+00:00",
-      "seconds": 0.36580529203638434
+      "startedAt": "2026-11-04T08:17:21.927856+00:00",
+      "seconds": 0.34083112492226064
     },
     {
       "scope": "case",
@@ -3415,8 +3217,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:48.928126+00:00",
-      "seconds": 0.37287912517786026
+      "startedAt": "2026-11-04T08:17:22.268725+00:00",
+      "seconds": 0.3414366669021547
     },
     {
       "scope": "case",
@@ -3426,8 +3228,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:49.301041+00:00",
-      "seconds": 0.3680812909733504
+      "startedAt": "2026-11-04T08:17:22.610198+00:00",
+      "seconds": 0.3437679579947144
     },
     {
       "scope": "case",
@@ -3437,8 +3239,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:49.669158+00:00",
-      "seconds": 0.36445145797915757
+      "startedAt": "2026-11-04T08:17:22.954006+00:00",
+      "seconds": 0.3412823751568794
     },
     {
       "scope": "case",
@@ -3448,8 +3250,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:50.033643+00:00",
-      "seconds": 0.5076010830234736
+      "startedAt": "2026-11-04T08:17:23.295343+00:00",
+      "seconds": 0.38361779204569757
     },
     {
       "scope": "case",
@@ -3459,8 +3261,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:50.541278+00:00",
-      "seconds": 0.4005215000361204
+      "startedAt": "2026-11-04T08:17:23.678998+00:00",
+      "seconds": 0.34952366701327264
     },
     {
       "scope": "case",
@@ -3470,8 +3272,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:50.941835+00:00",
-      "seconds": 0.3854050000663847
+      "startedAt": "2026-11-04T08:17:24.028561+00:00",
+      "seconds": 0.3426297919359058
     },
     {
       "scope": "case",
@@ -3481,8 +3283,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:51.327276+00:00",
-      "seconds": 0.3769387500360608
+      "startedAt": "2026-11-04T08:17:24.371230+00:00",
+      "seconds": 0.3411038750782609
     },
     {
       "scope": "case",
@@ -3492,8 +3294,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:51.704249+00:00",
-      "seconds": 0.38570358301512897
+      "startedAt": "2026-11-04T08:17:24.712372+00:00",
+      "seconds": 0.3599352079909295
     },
     {
       "scope": "case",
@@ -3503,8 +3305,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:52.089986+00:00",
-      "seconds": 0.3878007910680026
+      "startedAt": "2026-11-04T08:17:25.072345+00:00",
+      "seconds": 0.3641507502179593
     },
     {
       "scope": "case",
@@ -3514,8 +3316,8 @@
         "runtime": "3.14",
         "window": "scalar-collection-encode"
       },
-      "startedAt": "2026-10-31T20:13:52.477825+00:00",
-      "seconds": 0.6776512919459492
+      "startedAt": "2026-11-04T08:17:25.436532+00:00",
+      "seconds": 0.6297337498981506
     },
     {
       "scope": "case",
@@ -3525,15 +3327,345 @@
         "runtime": "3.14",
         "window": "scalar-collection-decode"
       },
-      "startedAt": "2026-10-31T20:13:53.155512+00:00",
-      "seconds": 0.6671599999535829
+      "startedAt": "2026-11-04T08:17:26.066305+00:00",
+      "seconds": 0.6198208751156926
+    },
+    {
+      "scope": "case",
+      "name": "predicate.shallow-scalar.binding",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-predicate-binding"
+      },
+      "startedAt": "2026-11-04T08:17:26.686167+00:00",
+      "seconds": 0.3226036671549082
+    },
+    {
+      "scope": "case",
+      "name": "predicate.shallow-scalar.cold-plan",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-cold-plan"
+      },
+      "startedAt": "2026-11-04T08:17:27.008809+00:00",
+      "seconds": 0.45485841599293053
+    },
+    {
+      "scope": "case",
+      "name": "predicate.scalar-any.binding",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-predicate-binding"
+      },
+      "startedAt": "2026-11-04T08:17:27.463709+00:00",
+      "seconds": 0.32885829196311533
+    },
+    {
+      "scope": "case",
+      "name": "predicate.scalar-any.cold-plan",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-cold-plan"
+      },
+      "startedAt": "2026-11-04T08:17:27.792606+00:00",
+      "seconds": 0.4642547501716763
+    },
+    {
+      "scope": "case",
+      "name": "predicate.nested-all.binding",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-predicate-binding"
+      },
+      "startedAt": "2026-11-04T08:17:28.256899+00:00",
+      "seconds": 0.3272259999066591
+    },
+    {
+      "scope": "case",
+      "name": "predicate.nested-all.cold-plan",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-cold-plan"
+      },
+      "startedAt": "2026-11-04T08:17:28.584165+00:00",
+      "seconds": 0.4708071250934154
+    },
+    {
+      "scope": "case",
+      "name": "predicate.two-hop-to-one.binding",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-predicate-binding"
+      },
+      "startedAt": "2026-11-04T08:17:29.055009+00:00",
+      "seconds": 0.3370594170410186
+    },
+    {
+      "scope": "case",
+      "name": "predicate.two-hop-to-one.cold-plan",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-cold-plan"
+      },
+      "startedAt": "2026-11-04T08:17:29.392105+00:00",
+      "seconds": 0.4950464591383934
+    },
+    {
+      "scope": "case",
+      "name": "predicate.quantifier-through-to-one.binding",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-predicate-binding"
+      },
+      "startedAt": "2026-11-04T08:17:29.887190+00:00",
+      "seconds": 0.33127716719172895
+    },
+    {
+      "scope": "case",
+      "name": "predicate.quantifier-through-to-one.cold-plan",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-cold-plan"
+      },
+      "startedAt": "2026-11-04T08:17:30.218504+00:00",
+      "seconds": 0.4996413749177009
+    },
+    {
+      "scope": "case",
+      "name": "predicate.subtype-narrowing.binding",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-predicate-binding"
+      },
+      "startedAt": "2026-11-04T08:17:30.718186+00:00",
+      "seconds": 0.3326898750383407
+    },
+    {
+      "scope": "case",
+      "name": "predicate.subtype-narrowing.cold-plan",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "typed-cold-plan"
+      },
+      "startedAt": "2026-11-04T08:17:31.050927+00:00",
+      "seconds": 0.49496687506325543
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.integer.size-0.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:31.545942+00:00",
+      "seconds": 0.3179608751088381
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.integer.size-0.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:31.863943+00:00",
+      "seconds": 0.31934929196722806
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.integer.size-8.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:32.183333+00:00",
+      "seconds": 0.3194317079614848
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.integer.size-8.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:32.502810+00:00",
+      "seconds": 0.31901570805348456
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.integer.size-128.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:32.821897+00:00",
+      "seconds": 0.3337000000756234
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.integer.size-128.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:33.155672+00:00",
+      "seconds": 0.33831133390776813
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.string.size-0.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:33.494044+00:00",
+      "seconds": 0.31569108297117054
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.string.size-0.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:33.809795+00:00",
+      "seconds": 0.316929625114426
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.string.size-8.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:34.126784+00:00",
+      "seconds": 0.31647016596980393
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.string.size-8.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:34.443327+00:00",
+      "seconds": 0.31619108305312693
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.string.size-128.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:34.759574+00:00",
+      "seconds": 0.3317247082013637
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.string.size-128.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:35.091357+00:00",
+      "seconds": 0.32399904215708375
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.decimal.size-0.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:35.415414+00:00",
+      "seconds": 0.31865254207514226
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.decimal.size-0.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:35.734124+00:00",
+      "seconds": 0.317819416988641
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.decimal.size-8.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:36.052000+00:00",
+      "seconds": 0.3338428330607712
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.decimal.size-8.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:36.385901+00:00",
+      "seconds": 0.3355027500074357
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.decimal.size-128.encode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-encode"
+      },
+      "startedAt": "2026-11-04T08:17:36.721461+00:00",
+      "seconds": 0.6079975829925388
+    },
+    {
+      "scope": "case",
+      "name": "scalar-collection.decimal.size-128.decode",
+      "labels": {
+        "member": "feature-boundary",
+        "runtime": "3.15",
+        "window": "scalar-collection-decode"
+      },
+      "startedAt": "2026-11-04T08:17:37.329531+00:00",
+      "seconds": 0.5973386659752578
     },
     {
       "scope": "collection",
       "name": "python-report-cost",
       "labels": {},
-      "startedAt": "2026-10-31T19:08:50.220250+00:00",
-      "seconds": 3903.6815915410407
+      "startedAt": "2026-11-04T07:16:38.650501+00:00",
+      "seconds": 3659.36865754216
     }
   ],
   "unavailable": []

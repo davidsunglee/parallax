@@ -2,23 +2,8 @@
   "members": {
     "feature-boundary": {
       "runtimes": {
-        "3.13": {
-          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
-          "implementation": "CPython",
-          "productionOrigins": {
-            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
-            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
-            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
-            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
-            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
-            "parallax.snapshot._publication._root": "not-loaded",
-            "parallax.snapshot._publication._wire_render": "not-loaded"
-          },
-          "status": "available",
-          "version": "3.13.18"
-        },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-259-build-each-object-in-one-fused-step-d94azi/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/canonical-tmp/parallax-feature-boundary-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
@@ -30,36 +15,36 @@
             "parallax.snapshot._publication._wire_render": "not-loaded"
           },
           "status": "available",
-          "version": "3.14.8"
+          "version": "3.14.10"
+        },
+        "3.15": {
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/envs/python-315/bin/python",
+          "implementation": "CPython",
+          "productionOrigins": {
+            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
+            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
+            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
+            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
+            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
+            "parallax.snapshot._publication._root": "not-loaded",
+            "parallax.snapshot._publication._wire_render": "not-loaded"
+          },
+          "status": "available",
+          "version": "3.15.2"
         }
       },
       "sources": {
-        "tests/unit/_feature_boundary_support.py": "b3575df3a4d4e1a280f2f2a75ff0f9ea71a6378b9cdddb32d8fb9e10f46641f7",
+        "tests/unit/_feature_boundary_support.py": "1bb71e4bad5a0aec308106953bf423902093b7a5798c33560f0d23b6b24e54d1",
         "tests/unit/memory_instruments.py": "6ab2b716c2a965b25772a26f4360cae6d09f93dfcea4f98fa8f875bd4d7db1fa",
         "tools/feature_boundary_overhead.py": "117d09e8a7b654dee4326dca5353e563e3385e4b682ff6d6856898920d4bc743",
         "tools/feature_boundary_reading.py": "d0964c1c16557de48bbbfc879b0dcdb092ee63a56fd2776f94258b6fb7384371",
-        "tools/production_origins.py": "98e9f53ed3923e21db688ce76156b20e8adc4de9a91493187c3a991cb0ceb158"
+        "tools/production_origins.py": "5ef6422a304a12cb0ecefe559ef4e485990b646d485f2aa4dd651fce3e9fcf7b"
       }
     },
     "instance-state": {
       "runtimes": {
-        "3.13": {
-          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
-          "implementation": "CPython",
-          "productionOrigins": {
-            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
-            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
-            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
-            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
-            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
-            "parallax.snapshot._publication._root": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_root.py",
-            "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
-          },
-          "status": "available",
-          "version": "3.13.18"
-        },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-259-build-each-object-in-one-fused-step-d94azi/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/canonical-tmp/parallax-instance-state-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
@@ -71,25 +56,40 @@
             "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
           },
           "status": "available",
-          "version": "3.14.8"
+          "version": "3.14.10"
+        },
+        "3.15": {
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/envs/python-315/bin/python",
+          "implementation": "CPython",
+          "productionOrigins": {
+            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
+            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
+            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
+            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
+            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
+            "parallax.snapshot._publication._root": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_root.py",
+            "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
+          },
+          "status": "available",
+          "version": "3.15.2"
         }
       },
       "sources": {
-        "tests/unit/_instance_state_support.py": "b3cc3ac04524ad581917a91fb1e1b4a3a199fe11ee84986cda296a5828a1c98f",
+        "tests/unit/_instance_state_support.py": "46b5b4ef5df68717c799868a05b589f84a06b1653f72e4a06e318e5b50ba9cfc",
         "tests/unit/memory_instruments.py": "6ab2b716c2a965b25772a26f4360cae6d09f93dfcea4f98fa8f875bd4d7db1fa",
         "tools/instance_state_overhead.py": "6d133bfb99989ad4755ef7aaab1debc3e53154665594c2aa235f3166b4324027",
-        "tools/instance_state_reading.py": "362f0333e2a8d15f3ba8b426ad50b73955cdeeb3c9580a26bf98b71decb68201",
-        "tools/production_origins.py": "98e9f53ed3923e21db688ce76156b20e8adc4de9a91493187c3a991cb0ceb158"
+        "tools/instance_state_reading.py": "4a65cd322652fc489fce27e2290fcb68acb99d2a1be1312a31c1de3d2432889e",
+        "tools/production_origins.py": "5ef6422a304a12cb0ecefe559ef4e485990b646d485f2aa4dd651fce3e9fcf7b"
       }
     },
     "lifecycle-overhead": {
       "runtimes": {
-        "3.13": {
+        "3.14": {
           "reason": "the member recorded no identity for this runtime",
           "status": "unavailable"
         },
-        "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-259-build-each-object-in-one-fused-step-d94azi/parallax/languages/python/.venv/bin/python",
+        "3.15": {
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/envs/python-315/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
@@ -101,33 +101,18 @@
             "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
           },
           "status": "available",
-          "version": "3.14.8"
+          "version": "3.15.2"
         }
       },
       "sources": {
-        "tools/lifecycle_overhead.py": "ae5f8b7b8ac2175434591bba81fc0aa6f7761b53dc53c6a42271fcd9f37d0be3",
-        "tools/production_origins.py": "98e9f53ed3923e21db688ce76156b20e8adc4de9a91493187c3a991cb0ceb158"
+        "tools/lifecycle_overhead.py": "34b51cc456a4ffaeb4d007158b1426c9e61c26d66f70f4876bb4f61e634ae822",
+        "tools/production_origins.py": "5ef6422a304a12cb0ecefe559ef4e485990b646d485f2aa4dd651fce3e9fcf7b"
       }
     },
     "snapshot-delivery": {
       "runtimes": {
-        "3.13": {
-          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
-          "implementation": "CPython",
-          "productionOrigins": {
-            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
-            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
-            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
-            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
-            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
-            "parallax.snapshot._publication._root": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_root.py",
-            "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
-          },
-          "status": "available",
-          "version": "3.13.18"
-        },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-259-build-each-object-in-one-fused-step-d94azi/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/canonical-tmp/parallax-snapshot-delivery-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
@@ -139,40 +124,41 @@
             "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
           },
           "status": "available",
-          "version": "3.14.8"
+          "version": "3.14.10"
+        },
+        "3.15": {
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/envs/python-315/bin/python",
+          "implementation": "CPython",
+          "productionOrigins": {
+            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
+            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
+            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
+            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
+            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
+            "parallax.snapshot._publication._root": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_root.py",
+            "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
+          },
+          "status": "available",
+          "version": "3.15.2"
         }
       },
       "sources": {
+        "tests/_support/live_read_workloads.py": "4ebe2009a4e030c28bad4ed1807d75cfbcd1a0d774d63a104bbe75c989292b6f",
         "tests/unit/_delivery_control_support.py": "17bf068a1b0b2089c5f805fa062d7695c2d5d586f9d68b372d5b37e10f842b4c",
         "tests/unit/_scalar_type_support.py": "865cbd96588b5e53af98c4a45d3d7d378760ecc7d294d5a9c7a202925e317f1e",
-        "tests/unit/_snapshot_materialization_support.py": "ba43f5b767e63d28bcee411e888484e551e2184d9b8c3ea51383db1949d26b8a",
+        "tests/unit/_snapshot_materialization_support.py": "ca8dca0ed74421fd9fe0465f302a2968d6c46d83405e4abea2d0efc911c8f4da",
         "tests/unit/_structural_geometry_support.py": "5a9b489a5cf1db949724afc89894a38daac07afe4cb6ba77c9eb0db414a0fde9",
         "tests/unit/_workload_spelling_support.py": "1ccd8896ef05d575e6563928117fe90083f16bf9aa78d9e61e6c7fec0204cfab",
         "tests/unit/memory_instruments.py": "6ab2b716c2a965b25772a26f4360cae6d09f93dfcea4f98fa8f875bd4d7db1fa",
-        "tools/production_origins.py": "98e9f53ed3923e21db688ce76156b20e8adc4de9a91493187c3a991cb0ceb158",
-        "tools/snapshot_delivery_overhead.py": "756250a9cabe461b8b44f88242110a08b85f7368a40796b9f62c7f5e0b2e6f0b",
-        "tools/snapshot_delivery_reading.py": "5626a9aff270b4e39d331adfab985fa21b821f41fad7d08d3ca747a465af4f55"
+        "tools/production_origins.py": "5ef6422a304a12cb0ecefe559ef4e485990b646d485f2aa4dd651fce3e9fcf7b",
+        "tools/snapshot_delivery_overhead.py": "628b98a8c0fee6eef360f157de21bae1e1108fd8e56d0ed24fb46d1363d0503d",
+        "tools/snapshot_delivery_reading.py": "840b7669439015e3275102c832926fc8eb45517b6fa29716e3ca44bc12623396"
       }
     },
     "write-lowering": {
       "runtimes": {
-        "3.13": {
-          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
-          "implementation": "CPython",
-          "productionOrigins": {
-            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
-            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
-            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
-            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
-            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
-            "parallax.snapshot._publication._root": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_root.py",
-            "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
-          },
-          "status": "available",
-          "version": "3.13.18"
-        },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-259-build-each-object-in-one-fused-step-d94azi/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/canonical-tmp/parallax-write-lowering-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
@@ -184,7 +170,22 @@
             "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
           },
           "status": "available",
-          "version": "3.14.8"
+          "version": "3.14.10"
+        },
+        "3.15": {
+          "executable": "/Users/david/.local/share/parallax/evidence/cor-258/envs/python-315/bin/python",
+          "implementation": "CPython",
+          "productionOrigins": {
+            "parallax.core.document_codec._document": "packages/parallax-core/src/parallax/core/document_codec/_document.py",
+            "parallax.core.entity._row_fill": "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
+            "parallax.core.read_delivery._convert": "packages/parallax-core/src/parallax/core/read_delivery/_convert.py",
+            "parallax.core.read_delivery._page._rows": "packages/parallax-core/src/parallax/core/read_delivery/_page/_rows.py",
+            "parallax.core.read_delivery._row_recording": "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py",
+            "parallax.snapshot._publication._root": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_root.py",
+            "parallax.snapshot._publication._wire_render": "packages/parallax-snapshot/src/parallax/snapshot/_publication/_wire_render.py"
+          },
+          "status": "available",
+          "version": "3.15.2"
         }
       },
       "sources": {
@@ -193,8 +194,8 @@
         "tests/unit/_workload_spelling_support.py": "1ccd8896ef05d575e6563928117fe90083f16bf9aa78d9e61e6c7fec0204cfab",
         "tests/unit/_write_lowering_support.py": "24f0a40c88ae5e3d02d638ea698114e4cab549f725eae2277f54c7076c85bd00",
         "tests/unit/memory_instruments.py": "6ab2b716c2a965b25772a26f4360cae6d09f93dfcea4f98fa8f875bd4d7db1fa",
-        "tools/production_origins.py": "98e9f53ed3923e21db688ce76156b20e8adc4de9a91493187c3a991cb0ceb158",
-        "tools/write_lowering_overhead.py": "b11412ad39ba897f154a9cc7e0bb66bba3751938c65a2c955146557a12065d8b",
+        "tools/production_origins.py": "5ef6422a304a12cb0ecefe559ef4e485990b646d485f2aa4dd651fce3e9fcf7b",
+        "tools/write_lowering_overhead.py": "29711c2d97045bfad9ffdd659b1ea3ff3693628319717388d7548518598cb43f",
         "tools/write_lowering_reading.py": "819afd8d1a14d238dc746bf7eaadc86661b83ce06816b88c044d240899291de8"
       }
     }
