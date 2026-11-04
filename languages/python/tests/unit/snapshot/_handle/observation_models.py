@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 """Idiomatic Entity Classes for the observation-keying suite: the two include
 shapes no corpus mirror carries.
 

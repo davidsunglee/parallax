@@ -201,7 +201,7 @@ class WriteDocumentBinds:
         for attempt in attempts:
             try:
                 attempt()
-            except (AttributeError, TypeError):
+            except AttributeError, TypeError:
                 continue
             self.mutated.append(container)
 

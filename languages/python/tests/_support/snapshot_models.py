@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 """Idiomatic Entity Classes for the frozen-node wrapping / statement-include /
 narrowed-view unit tests.
 

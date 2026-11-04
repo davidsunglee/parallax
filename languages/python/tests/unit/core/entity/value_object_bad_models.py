@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 """Deliberately mis-declared Value Object classes, built lazily.
 
 This module omits ``from __future__ import annotations`` so the engine reads the

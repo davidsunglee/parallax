@@ -3,7 +3,7 @@ name = "parallax-postgres"
 version = "0.1.0"
 description = "Parallax Postgres database adapter: the concrete database runtime over psycopg and its companion pool."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [

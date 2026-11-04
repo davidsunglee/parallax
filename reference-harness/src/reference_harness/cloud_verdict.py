@@ -365,7 +365,7 @@ class _GitHubJobs:
 def _attempt(environment: Mapping[str, str]) -> Attempt | None:
     try:
         return Attempt(int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"]))
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         return None
 
 

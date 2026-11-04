@@ -8,7 +8,6 @@ annotation objects; ``test_declaration_engine`` covers the stringized path and
 import ast
 import datetime as dt
 import inspect
-import sys
 from collections.abc import Callable
 from decimal import Decimal
 from typing import cast
@@ -86,7 +85,7 @@ class Customer(Entity, table="customer", namespace="sales"):
     tax_id: Attr[str] = attr(name="taxID", column="tax_id")
     legacy_id: Attr[str] = attr(name="legacyID")
     bin_no: Attr[str] = attr(column="BIN_NO")
-    orders: Rel[tuple["Order", ...]] = rel(
+    orders: Rel[tuple["Order", ...]] = rel(  # noqa: UP037 - relationship target resolves at model formation
         reverse_of="customer", order_by=("placed_at", desc("id"))
     )
 
@@ -776,17 +775,7 @@ def test_a_subtypes_own_declaration_wins_the_names_it_shares_with_its_root() -> 
     assert set(subtype.py_to_name) == {"id", "root_ref", "bond_ref"}
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 14),
-    reason="PEP 649 / PEP 749 defer class-body annotations only on Python 3.14+",
-)
 def test_deferred_annotations_are_recovered_without_the_future_import() -> None:
-    # This module omits ``from __future__ import annotations``, so on Python
-    # 3.14+ a class body carries a deferred ``__annotate_func__`` the engine
-    # must evaluate to see the live member types. The eager 3.13 path is
-    # exercised throughout this module; this pins the deferred recovery on its
-    # own runtime, so a broken ``annotationlib`` recovery fails here rather than
-    # silently yielding a memberless declaration.
     class Deferred(Entity, table="deferred"):
         id: Attr[int] = attr(primary_key=True)
         label: Attr[str]

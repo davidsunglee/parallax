@@ -230,7 +230,11 @@ def _capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Bud
     current = BudgetContract.load()
     old = BudgetContract.from_bytes(
         current.path,
-        current.authored.replace(str(current.authority["cpython"]).encode(), b"3.14.0", 1),
+        current.authored.replace(
+            str(current.authority["cpython"]).encode(),
+            f"{authority_minor(current.authority)}.0".encode(),
+            1,
+        ),
     )
     envelopes = member_envelopes(old)
     envelopes[cost_report.INSTANCE_STATE_SUBJECT] = complete_instance_state(old)
@@ -319,7 +323,7 @@ def test_reclassify_refuses_contract_changes_before_writes(
     authored = {
         "unchanged": old_text,
         "sampling": current.authored.replace(b"warmups: 3", b"warmups: 9", 1),
-        "minor": current.authored.replace(str(current.authority["cpython"]).encode(), b"3.15.1", 1),
+        "minor": current.authored.replace(str(current.authority["cpython"]).encode(), b"9.99.1", 1),
         "workload": current.authored + b"\nextra: changed\n",
     }[change]
     monkeypatch.setattr(

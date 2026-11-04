@@ -498,7 +498,7 @@ def test_a_read_over_a_session_ended_while_idle_is_replaced_without_preparing_it
     assert counts == expected_counts
     (lost, repeated, *rest) = submissions
     assert lost[0] is not repeated[0]
-    assert lost[1] == repeated[1] and all(map(operator.is_, lost[2], repeated[2]))
+    assert lost[1] == repeated[1] and all(map(operator.is_, lost[2], repeated[2], strict=False))
     assert [bind.values for bind in repeated[2][0] if isinstance(bind, ArrayBind)] == [[1, 2]]
     assert [sql for _, sql, _ in [repeated, *rest]] == [sql for _, sql, _ in expected_submissions]
     if layout == "columns":

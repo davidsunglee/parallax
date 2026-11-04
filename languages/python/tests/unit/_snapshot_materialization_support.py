@@ -206,7 +206,7 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         token: Attr[uuid.UUID | None]
         primary_tag: Attr[Tag | None]
         tags: Attr[tuple[Tag, ...]]
-        owner: Rel["Owner | None"] = rel(reverse_of="nodes")
+        owner: Rel["Owner | None"] = rel(reverse_of="nodes")  # noqa: UP037 - relationship target resolves at model formation
 
     class Special(Node, namespace=namespace, inheritance=AbstractSubtype):
         rank: Attr[int | None] = attr(type=Int32)

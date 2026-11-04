@@ -661,7 +661,7 @@ class Rel[T]:
             return RelationshipExpr[Any, Any](hop)
         try:
             value = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
-        except (AttributeError, TypeError):
+        except AttributeError, TypeError:
             value = obj.__dict__.get(self._py_name, UNLOADED)
         if value is UNLOADED:
             raise UnloadedRelationshipError(self._ref.relationship)

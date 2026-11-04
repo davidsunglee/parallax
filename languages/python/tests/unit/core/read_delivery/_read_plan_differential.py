@@ -224,7 +224,7 @@ def _stepped(value: object, neutral_type: NeutralType, step: int) -> object | No
                 candidate = uuid.UUID(int=value.int + step)
             case _:
                 return None
-    except (OverflowError, ValueError):
+    except OverflowError, ValueError:
         return None
     if (
         candidate is None

@@ -552,7 +552,7 @@ def _check_provenance(manifest: Mapping[str, Any], check: _Check) -> None:
     created = manifest.get("createdAt")
     try:
         dt.datetime.fromisoformat(cast("str", created))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         check.expect(False, f"createdAt {created!r} is not a timestamp")
     command = _record(manifest.get("command"))
     check.expect(_filled(command.get("argv"), list), "the command is not recorded")
@@ -643,7 +643,7 @@ def _check_statement(name: str, statement: Mapping[str, Any], check: _Check) -> 
     try:
         decoded = decode_binds(cast("Sequence[Mapping[str, object]]", binds))
         lossless = encode_binds(decoded) == binds
-    except (EvidenceError, TypeError, ValueError, AttributeError):
+    except EvidenceError, TypeError, ValueError, AttributeError:
         decoded, lossless = (), False
     if check.expect(lossless, f"{name}'s binds are not losslessly replayable"):
         placeholders = _placeholders(cast("str", sql))

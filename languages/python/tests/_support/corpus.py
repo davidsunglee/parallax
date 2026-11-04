@@ -150,7 +150,7 @@ def compare_binds(
             assert isinstance(right, list), (index, left, right)
             golden = cast("list[object]", right)
             assert len(elements) == len(golden), (index, left, right)
-            assert all(map(_scalar_equal, elements, golden)), (index, left, right)
+            assert all(map(_scalar_equal, elements, golden, strict=True)), (index, left, right)
         else:
             assert _scalar_equal(left, right), (index, left, right)
     if positions:

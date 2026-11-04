@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 from decimal import Decimal
 
 from parallax.core import (

@@ -31,6 +31,7 @@ from __future__ import annotations
 import importlib.machinery
 import sys
 from collections.abc import Iterable, Mapping
+from glob import iglob
 from pathlib import Path
 from typing import Final, cast
 
@@ -57,7 +58,13 @@ imports nothing on their account never loaded them."""
 
 def source_roots(workspace: Path = WORKSPACE) -> tuple[Path, ...]:
     """Every distribution's source root in ``workspace``, resolved."""
-    return tuple(sorted(path.resolve() for path in (workspace / "packages").glob("*/src")))
+    packages = workspace / "packages"
+    return tuple(
+        sorted(
+            (packages / path).resolve()
+            for path in iglob("*/src", root_dir=packages, include_hidden=True)
+        )
+    )
 
 
 def _within(location: str, roots: Iterable[Path]) -> bool:

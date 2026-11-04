@@ -463,13 +463,17 @@ def addresses(
     controls: bool = True,
     scalar_types: bool = True,
     live_reads: bool = True,
+    runtime_scope: Sequence[str] | None = None,
 ) -> tuple[Address, ...]:
     """Every (runtime, workload, cell) address a complete envelope carries,
-    the scalar-type reads on the runtimes :func:`reads_scalar_types` admits alone;
+    the scalar-type reads scoped to ``runtime_scope`` (current support by default);
     without ``scalar_types``, the matrix a capture taken before the scalar-type
     reads existed carries, and without ``controls`` as well, the one taken
     before the control group existed. Those historical matrices also omit
     ``live_reads``, which adds only elapsed readings against PostgreSQL."""
+    scalar_runtimes = scalar_type_runtimes(
+        supported_minors() if runtime_scope is None else runtime_scope
+    )
     leading = (*expanded_cells(contract), *geometry_cells())
     scalars = scalar_cells() if scalar_types else ()
     trailing = (
@@ -480,7 +484,7 @@ def addresses(
     return tuple(
         (runtime, cell.workload, cell.path)
         for runtime in runtimes
-        for cell in (*leading, *(scalars if reads_scalar_types(runtime) else ()), *trailing)
+        for cell in (*leading, *(scalars if runtime in scalar_runtimes else ()), *trailing)
     )
 
 
@@ -492,12 +496,18 @@ def selected_addresses(
     controls: bool = True,
     scalar_types: bool = True,
     live_reads: bool = True,
+    runtime_scope: Sequence[str] | None = None,
 ) -> tuple[Address, ...]:
     """The addresses among :func:`addresses` that ``selected`` keeps."""
     return tuple(
         address
         for address in addresses(
-            contract, runtimes, controls=controls, scalar_types=scalar_types, live_reads=live_reads
+            contract,
+            runtimes,
+            controls=controls,
+            scalar_types=scalar_types,
+            live_reads=live_reads,
+            runtime_scope=runtime_scope,
         )
         if selected(address[1], address[2])
     )

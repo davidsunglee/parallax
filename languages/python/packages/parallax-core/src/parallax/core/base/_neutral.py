@@ -251,7 +251,7 @@ def utc_instant(value: _dt.datetime) -> _dt.datetime | None:
         if base_value.utcoffset() is None:
             return None
         return base_value.astimezone(_dt.UTC)
-    except (OverflowError, TypeError, ValueError):
+    except OverflowError, TypeError, ValueError:
         return None
 
 
@@ -686,7 +686,7 @@ def _canonical_uuid_input(value: str) -> object:
     base_value = str.__str__(value)
     try:
         decoded = _uuid.UUID(base_value)
-    except (AttributeError, ValueError):
+    except AttributeError, ValueError:
         return base_value
     return decoded if str(decoded) == base_value else base_value
 
@@ -1227,7 +1227,7 @@ def _base_instance_namespace(value: object) -> dict[str, object] | None:
             continue
         try:
             namespace = get_descriptor(descriptor, value, owner)
-        except (AttributeError, TypeError):
+        except AttributeError, TypeError:
             continue
         return cast("dict[str, object]", namespace) if type(namespace) is dict else None
     return None

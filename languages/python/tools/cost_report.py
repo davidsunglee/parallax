@@ -366,6 +366,15 @@ def _decoded(member: Member, output: str, selected: Selection = every_cell) -> D
     return document
 
 
+def _captured_runtime_scope(document: Document) -> tuple[str, ...]:
+    """Recover the supported generation ending at the captured authority minor,
+    independently of which readings a complete capture or diagnostic kept."""
+    contract = Provenance.from_document(cast("Document", document["provenance"])).contract()
+    major, newest = (int(part) for part in authority_minor(contract.authority).split("."))
+    width = len(supported_minors())
+    return tuple(f"{major}.{minor}" for minor in range(newest - width + 1, newest + 1))
+
+
 def validate_matrix(
     document: Document,
     subject: str,
@@ -375,13 +384,14 @@ def validate_matrix(
 ) -> None:
     """Validate a subject's owned reading matrix against
     ``contract``, the addresses ``selected``, and the ``runtimes`` measured,
-    every supported minor unless named; other subjects have none."""
+    the captured supported generation unless named; other subjects have none."""
+    minors = _captured_runtime_scope(document) if runtimes is None else runtimes
     if subject == SNAPSHOT_SUBJECT:
-        validate_snapshot_matrix(document, contract, selected, runtimes)
+        validate_snapshot_matrix(document, contract, selected, minors)
     if subject == WRITE_SUBJECT:
-        validate_write_lowering_matrix(document, runtimes)
+        validate_write_lowering_matrix(document, minors)
     if subject == FEATURE_SUBJECT:
-        feature_report.validate_matrix(document, runtimes)
+        feature_report.validate_matrix(document, minors)
     if subject == LIFECYCLE_SUBJECT:
         lifecycle_report.validate_matrix(document)
 
@@ -446,8 +456,9 @@ def validate_snapshot_matrix(
     The matrix is exact at one of its historical generations: before live reads,
     before scalar types, or before controls. Partial additions never form a
     generation; ``current`` accepts the complete current matrix alone."""
-    minors = tuple(runtimes) if runtimes is not None else supported_minors()
-    expected = selected_addresses(contract, minors, selected)
+    scope = supported_minors() if current else _captured_runtime_scope(document)
+    minors = tuple(runtimes) if runtimes is not None else scope
+    expected = selected_addresses(contract, minors, selected, runtime_scope=scope)
     readings = _indexed(_readings(document), label="Snapshot reading")
     if not current and set(readings) != set(expected):
         for controls, scalars in ((True, True), (True, False), (False, False)):
@@ -458,6 +469,7 @@ def validate_snapshot_matrix(
                 controls=controls,
                 scalar_types=scalars,
                 live_reads=False,
+                runtime_scope=scope,
             )
             if set(readings) == set(earlier):
                 expected = earlier
@@ -477,6 +489,7 @@ def validate_snapshot_matrix(
         label="Snapshot comparison",
     )
     memory_children = contract.memory_children
+    comparison_runtime = authority_minor(contract.authority) if current else scope[-1]
     for address in expected:
         runtime, workload, path = address
         reading_document = readings[address]
@@ -505,7 +518,7 @@ def validate_snapshot_matrix(
                 f"sample median {expected_value}"
             )
         cell = contract_cells.get((workload, path))
-        if cell is None or runtime != authority_minor(contract.authority):
+        if cell is None or runtime != comparison_runtime:
             continue
         reading = Reading(workload, path, actual_value, expected_unit, samples)
         expected_comparison = snapshot_comparison(cell, reading, contract, complete=True)
@@ -541,13 +554,16 @@ def validate_write_lowering_matrix(
     is exact under none. ``current`` accepts the current coverage and
     vocabulary alone."""
     readings = _indexed(_readings(document), label="write-lowering reading")
-    minors = tuple(runtimes) if runtimes is not None else supported_minors()
+    scope = supported_minors() if current else _captured_runtime_scope(document)
+    minors = tuple(runtimes) if runtimes is not None else scope
     coverages = {"current": write_report.CASE_NAMES} if current else write_report.CASE_COVERAGES
     vocabularies = (
         {"current": write_report.CALL_NAMES} if current else write_report.CALL_VOCABULARIES
     )
     matrices = {
-        (coverage, vocabulary): write_report.expected_addresses(minors, call_names, case_names)
+        (coverage, vocabulary): write_report.expected_addresses(
+            minors, call_names, case_names, runtime_scope=scope
+        )
         for coverage, case_names in coverages.items()
         for vocabulary, call_names in vocabularies.items()
     }
@@ -1538,7 +1554,9 @@ def _comparable_envelope(
         validate(envelope)
         validate_matrix(envelope, subject, contract)
         if subject == INSTANCE_STATE_SUBJECT:
-            validate_instance_state_matrix(envelope, include_head_only=side != BASE)
+            validate_instance_state_matrix(
+                envelope, _captured_runtime_scope(envelope), include_head_only=side != BASE
+            )
     except (KeyError, TypeError, ValueError, ValidationError) as error:
         return None, [f"{side}: the {subject} envelope is invalid: {error}"]
     failures: list[str] = []
@@ -3373,7 +3391,7 @@ def _stated_history_reason(marker: Path) -> str | None:
         return None
     try:
         document = _load(marker)
-    except (ValueError, OSError):
+    except ValueError, OSError:
         return None
     if not isinstance(cast("object", document), Mapping):
         return None

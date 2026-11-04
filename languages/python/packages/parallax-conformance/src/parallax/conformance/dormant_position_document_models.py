@@ -1,3 +1,5 @@
+# ruff: noqa: UP037 - Relationship targets remain strings until model formation.
+
 """``models/dormant-position-layout-twin-document.yaml``: the Relational
 Document Layout twin of :mod:`parallax.conformance.dormant_position_models`."""
 

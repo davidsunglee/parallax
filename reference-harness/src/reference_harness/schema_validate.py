@@ -286,7 +286,7 @@ def _effective_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> En
     """
     try:
         return Entity(definition=resolve_effective_definition(entity_defs, entity_name))
-    except (KeyError, RejectionError):
+    except KeyError, RejectionError:
         return None
 
 
