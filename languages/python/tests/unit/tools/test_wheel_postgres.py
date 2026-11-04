@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -72,7 +74,8 @@ def _docker_commands(
             status = 1
             output = "daemon refused removal"
         assert options["env"]
-        return subprocess.CompletedProcess(arguments, status, output)
+        options["stdout"].write(output)
+        return subprocess.CompletedProcess(arguments, status)
 
     monkeypatch.setattr(postgres.sys, "platform", "linux")
     monkeypatch.setattr(postgres.subprocess, "run", run)
@@ -137,3 +140,27 @@ def test_cleanup_failure_preserves_the_validation_failure(
         cast("ExceptionGroup[Exception]", cleanup).exceptions[0], subprocess.CalledProcessError
     )
     assert "daemon refused" in (tmp_path / "setup.log").read_text()
+
+
+def test_command_capture_returns_while_the_server_descendant_keeps_stdout_open(
+    tmp_path: Path,
+) -> None:
+    sentinel = tmp_path / "stop-server"
+    descendant = (
+        "from pathlib import Path\nimport time\n"
+        f"while not Path({str(sentinel)!r}).exists():\n    time.sleep(0.01)\n"
+    )
+    start = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', {descendant!r}], close_fds=False)\n"
+        "print('server started', flush=True)\n"
+    )
+    commands = postgres._Commands(tmp_path)  # pyright: ignore[reportPrivateUsage] - daemon output capture is this test's subject
+    fallback_stop = threading.Timer(5, sentinel.touch)
+    fallback_stop.start()
+    try:
+        assert commands.run([sys.executable, "-c", start]) == "server started"
+        assert not sentinel.exists(), "capturing the command waited for its server descendant"
+    finally:
+        sentinel.touch()
+        fallback_stop.cancel()

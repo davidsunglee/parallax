@@ -73,24 +73,23 @@ class _Commands:
         self.env = dict(os.environ)
 
     def run(self, arguments: Sequence[str], *, check: bool = True) -> str:
-        with (self.output / "setup.log").open("a", encoding="utf-8") as log:
+        with (self.output / "setup.log").open("a+", encoding="utf-8", errors="replace") as log:
             log.write(f"$ {subprocess.list2cmdline(arguments)}\n")
             log.flush()
+            offset = log.tell()
             result = subprocess.run(
                 arguments,
                 env=self.env,
-                stdout=subprocess.PIPE,
+                stdout=log,
                 stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
             )
-            log.write(result.stdout)
             log.flush()
-        print(result.stdout, end="", flush=True)
+            log.seek(offset)
+            captured = log.read()
+        print(captured, end="", flush=True)
         if check and result.returncode:
-            raise subprocess.CalledProcessError(result.returncode, arguments, result.stdout)
-        return result.stdout.strip()
+            raise subprocess.CalledProcessError(result.returncode, arguments, captured)
+        return captured.strip()
 
 
 def _stop_container(commands: _Commands, container: str) -> None:
