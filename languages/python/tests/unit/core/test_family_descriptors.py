@@ -98,6 +98,7 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "scalar-collection-lifecycle-layout-twin-document",
     "storage-layout",
     "vehicle",
+    "versioned-payment-document",
     "workshop",
 )
 

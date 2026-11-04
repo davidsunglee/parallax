@@ -14495,6 +14495,59 @@
       ]
     }
   },
+  "models/versioned-payment-document.yaml": {
+    "versioned_payment_document": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.VersionedCardPayment",
+            "parallax.compatibility.VersionedCashPayment"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.VersionedPayment.id",
+          "declaringOwner": "parallax.compatibility.VersionedPayment",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.VersionedCardPayment",
+            "parallax.compatibility.VersionedCashPayment"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.VersionedPayment",
+          "declaringOwner": "parallax.compatibility.VersionedPayment",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.VersionedCardPayment",
+            "parallax.compatibility.VersionedCashPayment"
+          ],
+          "column": "version",
+          "contributor": "attribute:parallax.compatibility.VersionedPayment.version",
+          "declaringOwner": "parallax.compatibility.VersionedPayment",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.VersionedCardPayment",
+            "parallax.compatibility.VersionedCashPayment"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.VersionedPayment",
+          "declaringOwner": "parallax.compatibility.VersionedPayment",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/wallet.yaml": {
     "wallet": {
       "columns": [

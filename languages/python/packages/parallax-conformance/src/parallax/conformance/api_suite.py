@@ -2535,6 +2535,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-concurrency-064": _READ_LOCK_ROOT_GOLDEN_REASON,
     "m-concurrency-068": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
     "m-concurrency-069": _READ_ONLY_READ_LOCK_GOLDEN_REASON,
+    "m-concurrency-070": (
+        "the wire-level Optimistic golden proves an unlocked tag-partitioned TPH document "
+        "union and is graded by the compile/run sweeps; the existing Optimistic object-find "
+        "story proves the developer Concurrency Preference surface while this case "
+        "isolates SQL shape"
+    ),
     # -- m-unit-work: the isolation scenarios ------------------------------- #
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
