@@ -85,7 +85,11 @@ jobs:
           test "$(jq -r .source_sha candidate/release-manifest.json)" = "$source"
           python languages/python/tools/release_artifacts.py verify --bundle candidate
       - name: Require source CI and actual PostgreSQL floor/latest evidence
+        if: inputs.candidate-run-id == ''
         run: python languages/python/tools/release_ci.py --repository "$GITHUB_REPOSITORY" --bundle candidate
+      - name: Verify retained source CI and PostgreSQL evidence from the attested archive
+        if: inputs.candidate-run-id != ''
+        run: python languages/python/tools/release_ci.py --repository "$GITHUB_REPOSITORY" --bundle candidate --retained
       - name: Retain native validation records and timing evidence
         if: inputs.candidate-run-id == ''
         shell: bash
@@ -217,8 +221,15 @@ jobs:
         with:
           python-version: '3.15'
       - uses: astral-sh/setup-uv@v7
-      - name: Require candidate source to be merged into main
-        run: git merge-base --is-ancestor "$SOURCE" origin/main
+      - name: Fetch attested candidate source
+        run: git fetch --no-tags origin "$SOURCE"
+      - name: Require candidate source to be present on main
+        shell: bash
+        run: |
+          if ! git merge-base --is-ancestor "$SOURCE" origin/main; then
+            source_tree=$(git rev-parse "$SOURCE^{tree}")
+            git log --format=%T origin/main | grep -Fx "$source_tree"
+          fi
       - uses: actions/download-artifact@v8
         with:
           name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}

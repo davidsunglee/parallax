@@ -34,6 +34,7 @@ def _result(selected: tuple[str, ...] = ("18.6", "18.7")) -> dict[str, Any]:
         "status": "passed",
         "run": {
             "id": 21,
+            "html_url": "https://github.com/owner/project/actions/runs/21",
             "run_attempt": 2,
             "head_sha": SOURCE,
             "event": "push",
@@ -238,3 +239,114 @@ def test_ci_job_matrix_cannot_drop_a_supported_minor_or_shard(
         result["jobs"] = [job for job in result["jobs"] if "3.14.10" not in job["name"]]
     with pytest.raises(ValueError):
         ci.database_evidence(REPOSITORY, tmp_path, result)
+
+
+def _retained(monkeypatch: pytest.MonkeyPatch, bundle: Path) -> dict[str, Any]:
+    _fixtures(monkeypatch, bundle)
+    result = ci.successful_ci(REPOSITORY, SOURCE)
+    result["database"] = ci.database_evidence(REPOSITORY, bundle, result)
+    (bundle / "ci.json").write_text(json.dumps(result))
+    return result
+
+
+def test_recovery_verifies_retained_evidence_after_remote_artifacts_expire(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured = _retained(monkeypatch, tmp_path)
+
+    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("recovery must not query or download expiring workflow evidence")
+
+    monkeypatch.setattr(ci, "gh_api", unavailable)
+    monkeypatch.setattr(ci.subprocess, "check_output", unavailable)
+    for artifact in captured["database"]["artifacts"]:
+        artifact["expired"] = True
+    (tmp_path / "ci.json").write_text(json.dumps(captured))
+    result = ci.verify_retained(REPOSITORY, tmp_path, SOURCE)
+    assert result["database"]["status"] == "passed"
+    assert len(result["database"]["observations"]) == 8
+
+
+@pytest.mark.parametrize("change", ["missing", "changed", "no_hash"])
+def test_recovery_refuses_missing_or_changed_retained_archives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+) -> None:
+    captured = _retained(monkeypatch, tmp_path)
+    artifact = captured["database"]["artifacts"][-1]
+    path = tmp_path / "ci-database" / f"{artifact['name']}.zip"
+    if change == "missing":
+        path.unlink()
+    elif change == "changed":
+        path.write_bytes(path.read_bytes() + b"changed")
+    else:
+        del artifact["retained_sha256"]
+        (tmp_path / "ci.json").write_text(json.dumps(captured))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        ci.verify_retained(REPOSITORY, tmp_path, SOURCE)
+
+
+@pytest.mark.parametrize(
+    "change", ["source", "repository", "run_source", "event", "failed_job", "external_status"]
+)
+def test_recovery_revalidates_original_source_and_successful_ci(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+) -> None:
+    captured = _retained(monkeypatch, tmp_path)
+    if change == "source":
+        captured["source_sha"] = "b" * 40
+    elif change == "repository":
+        captured["repository"] = "other/project"
+    elif change == "run_source":
+        captured["run"]["head_sha"] = "b" * 40
+    elif change == "event":
+        captured["run"]["event"] = "schedule"
+    elif change == "failed_job":
+        captured["jobs"][0]["conclusion"] = "failure"
+    else:
+        captured["commit_status"] = {"statuses": [{"state": "failure"}], "state": "failure"}
+    (tmp_path / "ci.json").write_text(json.dumps(captured))
+    with pytest.raises(ValueError):
+        ci.verify_retained(REPOSITORY, tmp_path, SOURCE)
+
+
+def test_recovery_rechecks_database_observations_in_captured_archives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured = _retained(monkeypatch, tmp_path)
+    artifact = captured["database"]["artifacts"][-1]
+    path = tmp_path / "ci-database" / f"{artifact['name']}.zip"
+    with zipfile.ZipFile(path) as archive:
+        record = json.loads(archive.read("postgres-versions/postgres-123.json"))
+    record["observed"] = "18.6"
+    raw = _archive({"postgres-versions/postgres-123.json": record})
+    path.write_bytes(raw)
+    artifact["retained_sha256"] = hashlib.sha256(raw).hexdigest()
+    (tmp_path / "ci.json").write_text(json.dumps(captured))
+    with pytest.raises(ValueError, match="server version"):
+        ci.verify_retained(REPOSITORY, tmp_path, SOURCE)
+
+
+def test_recovery_cli_uses_only_retained_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _retained(monkeypatch, tmp_path)
+    (tmp_path / "release-manifest.json").write_text(json.dumps({"source_sha": SOURCE}))
+
+    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("retained verification must not contact GitHub")
+
+    monkeypatch.setattr(ci, "gh_api", unavailable)
+    monkeypatch.setattr(ci.subprocess, "check_output", unavailable)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "release_ci.py",
+            "--repository",
+            REPOSITORY,
+            "--bundle",
+            str(tmp_path),
+            "--retained",
+        ],
+    )
+    ci.main()
+    assert json.loads((tmp_path / "ci.json").read_text())["database"]["status"] == "passed"
