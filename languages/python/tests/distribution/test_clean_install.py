@@ -39,6 +39,13 @@ def _install(python: Path, wheelhouse: Wheelhouse, *packages: str) -> None:
     # uv caches a find-links wheel by its path, and pytest's numbered temp paths recur
     # across checkouts, so an unrefreshed install can reuse another tree's same-version wheel.
     refreshed = [arg for package in wheelhouse.wheels for arg in ("--refresh-package", package)]
+    # A find-links wheel competes with an index's: a published manylinux adapter of the
+    # same version outranks a local linux-tagged build. A URL constraint admits only the
+    # built wheel, and only for what the selection reaches.
+    constraints = python.parents[1] / "workspace-wheels.txt"
+    constraints.write_text(
+        "".join(f"{name} @ {wheel.as_uri()}\n" for name, wheel in wheelhouse.wheels.items())
+    )
     subprocess.run(
         [
             "uv",
@@ -46,8 +53,8 @@ def _install(python: Path, wheelhouse: Wheelhouse, *packages: str) -> None:
             "install",
             "--python",
             str(python),
-            "--find-links",
-            str(wheelhouse.directory),
+            "--constraint",
+            str(constraints),
             *refreshed,
             *packages,
         ],
