@@ -68,10 +68,16 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.read_planning import NarrowedViewKeys
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ReadEvidence
 from parallax.snapshot import Database, Snapshot
-from parallax.snapshot._inspection import NodeProvenance, RootConformance, SnapshotNodeState
+from parallax.snapshot._inspection import (
+    NarrowedViews,
+    NodeProvenance,
+    RootConformance,
+    SnapshotNodeState,
+)
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import Closure, closure, reachable_objects
 from tests.unit._snapshot_materialization_support import (
@@ -380,6 +386,8 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         (Snapshot, "snapshot"),
         (Entity, "entity"),
         (SnapshotNodeState, "node-state"),
+        (NarrowedViews, "views"),
+        (NarrowedViewKeys, "view-keys"),
         (NodeProvenance, "provenance"),
         (ReadEvidence, "origin"),
         (EntityIdentity, "entity-identity"),
@@ -430,8 +438,9 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         "entity-identity": 4,
         "pin": 1,
         "unloaded": 1,
-        "views": 34,
-        "tuple": 131,
+        "views": 36,
+        "view-keys": 1,
+        "tuple": 137,
     }
 
 
