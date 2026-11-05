@@ -483,17 +483,18 @@ class LevelUnion(NamedTuple):
     """The one statement a multi-concrete deep-fetch level reads, and what keys it.
 
     ``concretes`` is the hop's effective concrete set. ``key_column`` is the physical
-    Column every branch compares the gathered keys to. ``key_array`` is the cast array
-    those keys travel in, absent on a dialect expanding them to one placeholder each.
-    ``branch_binds`` is how many binds each branch must consume, derived from the
-    gathered keys and the propagated as-of coordinates rather than read off the
-    statement.
+    Column every branch compares the gathered keys to. ``key_count`` is how many keys
+    were gathered. ``key_array`` is the cast array those keys travel in, absent on a
+    dialect expanding them to one placeholder each. ``branch_binds`` is how many binds
+    each branch must consume, derived from the gathered keys and the propagated as-of
+    coordinates rather than read off the statement.
     """
 
     concretes: list[str]
     statement: str
     dialect: str
     key_column: str
+    key_count: int
     key_array: str | None
     branch_binds: int
 
@@ -569,4 +570,14 @@ def _assert_branch_keyed(
             f"{case.path.name}: `union all` branch {position} ({name!r}) of a deep-fetch "
             f"level consumes {placeholders} bind(s), expected {level.branch_binds}. Every "
             f"branch shares the level's one gathered key set (m-sql / m-read-planning)."
+        )
+    if level.key_array is None and not (
+        len(membership.expressions) == level.key_count
+        and all(isinstance(key, exp.Placeholder) for key in membership.expressions)
+    ):
+        raise CaseFailure(
+            f"{case.path.name}: `union all` branch {position} ({name!r}) does not compare "
+            f"its {level.key_count} gathered key(s) through its membership list, which reads "
+            f"{membership.sql(dialect=sqlglot_dialect(level.dialect))!r}. A child level "
+            f"renders one placeholder per key (m-sql)."
         )
