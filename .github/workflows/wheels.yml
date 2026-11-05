@@ -124,7 +124,7 @@ jobs:
 
   verdict:
     name: wheel-verdict
-    if: always() && inputs.validate
+    if: always() && !cancelled() && inputs.validate
     needs: [prepare, wheel]
     runs-on: ubuntu-24.04
     outputs:
