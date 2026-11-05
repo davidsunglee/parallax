@@ -30,7 +30,7 @@ from parallax.conformance.graph_stories import (
     a_finite_transaction_time_pinned_view_is_read_only,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
-from parallax.conformance.read_models import Animal, Cat, Dog
+from parallax.conformance.read_models import Animal, Bike, Car, Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
@@ -71,6 +71,10 @@ from tests._support.corpus import (
     instance_row,
 )
 from tests._support.db_port import ConnectsAsItself
+from tests._support.graph_residuals import (
+    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
+    classify_child_graph_shape_residuals,
+)
 from tests._support.root_ownership import own_root
 
 
@@ -291,6 +295,37 @@ def test_empty_intermediate_level_short_circuits(profile_run: Any) -> None:
     order = snapshot.result()
     assert order.items == ()
     assert db.database_calls == [2]
+
+
+def test_a_three_hop_include_loads_every_level_in_four_calls(profile_run: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-051"]
+    meta = _reset_for(story.case_id, profile_run)
+    db = _counting_connect(profile_run.port, meta)
+    snapshot = story.run(db)
+    tickets = {ticket.id: ticket for ticket in snapshot.results()}
+    assert sorted(tickets) == [50, 51, 52, 53, 54]
+
+    nordic = tickets[50].parking.vehicle
+    assert type(nordic) is Car
+    assert nordic.dealer is not None
+    assert nordic.dealer.name == "Nordic"
+    velo = tickets[51].parking.vehicle
+    assert type(velo) is Bike
+    assert velo.dealer is not None
+    assert velo.dealer.name == "Velo"
+    assert tickets[52].parking.vehicle is None
+    assert tickets[53].parking.vehicle.dealer is None
+    assert tickets[54].parking is None
+
+    case = corpus_case(story.case_id)
+    then = case_document(case)["then"]
+    roots = snapshot.wire().checked().results()
+    observed = {"Ticket": [envelope.graph_root(root) for root in roots]}
+    residuals = classify_child_graph_shape_residuals(
+        observed, then["graph"], CollectionKinds(engine.load_case_metamodel(case))
+    )
+    assert residuals == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[story.case_id]
+    assert db.database_calls == [then["databaseCalls"]]
 
 
 def test_pinned_graph_at_a_past_valid_time_instant(profile_run: Any) -> None:

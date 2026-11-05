@@ -238,13 +238,24 @@ A `table-per-concrete-subtype` abstract read lowers to `union all` over the effe
 concrete tables (`m-sql`); a column not applicable to a branch is a `cast(null as
 <type>)` placeholder in the column's declared type, so the union's result column types
 resolve deterministically. The **CAST target-type spelling is a dialect decision owned
-here** — and, for strings and documents, it **diverges from the DDL column type**:
+here**, separate from the DDL column type, and this table covers every declared column
+type:
 
 | Declared column type | Postgres | MariaDB |
 |---|---|---|
+| `boolean` | `cast(null as boolean)` | `cast(null as signed)` |
+| `int32` | `cast(null as int)` | `cast(null as signed)` |
+| `int64` | `cast(null as bigint)` | `cast(null as signed)` |
+| `float32` | `cast(null as real)` | `cast(null as float)` |
+| `float64` | `cast(null as double precision)` | `cast(null as double)` |
 | `decimal(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` |
 | bounded `string` (`maxLength n`) | `cast(null as varchar(n))` | `cast(null as char(n))` |
 | unbounded `string` | `cast(null as text)` | `cast(null as char)` |
+| `bytes` | `cast(null as bytea)` | `cast(null as binary)` |
+| `date` | `cast(null as date)` | `cast(null as date)` |
+| `time` | `cast(null as time)` | `cast(null as time)` |
+| `timestamp` | `cast(null as timestamptz)` | `cast(null as datetime(6))` |
+| `uuid` | `cast(null as uuid)` | `cast(null as char(36))` |
 | `json` (a Structured Column) | `cast(null as jsonb)` | `cast(null as char)` |
 
 MariaDB's `CAST` target grammar does **not** accept `varchar`, so a bounded-string
@@ -253,7 +264,11 @@ dialects (the general rule: **string types map to `char` under a MariaDB `CAST`*
 That grammar admits no unbounded character target but `char`, and no document target
 at all — MariaDB's `JSON` is an alias for `LONGTEXT`, and neither spelling is a legal
 `CAST` target — so an unbounded string and a Structured Column both place bare `char`
-there, while Postgres casts each to its own type. A future dialect supplies its own
+there, while Postgres casts each to its own type. The same grammar admits neither
+`bigint`, `boolean`, nor `tinyint`, so every integer and boolean places `signed`, and
+neither `longblob` nor `blob`, so bytes place `binary`. A placeholder need only be a
+legal target the branch's real column unions with: a `boolean` union resolves wider than
+its `tinyint(1)` column, and its values remain `0` and `1`. A future dialect supplies its own
 placeholder-cast spelling behind this same decision point; nothing above the seam
 names the concrete cast type.
 

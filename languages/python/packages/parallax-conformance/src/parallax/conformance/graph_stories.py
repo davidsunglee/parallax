@@ -38,6 +38,7 @@ from parallax.conformance.read_models import (
     Payment,
     Person,
     Pet,
+    Ticket,
     WildBoar,
 )
 from parallax.conformance.scripted_clock import ScriptedClock
@@ -104,6 +105,10 @@ def empty_root_materializes_no_children(db: ScopedDatabase) -> Snapshot[Any]:
 
 def empty_intermediate_level_short_circuits(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 4).include(Order.items.statuses))
+
+
+def a_three_hop_include_loads_every_level(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(Ticket.where(Ticket.all).include(Ticket.parking.vehicle.dealer))
 
 
 def pinned_graph_at_a_past_valid_time_instant(db: ScopedDatabase) -> Snapshot[Any]:
@@ -648,6 +653,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "An empty intermediate level short-circuits the grandchild fetch",
         "orders",
         empty_intermediate_level_short_circuits,
+    ),
+    GraphStory(
+        "m-snapshot-read-051",
+        "A three-hop include loads every level, one statement per hop",
+        "predicate-traversal",
+        a_three_hop_include_loads_every_level,
     ),
     GraphStory(
         "m-navigate-013",
