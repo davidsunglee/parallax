@@ -13,14 +13,16 @@ import datetime as dt
 import threading
 from collections.abc import Callable, Iterator
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
 from parallax.conformance import animal_owner, read_models
+from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, rel
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge
 from parallax.snapshot import (
+    Database,
     SnapshotInspectionError,
     _inspection,
     edge_of,
@@ -30,6 +32,8 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES, snapshot_state_of
 from tests._support import snapshot_models as sm
+from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.root_ownership import own_root
 from tests.unit import _deep_include_support as deep
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 
@@ -390,6 +394,56 @@ def test_a_sibling_never_answers_a_root_segment_it_merely_shares_a_name_with() -
             operation(cat, deep.Dog.gear)
         assert refusal.value.code == "snapshot-view-owner-mismatch"
         assert refusal.value.entity == deep.Cat.identity
+
+
+_RESPELLED_NS = "parallax.tests.respelled_root"
+
+
+class Sprout(Entity, table="respelled_sprout", namespace=_RESPELLED_NS):
+    id: Attr[int] = attr(primary_key=True)
+    parent_id: Attr[int]
+
+
+class Parent(Entity, table="respelled_parent", namespace=_RESPELLED_NS):
+    id: Attr[int] = attr(primary_key=True)
+    children: Rel[tuple[Sprout, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "parent_id"), name="kids"
+    )
+
+
+# A second declaration of the SAME Entity Identity, spelling the same relationship
+# under another Python name.
+class RespelledParent(Entity, table="respelled_parent", name="Parent", namespace=_RESPELLED_NS):
+    id: Attr[int] = attr(primary_key=True)
+    offspring: Rel[tuple[Sprout, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "parent_id"), name="kids"
+    )
+
+
+_RESPELLED: Final = DomainModel(RespelledParent, Sprout)
+
+
+def test_a_root_segment_reads_the_relationship_a_differently_spelled_class_serves() -> None:
+    query = Parent.where(Parent.id == 1)
+    with ScriptedAdapter(
+        Read(rows=[{"id": 1}]),
+        Read(rows=[{"id": 2, "parent_id": 1}]),
+        Read(rows=[{"id": 1}]),
+    ) as port:
+        database = own_root(Database.connect(port, _RESPELLED)).using_database_login()
+        loaded = database.find(query.include(Parent.children))
+        unloaded = database.find(query).result()
+
+    root = cast("Any", loaded.result())
+    assert type(root) is RespelledParent
+    assert is_view_loaded(root, Parent.children) is True
+    assert view(root, Parent.children) == root.offspring
+    assert [sprout.id for sprout in root.offspring] == [2]
+    assert loaded.wire(root.offspring[0], at=Parent.children)["id"] == 2
+
+    assert is_view_loaded(unloaded, Parent.children) is False
+    with pytest.raises(UnloadedRelationshipError):
+        view(unloaded, Parent.children)
 
 
 def test_a_continuation_no_reached_class_declares_is_an_owner_mismatch_at_any_depth() -> None:

@@ -1166,12 +1166,14 @@ class AuthoredIncludeSegment:
     def relationship_in(self, names: WireNames) -> RelationshipIdentity | None:
         """The relationship this segment denotes on the class ``names`` describes.
 
-        A root segment applies only where the name answers its own identity, so a
-        sibling's identically named relationship is never its relationship.
+        A root segment applies wherever the class declares its identity, under
+        whatever Python name that class spells it, so a sibling's identically named
+        relationship is never its relationship.
         """
-        found = names.relationship_identities.get(self.py_name)
         root = self.root_relationship
-        return found if root is None or found == root else None
+        if root is None:
+            return names.relationship_identities.get(self.py_name)
+        return root if root in names.relationship_identities.values() else None
 
     def described(self) -> str:
         root = self.root_relationship

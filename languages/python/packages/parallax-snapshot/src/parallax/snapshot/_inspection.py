@@ -398,7 +398,7 @@ def _segment_value(
     source: object, segment: AuthoredIncludeSegment, operation: str, *, raising: bool
 ) -> object:
     """One segment's already-loaded value at ``source``, which ``source``'s own
-    class resolves the segment's name against.
+    class resolves the segment against.
 
     A narrowed segment reads the distinct narrowed view the read populated; a
     broad segment reads the relationship slot itself, where the unloaded sentinel

@@ -329,7 +329,7 @@ def test_a_root_guard_survives_every_continuation_of_its_path() -> None:
     ]
 
 
-def test_a_root_segment_applies_only_where_its_name_answers_its_own_identity() -> None:
+def test_a_root_segment_applies_only_where_its_class_declares_its_own_identity() -> None:
     # Two siblings declare `gear`, so the name alone would answer on both.
     dog_gear = authored_include_path(deep.Dog.gear).segments[0]
     assert dog_gear.relationship_in(wire_names_of(deep.Dog)) == dog_gear.root_relationship
