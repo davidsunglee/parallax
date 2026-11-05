@@ -347,7 +347,6 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
         "m-temporal-read-010",
         "m-unit-work-031",
         "m-unit-work-032",
-        "m-unit-work-033",
         "m-unit-work-034",
     }
 )
@@ -369,16 +368,12 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # drained WHOLE before it does: the peer's commit lands between the two deliveries,
 # exactly where the case authors it.
 #
-# The other two isolation scenarios are graded by the reference harness alone, on
-# both engines, and are named here rather than left to be rediscovered:
-# `m-unit-work-031`'s reader must face state its peer wrote and has not committed,
+# `m-unit-work-031` is graded by the reference harness alone on both engines:
+# its reader must face state its peer wrote and has not committed,
 # and a unit of work BUFFERS its writes until its own flush edge, so the peer's DML
 # is not on the wire when the reader's step runs — the window the case authors is
 # one the harness's verbatim per-step execution has and a real unit of work does
-# not, so running it here would assert nothing about any level; and
-# `m-unit-work-033` states `expectGraph`, an oracle
-# `run_interleaved_scenario_case` refuses outright because it fills no
-# `stepGraphs` channel.
+# not, so running it here would assert nothing about any level.
 _INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
     {
         "m-temporal-write-021",
@@ -392,14 +387,7 @@ _INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
 
 
 def _case_uses_uow_grouping(case: case_format.Case) -> bool:
-    """Whether a scenario case's own steps declare the `uow` grouping key
-    (`m-case-format`) — the discriminator
-    between "this run-only case's observation is transaction-scoped, and the
-    engine's `uow`-grouping seam (`scenario._run_uow_group`) is what makes it
-    runnable" and every OTHER run-only reason a scenario/writeSequence case
-    carries (deep-fetch deferred loads, pk-gen sequence batch reservations —
-    none of which the
-    run lane is ready to grade yet, exactly like before this remediation)."""
+    """Whether the scenario names transaction-scoped unit-of-work groups."""
     when = cast("dict[str, Any]", case_document(case).get("when", {}))
     steps = cast("list[dict[str, Any]]", when.get("scenario", []))
     return any(isinstance(step.get("uow"), str) for step in steps)

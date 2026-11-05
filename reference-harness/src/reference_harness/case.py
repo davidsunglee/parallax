@@ -790,13 +790,8 @@ class Case:
     def lane(self) -> str:
         """Which executor satisfies this case (``harness`` default | ``api-conformance``).
 
-        A ``harness``-lane case executes as today; an ``api-conformance``-lane case
-        (every boundary and edit case, plus the read-lock matrix reads
-        ``m-concurrency-046``, ``m-concurrency-048``, and ``m-concurrency-049``) is
-        schema-validated by the
-        m-case-format harness but NOT executed — each language's API Conformance
-        Suite satisfies it. :func:`case_runner.run_case` early-returns for the
-        api-conformance lane.
+        The harness validates but does not execute an ``api-conformance`` case;
+        each language's API Conformance Suite supplies its runtime observations.
         """
         return self.raw.get("lane", "harness")
 
@@ -1059,7 +1054,7 @@ class Case:
 
     @property
     def is_scenario(self) -> bool:
-        """True for a unit-of-work, cache, or identity scenario case.
+        """True for an ordered unit-of-work scenario case.
 
         A scenario case carries ``when.scenario`` (an ordered list of
         steps with per-step Database Call counts) instead of a single query;

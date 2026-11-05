@@ -35,16 +35,8 @@
 # the existing customer reads (the 21 filter reads and the -023/-024
 # materialization graphs) do not ripple.
 #
-# A THIRD entity `Depot` and the to-many `Customer.depots` make the per-step
-# read-entity resolution regression-sensitive. Where `Location` reuses Customer's
-# `address` composite VERBATIM (so a wrong-descriptor decode is
-# indistinguishable), `Depot.address` is a DIFFERENT declared STRUCTURE — a FLAT
-# `{ line, postcode }` in the same `address` column. Decoding a Depot row with the
-# root Customer descriptor therefore yields observably wrong keys, so the deferred
-# `action: load` and query-backed-list first-`access` witnesses over `depots`
-# scenario root instead of the navigated child entity. `Depot` and its relationship
-# likewise leave Customer's / Location's Attribute and Value Object declarations
-# untouched, so no existing customer/location case ripples.
+# Depot.address deliberately differs from the Customer and Location composites,
+# so decoding a child with its parent's descriptor changes observable members.
 entities:
   - name: Customer
     namespace: parallax.compatibility
@@ -103,15 +95,6 @@ entities:
         dependent: true
         orderBy:
           - { attribute: id }
-      # depots: a SECOND VO-bearing child, reached via a distinct one-to-many. Its
-      # `Depot.address` value object reuses the SAME column name `address` but a
-      # DIFFERENT declared STRUCTURE (a FLAT { line, postcode }) than Customer's /
-      # Location's recursive composite — a deliberate descriptor DIVERGENCE. Decoding
-      # a Depot row with Customer's `address` descriptor yields observably wrong keys,
-      # so the deferred-load / first-access witnesses over `depots` are regression-
-      # sensitive to per-step read-entity resolution (`m-sql` instance-form Document-
-      # slot selection; `m-case-format` "Read result form"), unlike Location whose
-      # composite is Customer's verbatim.
       - name: depots
         cardinality: one-to-many
         join:

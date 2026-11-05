@@ -155,36 +155,6 @@ cost for a shape nothing asks for. The moment a case authors one, the repair is
 the branch plus its own DB-free driver; until then the honest state is the
 refusal this entry describes.
 
-### D-77 — The interleaved-`uow`-group runner refuses a step stating relationship contents, though its own find interpreter already holds what would answer one
-
-*Medium — one authored case has the reference harness as its only grader.*
-Relates to `parallax.conformance._lanes.interleaved.run_interleaved_scenario_case`,
-`tests/compatibility/test_run_sweep.py`.
-
-**What.** `expectGraph`'s READ placement is legal on any include-bearing read step
-(`core/spec/m-case-format.md` *Relationship contents at a step*), and three of
-this target's four find interpreters answer it: the ungrouped standalone find,
-`_run_uow_group`'s own step loop, and the snapshot lane's find each publish a
-`stepGraphs` entry through `read_step_graph`. The fourth —
-`run_interleaved_scenario_case`, the entry point for the interleaved races (the
-optimistic-lock races and the Isolation Level scenarios) — refuses such a step by
-name before either worker thread starts, because it fills no `stepGraphs` entry:
-its `ScenarioRun` reports that channel empty. Nothing about the interleaved shape
-conflicts with the observable: `_run_interleaved_group` drives the SAME `run_group_step`
-interpreter the contiguous runner does and already holds each find's own
-published output, which is exactly what `read_step_graph` takes. The limit is
-this target's rather than the case format's — the shape is unwired here, not
-mis-authored.
-
-`m-unit-work-033` now authors the combination: two interleaved deep-fetch steps,
-each stating `expectGraph`. The run sweep leaves it out of the interleaved lane
-for exactly this refusal, so the reference harness grades it alone.
-
-**Why it is still open.** The deferral waited for a case to author the
-combination, and one has. What remains is the repair: filling the channel from
-each group's finds, grading it in the run sweep, and its own DB-free driver,
-after which `m-unit-work-033` joins the interleaved lane.
-
 ### D-78 — The framework-marker write lane runs DML no Handle opened, so its work reaches no Execution Lifecycle
 
 *Medium — it bounds which case shapes may author `then.executionLifecycle`.*
@@ -728,6 +698,8 @@ prose.
 - **D-84** → closed by [COR-83](https://linear.app/flimflam/issue/COR-83/stream-read-planning-reads-at-fixed-memory). The Snapshot Stream's Execution Lifecycle producer exists: `parallax.core.execution_lifecycle._activity` opens a `snapshot_stream` root for a standalone delivery and a child of the current Transaction Attempt for a participating one, one Stream Batch per page, and each page's Database Calls under that batch. `engine.run_stream_case` therefore reads its `emissions` and `observations.roundTrips` off the delivered stream like every other lane, `_DeliveredCalls` is gone, and so is the run sweep's own port seam.
 - **D-86** → closed by [COR-83](https://linear.app/flimflam/issue/COR-83/stream-read-planning-reads-at-fixed-memory). The envelope carries the channel: `core/spec/m-conformance-adapter.md` *Per-step row observations* defines `stepRows` — one `{ at, rows }` entry per scenario read step the adapter drives, carrying the values that step PUBLISHED rather than the result sets its statements returned — and `tests/compatibility/test_run_sweep.py` grades every step's `expectRows` against it, the injected-port capture lane (`_ReadCapturePort`, `_scenario_read_schedule`, `_logical_row_transform`) deleted with it. One read step owns no entry, and the spec says which and why: a materializing predicate write's resolving read is production's own internal resolve, handed to no caller, so what holds an implementation to that step is its golden resolve statement and the per-row binds the write derives from those very rows.
 - **D-79** → withdrawn by [COR-110](https://linear.app/flimflam/issue/COR-110/logginglifecycleprovider-builds-a-field-mapping-for-every-event). The `Logger.isEnabledFor` guard the entry ruled out is taken and its prohibition reversed rather than satisfied, for three reasons the entry could not have weighed: the exact level now comes from the one match that already names a transition, so neither the approximation the ruled-out attempt made nor the detector that bounded it exists; the Logger shapes that defeat a guard defeat every library that guards on `isEnabledFor`, and Parallax accepts that standard exposure rather than holding itself to a stricter contract; and the promise that the Logger alone decides whether a record survives is given up deliberately, not preserved. `spec/python.md` states the guard and the exposure it accepts.
+
+- **D-77** → retired with the managed-object lifecycle and its exclusive interleaved graph witness ([ADR 0085](../../../docs/adr/0085-the-supported-lifecycle-is-snapshot-and-performance-contracts-own-workloads.md)).
 
 ## History
 

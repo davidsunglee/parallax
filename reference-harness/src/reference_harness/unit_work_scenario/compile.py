@@ -673,6 +673,10 @@ def _assert_identity_anchor(case: Case, index: int, step: Mapping[str, Any]) -> 
     identity = step.get("sameObjectAs")
     if identity is None:
         return
+    if step.get("action") != "access":
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}].sameObjectAs is only a snapshot access observable"
+        )
     if not isinstance(identity, int) or not names_earlier_step(identity, index):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}].sameObjectAs={identity!r} is not a real "

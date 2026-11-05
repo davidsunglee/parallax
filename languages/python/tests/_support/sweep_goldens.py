@@ -305,7 +305,7 @@ _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-temporal-write-008", "m-temporal-write-030", "m-temporal-write-040", "m-temporal-write-041"}
 )
 _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
-    {"m-temporal-write-031", "m-temporal-write-032"}
+    {"m-temporal-write-031", "m-temporal-write-032", "m-temporal-write-092"}
 )
 _PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-temporal-write-039"})
 _EXECUTION_LIFECYCLE_SCENARIOS: Final[frozenset[str]] = frozenset(

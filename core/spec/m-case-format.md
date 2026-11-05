@@ -1792,6 +1792,11 @@ always has.
 
 #### Lifecycle action steps
 
+A golden-graded Object Query read carries a non-empty `statements` list and
+executes its own read. Retained snapshot access is an action, never a cache-hit
+form of an independent read; state-graded reads instead execute through their
+production query interpreter without authored SQL.
+
 Beyond read and write steps, a scenario carries **action steps** over an
 already-published value or the unit-of-work boundary. An action carries an
 **`action`** verb, an **`on`** source where applicable, per-step golden

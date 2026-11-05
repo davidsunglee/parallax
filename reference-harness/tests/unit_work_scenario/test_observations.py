@@ -532,12 +532,11 @@ def test_a_reuse_naming_a_step_that_published_nothing_is_refused(
     """A write publishes no observation, so no later step may read one off it."""
     case = damaged_case(_STREAMED_EVIDENCE)
     step = _steps(case)[2]
-    del step["stream"]
-    del step["statements"]
-    del step["referenceSql"]
-    step["sameObjectAs"] = 1
     case.then["databaseCalls"] -= step["databaseCalls"]
-    step["databaseCalls"] = 0
+    step.clear()
+    step.update(action="access", on=1, path="items", databaseCalls=0)
+    case.when["scenario"] = case.scenario[:3]
+    case.then["databaseCalls"] = sum(s.get("databaseCalls", 0) for s in case.scenario)
 
     with pytest.raises(CaseFailure, match="names step 1, which published no observation"):
         assert_unit_work_scenario(
@@ -691,4 +690,46 @@ def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(
     with pytest.raises(TypeError, match="did not come through the publication seam"):
         assert_unit_work_scenario(
             case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS))
+        )
+
+
+@pytest.mark.parametrize("reuse_anchor", [False, True])
+def test_an_independent_read_cannot_reuse_a_prior_observation(
+    damaged_case: CaseLoader, reuse_anchor: bool
+) -> None:
+    case = damaged_case(_EDIT_KEEPS_ITEMS)
+    first = copy.deepcopy(_steps(case)[0])
+    second = copy.deepcopy(first)
+    del second["statements"]
+    second["databaseCalls"] = 0
+    if reuse_anchor:
+        second["sameObjectAs"] = 0
+    case.when["scenario"] = [first, second]
+    case.then["databaseCalls"] = first["databaseCalls"]
+
+    message = "only a snapshot access observable" if reuse_anchor else "read step requires golden"
+    with pytest.raises(CaseFailure, match=message):
+        assert_unit_work_scenario(
+            case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS))
+        )
+
+
+def test_access_identity_expectations_do_not_select_the_source_rows(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_EDIT_KEEPS_ITEMS)
+    first = copy.deepcopy(_steps(case)[0])
+    second = copy.deepcopy(first)
+    second["objectQuery"]["predicate"]["eq"]["value"] = 42
+    second["statements"][0]["binds"] = [42]
+    second["statements"][1]["binds"] = [[42]]
+    second["expectRows"] = [{**_ORDERS[-1], "price": "99.99"}]
+    access = copy.deepcopy(_steps(case)[2])
+    access["sameObjectAs"] = 1
+    case.when["scenario"] = [first, second, access]
+    case.then["databaseCalls"] = 4
+
+    with pytest.raises(CaseFailure, match="primary-key identities differ"):
+        assert_unit_work_scenario(
+            case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS, [_ORDERS[-1]], []))
         )

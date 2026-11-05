@@ -1,0 +1,54 @@
+# Deep fetch, DECLARED relationship ordering ASCENDING with `nulls: first` over a
+# NULLABLE key — the placement that is nobody's default, proven on BOTH dialects
+# (m-read-planning "Ordered to-many children" + m-dialect NULL ordering).
+model: models/orders.yaml
+tags: [m-read-planning, m-object-query, m-dialect, orderBy, ordering, nulls, nullable, relationship]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      in:
+        path: parallax.compatibility.Order.id
+        values:
+          - 1
+          - 42
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.notesAscNullsFirst
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
+      binds: { postgres: [[1, 42]], mariadb: [1, 42] }
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.body, t0.resolved_on from order_note t0 where t0.order_id = any(cast(? as bigint[])) order by t0.resolved_on asc nulls first
+        mariadb: select t0.id, t0.order_id, t0.body, t0.resolved_on from order_note t0 where t0.order_id in (?, ?) order by t0.resolved_on asc
+      binds: { postgres: [[1, 42]], mariadb: [1, 42] }
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 42)
+  graph:
+    Order:
+      - id: 1
+        name: Ada
+        sku: A-100
+        qty: 5
+        price: "10.50"
+        active: true
+        orderedOn: 2024-01-05
+        notesAscNullsFirst:
+          - { id: 52, orderId: 1, body: address check, resolvedOn: null }
+          - { id: 53, orderId: 1, body: fragile handling, resolvedOn: 2024-01-15 }
+          - { id: 51, orderId: 1, body: gift wrap, resolvedOn: 2024-03-01 }
+      - id: 42
+        name: Grace
+        sku: A-999
+        qty: 30
+        price: "99.99"
+        active: true
+        orderedOn: 2024-06-30
+        notesAscNullsFirst:
+          - { id: 54, orderId: 42, body: expedite, resolvedOn: 2024-04-04 }
+          - { id: 56, orderId: 42, body: insured, resolvedOn: 2024-05-05 }
+          - { id: 55, orderId: 42, body: signature required, resolvedOn: 2024-06-06 }
+  databaseCalls: 2

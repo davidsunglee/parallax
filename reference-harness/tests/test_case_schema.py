@@ -1,7 +1,7 @@
 """DB-free fidelity tests for the grouped compatibility-case schema.
 
 Pinned fixture documents against the new ``compatibility-case.schema.json``: a
-minimal well-formed document for each of the eleven shapes is ACCEPTED, and a
+minimal well-formed document for each supported shape is ACCEPTED, and a
 curated set of malformed documents — the legacy flat layout, a mislabeled
 ``shape``, a plain-string ``sql`` at a golden location, an empty ``sql`` map, an
 extra key inside a closed group, and ``binds`` authored outside a statement
@@ -179,15 +179,23 @@ def _action_scenario_case() -> dict[str, Any]:
                     "objectQuery": {
                         "target": "Order",
                         "predicate": {"in": {"path": "Order.id", "values": [1, 2]}},
+                        "includes": [{"segments": [{"rel": "Order.items"}]}],
                     },
-                    "databaseCalls": 1,
+                    "databaseCalls": 2,
                     "statements": [
                         {
                             "sql": {
                                 "postgres": "select t0.id from orders t0 where t0.id in (?, ?)"
                             },
                             "binds": [1, 2],
-                        }
+                        },
+                        {
+                            "sql": {
+                                "postgres": "select t0.id, t0.order_id from order_item t0 "
+                                "where t0.order_id in (?, ?)"
+                            },
+                            "binds": [1, 2],
+                        },
                     ],
                     "expectRows": [{"id": 1}, {"id": 2}],
                 },
@@ -195,17 +203,8 @@ def _action_scenario_case() -> dict[str, Any]:
                     "action": "access",
                     "on": 0,
                     "path": "items",
-                    "databaseCalls": 1,
-                    "statements": [
-                        {
-                            "sql": {
-                                "postgres": "select t0.id, t0.order_id from order_item t0 "
-                                "where t0.order_id in (?, ?)"
-                            },
-                            "binds": [1, 2],
-                        }
-                    ],
-                    "expectRows": [{"id": 11, "order_id": 1}],
+                    "databaseCalls": 0,
+                    "expectRows": [{"id": 1}, {"id": 2}],
                 },
                 {
                     "action": "access",
@@ -309,7 +308,13 @@ def _action_identity_error_case() -> dict[str, Any]:
                         "target": "Order",
                         "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
-                    "databaseCalls": 0,
+                    "databaseCalls": 1,
+                    "statements": [
+                        {
+                            "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
+                            "binds": [1],
+                        }
+                    ],
                 },
                 {
                     "action": "mutate",
@@ -320,7 +325,7 @@ def _action_identity_error_case() -> dict[str, Any]:
                 },
             ]
         },
-        "then": {"databaseCalls": 1},
+        "then": {"databaseCalls": 2},
     }
 
 
@@ -1311,41 +1316,28 @@ def _action_unknown_expect_error() -> dict[str, Any]:
 
 
 def _action_same_and_different_object() -> dict[str, Any]:
-    """One step declares BOTH `sameObjectAs` and `differentObjectFrom` (at the same step).
-
-    A single step's identity relationship to an anchor is sameness OR difference,
-    never both — the sibling `not: required[sameObjectAs, differentObjectFrom]`
-    rejects a step carrying the two together.
-    """
+    """A retired identity observable is outside the closed step vocabulary."""
     doc = _action_scenario_case()
     doc["when"]["scenario"][2]["differentObjectFrom"] = 1
     return doc
 
 
 def _action_set_on_non_mutate() -> dict[str, Any]:
-    """`set` on a non-`mutate` action (step 1 is a `load`) — the mutate-only `allOf` rejects it."""
+    """An access cannot carry assignments."""
     doc = _action_scenario_case()
     doc["when"]["scenario"][1]["set"] = {"name": "x"}
     return doc
 
 
 def _action_object_verb_missing_on() -> dict[str, Any]:
-    """An OBJECT-TARGETING action (step 1 is a `load`) missing `on`.
-
-    The per-verb conditional makes `on` REQUIRED for `mutate` / `load` /
-    `access` — each acts on a prior step's result — so a
-    `load` without `on` is rejected (unlike a boundary `flush` / `commit` / `abort`,
-    where `on` is optional)."""
+    """Snapshot access requires the materializing source index."""
     doc = _action_scenario_case()
     del doc["when"]["scenario"][1]["on"]
     return doc
 
 
 def _action_on_duplicate_index() -> dict[str, Any]:
-    """An array-form `on` naming the SAME source twice.
-
-    The array form is `uniqueItems`: a coordinate-grouped action references each
-    source at most once, so `on: [0, 0]` is rejected."""
+    """Snapshot actions reject array-valued source indices."""
     doc = _action_identity_error_case()
     doc["when"]["scenario"][2]["on"] = [0, 0]
     return doc
@@ -1361,6 +1353,7 @@ def _expect_graph_on_an_includeless_read_step() -> dict[str, Any]:
     doc = _action_scenario_case()
     step = doc["when"]["scenario"][0]
     del step["expectRows"]
+    del step["objectQuery"]["includes"]
     step["expectGraph"] = {"Order": [{"id": 1}, {"id": 2}]}
     return doc
 
@@ -1373,8 +1366,7 @@ def _expect_graph_on_a_write_step() -> dict[str, Any]:
 
 
 def _expect_graph_on_a_non_access_action() -> dict[str, Any]:
-    """`expectGraph` on a `load` — a step that RESOLVES the relationship rather
-    than reading an already-materialized one, so it grades a fresh fetch."""
+    """A mutate derives a value rather than navigating relationship contents."""
     doc = _action_scenario_case()
     doc["when"]["scenario"][1]["action"] = "mutate"
     doc["when"]["scenario"][1]["expectGraph"] = {"OrderItem": [{"id": 11}]}
@@ -1384,9 +1376,7 @@ def _expect_graph_on_a_non_access_action() -> dict[str, Any]:
 def _expect_graph_on_a_multi_source_access() -> dict[str, Any]:
     """`expectGraph` on an access naming the `on` ARRAY form.
 
-    The array spans sources at different lowered coordinates, so contents gathered
-    across them are a graph no single materialized view holds; an access stating
-    contents names the one read whose Include Paths materialized them.
+    Snapshot access names exactly one earlier materialization.
     """
     doc = _action_expect_graph_case()
     doc["when"]["scenario"][2]["on"] = [0]
@@ -1396,9 +1386,7 @@ def _expect_graph_on_a_multi_source_access() -> dict[str, Any]:
 def _expect_graph_without_a_navigated_path() -> dict[str, Any]:
     """`expectGraph` on an access naming no `path`.
 
-    The path-less `access` form resolves a query-backed list's own source entity
-    and navigates no relationship, so it reaches no relationship contents to state
-    and no accessed path the source read's `objectQuery.includes` could cover.
+    Snapshot access names the loaded relationship it navigates.
     """
     doc = _action_expect_graph_case()
     del doc["when"]["scenario"][2]["path"]
@@ -1988,3 +1976,29 @@ REJECTED_CASES = {
 def test_schema_rejects_malformed_case(label: str) -> None:
     doc = REJECTED_CASES[label]()
     assert not _is_valid(doc), f"{label} document should be rejected by the schema"
+
+
+@pytest.mark.parametrize("reuse_anchor", [False, True])
+def test_golden_scenario_reads_require_their_own_statements(reuse_anchor: bool) -> None:
+    doc = _scenario_case()
+    first = doc["when"]["scenario"][0]
+    second = {"objectQuery": first["objectQuery"], "databaseCalls": 0}
+    if reuse_anchor:
+        second["sameObjectAs"] = 0
+    doc["when"]["scenario"] = [first, second]
+    assert not _is_valid(doc)
+
+
+def test_snapshot_access_cannot_declare_a_lazy_database_read() -> None:
+    doc = _action_scenario_case()
+    access = doc["when"]["scenario"][1]
+    access["databaseCalls"] = 1
+    access["statements"] = [{"sql": {"postgres": "select id from order_item"}}]
+    assert not _is_valid(doc)
+
+
+def test_independent_reads_cannot_declare_snapshot_view_identity() -> None:
+    doc = _scenario_case()
+    first = doc["when"]["scenario"][0]
+    first["sameObjectAs"] = 0
+    assert not _is_valid(doc)
