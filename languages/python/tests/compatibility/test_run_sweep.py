@@ -227,10 +227,10 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     return positions
 
 
-def _gathered_bind_values(binds: list[object]) -> list[object]:
-    if binds and isinstance(binds[0], list):
-        return [*binds[0], *binds[1:]]
-    return binds
+def _unordered_key_sets(binds: list[object]) -> list[object]:
+    return [
+        Counter(cast("list[object]", bind)) if isinstance(bind, list) else bind for bind in binds
+    ]
 
 
 @pytest.mark.parametrize(
@@ -290,12 +290,13 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
             # GATHERED from the parent level's own returned rows — an unordered
             # set (m-case-format fifth assertion layer): the gathered order
             # depends on the parent query's own row order (itself possibly a
-            # declared, non-id `orderBy`), so only the MULTISET of bind values —
-            # the gathered keys together with any propagated as-of suffix — is
-            # asserted, never positional order.
-            assert Counter(_gathered_bind_values(observed_binds)) == Counter(
-                _gathered_bind_values(expected_binds)
-            ), (case.case_id, emission)
+            # declared, non-id `orderBy`), so each key set compares as a MULTISET,
+            # never by position. A `union all` level binds one key set per branch,
+            # and any propagated as-of suffix follows at its own position.
+            assert _unordered_key_sets(observed_binds) == _unordered_key_sets(expected_binds), (
+                case.case_id,
+                emission,
+            )
 
     observations = envelope["observations"]
     assert observations["databaseCalls"] == then.get("databaseCalls", 1), case.case_id

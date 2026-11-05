@@ -155,37 +155,22 @@ def _column_type(neutral_type: str, max_length: int | None, dialect: str) -> str
 
 def placeholder_cast_type(neutral_type: str, max_length: int | None, dialect: str) -> str:
     """The ``cast(null as <type>)`` target type for a table-per-concrete-subtype
-    ``union all`` NULL placeholder (m-sql), per dialect (m-dialect).
+    ``union all`` NULL placeholder, per dialect.
 
-    A column not applicable to a union branch is projected as ``cast(null as <type>)``
-    in the column's declared type, so the union's result column types resolve
-    deterministically rather than defaulting to an untyped ``NULL`` (m-sql). The
-    target-type *spelling* is a dialect decision owned by m-dialect and DIVERGES from
-    the DDL column type for strings:
-
-      * ``decimal(p, s)`` is identical on both dialects.
-      * A bounded ``string`` casts to Postgres ``varchar(n)`` but MariaDB ``char(n)`` —
-        MariaDB's ``CAST`` target grammar does NOT accept ``varchar`` (it uses
-        ``char``). An unbounded one casts to Postgres ``text`` and MariaDB ``char``,
-        which is that grammar's only unbounded character target.
-      * ``json`` diverges for the same reason: Postgres casts to its own ``jsonb``
-        document type, while MariaDB's ``JSON`` is an alias for ``LONGTEXT`` and is
-        no more a legal CAST target than ``LONGTEXT`` itself, so the document
-        placeholder casts to ``char`` there too.
-      * Every other neutral type reuses the DDL column-type mapping (``int64`` ->
-        ``bigint``, ...), which is a legal CAST target on both dialects.
-
-    This is the read-side counterpart of :func:`_column_type`; it exists separately
-    because CAST targets and column types are not the same grammar (the divergences
-    above).
+    m-dialect's placeholder cast form owns each spelling. This exists apart from
+    :func:`_column_type` because CAST targets and column types are different grammars.
     """
     decimal = _DECIMAL_RE.match(neutral_type)
     if decimal:
         return f"decimal({decimal.group(1)},{decimal.group(2)})"
-    if dialect == "mariadb" and neutral_type in ("string", _DOCUMENT_TYPE):
-        return f"char({max_length})" if neutral_type == "string" and max_length else "char"
+    if dialect == "mariadb":
+        if neutral_type == "string":
+            return f"char({max_length})" if max_length else "char"
+        return _MARIADB_PLACEHOLDER_CASTS[neutral_type]
     if neutral_type == "string":
         return f"varchar({max_length})" if max_length else "text"
+    if neutral_type == "int32":
+        return "int"
     return _column_type(neutral_type, max_length, dialect)
 
 
@@ -197,6 +182,20 @@ _TAG_COLUMN_MAX_LENGTH = 32
 # A top-level valueObject occupies ONE dialect-mapped `json` column
 # (m-value-object/m-core): the whole embedded composite, not column-flattened.
 _DOCUMENT_TYPE = "json"
+
+_MARIADB_PLACEHOLDER_CASTS = {
+    "boolean": "signed",
+    "int32": "signed",
+    "int64": "signed",
+    "float32": "float",
+    "float64": "double",
+    "bytes": "binary",
+    "date": "date",
+    "time": "time",
+    "timestamp": "datetime(6)",
+    "uuid": "char(36)",
+    _DOCUMENT_TYPE: "char",
+}
 
 
 # The longest identifier each database stores without truncating it (m-dialect).

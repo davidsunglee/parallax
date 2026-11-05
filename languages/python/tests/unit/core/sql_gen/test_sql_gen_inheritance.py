@@ -1228,11 +1228,11 @@ def test_tpcs_union_restarts_aliases_per_branch_and_concatenates_binds() -> None
         "and case when t1.id is null then false else (t1.name = ?) is true end"
     )
     assert branches[0] == (
-        "select t0.id, t0.title, t0.owner_id, t0.due, cast(null as integer) paid, "
+        "select t0.id, t0.title, t0.owner_id, t0.due, cast(null as int) paid, "
         f"'Inv' family_variant from inv t0 {joined}"
     )
     assert branches[1] == (
-        "select t0.id, t0.title, t0.owner_id, cast(null as integer) due, t0.paid, "
+        "select t0.id, t0.title, t0.owner_id, cast(null as int) due, t0.paid, "
         f"'Rec' family_variant from rec t0 {joined}"
     )
     # Per-branch binds, concatenated in alphabetical branch order — never merged,

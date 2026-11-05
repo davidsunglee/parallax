@@ -595,20 +595,15 @@ class Dialect:
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:
         """The ``CAST`` target-type spelling for a ``NULL`` placeholder column in a
-        table-per-concrete-subtype union-all branch (m-sql "table-per-concrete-
-        subtype lowering").
+        table-per-concrete-subtype union-all branch.
 
-        A distinct `m-dialect` decision from :meth:`column_type` (the DDL column
-        type), spelled independently rather than delegated: a bounded string casts
-        to Postgres ``varchar(n)`` (MariaDB ``char(n)`` — MariaDB's ``CAST`` grammar
-        rejects ``varchar``) and an unbounded string to ``text``, matching the DDL
-        mapping; a ``decimal`` casts to ``decimal(p, s)`` on every dialect —
-        identical to `~parallax.core.sql_gen._predicate`'s nested-extraction cast
-        (which reaches it through :meth:`nested_cast`), but
-        **not** :meth:`column_type`'s own ``numeric(p, s)`` DDL spelling.
+        `m-dialect`'s placeholder cast form owns each spelling. It is a separate
+        decision from :meth:`column_type`, which only some spellings happen to match.
         """
         if isinstance(neutral_type, Decimal):
             return f"decimal({neutral_type.precision}, {neutral_type.scale})"
+        if isinstance(neutral_type, Int32):
+            return "int"
         return self.column_type(neutral_type, max_length)
 
     def array_parameter(self, neutral_type: NeutralType, *, extracted: bool = False) -> str:

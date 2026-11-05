@@ -41,6 +41,7 @@ from parallax.conformance.read_models import (
     Payment,
     Person,
     Pet,
+    Ticket,
     WildBoar,
 )
 from parallax.conformance.read_stories import READ_STORIES
@@ -87,6 +88,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-snapshot-read-004": lambda: Order.where(Order.id == 999).include(Order.items.statuses),
     "m-snapshot-read-005": lambda: Order.where(Order.id == 4).include(Order.items.statuses),
     "m-snapshot-read-011": lambda: Order.where(Order.id == 1).include(Order.items.order),
+    "m-snapshot-read-051": lambda: Ticket.where(Ticket.all).include(Ticket.parking.vehicle.dealer),
     "m-navigate-013": lambda: (
         Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
@@ -269,6 +271,7 @@ _UNFINISHED: frozenset[str] = frozenset(
         "m-snapshot-read-004",
         "m-snapshot-read-005",
         "m-snapshot-read-011",
+        "m-snapshot-read-051",
     }
 )
 

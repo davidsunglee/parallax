@@ -10,9 +10,10 @@ returned by parent so the assembly can fan them back out in memory.
     its own rather than against the database's answer: a level's authored binds start
     with the gathered parent keys as one PostgreSQL array, cast to the array of the
     key's type, or as MariaDB's expanded list, then carry the effective set's
-    table-per-hierarchy tag values and propagated as-of coordinates. A declared
-    relationship ordering is graded on the rows the golden returned. A level whose
-    parents gathered no keys
+    table-per-hierarchy tag values and propagated as-of coordinates. A level reading
+    a table-per-concrete-subtype position over several concretes is one ``union all``
+    whose branches each repeat that whole group. A declared relationship ordering is
+    graded on the rows the golden returned. A level whose parents gathered no keys
 issues no SQL at all, so the statement a case lists for it is dead SQL the case is
 refused for.
 """
@@ -29,6 +30,7 @@ from .._postgres_arrays import column_array_parameter
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, coerce_identity_key
 from ..inheritance import (
+    STRATEGY_TPCS,
     STRATEGY_TPH,
     Family,
     inheritance_of,
@@ -38,7 +40,7 @@ from ..inheritance import (
     resolve_root_source_set,
     tag_value_to_subtype,
 )
-from . import execute, materialize
+from . import execute, materialize, tpcs
 from .executor import ReadExecutor
 
 # --- reading the authored paths ---------------------------------------------
@@ -208,7 +210,9 @@ class FetchStep:
     :attr:`root_guard` is the source set a PROPER root guard restricts this hop's
     parent objects to, carried only on the hop a guarded path starts with (a deeper
     hop's parents are already the guarded ones) and only when the guard admits fewer
-    than every root object.
+    than every root object. :attr:`union_set` is the effective concrete set a
+    table-per-concrete-subtype hop reads as one ``union all`` branch each, carried only
+    when it holds two or more concretes.
     """
 
     def __init__(
@@ -230,6 +234,7 @@ class FetchStep:
         tag_binds: list[Any],
         polymorphic: bool,
         variant_map: dict[Any, str],
+        union_set: list[str] | None,
     ) -> None:
         self.rel_ref = rel_ref
         self.rel_name = rel_ref.rpartition(".")[2]
@@ -248,6 +253,7 @@ class FetchStep:
         self.tag_binds = tag_binds
         self.polymorphic = polymorphic
         self.variant_map = variant_map
+        self.union_set = union_set
 
     @property
     def parent_hop(self) -> HopKey | None:
@@ -256,6 +262,11 @@ class FetchStep:
     @property
     def to_many(self) -> bool:
         return self.cardinality == "one-to-many"
+
+    @property
+    def branch_count(self) -> int:
+        """How many times the level's statement repeats its bind group."""
+        return len(self.union_set) if self.union_set else 1
 
 
 def fetch_steps(model: Model, query: dict[str, Any]) -> list[FetchStep]:
@@ -342,8 +353,13 @@ def _step_of(
         polymorphic = family.strategy_of(target) == STRATEGY_TPH and is_abstract(
             family.defs[child_target]
         )
+        union_set = (
+            hop.effective_set
+            if family.strategy_of(target) == STRATEGY_TPCS and len(hop.effective_set) > 1
+            else None
+        )
     else:
-        tag_column, tag_binds, polymorphic = None, [], False
+        tag_column, tag_binds, polymorphic, union_set = None, [], False, None
         view_key = rel_name
 
     return FetchStep(
@@ -363,6 +379,7 @@ def _step_of(
         tag_binds=tag_binds,
         polymorphic=bool(polymorphic),
         variant_map=variant_map,
+        union_set=union_set,
     )
 
 
@@ -535,6 +552,90 @@ def refuse_unused_levels(
         )
 
 
+def _branch_bind_groups(label: str, step: FetchStep, authored: Sequence[Any]) -> list[list[Any]]:
+    """*authored* split into the equal bind group each of the level's branches consumes.
+
+    A level with no `union all` has one branch, so its group is the whole list.
+    """
+    width, remainder = divmod(len(authored), step.branch_count)
+    if remainder:
+        raise CaseFailure(
+            f"{label} binds {list(authored)!r} do not split into one group per `union all` "
+            f"branch of {step.union_set!r}. Every branch binds the same keys (m-sql)."
+        )
+    return [
+        list(authored[branch * width : (branch + 1) * width]) for branch in range(step.branch_count)
+    ]
+
+
+def _checked_branch_binds(
+    label: str,
+    step: FetchStep,
+    dialect: str,
+    authored: list[Any],
+    parent_keys: list[Any],
+    expected_suffix: list[Any],
+    key_type: str,
+) -> list[Any]:
+    """The binds one branch of a level executes, once *authored* is graded against them.
+
+    Bind layout per branch: the gathered parent keys as one PostgreSQL array or
+    MariaDB's expanded list, then the polymorphic hop's tag binds
+    (table-per-hierarchy `kind = ?` / `in (?, …)` over the effective set, alphabetical
+    order), then the propagated as-of binds.
+    """
+    key_bind_count = 1 if dialect == "postgres" else len(parent_keys)
+    key_slice = authored[:key_bind_count]
+    rest = authored[key_bind_count:]
+    tag_slice = rest[: len(step.tag_binds)]
+    asof_suffix = rest[len(step.tag_binds) :]
+    authored_keys = key_slice[0] if dialect == "postgres" and len(key_slice) == 1 else key_slice
+    keys_match = (
+        isinstance(authored_keys, list)
+        and sorted(coerce_identity_key(bind) for bind in authored_keys) == parent_keys
+    )
+    expected_key_binds: list[Any] = [parent_keys] if dialect == "postgres" else parent_keys
+    if not keys_match:
+        raise CaseFailure(
+            f"{label} key-set binds {key_slice!r} != gathered parent keys "
+            f"{expected_key_binds!r}. The child level MUST be keyed by exactly the parents "
+            f"from the previous level."
+        )
+    if tag_slice != list(step.tag_binds):
+        raise CaseFailure(
+            f"{label} tag binds {tag_slice!r} != the effective-set tag values "
+            f"{step.tag_binds!r}. Every table-per-hierarchy hop but an unnarrowed one at the "
+            f"family root MUST filter its shared-table read by the effective set's tag "
+            f"values (m-sql / m-inheritance)."
+        )
+
+    # As-of propagation oracle: the root pin propagates per-hop, matched by axis, to
+    # each temporal child level. The oracle derives the child's as-of binds
+    # independently and asserts the authored suffix matches, so a dropped/wrong
+    # propagated as-of fails the case. A non-temporal child has an empty suffix (no
+    # as-of term).
+    if len(asof_suffix) != len(expected_suffix) or not all(
+        execute.bind_value_equal(
+            authored_bind,
+            expected,
+            "timestamp",
+            allow_temporal_infinity=True,
+        )
+        for authored_bind, expected in zip(asof_suffix, expected_suffix, strict=True)
+    ):
+        raise CaseFailure(
+            f"{label} as-of suffix {asof_suffix!r} != the propagated as-of binds "
+            f"{expected_suffix!r}. The root pin MUST propagate to this temporal child "
+            f"(matched by axis), appended after the IN list."
+        )
+
+    # The authored keys are canonical Wire values; the level executes their managed
+    # members, which a float32 key's Wire spelling does not equal.
+    managed_keys = [portable_literal.decode_canonical(key, key_type) for key in authored_keys]
+    executed_keys: list[Any] = [managed_keys] if dialect == "postgres" else managed_keys
+    return executed_keys + list(step.tag_binds) + expected_suffix
+
+
 def execute_fetch_levels(
     case: Case,
     reader: ReadExecutor,
@@ -553,12 +654,12 @@ def execute_fetch_levels(
     parent key set elides that child SQL entirely, and a level the golden lists
     but no parent reaches is unused SQL the case is refused for. Each executed
     level's authored binds are cross-checked against the keys, tag values, and
-    propagated as-of coordinates the oracle derives independently, so a dropped
-    IN list, a missing table-per-hierarchy tag filter, or a lost as-of
-    propagation fails the case rather than passing on the DB's own answer. Rows
-    are held per HOP rather than per entity, because two branches may reach one
-    entity through different guards or different parents and a deeper hop
-    descends from exactly one of them.
+    propagated as-of coordinates the oracle derives independently, once per
+    `union all` branch of a level that has them, so a dropped IN list, a missing
+    table-per-hierarchy tag filter, or a lost as-of propagation fails the case
+    rather than passing on the DB's own answer. Rows are held per HOP rather than
+    per entity, because two branches may reach one entity through different guards
+    or different parents and a deeper hop descends from exactly one of them.
     """
     dialect = reader.dialect
     root_pins = execute.root_asof_pins(query)
@@ -596,92 +697,45 @@ def execute_fetch_levels(
                 f"keys {parent_keys!r}."
             )
 
-        # Bind layout per child level: the gathered parent keys as one PostgreSQL
-        # array or MariaDB's expanded list, then the polymorphic hop's tag binds
-        # (table-per-hierarchy `kind = ?` / `in (?, …)` over the effective set,
-        # alphabetical order), then the propagated as-of binds.
         level_sql, raw_authored = levels[statement_index]
-        key_bind_count = 1 if dialect == "postgres" else len(parent_keys)
-        key_slice = raw_authored[:key_bind_count]
-        rest = list(raw_authored[key_bind_count:])
-        tag_slice = rest[: len(step.tag_binds)]
-        asof_suffix = rest[len(step.tag_binds) :]
-        authored_keys = key_slice[0] if dialect == "postgres" and len(key_slice) == 1 else key_slice
-        keys_match = (
-            isinstance(authored_keys, list)
-            and sorted(coerce_identity_key(bind) for bind in authored_keys) == parent_keys
+        label = (
+            f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} ({step.view_key})"
         )
-        expected_key_binds: list[Any] = [parent_keys] if dialect == "postgres" else parent_keys
-        if not keys_match:
+        if step.union_set is not None and step.order_by:
             raise CaseFailure(
-                f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
-                f"({step.view_key}) key-set binds {key_slice!r} != gathered parent "
-                f"keys {expected_key_binds!r}. The child level MUST be keyed by "
-                f"exactly the parents from the previous level."
+                f"{label} declares an `orderBy` over a `union all` level, whose canonical "
+                f"form m-sql does not state, so the oracle cannot grade it."
             )
-        if list(tag_slice) != list(step.tag_binds):
-            raise CaseFailure(
-                f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
-                f"({step.view_key}) tag binds {tag_slice!r} != the effective-set tag "
-                f"values {step.tag_binds!r}. Every table-per-hierarchy hop but an "
-                f"unnarrowed one at the family root MUST filter its shared-table read by "
-                f"the effective set's tag values (m-sql / m-inheritance)."
-            )
-
-        # As-of propagation oracle: the root pin propagates per-hop, matched by
-        # axis, to each temporal child level. The oracle derives the child's
-        # as-of binds independently and asserts the authored suffix matches, so a
-        # dropped/wrong propagated as-of fails the case. A non-temporal child has
-        # an empty suffix (no as-of term).
         expected_suffix = (
             execute.expected_pin_suffix(step.child_entity, root_pins)
             if step.child_entity.is_temporal
             else []
         )
-        if len(asof_suffix) != len(expected_suffix) or not all(
-            execute.bind_value_equal(
-                authored,
-                expected,
-                "timestamp",
-                allow_temporal_infinity=True,
-            )
-            for authored, expected in zip(asof_suffix, expected_suffix, strict=True)
-        ):
-            raise CaseFailure(
-                f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
-                f"({step.view_key}) as-of suffix {asof_suffix!r} != the propagated "
-                f"as-of binds {expected_suffix!r}. The root pin MUST propagate to "
-                f"this temporal child (matched by axis), appended after the IN list."
-            )
-
         key_type = step.child_entity.attribute_by_name(step.child_attr)["type"]
-        if dialect == "postgres":
-            key_array = f"= any({column_array_parameter(key_type)})"
-            if key_array not in level_sql:
-                raise CaseFailure(
-                    f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
-                    f"({step.view_key}) does not compare its gathered keys through "
-                    f"{key_array!r}. A PostgreSQL child level casts its one key array to "
-                    f"the array of the key's own type (m-sql / m-dialect)."
-                )
+        executed_binds = [
+            bind
+            for authored in _branch_bind_groups(label, step, raw_authored)
+            for bind in _checked_branch_binds(
+                label, step, dialect, authored, parent_keys, expected_suffix, key_type
+            )
+        ]
 
-        # The authored keys are canonical Wire values; the level executes their
-        # managed members, which a float32 key's Wire spelling does not equal.
-        managed_keys = [portable_literal.decode_canonical(key, key_type) for key in authored_keys]
-        executed_keys: list[Any] = [managed_keys] if dialect == "postgres" else managed_keys
-        child_rows = execute.query_rows(
-            case,
-            reader,
-            level_sql,
-            executed_keys + list(step.tag_binds) + expected_suffix,
-        )
+        key_array = column_array_parameter(key_type) if dialect == "postgres" else None
+        if key_array is not None and f"= any({key_array})" not in level_sql:
+            raise CaseFailure(
+                f"{label} does not compare its gathered keys through "
+                f"'= any({key_array})'. A PostgreSQL child level casts its one key array to "
+                f"the array of the key's own type (m-sql / m-dialect)."
+            )
+
+        child_rows = execute.query_rows(case, reader, level_sql, executed_binds)
+        child_col = column_of(step.child_entity, step.child_attr)
         # The level is materialized WHOLE by the seam that owns its kind of
         # position, which it states its own facts to: the raw tag column a
-        # polymorphic (abstract-target, table-per-hierarchy) hop projects, and the
-        # family's tag map. Every other hop names none — it is narrowed to one
-        # concrete, targets a concrete or no family, or is
-        # table-per-concrete-subtype, whose multi-concrete hop this planner reads as
-        # a single table and so cannot name a carrier for.
+        # polymorphic (abstract-target, table-per-hierarchy) hop projects and the
+        # family's tag map, or the `union all` a multi-concrete
+        # table-per-concrete-subtype hop reads. Every other hop names neither — it
+        # is narrowed to one concrete, or targets a concrete or no family.
         published = materialize.materialize_hop_level(
             case,
             step.child_entity,
@@ -689,10 +743,19 @@ def execute_fetch_levels(
             view_key=step.view_key,
             tag_column=step.tag_column if step.polymorphic else None,
             variant_map=step.variant_map,
+            union=None
+            if step.union_set is None
+            else tpcs.LevelUnion(
+                concretes=step.union_set,
+                statement=level_sql,
+                dialect=dialect,
+                key_column=child_col,
+                key_array=key_array,
+                branch_binds=len(executed_binds) // step.branch_count,
+            ),
         )
         rows_by_hop[step.hop_key] = published
 
-        child_col = column_of(step.child_entity, step.child_attr)
         bucket: dict[Any, list[materialize.PublishedRow]] = {}
         for row in published:
             bucket.setdefault(coerce_identity_key(row[child_col]), []).append(row)

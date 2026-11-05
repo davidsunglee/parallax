@@ -1,7 +1,8 @@
 """Grading a table-per-concrete-subtype abstract read's `union all` against the layout.
 
 An abstract read of a table-per-concrete-subtype position lowers to one `union all`
-branch per concrete Table, and the golden text is where that lowering is witnessed. The
+branch per concrete Table, and so does a deep-fetch level reaching such a position over
+more than one concrete. The golden text is where that lowering is witnessed. The
 storage layout settles the physical facts — the branch count and order, the Table each
 branch reads, the one logical contributor sequence every branch aligns to, and each
 branch's slot-or-absence entry per contributor. What this module asserts is the SQL
@@ -20,7 +21,7 @@ does not derive and states them as arguments.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, NamedTuple
 
 import sqlglot
 from sqlglot import exp
@@ -380,10 +381,7 @@ def assert_union_shape(
         view, instance_form=is_instance_form(case), document_resident=document_resident
     )
     superset = [view.column_spellings[ordinal] for ordinal in ordinals]
-    position_types = _placeholder_types(case.model, view.columns)
-    placeholder_types = [position_types[ordinal] for ordinal in ordinals]
     aliases = result_aliases(superset)
-    expected_columns = [*aliases, VARIANT_COLUMN]
     facts = WrapFacts(
         document_aliases=frozenset(
             alias
@@ -400,55 +398,175 @@ def assert_union_shape(
         tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
         assert_union_all_only(case, tree)
         dialect_facts = replace(facts, binds=tuple(case.statement_binds(0, dialect)))
-        branches = union_branch_selects(_union_all_body(case, tree, dialect, dialect_facts))
-        if len(branches) != len(branch_variants):
+        _assert_union_branches(
+            case,
+            union_branch_selects(_union_all_body(case, tree, dialect, dialect_facts)),
+            view,
+            branch_variants,
+            ordinals,
+            dialect,
+        )
+
+
+def _assert_union_branches(
+    case: Case,
+    branches: list[Any],
+    view: PositionLayoutView,
+    branch_variants: list[tuple[PositionBranch, str]],
+    ordinals: tuple[int, ...],
+    dialect: str,
+) -> None:
+    """Assert one statement's `union all` branches against the position they read.
+
+    What a whole read and a deep-fetch level share: the branch count and order, the
+    Table each branch reads, its aligned projection over *ordinals*, and its
+    `familyVariant` literal.
+    """
+    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
+    position_types = _placeholder_types(case.model, view.columns)
+    placeholder_types = [position_types[ordinal] for ordinal in ordinals]
+    expected_columns = [*result_aliases(superset), VARIANT_COLUMN]
+    if len(branches) != len(branch_variants):
+        raise CaseFailure(
+            f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "
+            f"{len(branch_variants)} `union all` branch(es) (the effective concrete "
+            f"set {[name for _, name in branch_variants]}), but the {dialect} golden "
+            f"has {len(branches)}."
+        )
+    for position, (branch, (position_branch, name)) in enumerate(
+        zip(branches, branch_variants, strict=True)
+    ):
+        table = position_branch.layout.table
+        branch_tables = [source.name for source in branch.find_all(exp.Table)]
+        if not branch_tables or branch_tables[0] != table:
             raise CaseFailure(
-                f"{case.path.name}: table-per-concrete-subtype abstract read lowers to "
-                f"{len(branch_variants)} `union all` branch(es) (the effective concrete "
-                f"set {[name for _, name in branch_variants]}), but the {dialect} golden "
-                f"has {len(branches)}."
+                f"{case.path.name}: `union all` branch {position} must read from "
+                f"{table!r} (the alphabetical-order concrete subtype {name!r}), got "
+                f"{branch_tables[0] if branch_tables else None!r}."
             )
-        for position, (branch, (position_branch, name)) in enumerate(
-            zip(branches, branch_variants, strict=True)
-        ):
-            table = position_branch.layout.table
-            branch_tables = [source.name for source in branch.find_all(exp.Table)]
-            if not branch_tables or branch_tables[0] != table:
-                raise CaseFailure(
-                    f"{case.path.name}: `union all` branch {position} must read from "
-                    f"{table!r} (the alphabetical-order concrete subtype {name!r}), got "
-                    f"{branch_tables[0] if branch_tables else None!r}."
-                )
-            presence_ordinals = set(document_presence_ordinals(branches, case.model, dialect))
-            logical_projections = [
-                projection
-                for ordinal, projection in enumerate(branch.expressions)
-                if ordinal not in presence_ordinals
-            ]
-            out_columns = [projection.output_name for projection in logical_projections]
-            if out_columns != expected_columns:
-                raise CaseFailure(
-                    f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
-                    f"{out_columns}, not the stable superset + familyVariant literal "
-                    f"{expected_columns} (the position's one contributor sequence, then "
-                    f"familyVariant; m-sql)."
-                )
-            logical_branch = branch.copy()
-            logical_branch.set("expressions", logical_projections)
-            _assert_branch_projection_shape(
-                case,
-                logical_branch,
-                position,
-                name,
-                superset,
-                tuple(position_branch.slots[ordinal] for ordinal in ordinals),
-                placeholder_types,
-                dialect,
+        presence_ordinals = set(document_presence_ordinals(branches, case.model, dialect))
+        logical_projections = [
+            projection
+            for ordinal, projection in enumerate(branch.expressions)
+            if ordinal not in presence_ordinals
+        ]
+        out_columns = [projection.output_name for projection in logical_projections]
+        if out_columns != expected_columns:
+            raise CaseFailure(
+                f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
+                f"{out_columns}, not the stable superset + familyVariant literal "
+                f"{expected_columns} (the position's one contributor sequence, then "
+                f"familyVariant; m-sql)."
             )
-            literal = string_literal_value(logical_projections[-1])
-            if literal != name:
-                raise CaseFailure(
-                    f"{case.path.name}: `union all` branch {position} projects familyVariant "
-                    f"literal {literal!r}, expected the concrete subtype name {name!r} "
-                    f"(TPCS projects familyVariant as a per-branch literal; m-sql)."
-                )
+        logical_branch = branch.copy()
+        logical_branch.set("expressions", logical_projections)
+        _assert_branch_projection_shape(
+            case,
+            logical_branch,
+            position,
+            name,
+            superset,
+            tuple(position_branch.slots[ordinal] for ordinal in ordinals),
+            placeholder_types,
+            dialect,
+        )
+        literal = string_literal_value(logical_projections[-1])
+        if literal != name:
+            raise CaseFailure(
+                f"{case.path.name}: `union all` branch {position} projects familyVariant "
+                f"literal {literal!r}, expected the concrete subtype name {name!r} "
+                f"(TPCS projects familyVariant as a per-branch literal; m-sql)."
+            )
+
+
+class LevelUnion(NamedTuple):
+    """The one statement a multi-concrete deep-fetch level reads, and what keys it.
+
+    ``concretes`` is the hop's effective concrete set. ``key_column`` is the physical
+    Column every branch compares the gathered keys to. ``key_array`` is the cast array
+    those keys travel in, absent on a dialect expanding them to one placeholder each.
+    ``branch_binds`` is how many binds each branch must consume, derived from the
+    gathered keys and the propagated as-of coordinates rather than read off the
+    statement.
+    """
+
+    concretes: list[str]
+    statement: str
+    dialect: str
+    key_column: str
+    key_array: str | None
+    branch_binds: int
+
+
+def assert_level_union_shape(
+    case: Case,
+    view: PositionLayoutView,
+    branch_variants: list[tuple[PositionBranch, str]],
+    level: LevelUnion,
+    *,
+    document_resident: bool,
+) -> None:
+    """Assert one deep-fetch level's `union all` shape (m-sql, m-read-planning).
+
+    A level over two or more concretes is the abstract-read lowering keyed by the
+    gathered parent keys, so its branches are graded exactly as a whole read's are,
+    and it is instance-form by classification. What a read does not have is the shared
+    key set: every branch must compare the SAME keys, so each is graded for its own
+    membership term and its own bind count. The count is what the level's flat bind
+    list cannot show, since an uneven split of those binds across the branches would
+    still add up to the same list.
+    """
+    engine = sqlglot_dialect(level.dialect)
+    tree = sqlglot.parse_one(level.statement, read=engine)
+    assert_union_all_only(case, tree)
+    if not isinstance(tree, exp.Union):
+        raise CaseFailure(
+            f"{case.path.name}: a deep-fetch level over {level.concretes} reads one bare "
+            f"`union all`, one branch per concrete (m-sql / m-read-planning)."
+        )
+    branches = union_branch_selects(tree)
+    _assert_union_branches(
+        case,
+        branches,
+        view,
+        branch_variants,
+        projected_position_ordinals(view, instance_form=True, document_resident=document_resident),
+        level.dialect,
+    )
+    for position, (branch, (_, name)) in enumerate(zip(branches, branch_variants, strict=True)):
+        _assert_branch_keyed(case, branch, position, name, level)
+
+
+def _assert_branch_keyed(
+    case: Case, branch: Any, position: int, name: str, level: LevelUnion
+) -> None:
+    """Assert one level branch compares the gathered keys and consumes its own binds."""
+    where = branch.args.get("where")
+    membership = where.this if where is not None else None
+    while isinstance(membership, exp.And):
+        membership = membership.this
+    if not isinstance(membership, exp.EQ if level.key_array is not None else exp.In) or not (
+        isinstance(membership.this, exp.Column) and membership.this.name == level.key_column
+    ):
+        raise CaseFailure(
+            f"{case.path.name}: `union all` branch {position} ({name!r}) of a deep-fetch "
+            f"level is not keyed by {level.key_column!r}. Every branch shares the level's "
+            f"gathered key set (m-sql / m-read-planning)."
+        )
+    if level.key_array is not None:
+        engine = sqlglot_dialect(level.dialect)
+        expected = sqlglot.parse_one(f"t0.key = any({level.key_array})", read=engine)
+        if membership.expression != expected.expression:
+            raise CaseFailure(
+                f"{case.path.name}: `union all` branch {position} ({name!r}) does not compare "
+                f"its gathered keys through {level.key_array!r}. A PostgreSQL child level "
+                f"casts its one key array to the array of the key's own type "
+                f"(m-sql / m-dialect)."
+            )
+    placeholders = sum(1 for _ in branch.find_all(exp.Placeholder))
+    if placeholders != level.branch_binds:
+        raise CaseFailure(
+            f"{case.path.name}: `union all` branch {position} ({name!r}) of a deep-fetch "
+            f"level consumes {placeholders} bind(s), expected {level.branch_binds}. Every "
+            f"branch shares the level's one gathered key set (m-sql / m-read-planning)."
+        )

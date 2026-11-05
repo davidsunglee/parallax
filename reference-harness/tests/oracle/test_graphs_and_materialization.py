@@ -17,16 +17,18 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, cast
 
 import pytest
 
-from reference_harness.case import Case
+from reference_harness.case import Case, Model, _load_yaml
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.document_codec import ParsedJsonString
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.object_query_oracle import materialize as oracle_materialize
+from reference_harness.temporality import derive_temporal_structure
 
 from .conftest import ScriptedReads
 
@@ -1143,3 +1145,483 @@ def test_a_child_statement_for_a_position_with_no_concrete_is_refused(
 
     with pytest.raises(CaseFailure, match="1 unused deep-fetch child statement"):
         assert_case_read(case, ScriptedReads(results=[_WORKBENCHES, _GADGETS, _WORKBENCHES]))
+
+
+# --- a table-per-concrete-subtype level ---------------------------------------
+
+
+_THREE_HOP = "m-snapshot-read-051-three-hop-include.yaml"
+
+_TICKETS: list[dict[str, Any]] = [
+    {"id": 50, "parking_id": 30},
+    {"id": 51, "parking_id": 31},
+    {"id": 52, "parking_id": 32},
+    {"id": 53, "parking_id": 33},
+    {"id": 54, "parking_id": None},
+]
+_PARKINGS: list[dict[str, Any]] = [
+    {"id": 30, "vehicle_id": 5},
+    {"id": 31, "vehicle_id": 6},
+    {"id": 32, "vehicle_id": None},
+    {"id": 33, "vehicle_id": 7},
+]
+# The rows a `union all` returns are aligned to one superset, so each carries the
+# sibling branch's column as the placeholder's NULL and names its own branch by literal.
+_VEHICLES: list[dict[str, Any]] = [
+    {
+        "id": 6,
+        "maker": "Trek",
+        "dealer_id": 41,
+        "gears": 21,
+        "seats": None,
+        "family_variant": "Bike",
+    },
+    {
+        "id": 5,
+        "maker": "Volvo",
+        "dealer_id": 40,
+        "gears": None,
+        "seats": 4,
+        "family_variant": "Car",
+    },
+    {
+        "id": 7,
+        "maker": "Saab",
+        "dealer_id": None,
+        "gears": None,
+        "seats": None,
+        "family_variant": "Car",
+    },
+]
+_DEALERS: list[dict[str, Any]] = [{"id": 40, "name": "Nordic"}, {"id": 41, "name": "Velo"}]
+
+_DIALECTS = ("postgres", "mariadb")
+
+
+def _chain(vehicles: list[dict[str, Any]] = _VEHICLES) -> list[list[dict[str, Any]]]:
+    """Every statement's answer in order, the independent root oracle last."""
+    return [_TICKETS, _PARKINGS, vehicles, _DEALERS, _TICKETS]
+
+
+def _vehicle_level(case: Case) -> dict[str, Any]:
+    """The `union all` statement of the case's polymorphic hop, as its copy holds it."""
+    return case.then["statements"][2]
+
+
+def _with_vehicle_sql(case: Case, dialect: str, old: str, new: str, *, count: int = -1) -> Case:
+    sql = _vehicle_level(case)["sql"]
+    assert old in sql[dialect]
+    sql[dialect] = sql[dialect].replace(old, new, count)
+    return case
+
+
+def _with_descriptor_change(case: Case, change: Callable[[dict[str, Any]], None]) -> Case:
+    """*case* read against its model descriptor as *change* rewrites it.
+
+    The corpus declares no model that varies this hop's position, and a variation the
+    oracle must grade is no reason to add one.
+    """
+    document = _load_yaml(case.model.path)
+    change(document)
+    return replace(
+        case,
+        model=Model(
+            path=case.model.path,
+            descriptor=derive_temporal_structure(document),
+            fixtures=dict(case.model.fixtures),
+        ),
+    )
+
+
+def _entity(document: dict[str, Any], name: str) -> dict[str, Any]:
+    return next(entity for entity in document["entities"] if entity["name"] == name)
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_union_level_assembles_the_authored_graph_in_one_statement(
+    corpus_case: CaseLoader, dialect: str
+) -> None:
+    case = corpus_case(_THREE_HOP)
+    reads = ScriptedReads(dialect=dialect, results=_chain())
+
+    assert_case_read(case, reads)
+
+    assert reads.statements[:4] == case.golden_statements(dialect)
+    assert len(reads.calls) == 5
+
+
+@pytest.mark.parametrize(
+    ("dialect", "expected"),
+    [
+        ("postgres", ([5, 6, 7], [5, 6, 7])),
+        ("mariadb", (5, 6, 7, 5, 6, 7)),
+    ],
+)
+def test_a_union_level_executes_the_gathered_keys_once_per_branch(
+    corpus_case: CaseLoader, dialect: str, expected: tuple[Any, ...]
+) -> None:
+    reads = ScriptedReads(dialect=dialect, results=_chain())
+
+    assert_case_read(corpus_case(_THREE_HOP), reads)
+
+    assert reads.calls[2][1] == expected
+
+
+@pytest.mark.parametrize(
+    ("dialect", "binds"),
+    [("postgres", [[7, 6, 5], [6, 5, 7]]), ("mariadb", [7, 6, 5, 6, 5, 7])],
+)
+def test_each_branch_compares_its_key_set_unordered(
+    damaged_case: CaseLoader, dialect: str, binds: list[Any]
+) -> None:
+    case = damaged_case(_THREE_HOP)
+    _vehicle_level(case)["binds"][dialect] = binds
+
+    assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize(
+    ("dialect", "binds"),
+    [
+        ("postgres", [[5, 6, 7], [5, 6]]),
+        ("postgres", [[5, 6, 7], [5, 6, 8]]),
+        ("postgres", [[5, 6], [5, 6, 7]]),
+        ("mariadb", [5, 6, 7, 5, 6, 8]),
+        ("mariadb", [5, 6, 5, 6, 7, 7]),
+    ],
+)
+def test_a_branch_keyed_by_anything_else_is_refused(
+    damaged_case: CaseLoader, dialect: str, binds: list[Any]
+) -> None:
+    case = damaged_case(_THREE_HOP)
+    _vehicle_level(case)["binds"][dialect] = binds
+
+    with pytest.raises(CaseFailure, match=r"level 2 \(vehicle\) key-set binds"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize(
+    ("dialect", "binds"), [("postgres", [[5, 6, 7]]), ("mariadb", [5, 6, 7, 5, 6])]
+)
+def test_binds_that_cannot_cover_every_branch_are_refused(
+    damaged_case: CaseLoader, dialect: str, binds: list[Any]
+) -> None:
+    case = damaged_case(_THREE_HOP)
+    _vehicle_level(case)["binds"][dialect] = binds
+
+    with pytest.raises(CaseFailure, match="one group per `union all` branch"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+def test_a_level_authoring_no_binds_at_all_is_refused(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_ORDERED_ITEMS)
+    del case.then["statements"][1]["binds"]
+    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+
+    with pytest.raises(CaseFailure, match="key-set binds"):
+        assert_case_read(case, reads)
+
+
+def test_uneven_branch_placeholders_are_refused_though_the_flat_binds_match(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        "mariadb",
+        "traversal_bike t0 where t0.id in (?, ?, ?)",
+        "traversal_bike t0 where t0.id in (?, ?)",
+    )
+    _with_vehicle_sql(
+        case,
+        "mariadb",
+        "traversal_car t0 where t0.id in (?, ?, ?)",
+        "traversal_car t0 where t0.id in (?, ?, ?, ?)",
+    )
+
+    with pytest.raises(CaseFailure, match=r"branch 0 \('Bike'\).*consumes 2 bind\(s\), expected 3"):
+        assert_case_read(case, ScriptedReads(dialect="mariadb", results=_chain()))
+
+
+def test_a_branch_keyed_by_another_column_is_refused(damaged_case: CaseLoader) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        "mariadb",
+        "traversal_car t0 where t0.id in",
+        "traversal_car t0 where t0.dealer_id in",
+    )
+
+    with pytest.raises(CaseFailure, match=r"branch 1 \('Car'\).*not keyed by 'id'"):
+        assert_case_read(case, ScriptedReads(dialect="mariadb", results=_chain()))
+
+
+def test_a_mariadb_branch_comparing_one_key_by_equality_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        "mariadb",
+        "traversal_car t0 where t0.id in (?, ?, ?)",
+        "traversal_car t0 where t0.id = ?",
+    )
+
+    with pytest.raises(CaseFailure, match=r"branch 1 \('Car'\).*not keyed by 'id'"):
+        assert_case_read(case, ScriptedReads(dialect="mariadb", results=_chain()))
+
+
+def test_a_branch_with_no_key_membership_is_refused(damaged_case: CaseLoader) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        "postgres",
+        " from traversal_car t0 where t0.id = any(cast(? as bigint[]))",
+        " from traversal_car t0",
+    )
+
+    with pytest.raises(CaseFailure, match=r"branch 1 \('Car'\).*not keyed by 'id'"):
+        assert_case_read(case, ScriptedReads(results=_chain()))
+
+
+def test_one_postgres_branch_casting_its_keys_narrower_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        "postgres",
+        "traversal_car t0 where t0.id = any(cast(? as bigint[]))",
+        "traversal_car t0 where t0.id = any(cast(? as int[]))",
+    )
+
+    with pytest.raises(CaseFailure, match=r"branch 1 \('Car'\) does not compare its gathered"):
+        assert_case_read(case, ScriptedReads(results=_chain()))
+
+
+_BIKE_BRANCH = {
+    "postgres": (
+        "select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as int) seats, "
+        "'Bike' family_variant from traversal_bike t0 where t0.id = any(cast(? as bigint[]))"
+    ),
+    "mariadb": (
+        "select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as signed) seats, "
+        "'Bike' family_variant from traversal_bike t0 where t0.id in (?, ?, ?)"
+    ),
+}
+_PLACEHOLDER = {"postgres": "cast(null as int)", "mariadb": "cast(null as signed)"}
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_dropping_a_branch_is_refused(damaged_case: CaseLoader, dialect: str) -> None:
+    case = damaged_case(_THREE_HOP)
+    _vehicle_level(case)["sql"][dialect] = _BIKE_BRANCH[dialect]
+
+    with pytest.raises(CaseFailure, match="one bare `union all`"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_repeating_a_branch_is_refused(damaged_case: CaseLoader, dialect: str) -> None:
+    case = damaged_case(_THREE_HOP)
+    sql = _vehicle_level(case)["sql"]
+    sql[dialect] = f"{sql[dialect]} union all {_BIKE_BRANCH[dialect]}"
+
+    with pytest.raises(CaseFailure, match=f"lowers to 2 .* the {dialect} golden has 3"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_reading_its_branches_out_of_canonical_order_is_refused(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = damaged_case(_THREE_HOP)
+    sql = _vehicle_level(case)["sql"]
+    bike, car = sql[dialect].split(" union all ")
+    sql[dialect] = f"{car} union all {bike}"
+
+    with pytest.raises(CaseFailure, match="branch 0 must read from 'traversal_bike'"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_branch_spelling_the_wrong_literal_is_refused(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP), dialect, "'Car' family_variant", "'Bike' family_variant"
+    )
+
+    with pytest.raises(CaseFailure, match="familyVariant literal 'Bike', expected .*'Car'"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_branch_with_an_untyped_null_is_refused(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = _with_vehicle_sql(damaged_case(_THREE_HOP), dialect, _PLACEHOLDER[dialect], "null")
+
+    with pytest.raises(CaseFailure, match="NON-applicable column"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize(
+    ("dialect", "wrong"),
+    [
+        ("postgres", "cast(null as bigint)"),
+        ("mariadb", "cast(null as char)"),
+        ("mariadb", "cast(null as int)"),
+    ],
+)
+def test_a_level_placeholder_in_another_type_is_refused(
+    damaged_case: CaseLoader, dialect: str, wrong: str
+) -> None:
+    case = _with_vehicle_sql(damaged_case(_THREE_HOP), dialect, _PLACEHOLDER[dialect], wrong)
+
+    with pytest.raises(CaseFailure, match="placeholder to"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_projecting_off_the_position_layout_is_refused(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        dialect,
+        f"t0.gears, {_PLACEHOLDER[dialect]} seats",
+        f"{_PLACEHOLDER[dialect]} seats, t0.gears",
+        count=1,
+    )
+
+    with pytest.raises(CaseFailure, match="not the stable superset"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_a_level_deduplicating_its_union_is_refused(damaged_case: CaseLoader, dialect: str) -> None:
+    case = _with_vehicle_sql(damaged_case(_THREE_HOP), dialect, " union all ", " union ")
+
+    with pytest.raises(CaseFailure, match="union all"):
+        assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
+
+
+def test_a_wrapped_level_is_refused(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_THREE_HOP)
+    sql = _vehicle_level(case)["sql"]
+    sql["postgres"] = (
+        "select u.id, u.maker, u.dealer_id, u.gears, u.seats, u.family_variant "
+        f"from ({sql['postgres']}) u"
+    )
+
+    with pytest.raises(CaseFailure, match="one bare `union all`"):
+        assert_case_read(case, ScriptedReads(results=_chain()))
+
+
+def test_a_level_is_graded_when_its_branches_return_no_rows(damaged_case: CaseLoader) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP), "postgres", "'Car' family_variant", "'Truck' family_variant"
+    )
+
+    with pytest.raises(CaseFailure, match="familyVariant literal 'Truck'"):
+        assert_case_read(case, ScriptedReads(results=[_TICKETS, _PARKINGS, [], _TICKETS]))
+
+
+def test_a_rows_branch_literal_is_the_variant_it_publishes(corpus_case: CaseLoader) -> None:
+    swapped = [row | {"family_variant": "Bike"} for row in _VEHICLES]
+
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
+        assert_case_read(corpus_case(_THREE_HOP), ScriptedReads(results=_chain(swapped)))
+
+
+def test_a_literal_naming_no_branch_of_the_level_is_refused(corpus_case: CaseLoader) -> None:
+    strays = [row | {"family_variant": "Truck"} for row in _VEHICLES]
+
+    with pytest.raises(CaseFailure, match="literal 'Truck' names no branch"):
+        assert_case_read(corpus_case(_THREE_HOP), ScriptedReads(results=_chain(strays)))
+
+
+def test_a_level_row_carrying_no_literal_is_refused(corpus_case: CaseLoader) -> None:
+    bare = [
+        {key: value for key, value in row.items() if key != "family_variant"} for row in _VEHICLES
+    ]
+
+    with pytest.raises(CaseFailure, match=r"polymorphic hop vehicle does not project"):
+        assert_case_read(corpus_case(_THREE_HOP), ScriptedReads(results=_chain(bare)))
+
+
+def test_a_redundantly_narrowed_level_reads_the_same_union_under_its_view_key(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_THREE_HOP)
+    segment = case.when["objectQuery"]["includes"][0]["segments"][1]
+    segment["narrowTo"] = ["parallax.compatibility.Bike", "parallax.compatibility.Car"]
+    for ticket in case.then["graph"]["Ticket"]:
+        if ticket["parking"] is not None:
+            parking = ticket["parking"]
+            parking["vehicle[Bike,Car]"] = parking.pop("vehicle")
+    reads = ScriptedReads(results=_chain())
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[2][1] == ([5, 6, 7], [5, 6, 7])
+
+
+def _vehicle_family_at_transaction_time(document: dict[str, Any]) -> None:
+    _entity(document, "Vehicle")["temporality"] = "transaction-time"
+
+
+@pytest.mark.parametrize(
+    ("dialect", "keys", "executed"),
+    [
+        ("postgres", [[5, 6, 7]], ([5, 6, 7], "infinity", [5, 6, 7], "infinity")),
+        ("mariadb", [5, 6, 7], (5, 6, 7, "infinity", 5, 6, 7, "infinity")),
+    ],
+)
+def test_a_temporal_union_level_repeats_its_as_of_binds_per_branch(
+    damaged_case: CaseLoader, dialect: str, keys: list[Any], executed: tuple[Any, ...]
+) -> None:
+    case = _with_descriptor_change(damaged_case(_THREE_HOP), _vehicle_family_at_transaction_time)
+    level = _vehicle_level(case)
+    level["sql"][dialect] = (
+        level["sql"][dialect]
+        .replace(" seats, 'Bike'", " seats, t0.in_z, t0.out_z, 'Bike'")
+        .replace("t0.seats, 'Car'", "t0.seats, t0.in_z, t0.out_z, 'Car'")
+        .replace(" union all ", " and t0.out_z = ? union all ")
+        + " and t0.out_z = ?"
+    )
+    level["binds"][dialect] = [*keys, "infinity", *keys, "infinity"]
+    vehicles = [row | {"in_z": _JANUARY, "out_z": _FOREVER} for row in _VEHICLES]
+    for ticket in case.then["graph"]["Ticket"]:
+        vehicle = (ticket["parking"] or {}).get("vehicle")
+        if vehicle is not None:
+            vehicle |= {"txStart": _JANUARY, "txEnd": "infinity"}
+    reads = ScriptedReads(dialect=dialect, results=_chain(vehicles))
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[2][1] == executed
+
+
+def test_a_temporal_union_branch_carrying_the_wrong_as_of_bind_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _with_descriptor_change(damaged_case(_THREE_HOP), _vehicle_family_at_transaction_time)
+    _vehicle_level(case)["binds"]["postgres"] = [
+        [5, 6, 7],
+        "infinity",
+        [5, 6, 7],
+        _JANUARY,
+    ]
+
+    with pytest.raises(CaseFailure, match=r"level 2 \(vehicle\) as-of suffix"):
+        assert_case_read(case, ScriptedReads(results=_chain()))
+
+
+def test_an_ordered_union_level_is_refused_rather_than_graded_as_unordered(
+    damaged_case: CaseLoader,
+) -> None:
+    def order_the_vehicle_hop(document: dict[str, Any]) -> None:
+        relationship = _entity(document, "Parking")["relationships"][0]
+        relationship["orderBy"] = [{"attribute": "id"}]
+
+    case = _with_descriptor_change(damaged_case(_THREE_HOP), order_the_vehicle_hop)
+
+    with pytest.raises(CaseFailure, match="`orderBy` over a `union all` level"):
+        assert_case_read(case, ScriptedReads(results=_chain()))

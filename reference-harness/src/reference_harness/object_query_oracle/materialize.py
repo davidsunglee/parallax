@@ -336,6 +336,7 @@ def materialize_hop_level(
     view_key: str,
     tag_column: str | None,
     variant_map: Mapping[Any, str],
+    union: tpcs.LevelUnion | None,
 ) -> list[PublishedRow]:
     """The rows one level of a deep fetch publishes.
 
@@ -344,39 +345,43 @@ def materialize_hop_level(
     the projection shape. What it does carry, and a navigated position does not, is
     a RESOLVED concrete set: *tag_column* is the shared-table discriminator a
     polymorphic table-per-hierarchy hop projects, stated beside the family's
-    *variant_map* rather than re-derived here, and is ``None`` for a hop whose
-    child level targets one concrete or a non-inheritance entity. A row whose tag
-    the reader composes no concrete for keeps its place carrying an
-    :class:`UnknownFamilyTag` and is decoded at no variant. The hop states those
-    facts because they are the level's own; the derivation over them is this
-    module's, which is why the level is materialized here rather than assembled
-    step by step by the caller that planned it.
+    *variant_map* rather than re-derived here, and *union* is the one statement a
+    multi-concrete table-per-concrete-subtype hop reads. A hop naming neither
+    targets one concrete or a non-inheritance entity. A row whose tag the reader
+    composes no concrete for keeps its place carrying an :class:`UnknownFamilyTag`
+    and is decoded at no variant. The hop states those facts because they are the
+    level's own; the derivation over them is this module's, which is why the level
+    is materialized here rather than assembled step by step by the caller that
+    planned it.
 
-    A table-per-concrete-subtype hop over more than one concrete also arrives with
-    ``None``: resolving a level's branch literal takes the ``union all`` shape that
-    names it, which the deep fetch does not plan, so such a level publishes rows
-    still carrying whatever their statement projected.
+    A *union* level is graded against the layout before its rows are read, as a
+    whole read's is, because what its statement must say is a property of the
+    position rather than of any row. Each row's branch literal then resolves into
+    the ``familyVariant`` it publishes.
 
     Navigating is instance-form, and a polymorphic level's document fan-out is
     taken per row at the concrete that row's own derived ``familyVariant`` names.
     """
-    if tag_column is None:
+    if union is not None:
+        at_their_variant = _rows_at_their_union_branch(case, union, rows, view_key=view_key)
+    elif tag_column is None:
         return [
             _published(_with_direct_collections_decoded(case.model, entity, row))
             for row in _materialize_document_layout(case, entity, rows, include_value_objects=True)
         ]
-    family_root = _family_root(case, entity.canonical_name)
-    at_their_variant = [
-        _materialize_hop_variant(
-            case,
-            row,
-            view_key=view_key,
-            tag_column=tag_column,
-            variant_map=variant_map,
-            family_root=family_root,
-        )
-        for row in rows
-    ]
+    else:
+        family_root = _family_root(case, entity.canonical_name)
+        at_their_variant = [
+            _materialize_hop_variant(
+                case,
+                row,
+                view_key=view_key,
+                tag_column=tag_column,
+                variant_map=variant_map,
+                family_root=family_root,
+            )
+            for row in rows
+        ]
     return [
         _published(row)
         if isinstance(row["familyVariant"], UnknownFamilyTag)
@@ -815,6 +820,30 @@ def _materialize_hop_variant(
     )
 
 
+def _rows_at_their_union_branch(
+    case: Case, union: tpcs.LevelUnion, rows: list[dict[str, Any]], *, view_key: str
+) -> list[dict[str, Any]]:
+    """Grade a multi-concrete deep-fetch level's `union all`, then restore its rows.
+
+    The table-per-concrete-subtype analogue of :func:`_materialize_hop_variant`. A
+    level is instance-form by classification, so the branch superset its rows align to
+    is the instance-form one.
+    """
+    family = Family(case.model.entity_defs)
+    position = _tpcs_position(case, family, union.concretes, instance_form=True)
+    tpcs.assert_level_union_shape(
+        case,
+        position.view,
+        position.branch_variants,
+        union,
+        document_resident=position.document_resident,
+    )
+    return [
+        _tpcs_row_at_its_branch(case, position, row, subject=f"polymorphic hop {view_key}")
+        for row in rows
+    ]
+
+
 def _materialize_navigated_family_variant(
     case: Case, entity: Entity, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -1179,7 +1208,8 @@ def _tpcs_row_at_its_branch(
     own Structured Column decodes through that branch's placements. The TPCS
     counterpart of the table-per-hierarchy tag-to-variant materialization
     (:func:`_with_family_variant`), which likewise names its *subject* so the same
-    defect reported against a whole read and against a navigated position reads alike.
+    defect reads alike whether reported against a whole read, a navigated position, or
+    a deep-fetch level.
     """
     new_row = _materialized_row(row)
     if tpcs.VARIANT_COLUMN not in new_row:

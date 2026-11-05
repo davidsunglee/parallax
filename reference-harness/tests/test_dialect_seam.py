@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pymysql.constants import FIELD_TYPE
 
 from reference_harness._case_execution import CaseExecution
@@ -26,6 +27,7 @@ from reference_harness.ddl_builder import (
     _column_type,
     ddl_for,
     interval_check_name,
+    placeholder_cast_type,
     quote_identifier,
 )
 from reference_harness.document_codec import decode_stored
@@ -105,6 +107,49 @@ def test_mariadb_type_mappings() -> None:
     assert _column_type("decimal(18,2)", None, "mariadb") == "decimal(18,2)"
     assert _column_type("string", 32, "mariadb") == "varchar(32)"
     assert _column_type("string", None, "mariadb") == "text"
+
+
+_PLACEHOLDER_CASTS = [
+    ("boolean", None, "boolean", "signed"),
+    ("int32", None, "int", "signed"),
+    ("int64", None, "bigint", "signed"),
+    ("float32", None, "real", "float"),
+    ("float64", None, "double precision", "double"),
+    ("decimal(18,2)", None, "decimal(18,2)", "decimal(18,2)"),
+    ("string", 64, "varchar(64)", "char(64)"),
+    ("string", None, "text", "char"),
+    ("bytes", None, "bytea", "binary"),
+    ("date", None, "date", "date"),
+    ("time", None, "time", "time"),
+    ("timestamp", None, "timestamptz", "datetime(6)"),
+    ("uuid", None, "uuid", "char(36)"),
+    ("json", None, "jsonb", "char"),
+]
+
+
+@pytest.mark.parametrize(("neutral_type", "max_length", "postgres", "mariadb"), _PLACEHOLDER_CASTS)
+def test_every_declared_column_type_has_a_placeholder_cast(
+    neutral_type: str, max_length: int | None, postgres: str, mariadb: str
+) -> None:
+    assert placeholder_cast_type(neutral_type, max_length, "postgres") == postgres
+    assert placeholder_cast_type(neutral_type, max_length, "mariadb") == mariadb
+
+
+@pytest.mark.parametrize(("neutral_type", "max_length"), [row[:2] for row in _PLACEHOLDER_CASTS])
+def test_a_placeholder_cast_unions_with_its_declared_column(
+    provider: Any, neutral_type: str, max_length: int | None
+) -> None:
+    dialect = provider.dialect
+    column_type = _column_type(neutral_type, max_length, dialect)
+    cast_type = placeholder_cast_type(neutral_type, max_length, dialect)
+    provider.reset()
+    provider.apply_ddl([f"create table placeholder_probe (probed {column_type})"])
+
+    rows = provider.query(
+        f"select probed from placeholder_probe union all select cast(null as {cast_type}) probed"
+    )
+
+    assert rows == [{"probed": None}]
 
 
 def test_mariadb_ddl_derives_from_descriptor() -> None:

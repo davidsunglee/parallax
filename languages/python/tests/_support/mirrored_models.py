@@ -45,6 +45,7 @@ from parallax.conformance.read_models import (
     DOCUMENT_MODEL,
     PAYMENT_MODEL,
     PERSON_MODEL,
+    PREDICATE_TRAVERSAL_MODEL,
     RATE_MODEL,
     READ_ONLY_INHERITANCE_MODEL,
     SCALARS_MODEL,
@@ -665,6 +666,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("composed-beast-document-reader", COMPOSED_BEAST_DOCUMENT_READER),
     ("dormant-position-layout-twin-columns", DORMANT_POSITION_COLUMNS),
     ("dormant-position-layout-twin-document", DORMANT_POSITION_DOCUMENT),
+    ("predicate-traversal", PREDICATE_TRAVERSAL_MODEL),
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 
@@ -932,11 +934,6 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "collections, one and many value objects, and self-referencing many-to-one owner "
             "repeat declaration constructs `scalar-collection-layout-twin`, `customer`, and "
             "`orders` mirror, and the Typed algebra API tests declare their own owners"
-        ),
-        "predicate-traversal": (
-            "portable compatibility-only model for single-valued traversal: its "
-            "table-per-hierarchy and table-per-concrete-subtype relationship targets repeat the "
-            "mirrored `animal` and `rate` family shapes behind plain many-to-one joins"
         ),
         "quote": (
             "no mirror authored; it is the mirrored `rate`'s table-per-concrete-subtype family "

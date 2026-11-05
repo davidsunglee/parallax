@@ -5,6 +5,7 @@ import uuid
 from decimal import Decimal
 
 from parallax.core import (
+    MANY_TO_ONE,
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
@@ -34,23 +35,30 @@ __all__ = [
     "DOCUMENT_MODEL",
     "PAYMENT_MODEL",
     "PERSON_MODEL",
+    "PREDICATE_TRAVERSAL_MODEL",
     "RATE_MODEL",
     "READ_ONLY_INHERITANCE_MODEL",
     "SCALARS_MODEL",
     "Annotation",
     "Balance",
+    "Bike",
+    "Car",
     "CardPayment",
     "CashPayment",
     "Cat",
+    "Collar",
+    "Dealer",
     "DepositRate",
     "Document",
     "Dog",
     "FinancialDocument",
     "Folder",
     "Invoice",
+    "Leash",
     "LoanRate",
     "Magazine",
     "Memo",
+    "Parking",
     "Passport",
     "Payment",
     "Periodical",
@@ -60,6 +68,11 @@ __all__ = [
     "Rate",
     "Receipt",
     "ScalarThing",
+    "Ticket",
+    "TraversalCat",
+    "TraversalDog",
+    "TraversalPet",
+    "Vehicle",
     "WildBoar",
 ]
 
@@ -261,3 +274,85 @@ class Magazine(Periodical, namespace=_NS, inheritance=ConcreteSubtype(tag_value=
 
 
 READ_ONLY_INHERITANCE_MODEL = DomainModel(Publication, Periodical, Magazine)
+
+
+class TraversalPet(
+    Entity,
+    name="Pet",
+    table="traversal_pet",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+
+
+class TraversalDog(
+    TraversalPet, name="Dog", namespace=_NS, inheritance=ConcreteSubtype(tag_value="dog")
+):
+    bark_volume: Attr[int | None] = attr(type=Int32)
+
+
+class TraversalCat(
+    TraversalPet, name="Cat", namespace=_NS, inheritance=ConcreteSubtype(tag_value="cat")
+):
+    indoor: Attr[bool | None]
+
+
+class Vehicle(Entity, namespace=_NS, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+    id: Attr[int] = attr(primary_key=True)
+    maker: Attr[str] = attr(max_length=32)
+    dealer_id: Attr[int | None]
+    dealer: Rel["Dealer | None"] = rel(cardinality=MANY_TO_ONE, join=("dealer_id", "id"))
+
+
+class Car(Vehicle, table="traversal_car", namespace=_NS, inheritance=ConcreteSubtype):
+    seats: Attr[int | None] = attr(type=Int32)
+
+
+class Bike(Vehicle, table="traversal_bike", namespace=_NS, inheritance=ConcreteSubtype):
+    gears: Attr[int] = attr(type=Int32)
+
+
+class Collar(Entity, table="traversal_collar", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    pet_id: Attr[int | None]
+    pet: Rel[TraversalPet | None] = rel(cardinality=MANY_TO_ONE, join=("pet_id", "id"))
+
+
+class Leash(Entity, table="traversal_leash", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    collar_id: Attr[int | None]
+    collar: Rel[Collar | None] = rel(cardinality=MANY_TO_ONE, join=("collar_id", "id"))
+
+
+class Parking(Entity, table="traversal_parking", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    vehicle_id: Attr[int | None]
+    vehicle: Rel[Vehicle | None] = rel(cardinality=MANY_TO_ONE, join=("vehicle_id", "id"))
+
+
+class Dealer(Entity, table="traversal_dealer", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str | None] = attr(max_length=32)
+
+
+class Ticket(Entity, table="traversal_ticket", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    parking_id: Attr[int | None]
+    parking: Rel[Parking | None] = rel(cardinality=MANY_TO_ONE, join=("parking_id", "id"))
+
+
+PREDICATE_TRAVERSAL_MODEL = DomainModel(
+    TraversalPet,
+    TraversalDog,
+    TraversalCat,
+    Vehicle,
+    Car,
+    Bike,
+    Collar,
+    Leash,
+    Parking,
+    Dealer,
+    Ticket,
+)

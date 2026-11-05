@@ -37,6 +37,7 @@ from parallax.core.base import (
     UUID,
     Decimal,
     FrozenMap,
+    NeutralType,
     PresentDocument,
 )
 from parallax.core.dialect import (
@@ -117,17 +118,29 @@ def test_column_type_mapping(dialect: Dialect) -> None:
     assert dialect.column_type(Decimal(18, 2), None) == "numeric(18, 2)"
 
 
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_null_cast_spells_a_decimal_placeholder_apart_from_its_ddl_type(
-    dialect: Dialect,
+@pytest.mark.parametrize(
+    ("neutral_type", "max_length", "spelling"),
+    [
+        (BOOLEAN, None, "boolean"),
+        (INT32, None, "int"),
+        (INT64, None, "bigint"),
+        (FLOAT32, None, "real"),
+        (FLOAT64, None, "double precision"),
+        (Decimal(18, 2), None, "decimal(18, 2)"),
+        (STRING, 64, "varchar(64)"),
+        (STRING, None, "text"),
+        (BYTES, None, "bytea"),
+        (DATE, None, "date"),
+        (TIME, None, "time"),
+        (TIMESTAMP, None, "timestamptz"),
+        (UUID, None, "uuid"),
+        (JSON, None, "jsonb"),
+    ],
+)
+def test_null_cast_spells_every_declared_column_type(
+    neutral_type: NeutralType, max_length: int | None, spelling: str
 ) -> None:
-    # The union-all placeholder cast is a decision of its own: a decimal casts to
-    # `decimal(p, s)` even though its DDL column type is `numeric(p, s)`, while
-    # every other type reuses the DDL mapping (a bounded string still narrows to
-    # `varchar(n)`).
-    assert dialect.null_cast(Decimal(18, 2), None) == "decimal(18, 2)"
-    assert dialect.null_cast(STRING, 64) == "varchar(64)"
-    assert dialect.null_cast(INT32, None) == "integer"
+    assert POSTGRES.null_cast(neutral_type, max_length) == spelling
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
