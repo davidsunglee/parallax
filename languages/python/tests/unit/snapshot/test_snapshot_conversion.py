@@ -196,7 +196,7 @@ def _recorded(
     prepared, cells = bound_cells(
         CatalogedModel(model), compiled, driver_row(compiled, row), singleton=proved
     )
-    index, _resolved, _document, _variant = prepared.record_row(cells, builder, source=ROOT_LEVEL)
+    index, _resolved, _document = prepared.record_row(cells, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     (root,) = observed_roots(page, model)

@@ -191,7 +191,7 @@ class _PredicateDriver:
     def run(self) -> object:
         selected = self._selected
         checked: ResolvedObjectQuery = resolve_read_query(
-            interpreted(selected, self._query), model=selected.model.meta, form="graph"
+            interpreted(selected, self._query), model=selected.model.meta
         )
         if not self._cold_plan:
             return checked
@@ -200,7 +200,6 @@ class _PredicateDriver:
             model=selected.model,
             dialect=POSTGRES,
             query=checked,
-            result_form="instance",
             preference=None,
         )
 

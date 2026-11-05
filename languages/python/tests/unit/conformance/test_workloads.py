@@ -38,7 +38,7 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
     for workload in catalog().values():
         assert workload.model.entity(workload.query.target) is not None
         assert workload.page_sizes == tuple(sorted(set(workload.page_sizes)))
-        validated = resolve_read_query(workload.query, model=workload.model, form="graph")
+        validated = resolve_read_query(workload.query, model=workload.model)
         plan = read_planning.plan(
             validated,
             workload.model,

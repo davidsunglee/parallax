@@ -34,15 +34,14 @@ __all__ = [
     "require_arity",
     "row_coordinates",
     "row_identity",
-    "row_variants",
 ]
 
 
 def row_identity(
     contract: ReadResultContract, row: Row
-) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
-    """The Entity ``row`` names, its `familyVariant` spelling, the stored tag no
-    composed concrete claimed, and the row's shared document."""
+) -> tuple[EntityIdentity, UnknownFamilyTag | None, object | None]:
+    """The Entity ``row`` names, the stored tag no composed concrete claimed, and
+    the row's shared document."""
     require_arity(contract, row)
     source = contract.row_identity
     shared = contract.shared_document_ordinal
@@ -50,20 +49,18 @@ def row_identity(
     # and the match costs several times as much.
     if isinstance(source, FixedRowIdentity):
         if shared is None:
-            return source.entity, None, None, None
-        return source.entity, None, None, unwrap_document_read(_document_read(row[shared]))
+            return source.entity, None, None
+        return source.entity, None, unwrap_document_read(_document_read(row[shared]))
     raw = row[cast("int", contract.identity_ordinal)]
     if isinstance(source, TaggedRowIdentity):
         answer = source.by_tag.get(raw)
-        entity, variant, unknown = (
-            (source.root, None, UnknownFamilyTag(raw)) if answer is None else answer
-        )
+        entity, unknown = (source.root, UnknownFamilyTag(raw)) if answer is None else answer
     else:
         literal: LiteralRowIdentity = source
-        entity, variant, unknown = literal.by_spelling[raw]
+        entity, unknown = literal.by_spelling[raw]
     if shared is None:
-        return entity, variant, unknown, None
-    return entity, variant, unknown, unwrap_document_read(_document_read(row[shared]))
+        return entity, unknown, None
+    return entity, unknown, unwrap_document_read(_document_read(row[shared]))
 
 
 def fixed_entity(contract: ReadResultContract) -> EntityIdentity | None:
@@ -73,21 +70,6 @@ def fixed_entity(contract: ReadResultContract) -> EntityIdentity | None:
     if isinstance(source, FixedRowIdentity) and contract.shared_document_ordinal is None:
         return source.entity
     return None
-
-
-def row_variants(
-    contract: ReadResultContract,
-) -> tuple[tuple[EntityIdentity, str | None], ...]:
-    """Every Entity and `familyVariant` spelling pair a row of ``contract`` can
-    resolve to, an unrecognized tag's family root included."""
-    source = contract.row_identity
-    if isinstance(source, FixedRowIdentity):
-        return ((source.entity, None),)
-    if isinstance(source, TaggedRowIdentity):
-        answers = (*source.by_tag.values(), (source.root, None, None))
-    else:
-        answers = tuple(source.by_spelling.values())
-    return tuple(dict.fromkeys((entity, variant) for entity, variant, _unknown in answers))
 
 
 def member_classifiers(

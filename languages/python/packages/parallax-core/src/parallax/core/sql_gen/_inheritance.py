@@ -86,10 +86,9 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
     return value
 
 
-type ResolvedVariant = tuple[EntityIdentity, str | None, UnknownFamilyTag | None]
-"""What resolving one row answers: the concrete Entity it names, the
-`familyVariant` spelling it publishes, and the stored discriminator no composed
-concrete subtype claimed."""
+type ResolvedVariant = tuple[EntityIdentity, UnknownFamilyTag | None]
+"""What resolving one row answers: the concrete Entity it names, and the stored
+discriminator no composed concrete subtype claimed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,8 +109,8 @@ class TaggedRowIdentity:
     """Table-per-hierarchy: the framework-owned raw tag ``column`` names the row's
     concrete, and never reaches the caller.
 
-    ``tag_pairs`` is a `(tagValue, Identity, variant spelling)` mapping in the
-    facet's canonical concrete-subtype order. For a homogeneous read it is the
+    ``tag_pairs`` is a `(tagValue, Identity)` mapping in the facet's canonical
+    concrete-subtype order. For a homogeneous read it is the
     WHOLE family's — never the read's own resolved position, since a narrowed
     abstract read still projects the shared table's tag column and may observe
     any of them — and for a heterogeneous shared document it is the position's,
@@ -131,14 +130,14 @@ class TaggedRowIdentity:
 
     column: str
     root: EntityIdentity
-    tag_pairs: tuple[tuple[str, EntityIdentity, str], ...]
+    tag_pairs: tuple[tuple[str, EntityIdentity], ...]
     by_tag: Mapping[object, ResolvedVariant] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "by_tag",
-            {tag: (identity, spelling, None) for tag, identity, spelling in self.tag_pairs},
+            {tag: (identity, None) for tag, identity in self.tag_pairs},
         )
 
 
@@ -151,8 +150,7 @@ class LiteralRowIdentity:
     The branch that produced a row owns some of the union's result aliases and
     reads the rest as its siblings' typed `NULL` padding. ``narrow_to_owned``
     is the object lane's: such a read publishes only what the resolved branch
-    owns, while a row-form read keeps a sibling's null padding under an alias
-    that is its own publication key, as the corpus expects.
+    owns, so a sibling's padding claims no publication key beside it.
     """
 
     column: str
@@ -164,7 +162,7 @@ class LiteralRowIdentity:
         object.__setattr__(
             self,
             "by_spelling",
-            {spelling: (identity, spelling, None) for spelling, identity in self.variants},
+            {spelling: (identity, None) for spelling, identity in self.variants},
         )
 
 
@@ -178,17 +176,14 @@ class DocumentFanOut:
     """One resolved concrete's share of a read's shared Structured Column.
 
     ``shape`` is absent for a `union all` branch that stores no document of its
-    own: such a row carries no document to decode and still pads the members its
-    siblings' documents carry, which is the state that padding stands for.
-    ``members`` may be empty for a present shape too — an observation-bearing
-    read of an owner with no document-resident member projects the column for the
-    stored document itself, and naming it keeps that document off the row's
-    values.
+    own: such a row carries no document to decode. ``members`` may be empty for a
+    present shape too — an observation-bearing read of an owner with no
+    document-resident member projects the column for the stored document itself,
+    and naming it keeps that document off the row's values.
     """
 
     shape: MemberShape | None
     members: tuple[tuple[str, tuple[str, ...]], ...]
-    padding: tuple[str, ...] = ()
     member_paths: Mapping[str, tuple[str, ...]] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -292,20 +287,6 @@ class EntitySources:
 
 
 @dataclass(frozen=True, slots=True)
-class DriverRowSlot:
-    """What publication needs to know about one folded value cell.
-
-    ``scalar`` is the cell's scalar publication spelling and encoding; a
-    document cell has none. ``padding_key`` is the key under which the cell
-    stays in every resolved row's flat publication, as null where that row's
-    Entity carries nothing there; a cell only its owners publish has none.
-    """
-
-    scalar: ScalarResult | None
-    padding_key: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class ReadResultContract:
     """What one compiled read's folded driver rows carry, and where.
 
@@ -325,8 +306,9 @@ class ReadResultContract:
     never a concrete in the position. Such an Entity carries only the cells
     that are its own members under their own spelling.
 
-    ``slots`` has one entry per folded cell, so its length is the row's arity;
-    carriers and document cells no row publishes have none. The carrier
+    ``slots`` has one entry per folded cell, so its length is the row's arity:
+    the cell's scalar publication spelling and encoding, which carriers and
+    document cells do not have. The carrier
     ordinals locate the row identity's cell, the shared Structured Column, and
     one Continuation Order coordinate per ordering term, in term order — none
     for a read that pages through nothing. A caller that needs the stored
@@ -338,7 +320,7 @@ class ReadResultContract:
     shared_document: SharedDocumentMapping | None
     direct_documents: DirectDocumentMappings | None
     entity_sources: tuple[EntitySources, ...] = field(repr=False)
-    slots: tuple[DriverRowSlot | None, ...] = field(repr=False)
+    slots: tuple[ScalarResult | None, ...] = field(repr=False)
     identity_ordinal: int | None
     shared_document_ordinal: int | None
     coordinate_ordinals: tuple[int, ...]
@@ -411,7 +393,7 @@ def _named_entities(row_identity: RowIdentity) -> tuple[EntityIdentity, ...]:
         case FixedRowIdentity(entity=entity):
             return (entity,)
         case TaggedRowIdentity(root=root, tag_pairs=pairs):
-            return (root, *(identity for _, identity, _ in pairs))
+            return (root, *(identity for _, identity in pairs))
         case LiteralRowIdentity(variants=variants):
             return tuple(identity for _, identity in variants)
 
@@ -425,18 +407,15 @@ def resolvable_entities(
 
 def tag_pairs(
     facet: InheritanceFacet, concretes: Sequence[EntityIdentity]
-) -> tuple[tuple[str, EntityIdentity, str], ...]:
-    """``concretes``' `(tagValue, Identity, variant spelling)` triples, in order."""
-    return tuple(
-        (tag_value(facet, concrete), concrete, family_variant_name(facet, concrete))
-        for concrete in concretes
-    )
+) -> tuple[tuple[str, EntityIdentity], ...]:
+    """``concretes``' `(tagValue, Identity)` pairs, in order."""
+    return tuple((tag_value(facet, concrete), concrete) for concrete in concretes)
 
 
 def family_tag_pairs(
     facet: InheritanceFacet, root: EntityIdentity
-) -> tuple[tuple[str, EntityIdentity, str], ...]:
-    """The WHOLE family's triples, in the facet's canonical concrete-subtype order.
+) -> tuple[tuple[str, EntityIdentity], ...]:
+    """The WHOLE family's pairs, in the facet's canonical concrete-subtype order.
 
     Deliberately the family's set, not the read's resolved position: a narrowed
     abstract read still projects the shared table's raw tag column, and the
@@ -568,8 +547,6 @@ def plan_document_reads(
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     projection: ResolvedReadProjection,
-    *,
-    pad_siblings: bool,
 ) -> tuple[SharedDocumentMapping | None, DirectDocumentMappings | None]:
     """The documents a read of ``layout``'s position fetches, and the mappings
     that read them back out (`m-sql` *Read projection*, rules 3 and 5).
@@ -588,9 +565,7 @@ def plan_document_reads(
     It keys every concrete of the position by the storage owner's complete
     resident shape, so a heterogeneous document is decoded by the shape of the
     concrete the ROW named, and a concrete fetching none of its residents fans
-    nothing out of it. ``pad_siblings`` is a flat-row publication's alone: each
-    entry then pads every fetched member key its siblings carry, which changes
-    neither what is fetched nor what is observed.
+    nothing out of it.
     """
     entries: list[tuple[EntityIdentity, DocumentResidentSelection | None, _Members]] = []
     direct: list[tuple[EntityIdentity, tuple[AttributeMetadata | ValueObjectMetadata, ...]]] = []
@@ -620,13 +595,8 @@ def plan_document_reads(
     )
     if document_column is None:
         return None, direct_documents
-    padding = (
-        tuple(dict.fromkeys(key for *_entry, members in entries for key, _path in members))
-        if pad_siblings
-        else ()
-    )
     per_entity = tuple(
-        (identity, DocumentFanOut(None if residents is None else residents.shape, members, padding))
+        (identity, DocumentFanOut(None if residents is None else residents.shape, members))
         for identity, residents, members in entries
     )
     return SharedDocumentMapping(document_column, per_entity), direct_documents
@@ -881,7 +851,7 @@ def plan_read_shape(
     both document planning and column selection read that one answer.
 
     ``instance_form`` is the object lane (`result_form == "instance"`), which
-    decides only sibling padding and which branch-owned fields a row publishes.
+    decides only which branch-owned fields a row publishes.
     ``shared_lock`` is here rather than at the rendering site because the union
     lane must REFUSE a requested shared row lock before any branch is rendered;
     ordering and the cap are the renderer's, since a union applies them to its
@@ -910,7 +880,6 @@ def plan_read_shape(
         storage,
         query.projection,
         narrowed=query.narrow_to is not None,
-        instance_form=instance_form,
     )
 
 
@@ -932,7 +901,6 @@ def _plan_single_table_read(
     projection: ResolvedReadProjection,
     *,
     narrowed: bool,
-    instance_form: bool,
 ) -> SingleTableReadPlan:
     concretes = tuple(position.concrete_subtypes)
     tph = isinstance(view.strategy, TablePerHierarchy)
@@ -940,12 +908,7 @@ def _plan_single_table_read(
     # single-table position reads its one concrete's own.
     table = _table_layout(storage, facet, entity.identity if tph else concretes[0])
     abstract_target = tph and isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype))
-    # Padding is the abstract-target row-form lane's alone: a read that publishes
-    # flat rows renders every branch's document members, so a row carries its
-    # siblings' keys as null.
-    shared, direct = plan_document_reads(
-        layout, facet, storage, projection, pad_siblings=abstract_target and not instance_form
-    )
+    shared, direct = plan_document_reads(layout, facet, storage, projection)
     columns = select_projection(
         position_slots(table, concretes),
         position.superset_attributes,
@@ -1051,11 +1014,9 @@ def _plan_tpcs_union_read(
             "a shared-lock suffix over a table-per-concrete-subtype union-all read "
             "(2+ effective concretes) has no goldened lowering yet"
         )
-    # A branch storing no document of its own still pads its siblings' document
-    # members, and reads the shared column the union aliased for all of them.
-    shared, direct = plan_document_reads(
-        layout, facet, storage, projection, pad_siblings=not instance_form
-    )
+    # A branch storing no document of its own still reads the shared column the
+    # union aliased for all of them.
+    shared, direct = plan_document_reads(layout, facet, storage, projection)
     scalars = tuple(
         index
         for index, column in enumerate(layout.columns)

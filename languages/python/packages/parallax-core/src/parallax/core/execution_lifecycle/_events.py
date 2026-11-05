@@ -27,8 +27,8 @@ type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 """Which outermost Handle operation a Root Execution describes."""
 
 type ReadInterface = Literal["typed", "wire", "rows"]
-"""Which read interface published a Read's result; ``rows`` is the internal
-values lane."""
+"""Which interface a Read ran through: ``typed`` and ``wire`` publish a result,
+and ``rows`` is a write's internal target acquisition, which publishes none."""
 
 type DatabaseCallKind = Literal["read", "write"]
 """Whether a Database Call ran a query or DML — carried so a failed call stays

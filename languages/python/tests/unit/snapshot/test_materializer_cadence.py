@@ -14,23 +14,16 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
-from parallax.core.read_delivery import _row_lane
 from parallax.core.read_delivery._page import (
     INERT_OBSERVER,
     ROOT_LEVEL,
-    EntityState,
     MaterializationObserver,
     Page,
     PageBuilder,
-    PageRows,
     ViewSchema,
     page_cadence,
 )
 from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader
-from parallax.core.read_delivery._row_converter import bind
-from parallax.core.read_delivery._row_lane import (
-    _published_rows,  # pyright: ignore[reportPrivateUsage]
-)
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
@@ -80,7 +73,6 @@ def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
     query = resolve_read_query(
         deserialize({"target": "Order", "predicate": {"true": {}}}),
         model=meta,
-        form="graph",
     )
     plan = read_planning.plan(
         query, meta, projection=read_planning.ReadProjectionRequest("all", True)
@@ -101,62 +93,19 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     stage = materializer.read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
     assert page_cadence(stage.page) is observer
-    assert (
-        len(
-            _published_rows(
-                stage,
-                meta,
-                bind(
-                    model, compiled.result_contract, compiled.projection, row_operations=True
-                ).row_publisher(),
-            )
-        )
-        == 2
-    )
+    assert list(publish_roots(stage.page, _publish, meta, atomic=True)) == [0, 1]
     assert observer.events == [
         ("prepared", 1),
         ("statement_rendered", ROOT_LEVEL),
         ("statement_executed", 2),
         ("states_decoded", 1),
         ("states_decoded", 1),
-        ("states_shared", 1),
         ("fetched_rows_reached", 1),
-        ("states_shared", 1),
         ("fetched_rows_reached", 1),
         ("root_published", 0),
         ("root_published", 1),
     ]
     assert all(type(value) is int for _event, value in observer.events)
-
-
-def test_eager_row_publication_withholds_events_when_a_later_root_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observer = RecordingObserver()
-    meta, model, compiled = _order_read()
-    rows = tuple(result_row(compiled, _row(order_id)) for order_id in (1, 2))
-    stage = PageReader(observer).read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
-
-    judged: list[int] = []
-    entity_state = vars(_row_lane)["entity_state"]
-
-    def fail_on_second_root(rows: PageRows, projection: int) -> EntityState:
-        judged.append(projection)
-        if len(judged) == 2:
-            raise RuntimeError("later row failed")
-        return entity_state(rows, projection)
-
-    monkeypatch.setattr(_row_lane, "entity_state", fail_on_second_root)
-    with pytest.raises(RuntimeError, match="later row failed"):
-        _published_rows(
-            stage,
-            meta,
-            bind(
-                model, compiled.result_contract, compiled.projection, row_operations=True
-            ).row_publisher(),
-        )
-
-    assert [event for event in observer.events if event[0] == "root_published"] == []
 
 
 def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly() -> None:

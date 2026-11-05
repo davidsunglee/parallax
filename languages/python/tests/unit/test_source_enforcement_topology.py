@@ -240,12 +240,10 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core.read_delivery._page._rows", "_construction_input"): frozenset({"ABSENT"}),
     ("parallax.core.read_delivery._page._rows", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.read_delivery._page._views", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.core.read_delivery._acquired_rows", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.read_delivery._page_reader", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core.read_delivery._read_plan", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core.read_delivery._row_converter", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core.read_delivery._row_lane", "_layout"): frozenset(
-        {"CatalogedModel", "EntityLayout"}
-    ),
     ("parallax.descriptor._hub", "_model"): frozenset({"DomainModel", "model_of"}),
     ("parallax.snapshot._inspection", "_expressions"): frozenset(
         {"AuthoredIncludePath", "AuthoredIncludeSegment", "authored_include_path"}
@@ -422,7 +420,7 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
         ("parallax.core._execution._root", "parallax.core.execution_lifecycle._pool_observation"),
         *(
             (f"parallax.core.read_delivery.{module}", "parallax.core.execution_lifecycle._activity")
-            for module in ("_delivery", "_fetch", "_page_reader", "_row_lane", "_stream")
+            for module in ("_delivery", "_fetch", "_page_reader", "_stream")
         ),
         ("parallax.snapshot._handle._wire_writes", "parallax.core.execution_lifecycle._activity"),
     }

@@ -23,7 +23,6 @@ from parallax.core._execution._read_pipeline import (
     ReadQuery,
     read_graph,
     read_page,
-    read_rows,
     resolved,
 )
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -71,20 +70,18 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery import RowsResult
+from parallax.core.read_delivery._acquired_rows import (
+    admitted_member_rows,
+    completed_member_rows,
+    publishable_member_rows,
+)
 from parallax.core.read_delivery._fetch import execute_read
 from parallax.core.read_delivery._page import ABSENT, release_page_rows
 from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader, StreamPageResult
 from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.read_delivery._row_lane import (
-    admitted_member_rows,
-    completed_member_rows,
-    publishable_member_rows,
-)
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.read_planning import PlannedEntityQuery
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
@@ -313,11 +310,6 @@ class _TxnAttemptBase:
             on_page_start=on_page_start,
             on_release=on_release,
         )
-
-    def read_rows(self, node: ObjectQueryNode) -> RowsResult:
-        """One participating row-form read; it records no observation."""
-        refuse_reentry(self._lifecycle)
-        return read_rows(self, node, self._planner)
 
     def begin(self) -> Self:
         """The read a participating delivery is begun as: this attempt itself."""

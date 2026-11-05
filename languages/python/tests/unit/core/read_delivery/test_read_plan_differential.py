@@ -42,7 +42,6 @@ def _plan(
         model=model,
         dialect=dialect,
         query=query,
-        result_form="instance",
         preference=None,
     )
 

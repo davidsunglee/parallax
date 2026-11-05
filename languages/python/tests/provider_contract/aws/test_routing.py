@@ -75,7 +75,8 @@ def test_a_writable_transaction_from_a_reader_defaulted_scope_runs_on_the_writer
 
     assert placed == [instances(aws_run, "writer"), set()]
     aws_run.wait_until(
-        lambda: READS["rows"](db, Ledger) == [*SEEDED, 3], "the reader to see the committed row"
+        lambda: READS["wire-eager"](db, Ledger) == [*SEEDED, 3],
+        "the reader to see the committed row",
     )
 
 

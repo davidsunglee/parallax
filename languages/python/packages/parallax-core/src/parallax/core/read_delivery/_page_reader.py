@@ -174,11 +174,10 @@ class PlannedFlatPageRequest:
 class FlatPageResult:
     """One flat batch and the Page-owned Entity States that judge it.
 
-    Each row's `familyVariant` and shared document are retained beside the Page.
-    Provider rows end at Page assembly.
+    Each row's shared document is retained beside the Page. Provider rows end at
+    Page assembly.
     """
 
-    variants: tuple[str | None, ...]
     documents: tuple[object | None, ...]
     page: Page
 
@@ -349,7 +348,7 @@ class PageReader:
             if isinstance(root, EmptyRead):
                 self.observer.prepared(1)
                 builder = plan.page_builder(_page_observer(self.observer))
-                return FlatPageResult((), (), builder.finish((), request.pin))
+                return FlatPageResult((), builder.finish((), request.pin))
             compiled, converter = root
             port, calls = request.port, request.calls
             return self._read_flat(
@@ -400,7 +399,6 @@ class PageReader:
         self.observer.statement_executed(ROOT_LEVEL, len(rows))
         recorded = tuple(converter.record_row(row, builder, source=ROOT_LEVEL) for row in rows)
         return FlatPageResult(
-            tuple(item[3] for item in recorded),
             tuple(item[2] for item in recorded),
             builder.finish(tuple(item[0] for item in recorded), pin),
         )
@@ -421,7 +419,6 @@ class PageReader:
             model=model,
             dialect=port.dialect,
             query=query,
-            result_form="instance",
             preference=preference,
         )
         self.observer.prepared(plan.fetch_count + 1)

@@ -570,7 +570,7 @@ def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, s
             folded_names(compiled.statement.sql, compiled.document_reads)
         )
     )
-    ref, _resolved, _document, _variant = bound_read(model, identity).record_row(
+    ref, _resolved, _document = bound_read(model, identity).record_row(
         row, builder, source=ROOT_LEVEL
     )
     return ref

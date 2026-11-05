@@ -206,8 +206,6 @@ def matrix_entity(strategy: Strategy, layout: Layout, name: str) -> EntityMetada
     return metadata
 
 
-def resolved(
-    query: ObjectQuery[Any, Any], *, form: Literal["rows", "graph"] = "graph"
-) -> ResolvedObjectQuery:
-    """``query`` against :data:`MATRIX_MODEL`, validated as a read in ``form`` is."""
-    return resolve_read_query(object_query_node(query, MATRIX_MODEL), model=MATRIX_META, form=form)
+def resolved(query: ObjectQuery[Any, Any]) -> ResolvedObjectQuery:
+    """``query`` against :data:`MATRIX_MODEL`, validated as a read is."""
+    return resolve_read_query(object_query_node(query, MATRIX_MODEL), model=MATRIX_META)

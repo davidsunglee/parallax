@@ -312,19 +312,19 @@ def test_an_empty_buffer_opens_no_flush_at_all() -> None:
     ]
 
 
-def test_a_row_form_read_is_a_child_of_the_attempt_under_the_rows_interface() -> None:
+def test_a_wire_read_is_a_child_of_the_attempt_under_the_wire_interface() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
     query = deserialize_query(
         {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
     )
 
-    _db(port, recorder).transact(lambda tx: tx.read_rows(query))
+    _db(port, recorder).transact(lambda tx: tx.wire.find(query))
 
     root = _only(recorder)
     read = root.events[4]
     assert isinstance(read, ReadStarted)
-    assert (read.parent_activity_id, read.interface) == (2, "rows")
+    assert (read.parent_activity_id, read.interface) == (2, "wire")
 
 
 # --------------------------------------------------------------------------- #

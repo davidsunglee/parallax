@@ -309,7 +309,7 @@ def _converted(
     ``proved`` level where its level records each row key at most once."""
     builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
     converter, row = prepared(stored, singleton=proved)
-    index, _resolved, _document, _variant = converter.record_row(row, builder, source=ROOT_LEVEL)
+    index, _resolved, _document = converter.record_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     layout = rows.layouts[index]
@@ -329,7 +329,7 @@ def _observed(prepared: _Prepared, stored: Mapping[str, object]) -> dict[str, ob
     """One stored row's shared Entity State viewed under physical storage keys."""
     builder = PageBuilder(ViewSchema.of())
     converter, row = prepared(stored)
-    index, _resolved, _document, _variant = converter.record_row(row, builder, source=ROOT_LEVEL)
+    index, _resolved, _document = converter.record_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     (root,) = observed_roots(page, _model_of(prepared))
@@ -550,7 +550,7 @@ def test_encoded_identity_is_decoded_before_logical_key_formation(
     raw: object, key: object, issue: str | None
 ) -> None:
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = encoded_identity_read().record_row(
+    index, _resolved, _document = encoded_identity_read().record_row(
         (raw, None, SQL_NULL), builder, source=ROOT_LEVEL
     )
     claimed = builder.finish((index,), Pin())
@@ -742,23 +742,6 @@ def test_a_document_row_is_observed_with_its_members_under_their_own_columns() -
     assert tuple(map(dict, marks)) == ({"tag": "founder", "origin": {"port": "Oslo"}},)
 
 
-def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
-    prepared, row = _prepared(REGISTER, "Register")({"id": 1, "payload": _stored_document(_ADA)})
-    builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, variant = prepared.record_row(row, builder, source=ROOT_LEVEL)
-    (root,) = observed_roots(builder.finish((index,), Pin()), REGISTER)
-
-    published = prepared.row_publisher().publish(root.concretes[0], root.member_values[0], variant)
-
-    assert list(published) == ["id", "label", "note", "stamp", "marks"]
-    assert published["stamp"] == dt.date(2026, 1, 15)
-    (mark,) = cast("tuple[Mapping[str, object], ...]", published["marks"])
-    assert (mark["tag"], dict(cast("Mapping[str, object]", mark["origin"]))) == (
-        "founder",
-        {"port": "Oslo"},
-    )
-
-
 # --------------------------------------------------------------------------- #
 # A read binds the occurrences it fetched by identity, never by spelling.      #
 # --------------------------------------------------------------------------- #
@@ -922,12 +905,11 @@ def _position(**cells: object) -> dict[str, object]:
 @dataclass(frozen=True, slots=True)
 class _Delivered:
     """What one converted row answers: its logical key, its judged members by
-    declared name, its issues, and the flat row it publishes."""
+    declared name, and its issues."""
 
     key: object
     members: Mapping[str, Any]
     issues: tuple[StoredDataIssueInput, ...]
-    flat: Mapping[str, object]
 
 
 def _delivered(
@@ -937,7 +919,7 @@ def _delivered(
         CatalogedModel(model), uncarried(compiled_read(model, entity), *uncarrying), cells
     )
     builder = PageBuilder(ViewSchema.of())
-    index, resolved, _document, variant = prepared.record_row(row, builder, source=ROOT_LEVEL)
+    index, _resolved, _document = prepared.record_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     key = page_rows(page).keys[index]
     (root,) = observed_roots(page, model)
@@ -946,12 +928,11 @@ def _delivered(
         key,
         rendered_members(root.layouts[0], values),
         root.issues[0],
-        prepared.row_publisher().publish(resolved, values, variant),
     )
 
 
 @pytest.mark.parametrize(
-    ("model", "entity", "cells", "key", "members", "flat"),
+    ("model", "entity", "cells", "key", "members"),
     [
         pytest.param(
             ORDERS,
@@ -967,15 +948,6 @@ def _delivered(
                 "active": True,
                 "orderedOn": dt.date(2024, 1, 1),
             },
-            [
-                ("id", 1),
-                ("name", "Ada"),
-                ("sku", None),
-                ("qty", 2),
-                ("price", decimal.Decimal("1.50")),
-                ("active", True),
-                ("ordered_on", dt.date(2024, 1, 1)),
-            ],
             id="native-columns",
         ),
         pytest.param(
@@ -991,14 +963,6 @@ def _delivered(
                 "localTime": dt.time(9, 30),
                 "externalId": None,
             },
-            [
-                ("id", 1),
-                ("f32", 1.5),
-                ("f64", 2.5),
-                ("local_time", dt.time(9, 30)),
-                ("external_id", None),
-                ("payload_hex", "0a1b"),
-            ],
             id="encoded-column",
         ),
         pytest.param(
@@ -1015,15 +979,6 @@ def _delivered(
                 "txStart": _OPENED,
                 "txEnd": INFINITY,
             },
-            [
-                ("pos_id", 1),
-                ("acct_num", "A-1"),
-                ("val", decimal.Decimal("1.50")),
-                ("from_z", _VALID_FROM),
-                ("thru_z", INFINITY),
-                ("in_z", _OPENED),
-                ("out_z", INFINITY),
-            ],
             id="bitemporal",
         ),
         pytest.param(
@@ -1038,54 +993,36 @@ def _delivered(
                 "stamp": dt.date(2026, 1, 15),
                 "marks": ({"tag": "founder", "origin": {"port": "Oslo"}},),
             },
-            [
-                ("id", 1),
-                ("label", "ada"),
-                ("note", "north wing"),
-                ("stamp", dt.date(2026, 1, 15)),
-                ("marks", ({"tag": "founder", "origin": {"port": "Oslo"}},)),
-            ],
             id="relational-document",
         ),
-        pytest.param(
-            TWIN_COLUMNS, "Marker", {"id": 5}, (5, ()), {"id": 5}, [("id", 5)], id="singleton-width"
-        ),
+        pytest.param(TWIN_COLUMNS, "Marker", {"id": 5}, (5, ()), {"id": 5}, id="singleton-width"),
     ],
 )
-def test_a_row_converts_and_publishes_its_members_whether_kept_or_reduced(
+def test_a_row_converts_its_members_whether_kept_or_reduced(
     model: Metamodel,
     entity: str,
     cells: Mapping[str, object],
     key: tuple[object, tuple[object, ...]],
     members: Mapping[str, object],
-    flat: list[tuple[str, object]],
 ) -> None:
     # A level either keeps a row's witness as its member row or reduces it.
-    # Neither choice is observable in the key, the judged members, the issues,
-    # or the published flat row.
+    # Neither choice is observable in the key, the judged members, or the issues.
     delivered = _delivered(model, entity, cells)
     assert delivered.key == (target(model, entity).identity, *key)
     assert delivered.members == members
     assert delivered.issues == ()
-    assert list(delivered.flat.items()) == flat
 
 
 def test_a_member_stored_at_another_members_result_key_reads_its_own_cell() -> None:
     # `payload` arrives under its encoded alias `payload_hex`, which is the Column
     # `shadow` is stored in, so `shadow`'s own cell arrives aliased once more.
-    # Each Attribute reads the cell its own result key names, and the flat row
-    # publishes both renamed members after the one it keeps.
+    # Each Attribute reads the cell its own result key names.
     cells = {"id": 1, "payload_hex": "00ff", "payload_hex_hex": "0102"}
     delivered = _delivered(SHADOWED, "Blob", cells)
     assert (delivered.members["payload"], delivered.members["shadow"]) == (
         b"\x00\xff",
         b"\x01\x02",
     )
-    assert list(delivered.flat.items()) == [
-        ("id", 1),
-        ("payload_hex", "00ff"),
-        ("payload_hex_hex", "0102"),
-    ]
 
 
 def test_a_read_without_a_members_cell_carries_no_value_for_it() -> None:
@@ -1630,7 +1567,7 @@ def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
             continue
         names = folded_names(compiled.statement.sql, compiled.document_reads)
         for driver in level_rows:
-            resolved, _variant, _unknown, _document = row_identity(compiled.result_contract, driver)
+            resolved, _unknown, _document = row_identity(compiled.result_contract, driver)
             entity_layout = model.layouts.entity(resolved)
             identity_positions = frozenset(
                 (*entity_layout.primary_key, *entity_layout.temporal_starts)

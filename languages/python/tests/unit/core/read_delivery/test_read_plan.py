@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -98,7 +98,6 @@ def _query(value: object = 1) -> ResolvedObjectQuery:
             }
         ),
         model=_META,
-        form="graph",
     )
 
 
@@ -111,7 +110,6 @@ def _name_query(value: str) -> ResolvedObjectQuery:
             }
         ),
         model=_META,
-        form="graph",
     )
     # Decoding yields a plain `str`; the caller's own carrier is kept instead,
     # so a probe observes exactly what the key and the plan retain of it.
@@ -126,7 +124,6 @@ def _plan(
     edition: str = "edition-a",
     model: CatalogedModel = _MODEL,
     dialect: Dialect = POSTGRES,
-    result_form: Literal["row", "instance"] = "instance",
     preference: ConcurrencyPreference | None = None,
 ) -> _read_plan.ReadPlan:
     return planner.plan(
@@ -134,7 +131,6 @@ def _plan(
         model=model,
         dialect=dialect,
         query=query,
-        result_form=result_form,
         preference=preference,
     )
 
@@ -161,18 +157,16 @@ def _shares_preparation(rendered: _read_plan.ReadPlan, prepared: _read_plan.Read
     )
 
 
-def test_different_query_values_share_one_read_plan_but_result_forms_do_not() -> None:
+def test_different_query_values_share_one_read_plan() -> None:
     planner = ReadPlanCache()
 
     first = _plan(planner, _query(1))
     other_value = _plan(planner, _query(2))
-    row_form = _plan(planner, _query(1), result_form="row")
 
     assert _shares_preparation(other_value, first)
     assert (_root(first)[0].statement.binds, _root(other_value)[0].statement.binds) == ((1,), (2,))
-    assert _root(row_form)[1] is not _root(first)[1]
     assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(
-        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 2, 1, 2, 0
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 1, 1, 1, 0
     )
 
 
@@ -190,7 +184,6 @@ def _match_query(name: str) -> ResolvedObjectQuery:
             }
         ),
         model=_META,
-        form="graph",
     )
 
 
@@ -244,7 +237,7 @@ _LATEST: dict[str, object] = {"transaction-time": {"asOf": "latest"}}
 
 def _resolved_key(meta: Metamodel, document: Mapping[str, object]) -> object:
     query_key = cast("Callable[[object], object]", vars(_read_plan)["_query_key"])
-    return query_key(resolve_read_query(deserialize(dict(document)), model=meta, form="graph"))
+    return query_key(resolve_read_query(deserialize(dict(document)), model=meta))
 
 
 def _order_query(predicate: Mapping[str, object], **clauses: object) -> dict[str, object]:
@@ -665,7 +658,6 @@ def _key(query: ResolvedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
         "model": _MODEL,
         "dialect": POSTGRES,
         "query": query,
-        "result_form": "instance",
         "preference": None,
     }
     return _read_plan._read_plan_key(**(values | fields))
@@ -730,7 +722,6 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
         _key(_query(), edition="edition-b"),
         _key(_query(), model=CatalogedModel(_META)),
         _key(_query(), dialect=replace(POSTGRES)),
-        _key(_query(), result_form="row"),
         _key(_query(), preference="locking"),
     ):
         assert not unpaged.same_family(distinct)
@@ -740,7 +731,7 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
 def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
     def selected(**clauses: object) -> ResolvedObjectQuery:
         authored = {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
-        return resolve_read_query(deserialize(authored | clauses), model=_META, form="graph")
+        return resolve_read_query(deserialize(authored | clauses), model=_META)
 
     assert not _key(selected(limit=3)).same_family(_key(selected()))
     assert not _key(selected(limit=3)).same_family(_key(selected(limit=5)))
@@ -865,7 +856,6 @@ def test_capacity_zero_uses_the_uncached_read_planning_seam() -> None:
         model=_MODEL,
         dialect=POSTGRES,
         query=selected,
-        result_form="instance",
         preference=None,
     )
     second = planner.plan(
@@ -873,7 +863,6 @@ def test_capacity_zero_uses_the_uncached_read_planning_seam() -> None:
         model=_MODEL,
         dialect=POSTGRES,
         query=selected,
-        result_form="instance",
         preference=None,
     )
 
@@ -922,7 +911,7 @@ def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None
     assert 1 in _root(planned)[0].statement.binds
     assert _root(planned)[0].statement.execution_value_positions() == ()
     assert received == [
-        frozenset({"model", "dialect", "query", "result_form", "preference"}),
+        frozenset({"model", "dialect", "query", "preference"}),
     ]
 
 
@@ -1030,7 +1019,6 @@ def _balance_as_of(day: int) -> ResolvedObjectQuery:
             )
         ),
         model=_BALANCE,
-        form="graph",
     )
 
 
@@ -1046,7 +1034,6 @@ def _membership(width: int, *, op: str = "in") -> ResolvedObjectQuery:
             }
         ),
         model=_META,
-        form="graph",
     )
 
 
@@ -1269,7 +1256,6 @@ def _member_query(member: str, value: object) -> ResolvedObjectQuery:
             {"target": "Order", "predicate": {"eq": {"path": f"Order.{member}", "value": value}}}
         ),
         model=_META,
-        form="graph",
     )
 
 
@@ -1454,16 +1440,11 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     assert calls == {"plan": 1, "compile": 1, "bind": 1}
 
 
-@pytest.mark.parametrize("result_form", ["row", "instance"])
 def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
-    result_form: Literal["row", "instance"], monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = projection_support.MATRIX_FAMILIES[("tph", "document")]["Holder"]
-    included = holder.where(holder.all).include(holder.members)
-    query = projection_support.resolved(
-        included if result_form == "instance" else holder.where(holder.all),
-        form="graph" if result_form == "instance" else "rows",
-    )
+    query = projection_support.resolved(holder.where(holder.all).include(holder.members))
     bind = cast("Callable[..., Any]", vars(_read_plan)["bind"])
     bound: list[object] = []
 
@@ -1476,7 +1457,6 @@ def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
         ReadPlanCache(0),
         query,
         model=CatalogedModel(projection_support.MATRIX_META),
-        result_form=result_form,
     )
 
     root, _converter = _root(plan)
@@ -1489,14 +1469,13 @@ def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
         ),
     )
     assert sorted(map(id, bound)) == sorted(id(read.projection) for read in compiled)
-    assert root.projection == read_planning.ResolvedReadProjection((), result_form == "instance")
-    if result_form == "instance":
-        (child,) = compiled[1:]
-        assert [
-            (member.identity.entity.name, member.identity.path[-1])
-            for member in child.projection.value_objects
-        ] == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
-        assert child.projection.observe_structured_document
+    assert root.projection == read_planning.ResolvedReadProjection((), True)
+    (child,) = compiled[1:]
+    assert [
+        (member.identity.entity.name, member.identity.path[-1])
+        for member in child.projection.value_objects
+    ] == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
+    assert child.projection.observe_structured_document
 
 
 def _with_items() -> ResolvedObjectQuery:
@@ -1509,7 +1488,6 @@ def _with_items() -> ResolvedObjectQuery:
             }
         ),
         model=_META,
-        form="graph",
     )
 
 
@@ -1794,7 +1772,7 @@ _WORKBENCHES: Final[Mapping[str, object]] = {
 def _dormant_query(
     document: Mapping[str, object], meta: Metamodel = _DORMANT_META
 ) -> ResolvedObjectQuery:
-    return resolve_read_query(deserialize(document), model=meta, form="graph")
+    return resolve_read_query(deserialize(document), model=meta)
 
 
 def _recording_preparation(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -2160,7 +2138,7 @@ def test_a_seeded_template_renders_the_current_reads_own_operands(
 ) -> None:
     def resolved(predicate: dict[str, object]) -> ResolvedObjectQuery:
         document = {"target": target, "predicate": predicate}
-        return resolve_read_query(deserialize(document), model=meta, form="graph")
+        return resolve_read_query(deserialize(document), model=meta)
 
     rendered, cold, cache = _seeded_render(meta, resolved(seed), resolved(current))
 
@@ -2195,7 +2173,7 @@ def _instant(day: int) -> tuple[object, ...]:
 
 
 def _resolved_read(meta: Metamodel, document: Mapping[str, object]) -> ResolvedObjectQuery:
-    return resolve_read_query(deserialize(dict(document)), model=meta, form="graph")
+    return resolve_read_query(deserialize(dict(document)), model=meta)
 
 
 def test_an_authored_operand_equal_to_a_temporal_coordinate_renders_apart_from_it() -> None:
@@ -2488,5 +2466,5 @@ def _corpus_query(
     meta: Metamodel, target: str, predicate: Mapping[str, object]
 ) -> ResolvedObjectQuery:
     return resolve_read_query(
-        deserialize({"target": target, "predicate": dict(predicate)}), model=meta, form="rows"
+        deserialize({"target": target, "predicate": dict(predicate)}), model=meta
     )

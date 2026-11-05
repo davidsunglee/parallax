@@ -1082,7 +1082,6 @@ def compile_statement(workload: Workload) -> LoweredStatement:
             model=CatalogedModel(META),
             dialect=POSTGRES,
             query=typed_resolved(query, MODEL),
-            result_form="instance",
             preference=None,
         )
         root = plan.root_read()

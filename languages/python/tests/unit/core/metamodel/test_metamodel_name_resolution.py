@@ -123,7 +123,7 @@ def test_read_query_resolution_classifies_an_ambiguous_bare_name_by_the_same_rul
     # read-query resolution or lowering resolves it.
     with pytest.raises(ModelRejectedError) as excinfo:
         model = _model()
-        resolve_read_query(_query("Person"), model=model, form="graph")
+        resolve_read_query(_query("Person"), model=model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
@@ -132,7 +132,7 @@ def test_read_query_resolution_refuses_a_target_the_model_does_not_declare() -> 
     # execution token exists and therefore before any executor or I/O can run.
     with pytest.raises(QueryTargetError) as excinfo:
         model = _model()
-        resolve_read_query(_query("Nope"), model=model, form="graph")
+        resolve_read_query(_query("Nope"), model=model)
     assert excinfo.value.code == "query-target-not-in-model"
 
 

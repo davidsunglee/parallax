@@ -286,7 +286,6 @@ def _database_entry_points(db: ScopedDatabase) -> dict[str, _Work]:
         "stream": lambda: db.stream(UNUSED),
         "wire.find": lambda: db.wire.find(UNUSED),
         "wire.stream": lambda: db.wire.stream(UNUSED),
-        "read_rows": lambda: db.read_rows(UNUSED),
         "transact": lambda: db.transact(UNUSED),
     }
 
@@ -307,7 +306,6 @@ def _transaction_entry_points(tx: TxnContext) -> dict[str, _Work]:
         "stream": lambda: tx.stream(UNUSED),
         "wire.find": lambda: tx.wire.find(UNUSED),
         "wire.stream": lambda: tx.wire.stream(UNUSED),
-        "read_rows": lambda: tx.read_rows(UNUSED),
         "insert": lambda: tx.insert(UNUSED, valid_from=NO_START, until=FIXED),
         "amend": lambda: tx.amend(UNUSED, until=FIXED),
         "amend_if": lambda: tx.amend_if(

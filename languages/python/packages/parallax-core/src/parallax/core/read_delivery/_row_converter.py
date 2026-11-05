@@ -5,22 +5,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_port import Row
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    EntityIdentity,
-    OccurrenceDefinition,
-)
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.read_delivery._convert import EntityReadMapping
-from parallax.core.read_delivery._page import ABSENT, PageBuilder, SourceLevel
+from parallax.core.read_delivery._page import PageBuilder, SourceLevel
 from parallax.core.read_delivery._row_decoding import (
     fixed_entity,
     member_classifiers,
     require_arity,
     row_identity,
-    row_variants,
 )
 from parallax.core.read_delivery._row_recording import (
     RecordRow,
@@ -32,10 +26,8 @@ from parallax.core.read_delivery._row_recording import (
 )
 from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen._inheritance import ReadResultContract
-from parallax.core.wire import encode_wire
-from parallax.core.write_plan.observe import occurrence_value
 
-__all__ = ["FetchedRowObserver", "ReadRowConverter", "RowPublisher", "bind"]
+__all__ = ["FetchedRowObserver", "ReadRowConverter", "bind"]
 
 
 class FetchedRowObserver(Protocol):
@@ -71,7 +63,6 @@ class ReadRowConverter:
     _record_trusted: RecordRow
     _record_reduced: RecordRow
     _fixed: EntityReadMapping | None
-    _operations: Mapping[tuple[EntityIdentity, str | None], _RowOperation] | None
 
     def record_row(
         self,
@@ -79,17 +70,16 @@ class ReadRowConverter:
         builder: PageBuilder,
         *,
         source: SourceLevel,
-    ) -> tuple[int, EntityIdentity, object | None, str | None]:
+    ) -> tuple[int, EntityIdentity, object | None]:
         """Record one provider row in ``builder``, answering its fetched row
-        index, the Entity it resolved to, its shared document, and its
-        `familyVariant` spelling."""
+        index, the Entity it resolved to, and its shared document."""
         fixed = self._fixed
         if fixed is not None:
             require_arity(self._contract, row)
-            resolved, variant, unknown, document = fixed.concrete_entity, None, None, None
+            resolved, unknown, document = fixed.concrete_entity, None, None
             mapping = fixed
         else:
-            resolved, variant, unknown, document = row_identity(self._contract, row)
+            resolved, unknown, document = row_identity(self._contract, row)
             mapping = self._mappings_by_entity[resolved]
         direct = mapping.direct_row
         if direct is not None:
@@ -111,7 +101,6 @@ class ReadRowConverter:
             record(mapping, stored_values, carried_positions, unknown, builder, source),
             resolved,
             document,
-            variant,
         )
 
     def record_rows(
@@ -133,7 +122,7 @@ class ReadRowConverter:
         if fixed is None:
             refs: list[int] = []
             for row in rows:
-                ref, resolved, document, _variant = self.record_row(row, builder, source=source)
+                ref, resolved, document = self.record_row(row, builder, source=source)
                 refs.append(ref)
                 if observer is not None:
                     observer.observe_fetched_row(ref, resolved, document)
@@ -181,112 +170,6 @@ class ReadRowConverter:
                 observer.observe_fetched_row(ref, concrete, None)
         return tuple(refs)
 
-    def row_publisher(self) -> RowPublisher:
-        """The flat-row publisher of a read bound with its row operations.
-
-        Raises :class:`ValueError` for a read bound without them."""
-        operations = self._operations
-        if operations is None:
-            raise ValueError("this read was bound without row operations")
-        return RowPublisher(operations)
-
-
-class RowPublisher:
-    """Publishes flat rows through the operations its read bound, one per
-    concrete Entity and `familyVariant` pair."""
-
-    __slots__ = ("_operations",)
-
-    def __init__(
-        self, operations: Mapping[tuple[EntityIdentity, str | None], _RowOperation]
-    ) -> None:
-        self._operations = operations
-
-    def publish(
-        self, concrete: EntityIdentity, row: tuple[object, ...], variant: str | None
-    ) -> dict[str, object]:
-        """One positional member row of ``concrete`` as its result-keyed flat row."""
-        return self._operations[concrete, variant](row)
-
-
-@dataclass(frozen=True, slots=True)
-class _RowOperation:
-    members: tuple[tuple[int, str, NeutralType | None, OccurrenceDefinition | None], ...]
-    keys: tuple[str, ...]
-    variant: str | None
-
-    def __call__(self, row: tuple[object, ...]) -> dict[str, object]:
-        values: dict[str, object] = {}
-        for position, key, encoded, occurrence in self.members:
-            value = row[position]
-            if value is ABSENT:
-                continue
-            if occurrence is not None:
-                value = occurrence_value(value, occurrence, ABSENT)
-            elif encoded is not None and value is not None:
-                value = encode_wire(encoded, cast("ManagedValue", value))
-            values[key] = value
-        for key in self.keys:
-            values.setdefault(key, None)
-        if self.variant is not None:
-            values["familyVariant"] = self.variant
-        return values
-
-
-def _row_operation(
-    contract: ReadResultContract, mapping: EntityReadMapping, variant: str | None
-) -> _RowOperation:
-    """How rows resolving to ``mapping``'s Entity under ``variant`` publish.
-
-    Key order is observable: kept members in layout order, then encoded
-    Attributes under their encoded keys, then the remaining publication keys as
-    null, then `familyVariant`. Those keys are, in cell order, every cell that
-    stays in each resolved row, then this Entity's own cells that publish only
-    for it, then the shared document's sibling padding.
-    """
-    layout = mapping.layout
-    slots = contract.slots
-    ordinals = mapping.result_ordinals
-    members = layout.member_selection.bindings
-    kept: list[tuple[int, str, NeutralType | None, OccurrenceDefinition | None]] = []
-    encoded: list[tuple[int, str, NeutralType | None, OccurrenceDefinition | None]] = []
-    for position, attribute in enumerate(layout.attributes):
-        if mapping.encoded_positions >> position & 1:
-            encoded.append(
-                (position, _scalar_key(contract, ordinals[position]), attribute.type, None)
-            )
-        else:
-            kept.append((position, attribute.storage.name, None, None))
-    kept.extend(
-        (position, occurrence.storage.name, None, occurrence.definition)
-        for position, occurrence in enumerate(layout.occurrences, start=len(layout.attributes))
-    )
-    keys = dict.fromkeys(
-        slot.padding_key for slot in slots if slot is not None and slot.padding_key is not None
-    )
-    for ordinal, position in sorted(
-        (ordinal, position) for position, ordinal in enumerate(ordinals) if ordinal is not None
-    ):
-        slot = slots[ordinal]
-        if slot is None or slot.padding_key is None:
-            keys.setdefault(
-                members[position].storage.name
-                if slot is None or slot.scalar is None
-                else slot.scalar.publication_key
-            )
-    shared = contract.shared_document
-    entry = None if shared is None else shared.by_entity.get(mapping.concrete_entity)
-    if entry is not None:
-        keys.update(dict.fromkeys(entry.padding))
-    return _RowOperation((*kept, *encoded), tuple(keys), variant)
-
-
-def _scalar_key(contract: ReadResultContract, ordinal: int | None) -> str:
-    slot = None if ordinal is None else contract.slots[ordinal]
-    if slot is None or slot.scalar is None:  # pragma: no cover - an encoded cell is a scalar's
-        raise ValueError("an encoded Attribute is read from a scalar cell")
-    return slot.scalar.publication_key
-
 
 def bind(
     model: CatalogedModel,
@@ -296,7 +179,6 @@ def bind(
     correlation_members: tuple[AttributeIdentity, ...] = (),
     singleton: bool = False,
     acquisition: bool = False,
-    row_operations: bool = False,
 ) -> ReadRowConverter:
     """Bind one compiled read's ``contract`` and resolved ``projection`` to
     ``model``: one mapping per Entity its rows can resolve to, and how each row
@@ -316,8 +198,7 @@ def bind(
     on its Page, so a row needs no comparison before it is judged: unless the
     read is a write's ``acquisition``, whose occurrences stay unjudged by
     contract, every row is judged as it is recorded. Every other row's payload
-    judgment is deferred. ``row_operations`` prepares the flat-row publication
-    of each Entity and `familyVariant` pair the contract can resolve a row to.
+    judgment is deferred.
     """
     mappings = MappingProxyType(
         {
@@ -334,15 +215,6 @@ def bind(
         record_trusted_singleton if singleton else record_trusted,
         record_judged if singleton and not acquisition else record_deferred,
         None if fixed is None else mappings[fixed],
-        MappingProxyType(
-            {
-                pair: _row_operation(contract, mappings[pair[0]], pair[1])
-                for pair in row_variants(contract)
-                if pair[0] in mappings
-            }
-        )
-        if row_operations
-        else None,
     )
 
 
@@ -373,10 +245,7 @@ def _entity_read_mapping(
         sum(
             1 << position
             for position, ordinal in enumerate(ordinals[: layout.attribute_count])
-            if ordinal is not None
-            and (slot := slots[ordinal]) is not None
-            and slot.scalar is not None
-            and slot.scalar.encoded
+            if ordinal is not None and (scalar := slots[ordinal]) is not None and scalar.encoded
         ),
         correlation_members,
     )

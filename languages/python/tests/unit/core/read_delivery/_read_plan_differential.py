@@ -80,7 +80,7 @@ def corpus_read(case: case_format.Case) -> CorpusRead:
     """``case``'s read as the binding resolves it before planning."""
     meta = engine.load_case_metamodel(case)
     node = _case_ingress.normalize_case_query(deserialize(_when(case)["objectQuery"]), meta)
-    query = resolve_read_query(node, model=meta, form="graph")
+    query = resolve_read_query(node, model=meta)
     return CorpusRead(case, meta, query)
 
 

@@ -11,7 +11,6 @@ layout and records every call.
 from __future__ import annotations
 
 import decimal
-from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -24,7 +23,6 @@ from parallax.core import (
     Int32,
     ValueObject,
     attr,
-    object_query,
 )
 from parallax.core.base import DocumentValue, StructuredDocument
 from parallax.snapshot import connect
@@ -84,21 +82,3 @@ def test_one_statement_materializes_every_collection_typed_and_wire(
     assert wire["amounts"] == _AMOUNTS
     assert wire["marks"] == _MARKS
     assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 2
-
-
-@pytest.mark.parametrize(("layout", "entity"), [("columns", Item), ("document", Sheet)])
-def test_a_row_form_read_publishes_the_managed_tuple(layout: str, entity: Any) -> None:
-    row = {key: value for key, value in _ROWS[layout].items() if key != "marks"}
-    port = ScriptedAdapter(Read(rows=[row]))
-    database = own_root(connect(port, _MODEL)).using_database_login()
-
-    (published,) = database.read_rows(
-        object_query.deserialize({"target": f"{_NS}.{entity.__name__}", "predicate": {"true": {}}})
-    ).rows
-
-    assert isinstance(published, Mapping)
-    assert published["amounts"] == (
-        decimal.Decimal("1.50"),
-        decimal.Decimal("1.50"),
-        decimal.Decimal("7.00"),
-    )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from parallax.core import inheritance, read_planning
+from parallax.core import concurrency, inheritance, read_planning
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
@@ -47,22 +47,35 @@ def compile_read(
     result_form: Literal["row", "instance"] = "row",
     preference: ConcurrencyPreference | None = None,
 ) -> CompiledRead:
-    """Compile ``predicate`` as the predicate of ``target``'s Entity Query,
-    planned as production plans every read."""
+    """Compile ``predicate`` as the predicate of ``target``'s Entity Query: an
+    ``instance`` read as production plans every delivery, and a ``row`` read as
+    acquisition compiles one, projecting no Value Object."""
+    query = _validated(
+        predicate,
+        model,
+        target,
+        narrow_to=narrow_to,
+        order_by=order_by,
+        limit=limit,
+        temporal=temporal,
+    )
+    if result_form == "row":
+        return compile_entity_query(
+            read_planning.plan_root(
+                query, model, projection=read_planning.ReadProjectionRequest("none", False)
+            ),
+            model,
+            dialect,
+            result_form="row",
+            shared_lock=preference is not None
+            and concurrency.view(model).effective_strategy(target.identity, preference)
+            == "locking",
+        )
     root = UNCACHED_READ_PLANNER.plan(
         edition="test",
         model=CatalogedModel(model),
         dialect=dialect,
-        query=_validated(
-            predicate,
-            model,
-            target,
-            narrow_to=narrow_to,
-            order_by=order_by,
-            limit=limit,
-            temporal=temporal,
-        ),
-        result_form=result_form,
+        query=query,
         preference=preference,
     ).root_read()
     assert not isinstance(root, EmptyRead)

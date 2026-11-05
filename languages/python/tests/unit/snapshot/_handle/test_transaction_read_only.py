@@ -18,7 +18,6 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
-from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import ReadOnlyTxnOptions, RetryPolicy, TxnOptions
 from parallax.core.unit_work import RollbackOnlyError
 from parallax.snapshot import (
@@ -76,9 +75,7 @@ def test_the_read_only_context_reads_and_names_no_write_verb() -> None:
     }
     assert writes <= set(dir(TxnContext))
     assert not writes & set(dir(ReadOnlyTxnContext))
-    assert {"find", "stream", "read_rows", "wire", "edition", "options"} <= set(
-        dir(ReadOnlyTxnContext)
-    )
+    assert {"find", "stream", "wire", "edition", "options"} <= set(dir(ReadOnlyTxnContext))
 
 
 def test_typed_and_wire_reads_share_one_read_only_boundary_and_take_no_lock() -> None:
@@ -113,14 +110,6 @@ def test_the_context_states_its_edition_and_its_resolved_options() -> None:
     assert edition
     assert options == ReadOnlyTxnOptions(retry=RetryPolicy(), isolation="serializable")
     assert port.calls[0] == BeginCall("serializable", "read_only")
-
-
-def test_row_form_reads_run_inside_the_read_only_boundary() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
-    db = account_db(port)
-    rows = db.read_only(lambda rtx: rtx.read_rows(object_query_node(_QUERY, ACCOUNT)).rows)
-    assert rows == (NEW_ROW,)
-    assert port.calls[0] == BeginCall("read_committed", "read_only")
 
 
 def test_a_stream_that_escapes_its_read_only_attempt_reads_no_page() -> None:

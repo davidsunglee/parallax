@@ -16,7 +16,6 @@ from parallax.core._execution._read_pipeline import (
     StandaloneRead,
     read_graph,
     read_page,
-    read_rows,
     resolved,
 )
 from parallax.core._execution._routing import OperationRouting, resolved_read_policy
@@ -32,9 +31,7 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
     refuse_reentry,
 )
-from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._page_reader import StreamPageResult
 from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import Publication
@@ -65,7 +62,7 @@ class ExecutionScope:
     inside the one read the delivery was begun as.
 
     The read policy applies only where an operation starts new execution — a
-    standalone read, row read, or stream, or a new read-only transaction.
+    standalone read or stream, or a new read-only transaction.
     Writable transactions always request the writer, and work that joins an
     active transaction inherits its connection without consulting this scope's
     routing at all. ``routes`` is the runtime's own immutable declaration,
@@ -194,11 +191,6 @@ class ExecutionScope:
             on_page_start=on_page_start,
             on_release=on_release,
         )
-
-    def read_rows(self, node: ObjectQueryNode) -> RowsResult:
-        """One standalone row-form read, published as transformed rows."""
-        refuse_reentry(self._lifecycle)
-        return read_rows(self.begin(), node, self._planner)
 
     def begin(self) -> StandaloneRead:
         """One operation's read, adopting the selection current now."""

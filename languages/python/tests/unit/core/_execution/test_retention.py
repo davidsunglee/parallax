@@ -588,7 +588,7 @@ def _instrument_root(builder: PageBuilder, tag: str, price: Decimal) -> int:
     }
     model = _accepted("instrument")
     row = result_row(compiled_read(model, "Instrument"), stored)
-    ref, _resolved, _document, _variant = bound_read(model, "Instrument").record_row(
+    ref, _resolved, _document = bound_read(model, "Instrument").record_row(
         row, builder, source=ROOT_LEVEL
     )
     return ref

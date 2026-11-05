@@ -62,7 +62,7 @@ _ANIMAL = corpus_model("animal")
 
 def _resolved(meta: Metamodel, target: str, predicate: Mapping[str, object]) -> ResolvedPredicate:
     document = {"target": target, "predicate": dict(predicate)}
-    return resolve_read_query(deserialize(document), model=meta, form="graph").predicate
+    return resolve_read_query(deserialize(document), model=meta).predicate
 
 
 _EVERY_OPERAND_FORM: Final[dict[str, object]] = {

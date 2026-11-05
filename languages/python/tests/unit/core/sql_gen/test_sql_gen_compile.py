@@ -216,7 +216,7 @@ def test_instance_form_projects_value_object_document_last() -> None:
         "select t0.id, t0.name, not t0.address is null, t0.address from customer t0"
     )
     assert instance.document_reads == ((2, 3),)
-    # Row-form (the default values lane) omits slot 4 — the scalars alone.
+    # Row-form omits slot 4 — the scalars alone.
     row = compile_read(oa.TrueNode(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
     assert row.statement.sql == "select t0.id, t0.name from customer t0"
 
@@ -457,14 +457,6 @@ def test_an_encoded_cell_delivers_its_logical_scalar_under_its_encoded_key() -> 
         "localTime": clock,
         "externalId": token,
     }
-    assert row.published == (
-        ("id", 1),
-        ("f32", 1.5),
-        ("f64", 2.5),
-        ("local_time", clock),
-        ("external_id", token),
-        ("payload_hex", "0a1b"),
-    )
 
 
 _BLOB_ID = Attribute(name="id", type="int64", column="id", primary_key=True)
@@ -1084,7 +1076,7 @@ _TRAVELERS = model("document-layout")
 
 def _traveler_query(predicate: Mapping[str, object]) -> ResolvedObjectQuery:
     document = {"target": "Traveler", "predicate": dict(predicate)}
-    return resolve_read_query(oq.deserialize(document), model=_TRAVELERS, form="rows")
+    return resolve_read_query(oq.deserialize(document), model=_TRAVELERS)
 
 
 def _traveler_predicate(display: str, score: int, note: str) -> Mapping[str, object]:

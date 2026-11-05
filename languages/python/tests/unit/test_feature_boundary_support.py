@@ -97,7 +97,7 @@ def test_typed_binding_resolves_the_independently_authored_predicate(shape: str)
         )
     )
     canonical = deserialize({"target": _TARGET, "predicate": _PREDICATES[shape]})
-    expected = resolve_read_query(canonical, model=model, form="graph")
+    expected = resolve_read_query(canonical, model=model)
     assert actual == expected
 
 

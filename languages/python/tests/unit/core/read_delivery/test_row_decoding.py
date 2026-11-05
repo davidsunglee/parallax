@@ -31,7 +31,6 @@ from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
 from tests.unit._document_layout_support import document_model, entity
 from tests.unit._prepared_read_support import result_row
-from tests.unit.core.sql_gen._delivery_support import deliver
 
 ORDERS = model("orders")
 DOCUMENT = document_model()
@@ -94,12 +93,12 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
         (
             "Payment",
             {"id": 1, "kind": "card", "payload": SQL_NULL},
-            ("CardPayment", "CardPayment", None, None),
+            ("CardPayment", None, None),
         ),
         (
             "Publication",
             {"id": 1, "payload": StructuredDocument({}), "family_variant": "Film"},
-            ("Film", "Film", None, dict[str, object]()),
+            ("Film", None, dict[str, object]()),
         ),
     ],
     ids=["tag", "literal"],
@@ -108,10 +107,10 @@ def test_a_row_reads_its_carriers_at_their_result_cells(
     name: str, cells: Mapping[str, object], identity: tuple[object, ...]
 ) -> None:
     compiled = _read(DOCUMENT_LAYOUT, name)
-    resolved, variant, unknown, document = row_identity(
+    resolved, unknown, document = row_identity(
         compiled.result_contract, result_row(compiled, cells)
     )
-    assert (resolved.name, variant, unknown, document) == identity
+    assert (resolved.name, unknown, document) == identity
 
 
 @pytest.mark.parametrize(
@@ -133,27 +132,3 @@ def test_a_shared_document_member_keeps_its_carriers_raw_state(
     )
     person = entity(DOCUMENT, "Person").identity
     assert builder.member_value(index, AttributeIdentity(person, "displayName")) is member
-
-
-def test_a_root_outside_the_shared_document_publishes_no_padding() -> None:
-    # A flat row resolving to a concrete pads its siblings' document members, while
-    # a row an unrecognized tag resolved to the family root carries no document of
-    # the position's and so pads nothing.
-    compiled = compile_read(
-        oa.TrueNode(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment")
-    )
-    card, unknown = deliver(
-        DOCUMENT_LAYOUT,
-        compiled,
-        [
-            {"id": 1, "kind": "card", "payload": {"detail": "visa", "authorizationCode": "A"}},
-            {"id": 3, "kind": "wire", "payload": {"detail": "x"}},
-        ],
-    )
-    assert card.published == (
-        ("id", 1),
-        ("detail", "visa"),
-        ("authorization_code", "A"),
-        ("familyVariant", "CardPayment"),
-    )
-    assert unknown.published == (("id", 3),)

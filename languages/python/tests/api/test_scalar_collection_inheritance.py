@@ -11,8 +11,7 @@ independently here.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 
@@ -31,7 +30,6 @@ from parallax.core import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import TablePerConcreteSubtype
-from parallax.core.object_query import deserialize
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
@@ -240,31 +238,4 @@ def test_writes_through_each_concrete_assign_inherited_and_own_collections(
         ("Phone", ("b",), (), ("1", "1"), Badge(codes=(7, 7)), None),
         ("Tablet", (), (), None, None, None),
         ("Desk", ("e", "d"), None, None, None, ()),
-    ]
-
-
-@_AXES
-def test_a_row_form_read_of_an_abstract_target_carries_each_collection(
-    profile_run: Any, strategy: Strategy, layout: Layout
-) -> None:
-    db = _served(profile_run)
-    _seed(db, strategy, layout)
-    namespace = f"scalar.collection.{strategy}.{layout}"
-    query = deserialize(
-        {
-            "target": f"{namespace}.Asset",
-            "predicate": {"true": {}},
-            "orderBy": [{"attr": f"{namespace}.Asset.id", "direction": "asc"}],
-        }
-    )
-
-    rows = cast("Sequence[Mapping[str, object]]", db.read_rows(query).rows)
-
-    assert [
-        tuple(row[name] for name in ("familyVariant", "tags", "ports", "numbers", "keys", "legs"))
-        for row in rows
-    ] == [
-        ("Phone", ("a", "a"), (1, 2), ("555",), (b"\x01\xff",), None),
-        ("Tablet", (), (3,), None, None, None),
-        ("Desk", ("d",), None, None, None, ("l", "r")),
     ]

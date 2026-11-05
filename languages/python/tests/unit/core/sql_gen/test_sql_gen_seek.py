@@ -221,15 +221,7 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
             }
         ],
     )
-    assert [key for key, _value in row.published] == [
-        "id",
-        "name",
-        "sku",
-        "qty",
-        "price",
-        "active",
-        "ordered_on",
-    ]
+    assert list(row.members) == ["id", "name", "sku", "qty", "price", "active", "orderedOn"]
 
 
 def test_a_coordinate_carried_at_another_width_than_the_order_is_refused() -> None:
@@ -530,11 +522,9 @@ _NULL_TAIL_ROWS: tuple[dict[str, object], ...] = (
 
 
 def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
-    """(Entity, variant, members, issues, published items) for every row."""
-    unread = (("home", None), ("right_home", None)) if instance else ()
+    """(Entity, members, issues) for every row."""
     return [
         (
-            "Plain",
             "Plain",
             {
                 "id": 2,
@@ -545,19 +535,8 @@ def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
                 **({"origin": {"city": "Bern"}} if instance else {}),
             },
             (),
-            (
-                ("id", 2),
-                ("holder_id", 12),
-                ("note", "memo"),
-                ("tags", ("a",)),
-                *((("origin", {"city": "Bern"}),) if instance else ()),
-                ("digest_hex", None),
-                *unread,
-                ("familyVariant", "Plain"),
-            ),
         ),
         (
-            "Right",
             "Right",
             {
                 "id": 3,
@@ -566,33 +545,13 @@ def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
                 **({"origin": None, "home": {"city": "Oslo"}} if instance else {}),
             },
             (),
-            (
-                ("id", 3),
-                ("holder_id", None),
-                *((("origin", None), ("right_home", {"city": "Oslo"})) if instance else ()),
-                ("digest_hex", "ff"),
-                ("note", None),
-                ("tags", None),
-                *((("home", None),) if instance else ()),
-                ("familyVariant", "Right"),
-            ),
         ),
         (
             # An unclaimed tag resolves to the family root, which reads its
             # encoded Column by storage spelling and so carries none.
             "Root",
-            None,
             {"id": 7, "holderId": None, **({"origin": None} if instance else {})},
             (("stored-data-family-tag-unknown", "ghost"),),
-            (
-                ("id", 7),
-                ("holder_id", None),
-                *((("origin", None),) if instance else ()),
-                ("digest_hex", None),
-                ("note", None),
-                ("tags", None),
-                *unread,
-            ),
         ),
     ]
 
@@ -675,9 +634,9 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
     ]
     delivered = deliver(projection_support.MATRIX_META, compiled, rows)
 
-    assert [
-        (row.entity, row.variant, row.members, row.issues, row.published) for row in delivered
-    ] == _null_tail_delivery(instance)
+    assert [(row.entity, row.members, row.issues) for row in delivered] == (
+        _null_tail_delivery(instance)
+    )
 
 
 def test_a_nullable_direct_leading_term_uses_the_same_seekable_two_branch_shape() -> None:
@@ -786,7 +745,6 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
     }
     (delivered,) = deliver(model, compiled, [cells])
     assert delivered.members == {"id": 1, "parallax_seek_0": 3}
-    assert delivered.published == (("id", 1), ("parallax_seek_0", 3))
     row = result_row(compiled, cells)
     assert row_coordinates(compiled.result_contract, (row,)) == (ContinuationCoordinate((3, 1)),)
 

@@ -97,7 +97,6 @@ def find_history(
         model=model,
         dialect=port.dialect,
         query=ordered,
-        result_form="instance",
         preference=preference,
     )
     if plan.fetch_count:  # pragma: no cover - validated milestone queries cannot include

@@ -83,6 +83,7 @@ from parallax.core.unit_work import (
     WritePlanner,
 )
 from parallax.core.write_plan.steps import KeyTarget
+from parallax.snapshot import WireDatabaseView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -468,7 +469,7 @@ def test_a_non_transactional_find_opens_no_unit_of_work_to_participate_in() -> N
     # while the values it publishes still retain the state each row observed
     # (`test_transaction_reads.py` pins that half).
     port = ScriptedAdapter(Read(rows=[_NEW_ROW]))
-    assert scope(port).read_rows(_account_seven()).rows == (_NEW_ROW,)
+    assert WireDatabaseView(scope(port)).find(_account_seven()).result()["id"] == 7
     assert [type(op) for op in port.calls] == [ReadCall]
 
 
@@ -722,7 +723,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
     def outer(_tx: TxnAttempt) -> str:
         with contextlib.suppress(DatabaseError):
-            db.transact(lambda inner_tx: inner_tx.read_rows(_account_seven()), itself)
+            db.transact(lambda inner_tx: WireDatabaseView(inner_tx).find(_account_seven()), itself)
         return "caught"
 
     assert db.transact(outer, itself) == "caught"
@@ -1610,8 +1611,8 @@ def test_a_read_only_attempt_owns_no_unit_of_work() -> None:
 def test_a_read_only_read_takes_no_lock_even_under_a_locking_root() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_NEW_ROW])))
     db = scope(port, options=TxnOptions(concurrency="locking"))
-    result = db.read_only(lambda rtx: rtx.read_rows(_account_seven()), itself)
-    assert result.rows == (_NEW_ROW,)
+    result = db.read_only(lambda rtx: WireDatabaseView(rtx).find(_account_seven()), itself)
+    assert result.result()["id"] == 7
     (read,) = [call for call in port.calls if isinstance(call, ReadCall)]
     assert "for share" not in read.sql
 
@@ -1779,7 +1780,7 @@ def test_an_escaped_read_only_attempt_refuses_every_read_after_it_ended() -> Non
     escaped: list[ReadOnlyTxnAttempt] = []
     scope(port).read_only(escaped.append, itself)
     with pytest.raises(EscapedTransactionError):
-        escaped[0].read_rows(_account_seven())
+        WireDatabaseView(escaped[0]).find(_account_seven())
     assert port.calls == [BeginCall("read_committed", "read_only"), CommitCall()]
 
 
@@ -1788,7 +1789,7 @@ def test_a_standalone_read_inside_a_read_only_callback_keeps_its_own_connection(
     db = scope(port, options=TxnOptions(concurrency="locking"))
 
     def outer(_rtx: ReadOnlyTxnAttempt) -> int:
-        return len(db.read_rows(_account_seven()).rows)
+        return len(WireDatabaseView(db).find(_account_seven()).results())
 
     assert db.read_only(outer, itself) == 1
     # Two acquisitions: the attempt's, and the standalone read's own, which

@@ -1,5 +1,5 @@
 """A bound read's recording of a whole level's rows, where every row names one
-Entity, and its flat-row publication."""
+Entity."""
 
 from __future__ import annotations
 
@@ -40,11 +40,3 @@ def test_a_fixed_read_refuses_a_row_of_another_arity() -> None:
 
     with pytest.raises(ValueError, match="does not match row arity 1"):
         converter.record_rows([(1,)], PageBuilder(ViewSchema.of()), ROOT_LEVEL, None)
-
-
-def test_a_read_bound_without_row_operations_publishes_no_flat_row() -> None:
-    compiled = compiled_read(_ENCODED, "EncodedOrder")
-    converter = bind(CatalogedModel(_ENCODED), compiled.result_contract, compiled.projection)
-
-    with pytest.raises(ValueError, match="bound without row operations"):
-        converter.row_publisher()

@@ -7,9 +7,7 @@ from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptio
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.core.read_delivery import RowsResult
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
@@ -64,14 +62,12 @@ class TxnContext:
     :meth:`find` does and a Wire write buffers exactly as the keyed verbs here
     do.
 
-    :meth:`read_rows` is the values lane over this same transaction — a
-    first-party row-form read, not a third public result format. There is no
-    write peer of it: every write, first-party callers included, is stated
-    through the keyed, predicate, and target verbs, Typed or Wire — an
-    existing row addressed by a value this store published, from a read or from
-    the insert that opened the row, a fresh row by the payload an insert opens it
-    with, a set by a selection plus its assignments, and an existing object by
-    its key under the revision its caller states.
+    Every write, first-party callers included, is stated through the keyed,
+    predicate, and target verbs, Typed or Wire — an existing row addressed by a
+    value this store published, from a read or from the insert that opened the
+    row, a fresh row by the payload an insert opens it with, a set by a selection
+    plus its assignments, and an existing object by its key under the revision
+    its caller states.
     """
 
     __slots__ = ("_attempt",)
@@ -462,24 +458,6 @@ class TxnContext:
             build_publication=typed_publication_for,
         )
 
-    def read_rows(self, query: ObjectQueryNode) -> RowsResult:
-        """Run a PARTICIPATING row-form read and return its published rows.
-
-        The values lane's peer of :meth:`find`, participating exactly as the
-        graph form does: it force-flushes pending writes first
-        (read-your-own-writes) and renders the read-lock suffix its target
-        Entity's Effective Concurrency Strategy calls for. Like every
-        participating read it opens its Read activity inside that force-flush,
-        under this transaction's attempt (`m-execution-lifecycle`).
-
-        It records NO observation. The values lane projects scalars only, so a
-        Predecessor Row read off it would be incomplete under Relational Document
-        Layout while `m-unit-work` requires a complete one. A caller that needs
-        evidence reads the graph form, which is what :meth:`find` and
-        ``tx.wire.find`` always run.
-        """
-        return self._attempt.read_rows(query)
-
     def amend_where[E: EntityBase](
         self, query: ObjectQuery[E, Any], *assignments: AttributeAssignment[E]
     ) -> int:
@@ -533,11 +511,11 @@ class ReadOnlyTxnContext:
 
     A facade over one read-only transaction attempt: its connection, the
     selection it adopted, and a native transaction opened read-only. It reads
-    exactly as :class:`TxnContext` does — :meth:`find`, :meth:`stream`,
-    :meth:`read_rows`, and :attr:`wire` — except that no read takes a
-    participation lock, the unversioned fallback included, and it has no verb
-    that writes. A reference used after its attempt ended raises
-    ``EscapedTransactionError``, a live stream included.
+    exactly as :class:`TxnContext` does — :meth:`find`, :meth:`stream`, and
+    :attr:`wire` — except that no read takes a participation lock, the
+    unversioned fallback included, and it has no verb that writes. A reference
+    used after its attempt ended raises ``EscapedTransactionError``, a live stream
+    included.
     """
 
     __slots__ = ("_attempt",)
@@ -587,11 +565,6 @@ class ReadOnlyTxnContext:
             convert_query=typed_read_query,
             build_publication=typed_publication_for,
         )
-
-    def read_rows(self, query: ObjectQueryNode) -> RowsResult:
-        """Run a row-form read inside this transaction; it records no
-        observation and takes no participation lock."""
-        return self._attempt.read_rows(query)
 
     @property
     def wire(self) -> WireDatabaseView:

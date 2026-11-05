@@ -13,7 +13,6 @@ from typing import Any, Final, cast
 
 from parallax.core import Attr, Document, DomainModel, Entity, attr
 from parallax.core.entity._model import model_of
-from parallax.core.object_query import deserialize
 from parallax.snapshot import ScopedDatabase, SnapshotStream, TxnContext
 from tests._support.query_probes import canonical_document
 
@@ -100,8 +99,5 @@ READS: Final[Mapping[str, Read]] = {
         list(db.wire.find(canonical_document(everything(entity), MODEL)).results())
     ),
     "wire-stream": lambda db, entity: _identities(_drained(STREAMS["wire"](db, entity))),
-    "rows": lambda db, entity: _identities(
-        db.read_rows(deserialize(canonical_document(everything(entity), MODEL))).rows
-    ),
 }
 """Every standalone read shape, reduced to the identities it delivered in order."""
