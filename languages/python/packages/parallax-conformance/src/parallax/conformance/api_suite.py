@@ -1568,25 +1568,26 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 )
 
 # Multi-concrete polymorphic PROJECTING inheritance reads (an abstract-root read,
-# or a narrow resolving to 2+ concretes) — the ROW-FORM (values-lane) originals
-# (m-inheritance-003/-013/-015/-052): `db.find` is instance-form, never row-form
-# (the Python binding: the right observation is `type(node)`, not a flattened dict),
-# so a flat `then.rows` comparison can never be reproduced from typed instances
-# for these — a permanent, structural non-fit, not a capability gap. Each of
-# these four has an executed
-# `then.graph` sibling proving the identical
-# capability through the shipped surface (m-inheritance-106/-107/-108/-109,
-# `graph_stories.py`) — these four row-form originals stay the values-lane witnesses
-# permanently, cross-referencing their own instance-form sibling.
+# or a narrow resolving to 2+ concretes) — the `then.rows` originals
+# (m-inheritance-003/-013/-015/-052): each states the position's scalar superset,
+# `null` where a row's own branch contributes nothing, while `db.find` materializes
+# per-variant Typed nodes (the Python binding: the right observation is
+# `type(node)`, not a flattened dict), so a flat `then.rows` comparison can never be
+# reproduced from typed instances for these — a permanent, structural non-fit, not
+# a capability gap. Each of these four has an executed `then.graph` sibling proving
+# the identical capability through the shipped surface
+# (m-inheritance-106/-107/-108/-109, `graph_stories.py`) — these four originals stay
+# the flat-assertion witnesses permanently, run through `wire.find` by the run lane
+# and cross-referencing their own `then.graph` sibling.
 _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
-    "resolving to 2+ concretes) — the ROW-FORM (values-lane) original: `db.find` is "
-    "instance-form, never row-form (python.md §4: the right observation is "
-    "`type(node)`, not a flattened dict), so a flat `then.rows` comparison can never be "
-    "reproduced from typed instances — a permanent, structural non-fit. Its own "
-    "INSTANCE-FORM sibling (m-inheritance-106/-107/-108/-109 respectively) IS executed "
-    "through `db.find` (`graph_stories.py`), proving the identical capability the OTHER "
-    "way, so both lanes of the same behavior are expressed"
+    "resolving to 2+ concretes) — the `then.rows` original: it states the position's "
+    "scalar superset while `db.find` materializes per-variant Typed nodes (python.md §4: "
+    "the right observation is `type(node)`, not a flattened dict), so a flat `then.rows` "
+    "comparison can never be reproduced from typed instances — a permanent, structural "
+    "non-fit. Its own `then.graph` sibling (m-inheritance-106/-107/-108/-109 respectively) "
+    "IS executed through `db.find` (`graph_stories.py`), proving the identical capability "
+    "the OTHER way, so both assertions of the same behavior are expressed"
 )
 
 # Temporal inheritance-family termination splits into two skip reasons by which
@@ -1633,11 +1634,12 @@ _INHERITED_SCALAR_COLLECTION_REASON: Final[str] = (
     "collections are projected and bound, graded byte-exact by the compile lane and end "
     "to end by the database-backed run lane"
 )
-_INHERITED_SCALAR_COLLECTION_ROW_FORM_REASON: Final[str] = (
-    "the row-form (values-lane) original of m-inheritance-141/-142: `db.find` is "
-    "instance-form, never row-form, so a flat `then.rows` comparison can never be "
-    "reproduced from typed instances; the compile lane grades each branch's collection "
-    "projection byte-exact and the database-backed run lane grades the superset rows"
+_INHERITED_SCALAR_COLLECTION_FLAT_ROWS_REASON: Final[str] = (
+    "the `then.rows` original of m-inheritance-141/-142: it states the position's scalar "
+    "superset while `db.find` materializes per-variant Typed nodes, so a flat `then.rows` "
+    "comparison can never be reproduced from typed instances; the compile lane grades "
+    "each branch's collection projection byte-exact and the database-backed run lane "
+    "grades the superset rows"
 )
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
@@ -2701,12 +2703,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-142": _INHERITED_SCALAR_COLLECTION_REASON,
     "m-inheritance-143": _INHERITED_SCALAR_COLLECTION_REASON,
     "m-inheritance-144": _INHERITED_SCALAR_COLLECTION_REASON,
-    "m-inheritance-145": _INHERITED_SCALAR_COLLECTION_ROW_FORM_REASON,
-    "m-inheritance-146": _INHERITED_SCALAR_COLLECTION_ROW_FORM_REASON,
+    "m-inheritance-145": _INHERITED_SCALAR_COLLECTION_FLAT_ROWS_REASON,
+    "m-inheritance-146": _INHERITED_SCALAR_COLLECTION_FLAT_ROWS_REASON,
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
-    # ROW-FORM originals (their instance-form siblings are executed) --------- #
+    # `then.rows` originals (their `then.graph` siblings are executed) ------- #
     "m-inheritance-003": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-013": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,

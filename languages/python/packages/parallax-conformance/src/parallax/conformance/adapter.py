@@ -252,9 +252,9 @@ def _read_observations(
 ) -> dict[str, Any]:
     """A read case's own observation shape (m-case-format "Read result form"):
     ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
-    fetch or a plain instance-form materialization) / ``then.rows`` (row-form) —
-    a case satisfies its `then` requirement with exactly one, so exactly one of
-    these three run lanes ever answers it.
+    fetch or a plain materialization) / ``then.rows`` (the flat scalar assertion
+    over that same read) — a case satisfies its `then` requirement with exactly
+    one, so exactly one of these three run lanes ever answers it.
 
     ``when.stream`` selects WITHIN each graph lane rather than beside them,
     because it names the DELIVERY and not the result: a streamed case reports the
