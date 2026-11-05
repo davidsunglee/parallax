@@ -1016,8 +1016,8 @@ def test_the_canonical_spelling_of_a_refused_continuation_stays_available() -> N
             }
         ],
     }
-    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]), Read(rows=[]))
-    order = _db(CLASSLESS_ORDERS, port).wire.find(deserialize(document)).result()
+    with ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]), Read(rows=[])) as port:
+        order = _db(CLASSLESS_ORDERS, port).wire.find(deserialize(document)).result()
     assert cast("Any", order)["items"][0]["statuses"] == []
 
 
