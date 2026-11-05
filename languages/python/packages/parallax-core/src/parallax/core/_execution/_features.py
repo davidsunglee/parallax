@@ -79,6 +79,6 @@ def _includes_over_a_scan(query: QueryClauses) -> bool:
     Reaching this answer costs no port, so this module stays clear of the
     Database Port its own read-query resolution consumer must not touch.
     """
-    return bool(query.includes) and any(
+    return query.requests_includes and any(
         isinstance(selection, (AsOfRange, History)) for selection in query.temporal.values()
     )

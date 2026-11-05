@@ -25,6 +25,7 @@ from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import (
     LATEST,
     TX_TIME,
@@ -47,14 +48,16 @@ from parallax.core.execution import (
     QueryTargetError,
     TransactionTimePinReadOnlyError,
 )
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
+from parallax.core.read_planning import DeepFetchError
 from parallax.core.unit_work import (
     ReadEvidence,
     StaleWriteError,
 )
 from parallax.core.write_plan import TemporalObservation
-from parallax.snapshot import Database, TxnContext, WireEntity
+from parallax.snapshot import Database, ReadOnlyTxnContext, TxnContext, WireEntity
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import inheritance_models as im
@@ -72,6 +75,7 @@ from tests._support.db_port import (
     inserted_rows,
 )
 from tests._support.root_ownership import own_root
+from tests.unit import _deep_include_support as deep
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -1132,6 +1136,66 @@ def test_tx_find_read_query_resolution_rejects_before_a_pending_write_can_flush(
         Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
     assert port.calls == [BeginCall(), WriteCall(INSERT_SQL, (7, "Newton", 5.00, 1)), CommitCall()]
+
+
+def test_a_bad_continuation_is_refused_before_a_pending_write_can_flush() -> None:
+    port = ScriptedAdapter(Transact(Write()))
+    new_order = Order(**cast("Any", deep.order_row(1)))
+
+    def fn(tx: TxnContext) -> None:
+        tx.insert(new_order)
+        with pytest.raises(QueryDefinitionError, match="no_such_member") as eager:
+            tx.find(Order.where(Order.id == 1).include(Order.items.no_such_member))
+        assert eager.value.code == "query-path-invalid"
+        with (
+            pytest.raises(QueryDefinitionError, match="no_such_member"),
+            tx.stream(Order.where(Order.id == 1).include(Order.items.no_such_member)),
+        ):
+            pass
+        assert [type(call) for call in port.calls] == [BeginCall]
+
+    own_root(
+        Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
+    assert [type(call) for call in port.calls] == [BeginCall, WriteCall, CommitCall]
+
+
+@pytest.mark.parametrize(("read", "leaves"), deep.DEEP_READS)
+def test_a_writable_transaction_read_executes_a_deep_include_to_its_leaf(
+    read: Callable[[TxnContext], Any], leaves: Callable[[Any], list[int]]
+) -> None:
+    with ScriptedAdapter(Transact(*deep.deep_order_reads())) as port:
+        database = own_root(
+            Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+        ).using_database_login()
+        assert database.transact(lambda tx: leaves(read(tx))) == deep.LEAF_ITEMS
+    assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 5
+
+
+@pytest.mark.parametrize(("read", "leaves"), deep.DEEP_READS)
+def test_a_read_only_transaction_read_executes_a_deep_include_to_its_leaf(
+    read: Callable[[ReadOnlyTxnContext], Any], leaves: Callable[[Any], list[int]]
+) -> None:
+    with ScriptedAdapter(Transact(*deep.deep_order_reads())) as port:
+        database = own_root(
+            Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+        ).using_database_login()
+        assert database.read_only(lambda tx: leaves(read(tx))) == deep.LEAF_ITEMS
+    assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 5
+
+
+@pytest.mark.parametrize("read", deep.BACK_REFERENCE_READS)
+@pytest.mark.parametrize("lane", ["transact", "read_only"])
+def test_a_transaction_read_past_a_back_reference_stays_an_execution_failure(
+    lane: str, read: Callable[[Any], object]
+) -> None:
+    port = ScriptedAdapter(Transact())
+    database = own_root(
+        Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+    ).using_database_login()
+    with raises_contextualized(DeepFetchError, match="back-reference"):
+        getattr(database, lane)(read)
+    assert [call for call in port.calls if isinstance(call, ReadCall)] == []
 
 
 # --------------------------------------------------------------------------- #

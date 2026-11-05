@@ -35,6 +35,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import LATEST, TX_TIME
 from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core._execution._publication import SelectedReadModel
@@ -64,6 +65,7 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery import _delivery as delivery
 from parallax.core.read_delivery import _row_lane as row_lane
@@ -604,6 +606,22 @@ def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str
         verbs[verb_name]()
 
     assert caught.value.code == "query-target-not-in-model"
+    assert execution.calls == ["begin"]
+
+
+@pytest.mark.parametrize("verb", [_find, _wire_find], ids=["find", "wire_find"])
+def test_a_bad_include_the_gate_refuses_reaches_no_execution_capability(
+    verb: Callable[[ExecutionScope, Any], object],
+) -> None:
+    # The Include step is inside the gate, so a path binding refuses opens no
+    # activity and runs no body, exactly as a target the model lacks does.
+    scope, execution = _scope(RefusingAdapter(), selected=_selection(ORDERS_MODEL))
+    query = Order.where(Order.id == 1).include(Order.items.no_such_member)
+
+    with pytest.raises(QueryDefinitionError, match="no_such_member") as caught:
+        verb(scope, query)
+
+    assert caught.value.code == "query-path-invalid"
     assert execution.calls == ["begin"]
 
 

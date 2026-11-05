@@ -9,16 +9,14 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity, Read
 from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
-from parallax.core.entity._declaration import (
-    declaration_of,
-    is_entity_class,
-    members_of,
-    wire_names_of,
-)
+from parallax.core.entity._declaration import declaration_of, is_entity_class, wire_names_of
 from parallax.core.entity._entity import DetachedLifecycleState, attach_lifecycle_state
-from parallax.core.entity._expressions import IncludeTraversal, include_traversal
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, RelationshipIdentity
-from parallax.core.object_query import IncludeSegment
+from parallax.core.entity._expressions import (
+    AuthoredIncludePath,
+    AuthoredIncludeSegment,
+    authored_include_path,
+)
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
@@ -364,7 +362,7 @@ _UNLOADED_MARKER: Final = _UnloadedMarker()
 
 
 def _traverse(
-    node: object, path: IncludeTraversal, operation: str, *, raising: bool
+    node: object, path: AuthoredIncludePath, operation: str, *, raising: bool
 ) -> tuple[list[object], bool, bool]:
     """Walk ``path`` from ``node``, answering its terminals, whether it fanned out,
     and whether every view it reached was loaded.
@@ -397,16 +395,20 @@ def _traverse(
 
 
 def _segment_value(
-    source: object, segment: IncludeSegment, operation: str, *, raising: bool
+    source: object, segment: AuthoredIncludeSegment, operation: str, *, raising: bool
 ) -> object:
-    """One segment's already-loaded value at ``source``.
+    """One segment's already-loaded value at ``source``, which ``source``'s own
+    class resolves the segment's name against.
 
     A narrowed segment reads the distinct narrowed view the read populated; a
     broad segment reads the relationship slot itself, where the unloaded sentinel
     is what an unrequested include left behind.
     """
-    key = _view_key(segment)
+    relationship = segment.relationship_in(wire_names_of(type(source)))
+    if relationship is None:
+        raise _owner_mismatch(source, segment, operation)
     if segment.narrow_to:
+        key = _view_key(relationship.name, segment)
         state = snapshot_state_of(source)
         views: Mapping[str, object] = {} if state is None else state.views
         if key not in views:
@@ -414,13 +416,10 @@ def _segment_value(
                 raise UnloadedRelationshipError(key)
             return _UNLOADED_MARKER
         return views[key]
-    owner = _segment_owner(source, segment)
-    if owner is None:
-        raise _owner_mismatch(source, segment, operation)
-    value = _relationship_value_of(source, owner)
+    value = _relationship_value_of(source, relationship)
     if value is UNLOADED:
         if raising:
-            raise UnloadedRelationshipError(key)
+            raise UnloadedRelationshipError(relationship.name)
         return _UNLOADED_MARKER
     return value
 
@@ -439,13 +438,13 @@ def _required_state(node: object, operation: str) -> SnapshotNodeState:
     return state
 
 
-def _require_path(node: object, path: object, operation: str) -> IncludeTraversal:
-    """``path``'s Include traversal, whose starting owner applies to ``node``.
+def _require_path(node: object, path: object, operation: str) -> AuthoredIncludePath:
+    """``path``'s authored path, whose root relationship applies to ``node``.
 
     Refuses anything else, including the bare relationship-name string an
     untyped caller may still reach here with. A relationship an accepted ancestor
-    declares applies to every concrete subtype, which is exactly what walking the
-    class's own ancestry answers.
+    declares applies to every concrete subtype, whose merged names answer that
+    ancestor's identity.
     """
     if not isinstance(path, IncludePath):
         raise SnapshotInspectionError(
@@ -457,43 +456,24 @@ def _require_path(node: object, path: object, operation: str) -> IncludeTraversa
             operation=operation,
             entity=_entity_of(node),
         )
-    traversal = include_traversal(cast("IncludePath[Any, Any]", path))
-    first = traversal.segments[0]
-    if _segment_owner(node, first) is None:
+    authored = authored_include_path(cast("IncludePath[Any, Any]", path))
+    first = authored.segments[0]
+    if first.relationship_in(wire_names_of(type(node))) is None:
         raise _owner_mismatch(node, first, operation)
-    return traversal
+    return authored
 
 
 def _owner_mismatch(
-    node: object, segment: IncludeSegment, operation: str
+    node: object, segment: AuthoredIncludeSegment, operation: str
 ) -> SnapshotInspectionError:
     entity = _entity_of(node)
     reached = "an Entity this path cannot address" if entity is None else entity.canonical
     return SnapshotInspectionError(
         code="snapshot-view-owner-mismatch",
-        message=f"{segment.rel} names no relationship applying to {reached}",
+        message=f"{segment.described()} names no relationship applying to {reached}",
         operation=operation,
         entity=entity,
     )
-
-
-def _segment_owner(node: object, segment: IncludeSegment) -> RelationshipIdentity | None:
-    """The Relationship Identity ``segment`` names for ``node``'s concrete class,
-    or ``None`` when no accepted ancestor of that class declares it.
-
-    A segment spells its owner exactly, so the answer is the ancestry position
-    carrying that Identity and declaring that relationship — which is how an
-    ancestor's declaration applies to a concrete subtype while a disjoint
-    sibling's identically named one does not.
-    """
-    owner, _, name = segment.rel.rpartition(".")
-    for ancestor in type(node).__mro__:
-        if not is_entity_class(ancestor):
-            continue
-        identity = declaration_of(ancestor).identity
-        if identity.canonical == owner and name in members_of(ancestor).relationship_py:
-            return RelationshipIdentity(identity, name)
-    return None
 
 
 def _entity_of(node: object) -> EntityIdentity | None:
@@ -501,19 +481,16 @@ def _entity_of(node: object) -> EntityIdentity | None:
     return declaration_of(cls).identity if is_entity_class(cls) else None
 
 
-def _view_key(segment: IncludeSegment) -> str:
-    """The private per-segment view key: the relationship's local name, plus the
-    variant spellings of the concrete subtypes a narrowed segment names.
+def _view_key(relationship: str, segment: AuthoredIncludeSegment) -> str:
+    """The private narrowed view key: the relationship's own name, plus the variant
+    spellings of the concrete subtypes a narrowed segment names.
 
-    A view key is RESULT vocabulary while the segment's own ``rel`` and ``narrowTo``
-    are addressing references, so both halves shed their namespace here — the
-    same local spelling deep-fetch planning derived through
-    ``inheritance.family_variant_name`` when it keyed the view it populated.
+    A view key is RESULT vocabulary while a segment's ``narrowTo`` is an addressing
+    reference, so the selection sheds its namespace here — the same local spelling
+    deep-fetch planning derived through ``inheritance.family_variant_name`` when it
+    keyed the view it populated.
     """
-    local = _local(segment.rel)
-    if not segment.narrow_to:
-        return local
-    return f"{local}[{','.join(sorted(_local(name) for name in segment.narrow_to))}]"
+    return f"{relationship}[{','.join(sorted(_local(name) for name in segment.narrow_to))}]"
 
 
 def _local(spelling: str) -> str:

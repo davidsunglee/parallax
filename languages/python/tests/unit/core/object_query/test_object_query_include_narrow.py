@@ -6,10 +6,10 @@ clause. Authoring reaches no model, so what a spelling BUILDS is checked here
 directly and what a model makes of it runs through the shared read gate
 `resolve_read_query`, the seam every execution path calls.
 
-A deeper relationship hop is composed rather than resolved: the segment is
-spelled from the path's own target, and the model settles its legality at that
-same gate. ``test_relationship_hops`` pins the composition and the two authoring
-facts it erases; here a multi-hop include is exercised only as far as it needs.
+A deeper relationship hop keeps its Python member name until an operation binds
+it, and the serving model's classes spell it at that same gate.
+``test_relationship_hops`` pins that binding; here a multi-hop include is
+exercised only as far as it needs.
 """
 
 from __future__ import annotations
@@ -42,10 +42,9 @@ from parallax.core import (
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import TIMESTAMP
 from parallax.core.base import Decimal as NeutralDecimal
-from parallax.core.entity import IncludePath
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._entity import build_object_query
-from parallax.core.entity._expressions import IncludeTraversal, include_traversal
+from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._model import model_of
 from parallax.core.execution import DeferredFeatureError
 from parallax.core.metamodel import EntityIdentity
@@ -65,6 +64,7 @@ from parallax.core.wire import encode_wire
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support.query_probes import canonical_query, predicate_node, typed_resolved
+from tests.unit import _deep_include_support as deep
 
 # The animal family's model composes its own polymorphic owner alongside it, so
 # it is the composition every case here is measured against at the gate below.
@@ -153,22 +153,29 @@ def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
     )
 
 
-def test_a_path_that_already_continued_cannot_continue_again() -> None:
-    # A composed hop points at an Entity the path names no class for, so a third
-    # hop has no owner to spell itself from.
-    bare: IncludePath[sm.SnapOrder, Any] = IncludePath(
-        IncludeTraversal(
-            segments=(IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),), target=None
-        )
+def test_a_narrowed_path_continues_past_a_continuation_of_its_own() -> None:
+    # A narrowed receiver answers a plain Include path, which continues by name
+    # exactly as an unfinished one does.
+    query = Animal.where(Animal.all).include(
+        Animal.owner.pets.narrow(Dog).owner.pets.narrow(Cat).owner
     )
-    with pytest.raises(AttributeError, match="already continued past the hop"):
-        _ = bare.statuses
+    (path,) = canonical_query(query, _ANIMAL_MODEL).includes
+    assert [(segment.rel, segment.narrow_to) for segment in path.segments] == [
+        ("parallax.compatibility.Animal.owner", ()),
+        ("parallax.compatibility.Person.pets", ("parallax.compatibility.Dog",)),
+        ("parallax.compatibility.Animal.owner", ()),
+        ("parallax.compatibility.Person.pets", ("parallax.compatibility.Cat",)),
+        ("parallax.compatibility.Animal.owner", ()),
+    ]
 
 
-def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_the_gate() -> None:
+def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_binding() -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.bogus_relationship)
-    with pytest.raises(ValueError, match="names no declared relationship on SnapOrderItem"):
+    with pytest.raises(
+        QueryDefinitionError, match="SnapOrderItem declares no relationship"
+    ) as caught:
         accepted_read_query(query, sm.SNAP_ORDERS_MODEL)
+    assert caught.value.code == "query-path-invalid"
 
 
 def test_include_accumulates_across_calls() -> None:
@@ -228,8 +235,8 @@ def test_relationship_path_dynamic_hop_rejects_a_private_name() -> None:
 
 
 def test_hop_narrow_derives_the_narrowed_view_path_segment() -> None:
-    path = include_traversal(im.Folder.documents.narrow(im.Invoice, im.Receipt))
-    assert path.segments[-1].rel == "parallax.compatibility.Folder.documents"
+    path = authored_include_path(im.Folder.documents.narrow(im.Invoice, im.Receipt))
+    assert path.described() == "parallax.compatibility.Folder.documents"
     assert set(path.segments[-1].narrow_to) == {
         "parallax.compatibility.Invoice",
         "parallax.compatibility.Receipt",
@@ -262,6 +269,78 @@ def test_include_canonicalization_keeps_broad_and_narrowed_paths_distinct() -> N
     )
 
 
+def _resolved_by_both_flows(query: ObjectQuery[Any, Any]) -> tuple[IncludePathNode, ...]:
+    """``query``'s canonical includes, having required a read and an export of it
+    to agree on what they resolve to."""
+    exported = canonical_query(query, deep.FAMILY)
+    assert (
+        typed_resolved(query, deep.FAMILY).includes
+        == resolve_read_query(exported, model=model_of(deep.FAMILY), form="graph").includes
+    )
+    return exported.includes
+
+
+_DEEP = deep.FAMILY_NS
+
+
+def test_authoring_keeps_paths_as_written_and_binding_canonicalizes_across_calls() -> None:
+    query = (
+        deep.Keeper.where(deep.Keeper.all)
+        .include(deep.Keeper.animals.toys.maker)
+        .include(deep.Keeper.animals.toys)
+        .include(deep.Keeper.animals.toys.maker, deep.Keeper.animals)
+    )
+    assert len(typed_read_query(query).includes) == 4
+    assert _resolved_by_both_flows(query) == (
+        IncludePathNode(
+            segments=(
+                IncludeSegment(rel=f"{_DEEP}.Keeper.animals"),
+                IncludeSegment(rel=f"{_DEEP}.Animal.playthings"),
+                IncludeSegment(rel=f"{_DEEP}.Toy.maker"),
+            )
+        ),
+    )
+
+
+def test_canonical_order_is_the_resolved_spelling_not_the_python_name() -> None:
+    # `toys` sorts before `vet` as written, and `attendingVet` before `playthings`
+    # as resolved, so an order taken from authored names would read backward.
+    query = deep.Keeper.where(deep.Keeper.all).include(
+        deep.Keeper.animals.toys, deep.Keeper.animals.vet
+    )
+    assert [path.segments[-1].rel for path in _resolved_by_both_flows(query)] == [
+        f"{_DEEP}.Animal.attendingVet",
+        f"{_DEEP}.Animal.playthings",
+    ]
+
+
+def test_a_narrowed_deep_path_is_no_prefix_or_duplicate_of_its_broad_twin() -> None:
+    query = deep.Keeper.where(deep.Keeper.all).include(
+        deep.Keeper.animals.toys.maker, deep.Keeper.animals.narrow(deep.Dog).toys
+    )
+    assert [
+        [segment.narrow_to for segment in path.segments] for path in _resolved_by_both_flows(query)
+    ] == [[(), (), ()], [(f"{_DEEP}.Dog",), ()]]
+
+
+def test_differently_guarded_deep_paths_stay_distinct_and_a_guard_protects_its_prefix() -> None:
+    query = deep.Animal.where(deep.Animal.all).include(
+        deep.Dog.toys, deep.Cat.toys.maker, deep.Animal.toys.maker, deep.Dog.toys.maker
+    )
+    assert [(path.applies_to, len(path.segments)) for path in _resolved_by_both_flows(query)] == [
+        (None, 2),
+        ((f"{_DEEP}.Cat",), 2),
+        ((f"{_DEEP}.Dog",), 2),
+    ]
+    prefixed = deep.Animal.where(deep.Animal.all).include(deep.Dog.toys, deep.Cat.toys.maker)
+    assert [
+        (path.applies_to, len(path.segments)) for path in _resolved_by_both_flows(prefixed)
+    ] == [
+        ((f"{_DEEP}.Dog",), 1),
+        ((f"{_DEEP}.Cat",), 2),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Path-ROOT guards: reaching an INHERITED relationship through a subtype.      #
 # --------------------------------------------------------------------------- #
@@ -271,9 +350,9 @@ def test_reaching_an_inherited_relationship_through_a_subtype_guards_the_path_ro
     # and records `Dog` as the path's SOURCE, which the query turns into the guard
     # beside `segments` — never a per-subtype relationship and never a segment
     # narrow.
-    traversal = include_traversal(Dog.owner)
-    assert traversal.segments == (IncludeSegment(rel="parallax.compatibility.Animal.owner"),)
-    assert traversal.source == "parallax.compatibility.Dog"
+    authored = authored_include_path(Dog.owner)
+    assert authored.described() == "parallax.compatibility.Animal.owner"
+    assert authored.access_source == "parallax.compatibility.Dog"
     includes = canonical_query(Animal.where(Animal.all).include(Dog.owner), _ANIMAL_MODEL).includes
     assert includes[0].applies_to == ("parallax.compatibility.Dog",)
 
@@ -283,9 +362,9 @@ def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> 
     # access source name the same Entity. The guard follows from the source against
     # the QUERIED position, not from that comparison, so a subtype-declared path
     # rooted at the family root guards exactly as an inherited one does.
-    traversal = include_traversal(Hound.handler)
-    assert traversal.segments == (IncludeSegment(rel="parallax.tests.include.Hound.handler"),)
-    assert traversal.source == "parallax.tests.include.Hound"
+    authored = authored_include_path(Hound.handler)
+    assert authored.described() == "parallax.tests.include.Hound.handler"
+    assert authored.access_source == "parallax.tests.include.Hound"
     includes = canonical_query(Beast.where(Beast.all).include(Hound.handler), KENNEL).includes
     assert includes[0].applies_to == ("parallax.tests.include.Hound",)
 

@@ -207,12 +207,13 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
 # spelling. `_expressions` is the same: the typed Object Query names the
 # authoring vocabulary it accepts and the authored state it carries, in
 # annotations, and the read policy dispatches on that authored state. The
-# Include carrier exposes no traversal facts, so each Include consumer — the
-# typed Object Query and Snapshot's read and view inspection — derives them
-# through `include_traversal`. The read policy and the Typed predicate-write
-# ingress reach `_authored_resolver` for the Typed adapter they supply, and the
-# model selection's projections borrow `_model`'s class index that adapter
-# resolves Python member names through.
+# Include carrier exposes no path of its own, so each Include consumer — the
+# typed Object Query and Snapshot's read and view inspection — reads it through
+# `authored_include_path`. The read policy and the Typed predicate-write ingress
+# reach `_authored_resolver` for the Typed adapter they supply, Snapshot's read
+# reaches it to bind a requested projection position, and the model selection's
+# projections borrow `_model`'s class index that adapter resolves Python member
+# names through.
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._transaction._attempt", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._page_origins", "_layout"): frozenset({"EntityLayout"}),
@@ -223,14 +224,14 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._publication", "_model"): frozenset({"ClassIndex"}),
     ("parallax.core._execution._read_pipeline", "_authored_resolver"): frozenset(
-        {"typed_predicate_interpretation"}
+        {"typed_query_interpretation"}
     ),
     ("parallax.core._execution._read_pipeline", "_expressions"): frozenset({"AuthoredQuery"}),
     ("parallax.core._execution._retention", "_construction_input"): frozenset({"ABSENT"}),
     ("parallax.core._execution._retention", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.object_query._fluent", "_entity"): frozenset({"Entity"}),
     ("parallax.core.object_query._fluent", "_expressions"): frozenset(
-        {"AuthoredPredicate", "AuthoredQuery", "IncludePath", "SortKey", "include_traversal"}
+        {"AuthoredPredicate", "AuthoredQuery", "IncludePath", "SortKey", "authored_include_path"}
     ),
     ("parallax.core.read_delivery._convert", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.read_delivery._delivery", "_layout"): frozenset({"CatalogedModel"}),
@@ -247,15 +248,16 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("parallax.descriptor._hub", "_model"): frozenset({"DomainModel", "model_of"}),
     ("parallax.snapshot._inspection", "_expressions"): frozenset(
-        {"IncludeTraversal", "include_traversal"}
+        {"AuthoredIncludePath", "AuthoredIncludeSegment", "authored_include_path"}
     ),
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
-        {"declaration_of", "is_entity_class", "members_of", "wire_names_of"}
+        {"declaration_of", "is_entity_class", "wire_names_of"}
     ),
     ("parallax.snapshot._inspection", "_entity"): frozenset(
         {"DetachedLifecycleState", "attach_lifecycle_state"}
     ),
-    ("parallax.snapshot._handle._read", "_expressions"): frozenset({"include_traversal"}),
+    ("parallax.snapshot._handle._read", "_authored_resolver"): frozenset({"include_path_node"}),
+    ("parallax.snapshot._handle._read", "_expressions"): frozenset({"authored_include_path"}),
     ("parallax.snapshot._handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot._handle._typed_writes", "_authored_resolver"): frozenset(
         {"typed_predicate_interpretation"}

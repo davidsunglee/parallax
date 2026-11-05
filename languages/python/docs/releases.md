@@ -1,5 +1,26 @@
 # Release notes
 
+## Unreleased
+
+These changes are not part of any published release.
+
+Typed include paths now reach any depth the read engine supports:
+`Ticket.parking.vehicle.dealer` authors and executes with dotted syntax, and each
+name past the first relationship is resolved against the serving model's Entity
+Classes when an operation binds the query. One- and two-hop class-backed includes
+need no migration.
+
+A Typed include that continues past its first relationship now needs a class-backed
+serving model. On a model built without Entity Classes, such a path passed to
+`db.wire.find(...)` raises `QueryDefinitionError(query-expression-invalid)` instead of
+composing a canonical spelling from Python names. Migrate those reads to a canonical
+Wire query, which states each segment's owner. Includes of a single relationship and
+canonical Wire input are unaffected.
+
+A continuation naming no relationship of the class it reaches now raises
+`QueryDefinitionError(query-path-invalid)` before I/O, in place of the `ValueError`
+that composed spelling reached at the read gate. Stream reads report it on entry.
+
 ## 0.1.0
 
 First coordinated release for early adopters.

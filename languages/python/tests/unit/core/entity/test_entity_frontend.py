@@ -53,7 +53,7 @@ from parallax.core.entity._errors import EditError
 from parallax.core.entity._expressions import (
     AssignableScalarExpr,
     PreparedOperation,
-    include_traversal,
+    authored_include_path,
 )
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -74,7 +74,6 @@ from parallax.core.metamodel import (
     derive_temporal_structure,
 )
 from parallax.core.metamodel import Document as AcceptedDocument
-from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import Comparison, serialize
 from tests._support.query_probes import predicate_node
@@ -594,11 +593,8 @@ def test_class_level_member_access_seeds_predicate_nodes() -> None:
     }
     path = Order.customer
     assert isinstance(path, IncludePath)
-    # A relationship reference names its owner locally, as the wire does; the
-    # path's own target keeps the namespace a continuing hop resolves in.
-    traversal = include_traversal(path)
-    assert traversal.segments == (IncludeSegment(rel="sales.Order.customer"),)
-    assert traversal.target == "sales.Customer"
+    # A relationship reference names its owner locally, as the wire does.
+    assert authored_include_path(path).described() == "sales.Order.customer"
 
 
 def test_a_query_over_a_class_no_model_composed_still_builds() -> None:

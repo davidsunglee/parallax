@@ -18,9 +18,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import animal_owner, read_models
-from parallax.core.entity import IncludePath, UnloadedRelationshipError
-from parallax.core.entity._expressions import IncludeTraversal
-from parallax.core.object_query import IncludeSegment
+from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge
 from parallax.snapshot import (
     SnapshotInspectionError,
@@ -32,6 +30,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES, snapshot_state_of
 from tests._support import snapshot_models as sm
+from tests.unit import _deep_include_support as deep
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
@@ -259,18 +258,8 @@ def test_a_narrowed_view_is_read_by_its_own_path_and_never_marks_the_broad_one()
 
 def test_equivalent_narrow_spellings_name_one_view() -> None:
     root = _narrowed_owner("pets[Cat,Dog]")
-    directly = IncludePath[Any, Any](
-        IncludeTraversal(
-            segments=(
-                IncludeSegment(
-                    rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog", "Cat")
-                ),
-            ),
-            target=None,
-        )
-    )
     assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Cat, sm.Dog)) is True
-    assert is_view_loaded(root, directly) is True
+    assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Dog, sm.Cat)) is True
 
 
 def test_an_unrequested_narrowed_view_answers_false_rather_than_raising() -> None:
@@ -306,20 +295,110 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
         owner, "parallax.compatibility.AnimalOwner.animals", (fixture.node("Dog", _DOG_ROW),)
     )
     (root,) = fixture.materialize(owner)
-    # `AnimalOwner.animals` reaches an `Animal`; continuing with a segment
-    # spelled from an unrelated owner reaches nothing that declares it.
-    path = IncludePath[Any, Any](
-        IncludeTraversal(
-            segments=(
-                IncludeSegment(rel="parallax.compatibility.AnimalOwner.animals"),
-                IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),
-            ),
-            target=None,
-        )
-    )
+    # `AnimalOwner.animals` reaches a `Dog`, whose class answers no relationship
+    # for a name another Entity declares.
     with pytest.raises(SnapshotInspectionError) as refusal:
-        view(root, path)
+        view(root, sm.AnimalOwner.animals.items)
     assert refusal.value.code == "snapshot-view-owner-mismatch"
+
+
+# --------------------------------------------------------------------------- #
+# Deep paths, read through each reached node's own class.                      #
+# --------------------------------------------------------------------------- #
+_ANIMALS = f"{deep.FAMILY_NS}.Keeper.animals"
+_TOYS = f"{deep.FAMILY_NS}.Animal.playthings"
+_MAKER = f"{deep.FAMILY_NS}.Toy.maker"
+_DOG_GEAR = f"{deep.FAMILY_NS}.Dog.gear"
+
+
+def _animal_row(animal_id: int) -> dict[str, object]:
+    return {"id": animal_id, "keeper_id": 1, "vet_id": None}
+
+
+def _toy_row(toy_id: int, animal_id: int, maker_id: int | None) -> dict[str, object]:
+    return {"id": toy_id, "animal_id": animal_id, "maker_id": maker_id}
+
+
+def _deep_keeper(*, makers_loaded: bool = True) -> Any:
+    """Keeper 1: a Dog with three toys, two sharing a maker and one with none, and
+    a Cat with loaded-empty toys."""
+    fixture = PageFixture(deep.FAMILY, _ANIMALS, _TOYS, _MAKER)
+    keeper = fixture.node("Keeper", {"id": 1})
+    dog = fixture.node("Dog", _animal_row(2))
+    cat = fixture.node("Cat", _animal_row(3))
+    toys = tuple(
+        fixture.node("Toy", _toy_row(toy, 2, maker))
+        for toy, maker in ((10, 100), (11, 100), (12, None))
+    )
+    fixture.attach(keeper, _ANIMALS, (dog, cat))
+    fixture.attach(dog, _TOYS, toys)
+    fixture.attach(cat, _TOYS, ())
+    if makers_loaded:
+        maker = fixture.node("Maker", {"id": 100})
+        fixture.attach(toys[0], _MAKER, maker)
+        fixture.attach(toys[1], _MAKER, maker)
+        fixture.attach(toys[2], _MAKER, None)
+    (root,) = fixture.materialize(keeper)
+    return root
+
+
+def test_a_deep_path_reads_renamed_and_inherited_members_with_fan_out_and_null_branches() -> None:
+    # `toys` is renamed and declared on the root, each reached node is a concrete
+    # descendant, and the null maker and the Cat's empty toys contribute nothing
+    # while the duplicate maker keeps its place in traversal order.
+    root = _deep_keeper()
+    reached = cast("tuple[Any, ...]", view(root, deep.Keeper.animals.toys.maker))
+    assert [maker.id for maker in reached] == [100, 100]
+    assert is_view_loaded(root, deep.Keeper.animals.toys.maker) is True
+
+
+def test_a_deep_path_reports_its_first_unloaded_segment_by_the_relationships_own_name() -> None:
+    root = _deep_keeper(makers_loaded=False)
+    assert is_view_loaded(root, deep.Keeper.animals.toys.maker) is False
+    with pytest.raises(UnloadedRelationshipError, match="maker"):
+        view(root, deep.Keeper.animals.toys.maker)
+    assert is_view_loaded(root, deep.Keeper.animals.vet) is False
+    with pytest.raises(UnloadedRelationshipError, match="attendingVet"):
+        view(root, deep.Keeper.animals.vet)
+
+
+def test_a_deep_path_past_a_narrowed_hop_continues_through_that_view() -> None:
+    fixture = PageFixture(deep.FAMILY, (_ANIMALS, "animals[Dog]"), _TOYS, _MAKER, _DOG_GEAR)
+    keeper = fixture.node("Keeper", {"id": 1})
+    dog = fixture.node("Dog", _animal_row(2))
+    toy = fixture.node("Toy", _toy_row(10, 2, 100))
+    fixture.attach(keeper, _ANIMALS, (dog,), narrowed="animals[Dog]")
+    fixture.attach(dog, _TOYS, (toy,))
+    fixture.attach(toy, _MAKER, fixture.node("Maker", {"id": 100}))
+    fixture.attach(dog, _DOG_GEAR, (fixture.node("Collar", {"id": 5, "dog_id": 2}),))
+    (root,) = fixture.materialize(keeper)
+
+    narrowed = deep.Keeper.animals.narrow(deep.Dog)
+    assert [m.id for m in cast("tuple[Any, ...]", view(root, narrowed.toys.maker))] == [100]
+    assert [c.id for c in cast("tuple[Any, ...]", view(root, narrowed.gear))] == [5]
+    assert is_view_loaded(root, deep.Keeper.animals.toys.maker) is False
+
+
+def test_a_sibling_never_answers_a_root_segment_it_merely_shares_a_name_with() -> None:
+    fixture = PageFixture(deep.FAMILY, _DOG_GEAR)
+    cat, dog = fixture.materialize(
+        fixture.node("Cat", _animal_row(3)), fixture.node("Dog", _animal_row(2))
+    )
+    assert is_view_loaded(dog, deep.Dog.gear) is False
+    for operation in (view, is_view_loaded):
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            operation(cat, deep.Dog.gear)
+        assert refusal.value.code == "snapshot-view-owner-mismatch"
+        assert refusal.value.entity == deep.Cat.identity
+
+
+def test_a_continuation_no_reached_class_declares_is_an_owner_mismatch_at_any_depth() -> None:
+    root = _deep_keeper()
+    for operation in (view, is_view_loaded):
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            operation(root, deep.Keeper.animals.toys.no_such_member)
+        assert refusal.value.code == "snapshot-view-owner-mismatch"
+        assert refusal.value.entity == deep.Toy.identity
 
 
 # --------------------------------------------------------------------------- #

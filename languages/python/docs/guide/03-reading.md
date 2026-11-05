@@ -359,10 +359,12 @@ not only those over the total. Parallax loads a graph with one statement per rel
 level, however many rows each level holds, so an include never turns into one query per
 row.
 
-`include` takes any number of paths, and calling it again adds more. An include path can run at most two relationships deep, and a
-longer one raises `QueryDefinitionError` as you build the query. A path loads every
-relationship along the way, so `include(Order.customer.orders)` loads each order's
-customer as well as that customer's orders:
+`include` takes any number of paths, and calling it again adds more. A path can run as
+deep as your relationships do, and each name in it is checked against your model when the
+read starts, before any database work: a name that is no relationship raises
+`QueryDefinitionError`. A path loads every relationship along the way, so
+`include(Order.customer.orders)` loads each order's customer as well as that customer's
+orders:
 
 <!-- example: load-orders-with-their-customer -->
 ```python

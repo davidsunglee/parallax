@@ -35,8 +35,8 @@ performed at this boundary.
 
 The fluent query clauses are `include`, `order_by`, `limit`, `narrow`, `as_of`,
 `history`, and `as_of_range`. There is no query `.where` refinement. Include
-paths are class-derived `IncludePath` values; authored chains stop at two hops,
-and a relationship's `.narrow(...)` returns an `IncludePath` that authors no
+paths are class-derived `IncludePath` values with no authored depth limit, and a
+relationship's `.narrow(...)` returns an `IncludePath` that authors no
 predicate. Sorting uses attribute expressions and direction/null-placement
 modifiers. `limit` requires a positive exact built-in integer, excluding `bool`.
 
@@ -65,6 +65,16 @@ inherited members resolve through their declarations, and an operation the
 resolved member cannot take — or a path that crosses a collection — is refused
 there. A model built without Entity Classes refuses such a path; the canonical
 Wire spelling remains available to it.
+
+An Include path past its first relationship binds the same way, except that
+traversing a to-many relationship is what an Include does rather than something
+it refuses. A segment narrowed to one subtype continues through that subtype's
+members; any other segment continues through its relationship's target. A name
+that is no relationship of the class reached raises
+`QueryDefinitionError(query-path-invalid)`, and a model built without Entity
+Classes raises `QueryDefinitionError(query-expression-invalid)` for a continuation
+while still binding a path of one relationship. Binding happens once per
+operation, so a stream refuses at entry rather than at the `.stream(...)` call.
 
 The generic expression types bind their source and result Entity positions.
 Their variance and overloads are the static contract. Some static rejections

@@ -25,6 +25,7 @@ from parallax.conformance.read_models import (
     Pet,
     WildBoar,
 )
+from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import (
     TX_TIME,
     AbstractRoot,
@@ -32,7 +33,6 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    IncludePath,
     TablePerHierarchy,
     ValueObject,
     attr,
@@ -42,11 +42,9 @@ from parallax.core import (
 )
 from parallax.core._execution import _read_query as read_query_module
 from parallax.core.base import INFINITY, TIMESTAMP
-from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import Edge
@@ -66,6 +64,7 @@ from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication import _wire_render
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.db_port import Read, ScriptedAdapter
+from tests.unit import _deep_include_support as deep
 
 
 class _ForeignCustomer(
@@ -496,20 +495,80 @@ def test_explicit_position_is_strict_and_admits_the_requested_concrete() -> None
         snapshot.wire(customer.locations[0], at=vo.Customer.depots)
     assert unrequested.value.code == "snapshot-wire-at-unrequested"
 
-    unknown = IncludePath[vo.Customer, Entity](
-        IncludeTraversal(
-            segments=(IncludeSegment(rel="parallax.compatibility.Customer.unknown"),),
-            target="parallax.compatibility.Entity",
-        )
-    )
     with pytest.raises(SnapshotInspectionError) as invalid_path:
-        snapshot.wire(customer, at=unknown)
+        snapshot.wire(customer, at=vo.Customer.locations.unknown)
     assert invalid_path.value.code == "snapshot-wire-at-unrequested"
 
     with pytest.raises(SnapshotInspectionError) as wrong_concrete:
         snapshot.wire(customer, at=vo.Customer.locations)
     assert wrong_concrete.value.code == "snapshot-wire-at-concrete-mismatch"
     root.close()
+
+
+def _project_at_every_depth(project: Any, order: Any) -> None:
+    item = order.items[0]
+    status = item.statuses[0]
+    leaf = status.order.items[1]
+    assert project(item, at=Order.items)["id"] == 11
+    assert project(status, at=Order.items.statuses)["id"] == 21
+    assert project(status.order, at=Order.items.statuses.order)["id"] == 2
+    assert project(leaf, at=Order.items.statuses.order.items)["id"] == 32
+
+
+def _refuse_unrequested_positions(project: Any, order: Any) -> None:
+    item = order.items[0]
+    for position in (
+        Order.statuses,
+        Order.items.order,
+        Order.items.statuses.order.statuses,
+        Order.items.no_such_member,
+        Order.items.statuses.order.items.no_such_member,
+    ):
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            project(item, at=position)
+        assert refusal.value.code == "snapshot-wire-at-unrequested"
+
+
+def test_an_eager_projection_binds_a_requested_position_at_any_depth() -> None:
+    root = cast(
+        "Database[Any]", Database.connect(ScriptedAdapter(*deep.deep_order_reads()), ORDERS_MODEL)
+    )
+    snapshot = root.using_database_login().find(deep.deep_order_query())
+    order = snapshot.result()
+    root.close()
+    _project_at_every_depth(snapshot.wire, order)
+    _refuse_unrequested_positions(snapshot.wire, order)
+
+
+def test_a_paused_stream_binds_a_requested_position_at_any_depth() -> None:
+    root = cast(
+        "Database[Any]", Database.connect(ScriptedAdapter(*deep.deep_order_reads()), ORDERS_MODEL)
+    )
+    with root.using_database_login().stream(deep.deep_order_query(), batch_size=10) as stream:
+        order = next(iter(stream))
+        _project_at_every_depth(stream.wire, order)
+        _refuse_unrequested_positions(stream.wire, order)
+    root.close()
+
+
+def test_a_projection_position_spells_renamed_and_inherited_members_as_the_read_did() -> None:
+    root = cast(
+        "Database[Any]", Database.connect(ScriptedAdapter(*deep.family_reads()), deep.FAMILY)
+    )
+    snapshot = root.using_database_login().find(
+        deep.Keeper.where(deep.Keeper.id == 1).include(deep.Keeper.animals.toys.maker)
+    )
+    keeper = snapshot.result()
+    root.close()
+    dog, cat = keeper.animals
+    toy, _ = dog.toys
+    assert cat.toys == ()
+    assert toy.maker is not None
+    assert snapshot.wire(toy, at=deep.Keeper.animals.toys)["id"] == 10
+    assert snapshot.wire(toy.maker, at=deep.Keeper.animals.toys.maker)["id"] == 100
+    with pytest.raises(SnapshotInspectionError) as sibling:
+        snapshot.wire(dog, at=deep.Cat.gear)
+    assert sibling.value.code == "snapshot-wire-at-unrequested"
 
 
 def test_wire_envelopes_are_ineligible_even_when_empty() -> None:

@@ -9,6 +9,8 @@ from parallax.core.entity._expressions import (
     AuthoredAnd,
     AuthoredConstant,
     AuthoredGroup,
+    AuthoredIncludePath,
+    AuthoredIncludeSegment,
     AuthoredMemberPath,
     AuthoredNarrow,
     AuthoredNot,
@@ -29,14 +31,19 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    RelationshipIdentity,
+    entity_by_name,
 )
 from parallax.core.object_query import (
+    IncludeSegment,
     InterpretedQuery,
     ObjectQueryNode,
     object_query,
     validate_object_query,
 )
+from parallax.core.object_query._canonical import canonical_includes
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import (
     CURRENT_SCALAR_ELEMENT,
     And,
@@ -92,7 +99,12 @@ from parallax.core.predicate.validate import (
 )
 from parallax.core.wire import encode_wire
 
-__all__ = ["object_query_node", "typed_predicate_interpretation"]
+__all__ = [
+    "include_path_node",
+    "object_query_node",
+    "typed_predicate_interpretation",
+    "typed_query_interpretation",
+]
 
 
 def typed_predicate_interpretation(
@@ -118,6 +130,46 @@ def typed_predicate_interpretation(
     return interpret
 
 
+def typed_query_interpretation(
+    query: AuthoredQuery, model: Metamodel, classes: ClassIndex | None
+) -> InterpretedQuery:
+    """The Typed query adapters: ``query``'s predicate and Include paths resolved
+    against the adopted ``model`` at their own gate steps.
+
+    The paths are canonicalized here because ordering, deduplication, and prefix
+    elimination are facts about resolved spellings, and retained nowhere because
+    each operation binds against its own selection.
+    """
+    resolver = _Resolver(model, classes)
+
+    def includes() -> tuple[IncludePathNode, ...]:
+        return canonical_includes(
+            tuple(resolver.include_node(path, query.target) for path in query.includes)
+        )
+
+    return InterpretedQuery(
+        query, typed_predicate_interpretation(query.predicate, model, classes), includes
+    )
+
+
+def include_path_node(
+    path: AuthoredIncludePath,
+    queried: EntityIdentity,
+    model: Metamodel,
+    classes: ClassIndex | None,
+) -> IncludePathNode:
+    """``path`` as the canonical node it means under ``model`` for a read queried at
+    ``queried``.
+
+    A path of its root segment alone needs no classes. A continuation reads the
+    reached Entity's class, so ``classes`` absent or missing that Entity refuses
+    it as ``query-expression-invalid``, and a name that is no relationship of that
+    class as ``query-path-invalid``. Every other rule of the hops the node spells
+    is ``validate_include_path``'s.
+    """
+    return _Resolver(model, classes).include_node(path, queried)
+
+
 def object_query_node(query: ObjectQuery[Any, Any], model: DomainModel) -> ObjectQueryNode:
     """``query``'s canonical Object Query under the serving ``model``, exported on
     demand and memoized nowhere; a read never consumes this export.
@@ -125,8 +177,9 @@ def object_query_node(query: ObjectQuery[Any, Any], model: DomainModel) -> Objec
     Every clause is judged exactly as a Typed read under ``model`` judges it, and
     each predicate path is spelled the way that judgment binds it —
     Entity-qualified at the queried position, relative wherever a scope binds its
-    receiver — so the document admits what the Typed query admits and means what
-    it means.
+    receiver — and each Include path is spelled by the resolver a read binds it
+    through, so the document admits what the Typed query admits and means what it
+    means.
     """
     return _canonical_query(typed_read_query(query), model_of(model), class_index(model))
 
@@ -142,12 +195,17 @@ def _canonical_query(
         )
     resolver = _Resolver(model, classes)
     exported: list[PredicateNode] = []
+    bound: list[IncludePathNode] = []
 
     def interpret(root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate:
         exported.append(resolver.export(query.predicate, root_frame(root, position)))
         return ResolvedConstant(True)
 
-    validate_object_query(root, InterpretedQuery(query, interpret), model)
+    def includes() -> tuple[IncludePathNode, ...]:
+        bound.extend(resolver.include_node(path, query.target) for path in query.includes)
+        return tuple(bound)
+
+    validate_object_query(root, InterpretedQuery(query, interpret, includes), model)
     (predicate,) = exported
     return object_query(
         query.target,
@@ -156,7 +214,7 @@ def _canonical_query(
         temporal=query.temporal,
         order_by=query.order_by,
         limit=query.limit,
-        includes=query.includes,
+        includes=tuple(bound),
     )
 
 
@@ -284,6 +342,88 @@ class _Resolver:
 
         return exported, export_in
 
+    def include_node(self, path: AuthoredIncludePath, queried: EntityIdentity) -> IncludePathNode:
+        """``path``'s canonical node for a read queried at ``queried``.
+
+        Each identity names the declaring Entity, so a continuation spells where
+        its member was declared rather than the Entity it was reached through.
+        """
+        described = path.described()
+        final = len(path.segments) - 1
+        if final:
+            self._class_index(described)
+        entity = queried
+        segments: list[IncludeSegment] = []
+        for index, segment in enumerate(path.segments):
+            relationship = segment.root_relationship or self._continuation(
+                segment, entity, described
+            )
+            segments.append(IncludeSegment(_relationship_spelling(relationship), segment.narrow_to))
+            if index != final:
+                entity = self._entity_past(relationship, segment)
+        return IncludePathNode(tuple(segments), _source_guard(path.access_source, queried))
+
+    def _continuation(
+        self, segment: AuthoredIncludeSegment, entity: EntityIdentity, described: str
+    ) -> RelationshipIdentity:
+        current = self._class_of(entity, described)
+        relationship = segment.relationship_in(wire_names_of(current))
+        if relationship is None:
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message=(
+                    f"{described}: {current.__name__} declares no relationship {segment.py_name!r}"
+                ),
+            )
+        return relationship
+
+    def _entity_past(
+        self, relationship: RelationshipIdentity, segment: AuthoredIncludeSegment
+    ) -> EntityIdentity:
+        """The Entity whose class spells the segment after ``segment``: the sole
+        subtype it narrowed to, or else what its relationship points at.
+
+        A narrow naming no Entity of this model continues through that target, so
+        ``validate_include_path`` states the narrow's own refusal.
+        """
+        target = self._relationship_target(relationship, "deep-fetch-value-object-segment")
+        if len(segment.narrow_to) != 1:
+            return target.identity
+        narrowed = entity_by_name(self._model, segment.narrow_to[0])
+        return target.identity if narrowed is None else narrowed.identity
+
+    def _class_index(self, described: str) -> ClassIndex:
+        classes = self._classes
+        if classes is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=(
+                    f"{described}: the serving model was built from no Entity Classes, so it "
+                    "has no Python member correspondence to resolve these names through; "
+                    "author the query canonically through Wire instead"
+                ),
+            )
+        return classes
+
+    def _class_of(self, entity: EntityIdentity, described: str) -> type:
+        current = self._class_index(described).class_of(entity)
+        if current is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=(
+                    f"{described}: the serving model composes no Entity Class for "
+                    f"{entity.canonical}"
+                ),
+            )
+        return current
+
+    def _relationship_target(
+        self, relationship: RelationshipIdentity, wrong_kind_rule: str
+    ) -> EntityMetadata:
+        return relationship_target(
+            _relationship_spelling(relationship), self._model, wrong_kind_rule=wrong_kind_rule
+        )
+
     def _subject(self, subject: AuthoredSubject, frame: PredicateFrame) -> ScalarSubject:
         if isinstance(subject, AuthoredMemberPath):
             return FieldSubject(self._spelled(subject, frame))
@@ -323,16 +463,7 @@ class _Resolver:
             receiver, EntityIdentity
         ):  # pragma: no cover - deferred paths start at an Entity
             raise QueryDefinitionError(code="query-path-invalid", message=described)
-        classes = self._classes
-        if classes is None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{described}: the serving model was built from no Entity Classes, so it "
-                    "has no Python member correspondence to resolve these names through; "
-                    "author the predicate canonically through Wire instead"
-                ),
-            )
+        self._class_index(described)
         entity = receiver
         current: type | None = None
         value_object: type | None = None
@@ -352,15 +483,7 @@ class _Resolver:
                     )
                 continue
             if current is None:
-                current = classes.class_of(entity)
-                if current is None:
-                    raise QueryDefinitionError(
-                        code="query-expression-invalid",
-                        message=(
-                            f"{described}: the serving model composes no Entity Class for "
-                            f"{entity.canonical}"
-                        ),
-                    )
+                current = self._class_of(entity, described)
             correspondences = wire_names_of(current)
             member = correspondences.members.get(name)
             if member is not None:
@@ -378,13 +501,28 @@ class _Resolver:
             if relationship is None:
                 raise _unresolved_name(described, current.__name__, name)
             canonical.append(relationship.name)
-            target = relationship_target(
-                f"{relationship.source_entity.canonical}.{relationship.name}",
-                self._model,
-                wrong_kind_rule="path-target-kind-mismatch",
-            )
+            target = self._relationship_target(relationship, "path-target-kind-mismatch")
             entity, current = target.identity, None
         return tuple(canonical)
+
+
+def _relationship_spelling(relationship: RelationshipIdentity) -> str:
+    return f"{relationship.source_entity.canonical}.{relationship.name}"
+
+
+def _source_guard(source: str | None, queried: EntityIdentity) -> tuple[str, ...] | None:
+    """The guard a path reached through the Entity ``source`` authors at ``queried``.
+
+    A guard is what makes a path start from fewer than every queried object, so it
+    is the access source measured against the queried position, never against the
+    relationship's declaring Entity: ``Dog.doghouse``, declared on ``Dog``, and
+    ``Dog.owner``, inherited from ``Animal``, guard an ``Animal`` query identically.
+    Reaching the first hop through the queried position itself guards nothing, so
+    it authors no selection rather than one resolving to the whole position.
+    """
+    if source is None or source == queried.canonical:
+        return None
+    return (source,)
 
 
 def _exported_operation(subject: ScalarSubject, resolved: ResolvedPredicate) -> PredicateNode:

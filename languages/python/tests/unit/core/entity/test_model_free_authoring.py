@@ -28,8 +28,12 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import (
+    LATEST,
+    ONE_TO_MANY,
+    TX_TIME,
     Attr,
     DomainModel,
     EditError,
@@ -38,31 +42,42 @@ from parallax.core import (
     Float32,
     Predicate,
     QueryDefinitionError,
+    Rel,
     TxTemporal,
     attr,
     inheritance,
+    rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import _authored_resolver
-from parallax.core.entity._authored_resolver import object_query_node
+from parallax.core.entity._authored_resolver import include_path_node, object_query_node
 from parallax.core.entity._expressions import (
     AuthoredConstant,
+    AuthoredIncludePath,
     AuthoredMemberPath,
     AuthoredQuery,
     PreparedOperation,
     UnfinishedOperation,
+    authored_include_path,
 )
+from parallax.core.entity._model import ClassIndex, model_of
 from parallax.core.entity._model import DomainModel as _Fixed
-from parallax.core.entity._model import model_of
-from parallax.core.execution import QueryTargetError
+from parallax.core.execution import (
+    DeferredFeatureError,
+    QueryTargetError,
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
     WriteAssignmentError,
     judge_assignment,
 )
+from parallax.core.object_query import deserialize
 from parallax.core.object_query._fluent import typed_read_query
+from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import ModelRejectedError, PredicateNode, validate
 from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
 from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
@@ -80,8 +95,9 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.query_probes import predicate_node, typed_resolved
+from tests._support.query_probes import canonical_query, predicate_node, typed_resolved
 from tests._support.root_ownership import own_root
+from tests.unit import _deep_include_support as deep
 from tests.unit._transact_support import FIXED
 
 _NS = "parallax.compatibility"
@@ -140,6 +156,49 @@ class _Source:
 # The one Domain Model provenance that composes no Entity Class, and therefore
 # the only connection left that cannot materialize a Snapshot.
 CLASSLESS = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
+
+
+class _RelatedSource:
+    """A classless composition with relationships for an Include to traverse."""
+
+    @property
+    def entities(self) -> tuple[UnresolvedEntityDeclaration, ...]:
+        return (sm.SnapOrder, sm.SnapOrderItem, sm.SnapOrderStatus)
+
+
+CLASSLESS_ORDERS = _Fixed._from_unresolved(_RelatedSource())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
+
+
+class Book(Entity, table="book", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    shelf_id: Attr[int]
+
+
+class Shelf(Entity, table="shelf", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    library_id: Attr[int]
+    books: Rel[tuple[Book, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "shelf_id"), name="volumes"
+    )
+
+
+# A second declaration of the SAME Entity Identity, whose one Python relationship
+# name corresponds to another canonical name.
+class Reshelved(Entity, table="shelf", name="Shelf", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    library_id: Attr[int]
+    books: Rel[tuple[Book, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "shelf_id"), name="tomes"
+    )
+
+
+class Library(Entity, table="library", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    shelves: Rel[tuple[Shelf, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "library_id"))
+
+
+SHELVED = DomainModel(Library, Shelf, Book)
+RESHELVED = DomainModel(Library, Reshelved, Book)
 
 
 def _db(model: DomainModel, adapter: DatabaseAdapter) -> ScopedDatabase:
@@ -480,12 +539,25 @@ def _reachable(value: object) -> Iterator[object]:
             id="value-object-scope",
         ),
         pytest.param(sm.SnapOrder.where(sm.SnapOrder.items.any()), id="relationship"),
+        pytest.param(
+            sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.statuses),
+            id="include",
+        ),
     ],
 )
 def test_a_typed_query_retains_its_authored_state_and_no_canonical_node(query: Any) -> None:
     reached = list(_reachable(query))
-    assert not [value for value in reached if isinstance(value, PredicateNode)]
+    assert not [value for value in reached if isinstance(value, PredicateNode | IncludePathNode)]
     assert any(isinstance(value, AuthoredQuery) for value in reached)
+
+
+def test_an_include_path_is_authored_without_a_model_at_any_depth() -> None:
+    # None of these classes is consulted: a name no declaration carries authors
+    # exactly as a real one does, and only binding can tell them apart.
+    query = deep.Keeper.where(deep.Keeper.all).include(deep.Keeper.animals.a.b.c.d.e)
+    (path,) = typed_read_query(query).includes
+    assert isinstance(path, AuthoredIncludePath)
+    assert [segment.py_name for segment in path.segments] == ["animals", "a", "b", "c", "d", "e"]
 
 
 def test_where_all_and_whole_query_narrowing_keep_their_authored_meaning() -> None:
@@ -832,3 +904,203 @@ def test_an_unfinished_anchor_the_serving_model_composes_no_class_for_is_refused
     with pytest.raises(QueryDefinitionError, match="composes no Entity Class") as caught:
         typed_resolved(query, WIDGETS)
     assert caught.value.code == "query-expression-invalid"
+
+
+# --------------------------------------------------------------------------- #
+# Include paths bind against the adopted model                                 #
+# --------------------------------------------------------------------------- #
+_ORDER_ROW: dict[str, object] = {
+    "id": 1,
+    "name": "Ada",
+    "sku": None,
+    "qty": 1,
+    "price": Decimal("1.00"),
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 1),
+}
+_ITEM_ROW: dict[str, object] = {
+    "id": 11,
+    "order_id": 1,
+    "sku": "x",
+    "quantity": 1,
+    "shipped_on": None,
+}
+_SHELVED_READS = (
+    Read(rows=[{"id": 1}]),
+    Read(rows=[{"id": 2, "library_id": 1}]),
+    Read(rows=[{"id": 3, "shelf_id": 2}]),
+)
+
+
+def _shelf_rel(model: DomainModel, query: Any) -> str:
+    return canonical_query(query, model).includes[0].segments[-1].rel
+
+
+def test_one_authored_include_means_what_each_serving_model_declares() -> None:
+    query = Library.where(Library.all).include(Library.shelves.books)
+    before = typed_read_query(query)
+    assert _shelf_rel(SHELVED, query) == f"{_NS}.Shelf.volumes"
+    assert _shelf_rel(RESHELVED, query) == f"{_NS}.Shelf.tomes"
+    assert _shelf_rel(SHELVED, query) == f"{_NS}.Shelf.volumes"
+    assert typed_read_query(query) is before
+
+
+def test_a_republished_serving_model_rebinds_one_authored_include() -> None:
+    # One Database and so one plan cache across the swap: what a read of the first
+    # edition resolved and planned must not answer the second.
+    query = Library.where(Library.all).include(Library.shelves.books)
+    first = prepare_model(SHELVED, edition="first")
+    second = prepare_model(RESHELVED, edition="second")
+    serving = ServingModel(first)
+    port = ScriptedAdapter(*_SHELVED_READS, *_SHELVED_READS, *_SHELVED_READS)
+    database = _db(cast("Any", serving), port)
+
+    def reached() -> tuple[type, list[int]]:
+        (shelf,) = database.find(query).result().shelves
+        return type(shelf), [book.id for book in shelf.books]
+
+    assert reached() == (Shelf, [3])
+    serving.publish(second, expected=first)
+    assert reached() == (Reshelved, [3])
+    serving.publish(first, expected=second)
+    assert reached() == (Shelf, [3])
+    assert len(port.calls) == 9
+
+
+def test_a_first_hop_include_binds_on_a_classless_model_through_wire() -> None:
+    query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(sm.SnapOrder.items)
+    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]))
+    order = _db(CLASSLESS_ORDERS, port).wire.find(query).result()
+    assert [item["id"] for item in cast("Any", order)["items"]] == [11]
+
+
+def test_a_continuation_is_refused_on_a_classless_model_before_io() -> None:
+    query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(sm.SnapOrder.items.statuses)
+    database = _db(CLASSLESS_ORDERS, RefusingAdapter())
+    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+        database.wire.find(query)
+    assert caught.value.code == "query-expression-invalid"
+    with pytest.raises(QueryDefinitionError, match="through Wire instead") as streamed:
+        database.wire.stream(query).__enter__()
+    assert streamed.value.code == "query-expression-invalid"
+
+
+def test_a_narrowed_continuation_is_refused_on_a_classless_model_as_any_other_is() -> None:
+    query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(
+        sm.SnapOrder.items.narrow(sm.SnapOrderItem).statuses
+    )
+    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+        _db(CLASSLESS_ORDERS, RefusingAdapter()).wire.find(query)
+    assert caught.value.code == "query-expression-invalid"
+
+
+def test_a_classless_model_refuses_a_continuation_before_reading_its_root() -> None:
+    # The refusal is the model's own, so a root it does not even declare earns the
+    # same answer rather than a complaint about that relationship.
+    query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(cast("Any", deep.Keeper.animals.toys))
+    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+        typed_resolved(query, CLASSLESS_ORDERS)
+    assert caught.value.code == "query-expression-invalid"
+
+
+def test_the_canonical_spelling_of_a_refused_continuation_stays_available() -> None:
+    document = {
+        "target": "parallax.compatibility.SnapOrder",
+        "predicate": {"eq": {"path": "parallax.compatibility.SnapOrder.id", "value": 1}},
+        "includes": [
+            {
+                "segments": [
+                    {"rel": "parallax.compatibility.SnapOrder.items"},
+                    {"rel": "parallax.compatibility.SnapOrderItem.statuses"},
+                ]
+            }
+        ],
+    }
+    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]), Read(rows=[]))
+    order = _db(CLASSLESS_ORDERS, port).wire.find(deserialize(document)).result()
+    assert cast("Any", order)["items"][0]["statuses"] == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(sm.SnapOrder.items, id="first-hop"),
+        pytest.param(sm.SnapOrder.items.statuses, id="continuation"),
+    ],
+)
+def test_ordinary_typed_publication_refuses_a_classless_model_before_the_include_binds(
+    path: Any,
+) -> None:
+    query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(path)
+    with pytest.raises(SnapshotConnectionError) as caught:
+        _db(CLASSLESS_ORDERS, RefusingAdapter()).find(query)
+    assert caught.value.code == "snapshot-class-backed-model-required"
+
+
+def test_a_reached_entity_the_class_index_omits_is_refused() -> None:
+    with pytest.raises(QueryDefinitionError, match="composes no Entity Class") as caught:
+        include_path_node(
+            authored_include_path(deep.Keeper.animals.toys),
+            deep.Keeper.identity,
+            model_of(deep.FAMILY),
+            ClassIndex({}, {}),
+        )
+    assert caught.value.code == "query-expression-invalid"
+
+
+def test_a_root_only_path_binds_with_no_class_index_at_all() -> None:
+    node = include_path_node(
+        authored_include_path(deep.Dog.toys),
+        deep.Animal.identity,
+        model_of(deep.FAMILY),
+        None,
+    )
+    assert node.applies_to == (f"{deep.FAMILY_NS}.Dog",)
+    assert [segment.rel for segment in node.segments] == [f"{deep.FAMILY_NS}.Animal.playthings"]
+
+
+_BAD_INCLUDE = deep.Keeper.animals.no_such_member
+
+
+@pytest.mark.parametrize("bind", [typed_resolved, canonical_query], ids=["read", "export"])
+def test_an_include_refusal_lands_at_its_clause_position(bind: Any) -> None:
+    # A predicate and a Sort Key precede Includes in the document, so each of
+    # their refusals outranks a bad path; both flows keep that order.
+    bad_path = deep.Keeper.where(deep.Keeper.all).include(_BAD_INCLUDE)
+    with pytest.raises(QueryDefinitionError, match="no_such_member") as include:
+        bind(bad_path, deep.FAMILY)
+    assert include.value.code == "query-path-invalid"
+
+    bad_predicate = deep.Keeper.where(deep.Keeper.animals.id == 1).include(_BAD_INCLUDE)
+    with pytest.raises(ModelRejectedError) as predicate:
+        bind(bad_predicate, deep.FAMILY)
+    assert predicate.value.rule == "path-crosses-many"
+
+    bad_order = (
+        deep.Keeper.where(deep.Keeper.all)
+        .order_by(cast("Any", deep.Toy.id.asc()))
+        .include(_BAD_INCLUDE)
+    )
+    with pytest.raises(ModelRejectedError) as order:
+        bind(bad_order, deep.FAMILY)
+    assert order.value.rule == "attribute-outside-active-position"
+
+
+def test_a_missing_target_outranks_a_bad_include() -> None:
+    query = deep.Keeper.where(deep.Keeper.all).include(_BAD_INCLUDE)
+    with pytest.raises(QueryTargetError):
+        typed_resolved(query, WIDGETS)
+
+
+def test_a_bad_include_outranks_the_checks_that_follow_the_clause_gate() -> None:
+    scanned = Policy.where(Policy.all).as_of(valid_time=LATEST).history(TX_TIME)
+    with pytest.raises(DeferredFeatureError):
+        typed_resolved(scanned.include(Policy.coverages), POLICY_MODEL)
+    with pytest.raises(QueryDefinitionError, match="no_such_member"):
+        typed_resolved(scanned.include(Policy.coverages.no_such_member), POLICY_MODEL)
+    with pytest.raises(ValueError, match="row-form"):
+        typed_resolved(
+            sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.statuses),
+            sm.SNAP_ORDERS_MODEL,
+            form="rows",
+        )

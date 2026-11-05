@@ -14,7 +14,7 @@ from parallax.core._execution._routing import OperationRouting
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity._authored_resolver import typed_predicate_interpretation
+from parallax.core.entity._authored_resolver import typed_query_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -28,7 +28,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_stream_root,
 )
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import InterpretedQuery, ObjectQueryNode, QueryInput
+from parallax.core.object_query import ObjectQueryNode, QueryInput
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._delivery import deliver_find, deliver_history
@@ -66,14 +66,12 @@ canonical Object Query, or a Typed query's authored state."""
 
 def interpreted(selected: SelectedReadModel, query: ReadQuery) -> QueryInput:
     """``query`` as the read gate consumes it under ``selected``: canonical input
-    as itself, and an authored query beside the Typed adapter that resolves its
-    predicate against the selection's model and borrowed class index."""
+    as itself, and an authored query beside the Typed adapters that resolve its
+    predicate and Include paths against the selection's model and borrowed class
+    index."""
     if isinstance(query, ObjectQueryNode):
         return query
-    return InterpretedQuery(
-        query,
-        typed_predicate_interpretation(query.predicate, selected.model.meta, selected.classes),
-    )
+    return typed_query_interpretation(query, selected.model.meta, selected.classes)
 
 
 @dataclass(frozen=True, slots=True)

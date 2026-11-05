@@ -7,7 +7,6 @@ from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import (
     InterpretedQuery,
-    QueryClauses,
     QueryInput,
     validate_object_query,
 )
@@ -73,20 +72,9 @@ def resolve_read_query(
     deferred = deferred_features(clauses)
     if deferred:
         raise DeferredFeatureError(deferred)
-    if form == "rows" and fetches_relationships(clauses):
+    if form == "rows" and clauses.requests_includes:
         raise ValueError(
             "a row-form read materializes no relationships, so it carries no deep-fetch "
             "levels; request the graph form to materialize a related level"
         )
     return resolved
-
-
-def fetches_relationships(query: QueryClauses) -> bool:
-    """Whether ``query`` names a relationship level to fetch.
-
-    Includes is one clause of one flat query, so this is a field read: a named
-    level is a path segment, and a path is non-empty by construction. Deciding it
-    structurally is what keeps this seam free of deep-fetch planning, which its
-    enforcement scope forbids it to reach.
-    """
-    return any(path.segments for path in query.includes)
