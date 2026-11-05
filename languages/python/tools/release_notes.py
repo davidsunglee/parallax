@@ -69,14 +69,16 @@ def render_notes(
     repository: str,
     source: str,
     ci_run_id: int,
+    ci_attempt: int,
     publication_run_id: int,
+    publication_attempt: int,
 ) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("repository must be an owner/name pair")
     if not re.fullmatch(r"[0-9a-f]{40}", source):
         raise ValueError("source must be a full commit SHA")
-    if min(ci_run_id, publication_run_id) < 1:
-        raise ValueError("evidence run IDs must be positive")
+    if min(ci_run_id, ci_attempt, publication_run_id, publication_attempt) < 1:
+        raise ValueError("evidence run IDs and attempts must be positive")
     section = _section(notes, version)
     section = _LINK.sub(
         lambda match: match[1] + _destination(match[2], repository, source) + match[3], section
@@ -89,8 +91,9 @@ def render_notes(
         f"Parallax {version} is published to PyPI.\n\n{section}\n\n"
         "### Validation and provenance\n\n"
         f"Published artifacts match the validated manifest for source `{source}`.\n\n"
-        f"- [Successful source CI]({prefix}/{ci_run_id})\n"
-        f"- [Production publication and verification]({prefix}/{publication_run_id})\n"
+        f"- [Successful source CI]({prefix}/{ci_run_id}/attempts/{ci_attempt})\n"
+        "- [Production publication and verification]"
+        f"({prefix}/{publication_run_id}/attempts/{publication_attempt})\n"
     )
 
 
@@ -99,6 +102,7 @@ def main() -> None:
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--publication-run-id", type=int, required=True)
+    parser.add_argument("--publication-attempt", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     manifest = json.loads((args.bundle / "release-manifest.json").read_text())
@@ -123,7 +127,9 @@ def main() -> None:
         args.repository,
         source,
         ci["run"]["id"],
+        ci["run"]["run_attempt"],
         args.publication_run_id,
+        args.publication_attempt,
     )
     args.output.write_text(rendered, encoding="utf-8")
 

@@ -14,7 +14,7 @@ _REPOSITORY = "example/parallax"
 
 
 def _render(notes: str) -> str:
-    return release.render_notes(notes, "0.1.0", _REPOSITORY, _SOURCE, 123, 456)
+    return release.render_notes(notes, "0.1.0", _REPOSITORY, _SOURCE, 123, 2, 456, 3)
 
 
 def test_selects_only_requested_release_and_preserves_nested_headings_and_code() -> None:
@@ -41,8 +41,8 @@ Earlier features.
     assert "Future changes." not in rendered
     assert "Earlier features." not in rendered
     assert f"source `{_SOURCE}`" in rendered
-    assert f"https://github.com/{_REPOSITORY}/actions/runs/123" in rendered
-    assert f"https://github.com/{_REPOSITORY}/actions/runs/456" in rendered
+    assert f"https://github.com/{_REPOSITORY}/actions/runs/123/attempts/2" in rendered
+    assert f"https://github.com/{_REPOSITORY}/actions/runs/456/attempts/3" in rendered
 
 
 @pytest.mark.parametrize(
@@ -91,15 +91,33 @@ def test_refuses_relative_links_escaping_the_repository() -> None:
 
 
 @pytest.mark.parametrize(
-    ("repository", "source", "ci_run", "publication_run"),
-    [("invalid", _SOURCE, 1, 2), (_REPOSITORY, "HEAD", 1, 2), (_REPOSITORY, _SOURCE, 0, 2)],
+    ("repository", "source", "ci_run", "ci_attempt", "publication_run", "publication_attempt"),
+    [
+        ("invalid", _SOURCE, 1, 1, 2, 1),
+        (_REPOSITORY, "HEAD", 1, 1, 2, 1),
+        (_REPOSITORY, _SOURCE, 0, 1, 2, 1),
+        (_REPOSITORY, _SOURCE, 1, 0, 2, 1),
+        (_REPOSITORY, _SOURCE, 1, 1, 2, 0),
+    ],
 )
 def test_refuses_ambiguous_source_and_evidence_identity(
-    repository: str, source: str, ci_run: int, publication_run: int
+    repository: str,
+    source: str,
+    ci_run: int,
+    ci_attempt: int,
+    publication_run: int,
+    publication_attempt: int,
 ) -> None:
     with pytest.raises(ValueError):
         release.render_notes(
-            "## 0.1.0\nFeatures.\n", "0.1.0", repository, source, ci_run, publication_run
+            "## 0.1.0\nFeatures.\n",
+            "0.1.0",
+            repository,
+            source,
+            ci_run,
+            ci_attempt,
+            publication_run,
+            publication_attempt,
         )
 
 
@@ -129,7 +147,13 @@ def test_cli_reads_artifact_source_notes_instead_of_checkout_notes(
         "source_sha": source,
         "repository": _REPOSITORY,
         "status": "passed",
-        "run": {"id": 123, "head_sha": source, "status": "completed", "conclusion": "success"},
+        "run": {
+            "id": 123,
+            "run_attempt": 2,
+            "head_sha": source,
+            "status": "completed",
+            "conclusion": "success",
+        },
     }
     (bundle / "ci.json").write_text(json.dumps(ci))
     output = tmp_path / "published.md"
@@ -144,6 +168,8 @@ def test_cli_reads_artifact_source_notes_instead_of_checkout_notes(
             _REPOSITORY,
             "--publication-run-id",
             "456",
+            "--publication-attempt",
+            "3",
             "--output",
             str(output),
         ],
@@ -153,6 +179,8 @@ def test_cli_reads_artifact_source_notes_instead_of_checkout_notes(
     assert "Original authored features." in rendered
     assert "Unvalidated checkout features." not in rendered
     assert f"source `{source}`" in rendered
+    assert f"https://github.com/{_REPOSITORY}/actions/runs/123/attempts/2" in rendered
+    assert f"https://github.com/{_REPOSITORY}/actions/runs/456/attempts/3" in rendered
     ci["run"]["head_sha"] = "b" * 40
     (bundle / "ci.json").write_text(json.dumps(ci))
     output.unlink()

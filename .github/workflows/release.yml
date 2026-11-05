@@ -370,5 +370,5 @@ jobs:
           tar -czf pypi-evidence.tar.gz production
           gh release upload "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" pypi-evidence.tar.gz
           git fetch --no-tags origin "$SOURCE"
-          python languages/python/tools/release_notes.py --bundle candidate --repository "$GITHUB_REPOSITORY" --publication-run-id "$GITHUB_RUN_ID" --output published-notes.md
+          python languages/python/tools/release_notes.py --bundle candidate --repository "$GITHUB_REPOSITORY" --publication-run-id "$GITHUB_RUN_ID" --publication-attempt "$GITHUB_RUN_ATTEMPT" --output published-notes.md
           gh release create "v$VERSION" candidate/dist/* candidate/release-manifest.json candidate/wheel-manifest.json candidate/ci.json pypi-evidence.tar.gz --target "$SOURCE" --title "Parallax $VERSION" --notes-file published-notes.md
