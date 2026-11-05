@@ -32,7 +32,7 @@ from parallax.snapshot._publication import _root, _typed, _wire_render
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
-from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of
+from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.model_capabilities import (
     graph_construction_for,
@@ -107,7 +107,7 @@ def _conforming(form: _Form, value: object) -> bool:
         state = snapshot_state_of(value)
         assert state is not None
         return state.provenance.root_conformance is RootConformance.CONFORMING
-    return stored_entity_of(cast("Any", value)) is not None
+    return stored_provenance_of(cast("Any", value)) is not None
 
 
 def _evidence(form: _Form, value: object) -> object:
@@ -632,9 +632,9 @@ def test_alternating_wire_roots_reset_every_per_root_fact(atomic: bool, reverse:
     assert "itemsByCode" not in empty
     hydrated = cast("Mapping[str, Any]", invalid_record(published[ordered.index(roots[4])]).data)
     assert [item["id"] for item in hydrated["items"]] == [51]
-    assert stored_entity_of(cast("Any", hydrated)) is None
+    assert stored_provenance_of(cast("Any", hydrated)) is None
     assert all(
-        stored_entity_of(cast("Any", published[ordered.index(root)])) is not None
+        stored_provenance_of(cast("Any", published[ordered.index(root)])) is not None
         for root in (roots[0], roots[2], roots[3])
     )
     _assert_disjoint(

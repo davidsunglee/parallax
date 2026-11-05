@@ -454,7 +454,7 @@ results together, and three divergences follow:
   milestone.** Both whole-result and streamed `history` / `asOfRange` reads use
   the Continuation Order and publish a flat root sequence; a whole-result caller
   receives the finite tuple together while a stream receives one root at a time.
-  Each root stands at its **own** edge pin, and a milestone-set delivery answers
+  Each root stands at its **own** milestone pin, and a milestone-set delivery answers
   the **empty** pin for
   itself, exactly as the whole result of the same query does, because a scan is
   not a pin. Exactly as the whole result does, it also retains no write evidence:

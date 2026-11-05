@@ -192,6 +192,7 @@ RECIPES: Final[list[Recipe]] = [
             "    TX_TIME,\n"
             "    VALID_TIME,\n"
             "    Attr,\n"
+            "    Pin,\n"
             "    QueryDefinitionError,\n"
             "    TemporalBound,\n"
             "    TxTemporal,\n"
@@ -211,6 +212,7 @@ RECIPES: Final[list[Recipe]] = [
             "    TxnContext,\n"
             "    WireEntity,\n"
             "    is_view_loaded,\n"
+            "    pin_of,\n"
             ")\n"
         ),
     ),
@@ -621,6 +623,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="project-a-typed-result-as-wire",
         title="Project a Typed result as Wire data without another read",
         snippet=_sources(guide_recipes.customer_for_page_and_api),
+    ),
+    Recipe(
+        recipe_id="inspect-where-a-wire-read-stood",
+        title="Inspect where a Wire read stood",
+        snippet=_sources(guide_recipes.a_wire_price_and_its_pin),
     ),
     Recipe(
         recipe_id="execution-authority-imports",
@@ -1926,10 +1933,10 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # (`graph_stories.py`) and no case-scoped reason remains for either.
 #
 # Milestone-set GRAPH siblings of the executed history proof. `history` /
-# `as_of_range` over a Transaction-Time entity answers one edge-pinned graph per
+# `as_of_range` over a Transaction-Time entity answers one graph per
 # milestone (`then.graphs`), and the shipped-surface half of that — a real
 # `db.find(... .history(TX_TIME))` against Postgres resolving two milestones of
-# one domain key as distinct edge-pinned nodes — is executed and graded as the
+# one domain key as distinct milestone-pinned nodes — is executed and graded as the
 # supplemental `graph_stories.history_of_a_concrete_temporal_node_
 # distinguishes_milestones`. The wire half is graded for these two cases
 # THEMSELVES: both are compile-exercised and run-exercised
@@ -1941,8 +1948,8 @@ _MILESTONE_SET_GRAPH_SIBLING_REASON: Final[str] = (
     "a representative sibling of the executed milestone-set graph proof "
     "(`graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones`, "
     "real-Postgres via `parallax.snapshot.connect` + `db.find(....history(TX_TIME))`, "
-    "resolving one key's two milestones as distinct edge-pinned nodes): the SAME "
-    "per-milestone partition and edge pin over a different model, and — for "
+    "resolving one key's two milestones as distinct milestone-pinned nodes): the SAME "
+    "per-milestone partition and milestone pin over a different model, and — for "
     "`m-snapshot-read-014` — with `as_of_range`'s overlap window in place of the full "
     "chain; both cases are themselves graded end-to-end by the compile AND run sweeps, "
     "which materialize their own `then.graphs`"
@@ -1959,7 +1966,7 @@ _STREAMED_DELIVERY_REASON: Final[str] = (
     "sweep drives `db.wire.stream` itself against real Postgres, compares every statement "
     "the delivery executed to the authored pages, and materializes the case's own result — "
     "`then.graph`, or the per-milestone `then.graphs` a milestone-set delivery publishes "
-    "one edge-pinned root at a time; and the delivery contract the surface adds on top — "
+    "one milestone-pinned root at a time; and the delivery contract the surface adds on top — "
     "single pass, one view, scope binding, continuation past invalid stored data, and "
     "page-size invariance over storage the model describes, in BOTH namespaces — is "
     "graded against the shipped surface by `tests/unit/test_snapshot_stream.py`"

@@ -99,8 +99,8 @@ pinned coordinates**, matched by axis. An object's coordinates are part of its
 identity (`m-identity-map`), so a dereference never has to guess which instant
 to propagate: the source *is* a pin. This is what makes both materializations
 temporally coherent — a graph's pointers cannot silently cross temporal
-contexts, and a view materialized from a `history` read (edge-pinned at its
-milestone's from-instant, `m-temporal-read`) dereferences at its own edge.
+contexts, and a view materialized from a `history` read (standing at its
+milestone pin, `m-temporal-read`) dereferences at its own edge.
 
 Propagated coordinates are managed Timestamp values. Navigation **closes** a
 resolved predicate's temporal visibility in one pass: every resolved relationship

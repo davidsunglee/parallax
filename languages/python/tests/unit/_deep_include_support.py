@@ -9,6 +9,10 @@ states an ending as well as a leaf.
 The family renames ``Animal.toys`` to ``playthings`` and ``Animal.vet`` to
 ``attendingVet``, declares both on the abstract root a concrete inherits them from,
 and gives two siblings an identically named relationship of their own.
+
+The temporal family reaches a maker three hops down through a narrowed view, with
+every node opened at an instant of its own, so a read's one Pin and each node's own
+Edge stay apart at every depth.
 """
 
 from __future__ import annotations
@@ -30,10 +34,13 @@ from parallax.core import (
     Entity,
     Rel,
     TablePerHierarchy,
+    TxTemporal,
     attr,
     rel,
 )
+from parallax.core.base import INFINITY
 from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.temporal_read import Edge, Pin
 from tests._support.db_port import Read
 
 __all__ = [
@@ -42,6 +49,9 @@ __all__ = [
     "FAMILY",
     "FAMILY_NS",
     "LEAF_ITEMS",
+    "TEMPORAL_FAMILY",
+    "TEMPORAL_PIN",
+    "TEMPORAL_READ_EDGES",
     "Animal",
     "Bell",
     "Cat",
@@ -49,6 +59,12 @@ __all__ = [
     "Dog",
     "Keeper",
     "Maker",
+    "TemporalAnimal",
+    "TemporalCat",
+    "TemporalDog",
+    "TemporalKeeper",
+    "TemporalMaker",
+    "TemporalToy",
     "Toy",
     "back_reference_query",
     "deep_order_query",
@@ -57,6 +73,8 @@ __all__ = [
     "item_row",
     "order_row",
     "status_row",
+    "temporal_query",
+    "temporal_reads",
     "typed_leaf_items",
     "wire_leaf_items",
 ]
@@ -138,6 +156,87 @@ def family_reads() -> tuple[Read, ...]:
             ]
         ),
         Read(rows=[{"id": 100}]),
+    )
+
+
+class TemporalMaker(TxTemporal, table="deep_t_maker", namespace=FAMILY_NS):
+    id: Attr[int] = attr(primary_key=True)
+
+
+class TemporalToy(TxTemporal, table="deep_t_toy", namespace=FAMILY_NS):
+    id: Attr[int] = attr(primary_key=True)
+    animal_id: Attr[int]
+    maker_id: Attr[int | None]
+    maker: Rel[TemporalMaker | None] = rel(cardinality=MANY_TO_ONE, join=("maker_id", "id"))
+
+
+class TemporalAnimal(
+    TxTemporal,
+    table="deep_t_animal",
+    namespace=FAMILY_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    keeper_id: Attr[int | None]
+    toys: Rel[tuple[TemporalToy, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "animal_id"))
+
+
+class TemporalDog(
+    TemporalAnimal, namespace=FAMILY_NS, inheritance=ConcreteSubtype(tag_value="dog")
+):
+    pass
+
+
+class TemporalCat(
+    TemporalAnimal, namespace=FAMILY_NS, inheritance=ConcreteSubtype(tag_value="cat")
+):
+    pass
+
+
+class TemporalKeeper(TxTemporal, table="deep_t_keeper", namespace=FAMILY_NS):
+    id: Attr[int] = attr(primary_key=True)
+    animals: Rel[tuple[TemporalAnimal, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "keeper_id")
+    )
+
+
+TEMPORAL_FAMILY: Final = DomainModel(
+    TemporalKeeper, TemporalAnimal, TemporalDog, TemporalCat, TemporalToy, TemporalMaker
+)
+_TEMPORAL_READ_AT: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+TEMPORAL_PIN: Final = Pin(tx_time=_TEMPORAL_READ_AT)
+_KEEPER_OPENED: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_DOG_OPENED: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_TOY_OPENED: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_MAKER_OPENED: Final = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+TEMPORAL_READ_EDGES: Final = (
+    Edge(tx_time=_KEEPER_OPENED),
+    Edge(tx_time=_DOG_OPENED),
+    Edge(tx_time=_TOY_OPENED),
+    Edge(tx_time=_MAKER_OPENED),
+)
+"""The root's Edge, then the narrowed dog's, its toy's, and that toy's maker's."""
+
+
+def temporal_query() -> ObjectQuery[TemporalKeeper, TemporalKeeper]:
+    return (
+        TemporalKeeper.where(TemporalKeeper.id == 1)
+        .as_of(tx_time=_TEMPORAL_READ_AT)
+        .include(TemporalKeeper.animals.narrow(TemporalDog).toys.maker)
+    )
+
+
+def temporal_reads() -> tuple[Read, ...]:
+    """The four statements :func:`temporal_query` issues, one per level."""
+
+    def opened(instant: dt.datetime) -> dict[str, object]:
+        return {"in_z": instant, "out_z": INFINITY}
+
+    return (
+        Read(rows=[{"id": 1, **opened(_KEEPER_OPENED)}]),
+        Read(rows=[{"id": 2, "kind": "dog", "keeper_id": 1, **opened(_DOG_OPENED)}]),
+        Read(rows=[{"id": 10, "animal_id": 2, "maker_id": 100, **opened(_TOY_OPENED)}]),
+        Read(rows=[{"id": 100, **opened(_MAKER_OPENED)}]),
     )
 
 

@@ -4,6 +4,11 @@
 
 These changes are not part of any published release.
 
+`pin_of` now accepts a Wire node as `edge_of` does: any node a Wire read published,
+direct or projected, answers the `Pin` its read retained, with no I/O and no write
+authority. A non-temporal node raises `snapshot-pin-unavailable`, and anything no read
+published raises `snapshot-node-required`.
+
 Typed include paths now reach any depth the read engine supports:
 `Ticket.parking.vehicle.dealer` authors and executes with dotted syntax, and each
 name past the first relationship is resolved against the serving model's Entity

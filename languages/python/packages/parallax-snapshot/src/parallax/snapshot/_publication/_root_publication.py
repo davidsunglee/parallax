@@ -21,7 +21,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.temporal_read import Edge, Pin, TemporalShape
 from parallax.snapshot._publication._root import RootView
 
-__all__ = ["edge_pin", "publication_issue", "publish_roots", "require_publishable"]
+__all__ = ["milestone_pin", "publication_issue", "publish_roots", "require_publishable"]
 
 _NO_READ_EVIDENCE: Final[Mapping[int, ReadEvidence]] = MappingProxyType({})
 
@@ -48,9 +48,9 @@ def require_publishable(root: RootView) -> None:
         raise stored_data_refusal(issue)
 
 
-def edge_pin(edge: Edge) -> Pin:
-    """One milestone's own edge, rendered as a :class:`Pin` (the Python binding: each
-    milestone-set root is edge-pinned at its own milestone's from-instant).
+def milestone_pin(edge: Edge) -> Pin:
+    """One milestone's own edge, rendered as the :class:`Pin` a milestone-set root
+    stands at.
 
     An axis the Entity does not declare answers absent on both sides, so the
     rendering needs no per-entity axis list of its own.
@@ -92,7 +92,7 @@ def publish_roots[T](
         prepared: list[T] = []
         published_counts = array("I")
         for position, edge in enumerate(edges):
-            resolve(position, rows.pin if edge is None else edge_pin(edge))
+            resolve(position, rows.pin if edge is None else milestone_pin(edge))
             release_finished_rows(page, schedule, position, root.reached)
             values = publish_root(root, ordinal_offset + position)
             prepared.extend(values)
@@ -105,7 +105,7 @@ def publish_roots[T](
             observer.root_published(ordinal_offset + position)
         return
     for position, edge in enumerate(edges):
-        resolve(position, rows.pin if edge is None else edge_pin(edge))
+        resolve(position, rows.pin if edge is None else milestone_pin(edge))
         release_finished_rows(page, schedule, position, root.reached)
         yield from publish_root(root, ordinal_offset + position)
         observer.root_published(ordinal_offset + position)

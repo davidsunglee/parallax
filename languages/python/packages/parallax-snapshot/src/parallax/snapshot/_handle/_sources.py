@@ -21,9 +21,7 @@ from parallax.snapshot._inspection import (
 from parallax.snapshot._publication._wire import (
     WireEntity,
     authoring_of,
-    read_evidence_of,
-    stored_entity_of,
-    wire_pin_of,
+    stored_provenance_of,
 )
 
 __all__ = [
@@ -69,7 +67,8 @@ def resolve_keyed_write_source(
     insert took.
     """
     if isinstance(source, WireEntity):
-        if stored_entity_of(source) is None:
+        stored = stored_provenance_of(source)
+        if stored is None:
             return ResolvedKeyedWriteSource(
                 entity=entity,
                 pin=None,
@@ -80,8 +79,8 @@ def resolve_keyed_write_source(
             )
         return ResolvedKeyedWriteSource(
             entity=entity,
-            pin=wire_pin_of(source),
-            read_evidence=read_evidence_of(source),
+            pin=stored.pin,
+            read_evidence=stored.read_evidence,
             provenance="this",
             advice=WIRE_KEYED_WRITE_ADVICE,
         )
@@ -123,11 +122,11 @@ def resolve_keyed_insert(
         return ResolvedKeyedInsert(
             entity=entity, pin=None, provenance="none", advice=WIRE_KEYED_WRITE_ADVICE
         )
-    stored = stored_entity_of(value) is not None
+    stored = stored_provenance_of(value)
     return ResolvedKeyedInsert(
         entity=entity,
-        pin=wire_pin_of(value) if stored else None,
-        provenance="this" if stored or authoring_of(value) is not None else "none",
+        pin=None if stored is None else stored.pin,
+        provenance="this" if stored is not None or authoring_of(value) is not None else "none",
         advice=WIRE_KEYED_WRITE_ADVICE,
     )
 

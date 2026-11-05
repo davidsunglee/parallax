@@ -139,7 +139,7 @@ def _assert_stream(case: Case, reader: ReadExecutor) -> None:
 
     A milestone-set delivery states ``then.graphs`` instead, and is graded by the
     same partition oracle the eager milestone-set read is: a delivery publishes
-    roots rather than graphs, each standing at its own edge pin, so the graphs are
+    roots rather than graphs, each standing at its own milestone pin, so the graphs are
     recovered from the delivered roots' own edge coordinates and every
     disjointness rule the eager form states holds unchanged.
     """
@@ -255,13 +255,13 @@ def _graphs_root_entity(case: Case) -> Entity:
 
 
 def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
-    """Assert a `history` / `asOfRange` read's per-milestone edge-pinned graphs.
+    """Assert a `history` / `asOfRange` read's per-milestone graphs.
 
     The single root statement returns the FULL milestone set in one query. Each
     ``then.graphs`` entry declares a milestone ``pin`` — its OWN edge coordinate
     (the milestone's from-instant per as-of axis), never a shared root pin — and
     the graph materialized at it, so ``history`` yields one independently
-    edge-pinned graph per milestone and ``asOfRange`` one per overlapping
+    pinned graph per milestone and ``asOfRange`` one per overlapping
     milestone. ``referenceSql`` independently cross-checks the whole milestone set,
     and the partition rules themselves live in :func:`..graph.assert_milestone_partition`
     because a streamed delivery reaches the same interpretation.

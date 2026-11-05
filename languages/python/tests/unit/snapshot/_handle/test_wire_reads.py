@@ -77,6 +77,7 @@ from parallax.snapshot import (
     WireEntity,
     connect,
     edge_of,
+    pin_of,
 )
 from parallax.snapshot._handle._read import wire_publication
 from parallax.snapshot._handle._wire import WireDatabaseView, wire_read_query
@@ -86,11 +87,10 @@ from parallax.snapshot._publication import (
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
-    _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
+    _stated_wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     read_evidence_of,
     shared_wire_encoder,
-    stored_entity_of,
-    wire_pin_of,
+    stored_provenance_of,
 )
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.adoption import raises_contextualized
@@ -337,7 +337,7 @@ def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
 
 
 def test_default_wire_encoding_preserves_temporal_infinity() -> None:
-    assert _wire_scalar(TIMESTAMP, INFINITY) == "infinity"
+    assert _stated_wire_scalar(TIMESTAMP, INFINITY) == "infinity"
 
 
 def test_a_document_occurrence_publishes_the_members_the_document_held() -> None:
@@ -432,9 +432,11 @@ def test_only_an_entity_node_can_carry_provenance() -> None:
     )
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
-    assert stored_entity_of(cast("Any", address)) is None
+    assert stored_provenance_of(cast("Any", address)) is None
     assert read_evidence_of(cast("Any", address)) is None
-    assert stored_entity_of(root) == EntityIdentity("parallax.compatibility", "Customer")
+    stored = stored_provenance_of(root)
+    assert stored is not None
+    assert stored.entity == EntityIdentity("parallax.compatibility", "Customer")
     assert read_evidence_of(root) is None
 
 
@@ -1428,7 +1430,7 @@ def test_a_wire_read_node_answers_its_own_milestone_rather_than_its_pin(
     # carry the one perspective the read looked from.
     assert edge_of(root) == root_edge
     assert edge_of(child) == child_edge
-    assert wire_pin_of(root) == wire_pin_of(child) == pin
+    assert pin_of(root) == pin_of(child) == pin
 
 
 def test_wire_inspection_reconstructs_an_equal_edge_and_leaves_the_node_as_published() -> None:
@@ -1438,8 +1440,106 @@ def test_wire_inspection_reconstructs_an_equal_edge_and_leaves_the_node_as_publi
     first = edge_of(root)
     assert edge_of(root) == first
     assert dict(root) == published
-    assert stored_entity_of(root) == EntityIdentity("parallax.compatibility", "Policy")
+    stored = stored_provenance_of(root)
+    assert stored is not None
+    assert stored.entity == EntityIdentity("parallax.compatibility", "Policy")
     assert len(port.executed) == 2
+
+
+def test_wire_pin_inspection_reads_the_retained_pin_and_leaves_the_node_as_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = _policy_port()
+    (root,) = _published_roots(POLICY, port, _POLICY_QUERY, "eager")
+    published = dict(root)
+    serialized = json.dumps(root)
+
+    def refusing(*_: object) -> object:
+        raise AssertionError("pin inspection decoded a published start")
+
+    monkeypatch.setattr(wire_materialize, "decode_canonical_wire", refusing)
+    pin = pin_of(root)
+
+    assert pin == Pin(tx_time=LATEST, valid_time=_READ_AT)
+    assert pin_of(root) is pin
+    assert list(root) == list(published)
+    assert dict(root) == published
+    assert json.dumps(root) == serialized
+    assert len(port.executed) == 2
+
+
+def _invoice_line_milestones_port() -> QueuePort:
+    def milestone(amount: str, opened: dt.datetime, closed: object) -> MappingRow:
+        return {
+            "id": 1000,
+            "invoice_id": 100,
+            "amount": Decimal(amount),
+            "in_z": opened,
+            "out_z": closed,
+        }
+
+    return QueuePort(
+        [
+            [
+                milestone("50.00", _OPENED, _LINE_OPENED),
+                milestone("75.00", _LINE_OPENED, INFINITY),
+            ]
+        ]
+    )
+
+
+_INVOICE_LINE_HISTORY: Mapping[str, object] = {
+    "target": "InvoiceLine",
+    "predicate": {"true": {}},
+    "temporal": {"transaction-time": {"history": {}}},
+}
+
+
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_each_wire_milestone_root_answers_its_own_milestone_pin(delivery: str) -> None:
+    roots = _published_roots(
+        INVOICE, _invoice_line_milestones_port(), _INVOICE_LINE_HISTORY, delivery
+    )
+    assert [pin_of(root) for root in roots] == [Pin(tx_time=_OPENED), Pin(tx_time=_LINE_OPENED)]
+
+
+def _copied_by_method(node: object) -> object:
+    return cast("Any", node).copy()
+
+
+@pytest.mark.parametrize(
+    "copied",
+    [
+        pytest.param(copy.copy, id="copy"),
+        pytest.param(copy.deepcopy, id="deepcopy"),
+        pytest.param(_copied_by_method, id="method"),
+    ],
+)
+def test_a_copy_of_a_wire_node_answers_as_the_node_does(copied: Callable[[object], object]) -> None:
+    (root,) = _published_roots(POLICY, _policy_port(), _POLICY_QUERY, "eager")
+    assert copied(root) is root
+    assert pin_of(copied(root)) is pin_of(root)
+
+
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_a_deep_narrowed_wire_node_keeps_its_roots_pin_on_its_own_edge(delivery: str) -> None:
+    db = own_root(
+        Database.connect(ScriptedAdapter(*deep.temporal_reads()), deep.TEMPORAL_FAMILY)
+    ).using_database_login()
+    if delivery == "eager":
+        root = _entity(db.wire.find(deep.temporal_query()).result())
+    else:
+        with db.wire.stream(deep.temporal_query(), batch_size=10) as stream:
+            (streamed,) = stream
+        root = _entity(streamed)
+
+    (dog,) = (_entity(node) for node in _sequence(root["animals[TemporalDog]"]))
+    (toy,) = (_entity(node) for node in _sequence(dog["toys"]))
+    maker = _entity(toy["maker"])
+
+    nodes = (root, dog, toy, maker)
+    assert [pin_of(node) for node in nodes] == [deep.TEMPORAL_PIN] * 4
+    assert tuple(edge_of(node) for node in nodes) == deep.TEMPORAL_READ_EDGES
 
 
 def _hydrated_branch() -> InvalidData[WireEntity]:
@@ -1474,22 +1574,29 @@ def test_a_hydrated_diagnostic_node_answers_its_milestone_without_write_authorit
     assert record.data is not None
     assert {issue.code for issue in record.issues} == {"stored-data-many-wrong-kind"}
     assert edge_of(record.data) == Edge(tx_time=_OPENED, valid_time=_EFFECTIVE)
+    assert pin_of(record.data) == Pin(tx_time=LATEST, valid_time=LATEST)
     # Inspection is structural: the node remains no keyed write source.
-    assert stored_entity_of(record.data) is None
+    assert stored_provenance_of(record.data) is None
     assert read_evidence_of(record.data) is None
 
 
-def test_a_non_temporal_wire_read_node_stands_on_no_milestone() -> None:
+def test_a_non_temporal_wire_read_node_stands_on_no_milestone_and_at_no_pin() -> None:
     root = _entity(
         _wire_database(QueuePort([[_order_row()]]))
         .wire.find({"target": "Order", "predicate": {"true": {}}})
         .result()
     )
+    order = EntityIdentity("parallax.compatibility", "Order")
     with pytest.raises(SnapshotInspectionError) as refusal:
         edge_of(root)
     assert refusal.value.code == "snapshot-edge-unavailable"
     assert refusal.value.operation == "edge_of"
-    assert refusal.value.entity == EntityIdentity("parallax.compatibility", "Order")
+    assert refusal.value.entity == order
+    with pytest.raises(SnapshotInspectionError) as refusal:
+        pin_of(root)
+    assert refusal.value.code == "snapshot-pin-unavailable"
+    assert refusal.value.operation == "pin_of"
+    assert refusal.value.entity == order
 
 
 def _unpublished_inputs() -> dict[str, object]:
@@ -1508,15 +1615,25 @@ def _unpublished_inputs() -> dict[str, object]:
 @pytest.mark.parametrize(
     "name", ["converted", "pickled", "matching-keys", "nested-value-object", "invalid-record"]
 )
-def test_a_value_no_wire_read_published_is_not_inspectable(name: str) -> None:
+@pytest.mark.parametrize(
+    ("operation", "inspect"), [("edge_of", edge_of), ("pin_of", pin_of)], ids=["edge", "pin"]
+)
+def test_a_value_no_wire_read_published_is_not_inspectable(
+    operation: str, inspect: Callable[[object], object], name: str
+) -> None:
     with pytest.raises(SnapshotInspectionError) as refusal:
-        edge_of(_unpublished_inputs()[name])
+        inspect(_unpublished_inputs()[name])
     assert refusal.value.code == "snapshot-node-required"
-    assert refusal.value.operation == "edge_of"
+    assert refusal.value.operation == operation
     assert refusal.value.entity is None
 
 
-def test_the_node_an_insert_answered_is_not_inspectable_even_for_a_temporal_entity() -> None:
+@pytest.mark.parametrize(
+    ("operation", "inspect"), [("edge_of", edge_of), ("pin_of", pin_of)], ids=["edge", "pin"]
+)
+def test_the_node_an_insert_answered_is_not_inspectable_even_for_a_temporal_entity(
+    operation: str, inspect: Callable[[object], object]
+) -> None:
     refusals: list[SnapshotInspectionError] = []
 
     def fn(tx: TxnContext) -> None:
@@ -1524,11 +1641,11 @@ def test_the_node_an_insert_answered_is_not_inspectable_even_for_a_temporal_enti
             "parallax.compatibility.Balance", {"id": 1, "acctNum": "A-1", "value": "5.00"}
         )
         with pytest.raises(SnapshotInspectionError) as refusal:
-            edge_of(node)
+            inspect(node)
         refusals.append(refusal.value)
 
     db_for(BALANCE, ScriptedAdapter(Transact(Write()))).transact(fn)
     (refusal,) = refusals
     assert refusal.code == "snapshot-node-required"
-    assert refusal.operation == "edge_of"
+    assert refusal.operation == operation
     assert refusal.entity == EntityIdentity("parallax.compatibility", "Balance")

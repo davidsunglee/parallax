@@ -27,6 +27,7 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import (
+    LATEST,
     TX_TIME,
     AbstractRoot,
     Attr,
@@ -47,7 +48,7 @@ from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import InvalidData
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import decode_canonical_wire
 from parallax.snapshot import (
     Database,
@@ -57,6 +58,7 @@ from parallax.snapshot import (
     SnapshotStream,
     WireEntity,
     edge_of,
+    pin_of,
     view,
 )
 from parallax.snapshot._inspection import snapshot_state_of
@@ -786,6 +788,91 @@ def test_a_projected_node_answers_its_typed_sources_milestone_without_typed_edge
         assert not isinstance(state.edge_cache, Edge)
     assert edge_of(policy) == edge_of(projected)
     assert edge_of(coverage) == edge_of(projected_coverage)
+
+
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_a_projected_node_answers_the_pin_its_typed_source_retained(delivery: str) -> None:
+    policy, projected = _projected_policy(delivery)
+    (coverage,) = policy.coverages
+    (projected_coverage,) = cast("list[WireEntity]", projected["coverages"])
+
+    assert pin_of(projected) == Pin(
+        tx_time=LATEST, valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    )
+    for source, wire in ((policy, projected), (coverage, projected_coverage)):
+        state = snapshot_state_of(source)
+        assert state is not None
+        assert cast("Any", wire)._provenance is state.provenance
+        assert pin_of(wire) is pin_of(source)
+
+
+def _balance_milestone(value: str, opened: dt.datetime, closed: object) -> dict[str, object]:
+    return {
+        "bal_id": 1,
+        "acct_num": "A-1",
+        "val": Decimal(value),
+        "in_z": opened,
+        "out_z": closed,
+    }
+
+
+_BALANCE_MILESTONES = Read(
+    rows=[
+        _balance_milestone("5.00", _OPENED, _COVERAGE_OPENED),
+        _balance_milestone("7.00", _COVERAGE_OPENED, INFINITY),
+    ]
+)
+
+
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_each_projected_milestone_root_keeps_its_own_milestone_pin(delivery: str) -> None:
+    root = cast(
+        "Database[Any]", Database.connect(ScriptedAdapter(_BALANCE_MILESTONES), BALANCE_MODEL)
+    )
+    query = Balance.where(Balance.id == 1).history(TX_TIME)
+    db = root.using_database_login()
+    if delivery == "eager":
+        projected = db.find(query).wire().results()
+    else:
+        with db.stream(query, batch_size=10) as stream:
+            projected = [stream.wire(node) for node in stream]
+    root.close()
+
+    assert [pin_of(node) for node in projected] == [
+        Pin(tx_time=_OPENED),
+        Pin(tx_time=_COVERAGE_OPENED),
+    ]
+
+
+@pytest.mark.parametrize("delivery", ["eager", "streamed"])
+def test_a_deep_narrowed_projected_node_keeps_its_roots_pin_on_its_own_edge(delivery: str) -> None:
+    root = cast(
+        "Database[Any]",
+        Database.connect(ScriptedAdapter(*deep.temporal_reads()), deep.TEMPORAL_FAMILY),
+    )
+    db = root.using_database_login()
+    if delivery == "eager":
+        typed = db.find(deep.temporal_query())
+        keeper = typed.result()
+        projected = typed.wire(keeper)
+    else:
+        with db.stream(deep.temporal_query(), batch_size=10) as stream:
+            ((keeper, projected),) = [(node, stream.wire(node)) for node in stream]
+    root.close()
+
+    (dog,) = cast(
+        "tuple[Any, ...]", view(keeper, deep.TemporalKeeper.animals.narrow(deep.TemporalDog))
+    )
+    (toy,) = dog.toys
+    (projected_dog,) = cast("list[WireEntity]", projected["animals[TemporalDog]"])
+    (projected_toy,) = cast("list[WireEntity]", projected_dog["toys"])
+    projected_maker = cast("WireEntity", projected_toy["maker"])
+
+    nodes = (projected, projected_dog, projected_toy, projected_maker)
+    assert [pin_of(node) for node in nodes] == [deep.TEMPORAL_PIN] * 4
+    assert tuple(edge_of(node) for node in nodes) == deep.TEMPORAL_READ_EDGES
+    for source, wire in ((keeper, projected), (dog, projected_dog), (toy.maker, projected_maker)):
+        assert pin_of(wire) is pin_of(source)
 
 
 @pytest.mark.parametrize(

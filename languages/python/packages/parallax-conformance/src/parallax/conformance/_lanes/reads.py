@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, cast
 
@@ -26,7 +25,6 @@ from parallax.conformance._mechanism.model_facts import (
 from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import read_only, transact, underlying
 from parallax.core import read_delivery
-from parallax.core.base import normalize_instant
 from parallax.core.continuation import ContinuationError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
@@ -50,6 +48,7 @@ from parallax.snapshot import (
     Snapshot,
     TxnContext,
     WireEntity,
+    pin_of,
 )
 
 __all__ = [
@@ -395,9 +394,9 @@ def run_streamed_graphs_case(
     :func:`run_graphs_case` stands to :func:`run_graph_case`. The delivery is the
     same one — production's streamed read at the case's declared page size — and
     what differs is only the authored observation shape: the flat delivery
-    publishes one root per milestone, each standing at its own edge pin, so the
-    `{pin, graph}` entries are recovered from those pins rather than from a second
-    read per milestone.
+    publishes one root per milestone, each standing at its own milestone pin, so
+    the `{pin, graph}` entries are recovered from those pins rather than from a
+    second read per milestone.
     """
     model = load_case_metamodel(case)
     query = _read_query(case, model)
@@ -457,8 +456,8 @@ def run_graphs_case(
 
     A milestone-set Wire Snapshot publishes every milestone's roots in ONE
     ordered result (`m-snapshot-read`), so the per-milestone partition is
-    recovered from each root's own edge — the coordinate the pin states — rather
-    than from a second read per milestone.
+    recovered from each root's own retained milestone pin rather than from a
+    second read per milestone.
     """
     model = load_case_metamodel(case)
     query = _read_query(case, model)
@@ -469,10 +468,9 @@ def run_graphs_case(
             "a single-instant read asserts `then.graph`"
         )
     root_key = envelope.graph_root_key(query.target.canonical, model)
-    entity = declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: roots}}
-        for pin, roots in _milestone_partition(entity, snapshot.checked().results())
+        for pin, roots in _milestone_partition(snapshot.checked().results())
     ]
     return _read_emissions(observed), graphs_wire, observed.database_calls
 
@@ -493,18 +491,16 @@ def _is_single_graph(
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
-def _milestone_partition(
-    entity: EntityMetadata, roots: Sequence[object]
-) -> list[tuple[Pin, list[MappingRow | None]]]:
+def _milestone_partition(roots: Sequence[object]) -> list[tuple[Pin, list[MappingRow | None]]]:
     """One ordered milestone-set result partitioned back into its own graphs.
 
     Roots arrive in the executor's chronological milestone order, so a partition
-    closes as soon as the edge changes: grouping by first appearance would fold
+    closes as soon as the pin changes: grouping by first appearance would fold
     two milestones a scan legitimately answers twice.
     """
     partitions: list[tuple[Pin, list[MappingRow | None]]] = []
     for root in roots:
-        pin = _root_pin(entity, root)
+        pin = _milestone_pin(root)
         if not partitions or partitions[-1][0] != pin:
             partitions.append((pin, []))
         partitions[-1][1].append(envelope.graph_root(root))
@@ -523,7 +519,7 @@ def _milestone_groups(
     objects. Grouping globally is what a whole-result read's own executor does,
     which is why the same `then.graphs` states both.
 
-    The entries are ordered by edge rank, Valid Time before Transaction Time, for
+    The entries are ordered by milestone rank, Valid Time before Transaction Time, for
     the same reason: what a milestone-set result states is which milestones the
     read reached, and ordering the entries by an order the delivery happens to
     have visited them in would make the observation depend on the page size the
@@ -531,11 +527,11 @@ def _milestone_groups(
     """
     groups: dict[Pin, list[MappingRow | None]] = {}
     for root in roots:
-        groups.setdefault(_root_pin(entity, root), []).append(envelope.graph_root(root))
-    return sorted(groups.items(), key=lambda entry: _edge_rank(entity, entry[0]))
+        groups.setdefault(_milestone_pin(root), []).append(envelope.graph_root(root))
+    return sorted(groups.items(), key=lambda entry: _milestone_rank(entity, entry[0]))
 
 
-def _edge_rank(entity: EntityMetadata, pin: Pin) -> tuple[object, ...]:
+def _milestone_rank(entity: EntityMetadata, pin: Pin) -> tuple[object, ...]:
     """One milestone's chronological rank: its coordinates in canonical axis order."""
     coordinates = {
         TemporalDimension.VALID_TIME: pin.valid_time,
@@ -545,31 +541,20 @@ def _edge_rank(entity: EntityMetadata, pin: Pin) -> tuple[object, ...]:
     return tuple(coordinates[axis.dimension] for axis in axes)
 
 
-def _root_pin(entity: EntityMetadata, root: object) -> Pin:
-    """One milestone-set root's own edge pin, read off the values it published.
+def _milestone_pin(root: object) -> Pin:
+    """The milestone pin production retained for one milestone-set root.
 
-    A milestone-set graph is edge-pinned at its own milestone's from-instant
-    (`m-snapshot-read`), and the root carries those axis starts as declared
-    members, so the coordinate is the row's own rather than a second reading of
-    the query.
+    The empty Pin a root with an undecoded start retains is faithful inspection
+    but no observation: `then.graphs` states every pin with at least one
+    coordinate, so it is refused rather than reported as ``{}``.
     """
-    values = envelope.graph_root(root)
-    if values is None:  # pragma: no cover - a non-hydrating milestone root pins nothing
+    node = envelope.graph_root(root)
+    if node is None:
         raise EngineError("a milestone-set root published no value to pin")
-    coordinates: dict[TemporalDimension, object] = {
-        axis.dimension: values.get(axis.start_attribute.name) for axis in entity.declared_as_of_axes
-    }
-    return Pin(
-        tx_time=_pin_instant(coordinates.get(TemporalDimension.TRANSACTION_TIME)),
-        valid_time=_pin_instant(coordinates.get(TemporalDimension.VALID_TIME)),
-    )
-
-
-def _pin_instant(value: object) -> dt.datetime | None:
-    """One published axis start as the instant a :class:`Pin` carries."""
-    if not isinstance(value, str):
-        return None
-    return normalize_instant(dt.datetime.fromisoformat(value))
+    pin = pin_of(node)
+    if pin == Pin():
+        raise EngineError("a milestone-set root published no decoded milestone start")
+    return pin
 
 
 def _read_emissions(observed: LifecycleObservation) -> list[Emission]:

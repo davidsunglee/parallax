@@ -87,7 +87,7 @@ coordinates*, not a copy of one row:
   the API Conformance Suite. A finite Valid-Time pin is writable: mutating it is
   the retroactive correction that lowers to the `m-temporal-write` rectangle split.
 - A `history` / `asOfRange` read materializes **one view per milestone**, each
-  interned at its **edge pin** — the milestone's own from-instant, the one
+  interned at its **milestone pin** — the milestone's own from-instant, the one
   instant guaranteed to select exactly that milestone (`m-temporal-read`,
   Reladomo's `equalsEdgePoint` heritage: for a half-open `[from, to)` interval
   the edge is the from column).

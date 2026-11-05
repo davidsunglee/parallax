@@ -488,7 +488,7 @@ def assert_milestone_partition(
 
     Shared by the two ways a milestone set reaches a result: one whole read that
     materializes a graph per milestone, and one streamed delivery that publishes
-    each milestone root on its own at its own edge pin. What `then.graphs` states
+    each milestone root on its own at its own milestone pin. What `then.graphs` states
     is the same either way — which milestones the read reached and what each
     carries — so the partition, its disjointness, and the per-graph comparison are
     one oracle, and ``nodes`` is positionally aligned with ``root_rows``.
@@ -523,7 +523,7 @@ def assert_milestone_partition(
             raise CaseFailure(
                 f"{case.path.name}: then.graphs[{graph_index}] repeats the pin declared by "
                 f"then.graphs[{seen_pins[pin_key]}] ({pin!r}); each milestone MUST be "
-                f"edge-pinned by exactly one graph — the pins MUST be pairwise disjoint."
+                f"pinned by exactly one graph — the pins MUST be pairwise disjoint."
             )
         seen_pins[pin_key] = graph_index
         group = [
@@ -539,7 +539,7 @@ def assert_milestone_partition(
         if not group:
             raise CaseFailure(
                 f"{case.path.name}: then.graphs[{graph_index}] pin {pin!r} matched no milestone "
-                f"row; each declared graph MUST be edge-pinned to a real milestone's "
+                f"row; each declared graph MUST be pinned to a real milestone's "
                 f"from-instant."
             )
         overlap = [index for index in group if index in owner]
@@ -567,6 +567,6 @@ def assert_milestone_partition(
         stray = [row for index, row in enumerate(root_rows) if index not in owner]
         raise CaseFailure(
             f"{case.path.name}: {len(stray)} milestone row(s) matched no then.graphs "
-            f"pin — every milestone MUST be edge-pinned into exactly one graph.\n"
+            f"pin — every milestone MUST be pinned into exactly one graph.\n"
             f"  unmatched: {stray!r}"
         )

@@ -26,6 +26,7 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
+    Pin,
     TemporalBound,
     attr,
 )
@@ -46,6 +47,7 @@ from parallax.snapshot import (
     connect,
     edge_of,
     is_view_loaded,
+    pin_of,
 )
 
 __all__ = [
@@ -56,6 +58,7 @@ __all__ = [
     "StorePickup",
     "a_scope_for_reports",
     "a_scope_for_slow_conflicts",
+    "a_wire_price_and_its_pin",
     "add_a_customer_from_json",
     "add_a_surcharge_to_every_order",
     "add_and_find_a_customer",
@@ -757,6 +760,14 @@ def customer_for_page_and_api(db: ScopedDatabase, customer_id: int) -> tuple[Cus
     """One read: a Typed value to render, and the same graph as Wire data to send."""
     snapshot = db.find(Customer.where(Customer.id == customer_id).include(Customer.orders))
     return snapshot.result(), snapshot.wire().result()
+
+
+def a_wire_price_and_its_pin(
+    db: ScopedDatabase, sku: str, day: dt.datetime
+) -> tuple[WireEntity, Pin]:
+    """A price as Wire data, and where its read stood, to log beside what was sent."""
+    price = db.wire.find(Price.where(Price.sku == sku).as_of(valid_time=day)).result()
+    return price, pin_of(price)
 
 
 def record_an_order(db: ScopedDatabase, order: Order) -> None:

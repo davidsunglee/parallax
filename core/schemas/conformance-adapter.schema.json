@@ -331,7 +331,7 @@
       }
     },
     "milestoneGraphObservation": {
-      "description": "One edge-pinned graph in the ordered observation for a milestone-set snapshot read. The pin is the milestone's own from-instant per as-of axis, keyed by as-of attribute name; graph has the same root-class-keyed shape as a single graph observation.",
+      "description": "One graph in the ordered observation for a milestone-set snapshot read. Its pin is the milestone pin: the milestone's own from-instant per declared dimension, keyed by `valid-time` and/or `transaction-time`; graph has the same root-class-keyed shape as a single graph observation.",
       "type": "object",
       "additionalProperties": false,
       "required": ["pin", "graph"],

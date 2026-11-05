@@ -53,10 +53,17 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import VersionedObjectStateKey
-from parallax.snapshot import TxnContext, WireEntity, connect, edge_of, pin_of
+from parallax.snapshot import (
+    SnapshotInspectionError,
+    TxnContext,
+    WireEntity,
+    connect,
+    edge_of,
+    pin_of,
+)
 from parallax.snapshot import _publication as publication
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
-from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of, wire_pin_of
+from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -968,8 +975,10 @@ def test_a_value_no_writable_attempt_read_keeps_its_published_provenance(placeme
     projected = snapshot.wire().result()
     assert isinstance(projected, WireEntity)
     assert read_evidence_of(projected) is None
-    assert stored_entity_of(projected) == _CensusCharter.identity
-    assert wire_pin_of(projected) == pin_of(node)
+    stored = stored_provenance_of(projected)
+    assert stored is not None
+    assert stored.entity == _CensusCharter.identity
+    assert pin_of(projected) == pin_of(node)
 
 
 def test_inspecting_an_edge_changes_none_of_the_facts_a_write_or_projection_reads() -> None:
@@ -1003,8 +1012,8 @@ def test_inspecting_an_edge_changes_none_of_the_facts_a_write_or_projection_read
         projected = snapshot.wire().result()
         assert isinstance(projected, WireEntity)
         assert read_evidence_of(projected) is state.provenance.read_evidence
-        assert wire_pin_of(projected) is state.provenance.pin
-        assert stored_entity_of(projected) == state.provenance.entity
+        assert pin_of(projected) is state.provenance.pin
+        assert stored_provenance_of(projected) is state.provenance
 
     db.transact(inspected)
 
@@ -1020,7 +1029,7 @@ def test_inspecting_a_wire_nodes_edge_changes_none_of_the_facts_a_write_reads() 
         assert evidence is not None
 
         def facts() -> tuple[object, ...]:
-            return (stored_entity_of(node), wire_pin_of(node), read_evidence_of(node), dict(node))
+            return (stored_provenance_of(node), pin_of(node), read_evidence_of(node), dict(node))
 
         before = facts()
 
@@ -1053,7 +1062,39 @@ def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     assert state.provenance.root_conformance is RootConformance.NONCONFORMING
     assert isinstance(wire, InvalidData)
     assert isinstance(wire.data, WireEntity)
-    assert stored_entity_of(wire.data) is None
+    assert stored_provenance_of(wire.data) is None
+    for hydrated in (typed.data, wire.data):
+        with pytest.raises(SnapshotInspectionError) as non_temporal:
+            pin_of(hydrated)
+        assert non_temporal.value.code == "snapshot-pin-unavailable"
+    for wrapper in (typed, wire):
+        with pytest.raises(SnapshotInspectionError) as wrapped:
+            pin_of(wrapper)
+        assert wrapped.value.code == "snapshot-node-required"
+
+
+def test_a_classified_temporal_roots_hydrated_data_answers_its_pin_without_write_authority() -> (
+    None
+):
+    row, _document = _census_row()
+    invalid = {**row, "payload": StructuredDocument({"title": "Northbound", "legs": {"port": "x"}})}
+    port = ScriptedAdapter(Read(rows=[invalid]), Read(rows=[invalid]))
+    db = own_root(connect(port, _CENSUS_MODEL)).using_database_login()
+    query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=_CENSUS_AT)
+    typed = db.find(query).checked().result()
+    wire = db.wire.find(query).checked().result()
+
+    assert isinstance(typed, InvalidData)
+    assert isinstance(wire, InvalidData)
+    assert isinstance(wire.data, WireEntity)
+    pin = Pin(tx_time=LATEST, valid_time=_CENSUS_AT)
+    assert pin_of(typed.data) == pin_of(wire.data) == pin
+    for wrapper in (typed, wire):
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            pin_of(wrapper)
+        assert refusal.value.code == "snapshot-node-required"
+    assert stored_provenance_of(wire.data) is None
+    assert read_evidence_of(wire.data) is None
 
 
 # --------------------------------------------------------------------------- #

@@ -1377,7 +1377,7 @@ def _milestone_pages(*, size: int) -> ScriptedAdapter:
 
 
 @pytest.mark.parametrize("size", [1, 2, 3], ids=lambda size: f"batch-{size}")
-def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_edge_pin(
+def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_milestone_pin(
     size: int,
 ) -> None:
     # A Page is shared input and a milestone page is that page plus a pin
@@ -1407,6 +1407,25 @@ def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_edge_pin(
     ]
 
 
+@pytest.mark.parametrize("size", [1, 2, 3], ids=lambda size: f"batch-{size}")
+def test_each_wire_streamed_milestone_root_answers_its_own_milestone_pin(size: int) -> None:
+    with _positions(_milestone_pages(size=size)).wire.stream(
+        _all_milestones(), batch_size=size
+    ) as stream:
+        direct = list(stream)
+    with _positions(_milestone_pages(size=size)).stream(_all_milestones(), batch_size=size) as (
+        stream
+    ):
+        projected = [stream.wire(root) for root in stream]
+    expected = [
+        Pin(valid_time=_JANUARY, tx_time=_JANUARY),
+        Pin(valid_time=_JANUARY, tx_time=_APRIL),
+        Pin(valid_time=_JUNE, tx_time=_APRIL),
+    ]
+    assert [pin_of(root) for root in direct] == expected
+    assert [pin_of(root) for root in projected] == expected
+
+
 def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() -> None:
     # The page statements the delivery actually ran: the key is constant across
     # the whole result, so an order ending in it would seek `pos_id > 1` and
@@ -1427,7 +1446,7 @@ def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> 
     # `find_history` returns one flat milestone-root sequence and ranks the roots
     # Valid-Time-first; with no authored `orderBy` the Continuation Order is the
     # key then that same edge, so a single object's streamed history IS the eager
-    # edge rank — same roots, same order, same pin on each, and the same absence
+    # milestone rank — same roots, same order, same pin on each, and the same absence
     # of retained write evidence, a milestone view being read-only either way.
     eager = _positions(ScriptedAdapter(Read(rows=list(_MILESTONES)))).find(_all_milestones())
     with _positions(_milestone_pages(size=1)).stream(_all_milestones(), batch_size=1) as stream:

@@ -43,7 +43,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 from parallax.core.read_delivery._page import ABSENT
 from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.temporal_read import Edge, Pin, TemporalFacet
+from parallax.core.temporal_read import Edge, TemporalFacet
 from parallax.core.wire import decode_canonical_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
@@ -68,10 +68,10 @@ __all__ = [
     "opened_wire_entity",
     "projection_entity",
     "read_evidence_of",
+    "required_wire_provenance",
     "shared_wire_encoder",
-    "stored_entity_of",
+    "stored_provenance_of",
     "wire_edge_of",
-    "wire_pin_of",
 ]
 
 type WireValue = bool | int | float | str | list[WireValue] | dict[str, WireValue] | None
@@ -330,33 +330,37 @@ def read_evidence_of(entity: WireEntity) -> ReadEvidence | None:
     """The private Read Evidence ``entity`` carries, or ``None`` for a mapping no
     writable attempt's Wire read published.
 
-    The one reader of the slot. A hint is never authority of its own — it names
-    the exact state its read observed and nothing about what may be written —
-    so this answers a fact and the write side draws the conclusion.
+    A hint is never authority of its own — it names the exact state its read
+    observed and nothing about what may be written — so this answers a fact and
+    the write side draws the conclusion.
     """
     provenance: NodeProvenance | None = getattr(entity, "_provenance", None)
     return None if provenance is None else provenance.read_evidence
 
 
-def stored_entity_of(entity: WireEntity) -> EntityIdentity | None:
-    """The concrete Entity of a node a read published from conforming stored
-    state, or ``None`` for any other mapping — diagnostic data under a
-    classified root, the node an insert answered, or one Parallax never
-    published.
+def stored_provenance_of(entity: WireEntity) -> NodeProvenance | None:
+    """The provenance of a node a read published from conforming stored state,
+    or ``None`` for any other mapping — diagnostic data under a classified root,
+    the node an insert answered, or one Parallax never published.
 
     A fact about provenance alone, with or without Read Evidence beside it.
     """
     provenance: NodeProvenance | None = getattr(entity, "_provenance", None)
     if provenance is None or provenance.root_conformance is not RootConformance.CONFORMING:
         return None
-    return provenance.entity
+    return provenance
 
 
-def wire_pin_of(entity: WireEntity) -> Pin | None:
-    """The as-of coordinates a read-published node was read at, or ``None``
-    where its family declares no As-Of Axis or no read published it."""
-    provenance: NodeProvenance | None = getattr(entity, "_provenance", None)
-    return None if provenance is None else provenance.pin
+def required_wire_provenance(node: object, operation: str) -> NodeProvenance:
+    """The provenance of a node a Wire read published, conforming or diagnostic,
+    refusing every other carrier on behalf of inspection ``operation``.
+
+    Only the exact read-published carrier answers: the node an insert answered
+    subclasses it, and matching keys on any other mapping never do.
+    """
+    if type(node) is not _WireEntityNode:
+        raise _wire_node_required(node, operation)
+    return node._provenance  # pyright: ignore[reportPrivateUsage] - the carrier's own slot
 
 
 _TX_START: Final = TEMPORAL_MEMBERS[TemporalDimension.TRANSACTION_TIME][0].name
@@ -368,15 +372,12 @@ def wire_edge_of(node: object) -> Edge:
     Wire read published, conforming or diagnostic, decoded from its own
     published milestone starts on every call.
 
-    Only the read-published carrier answers; matching keys on any other mapping
-    never do. The Pin decides whether the node is temporal at all, never where
-    its milestone starts. Every Entity reserves the framework endpoint names in
-    its top-level members, so a published ``validStart`` is the Valid-Time
-    start and only a Bitemporal node publishes one.
+    The Pin decides whether the node is temporal at all, never where its
+    milestone starts. Every Entity reserves the framework endpoint names in its
+    top-level members, so a published ``validStart`` is the Valid-Time start and
+    only a Bitemporal node publishes one.
     """
-    if type(node) is not _WireEntityNode:
-        raise _not_read_published(node)
-    provenance = node._provenance  # pyright: ignore[reportPrivateUsage] - the carrier's own slot
+    provenance = required_wire_provenance(node, "edge_of")
     if provenance.pin is None:
         entity = provenance.entity
         raise SnapshotInspectionError(
@@ -385,16 +386,17 @@ def wire_edge_of(node: object) -> Edge:
             operation="edge_of",
             entity=entity,
         )
-    valid_start = node.get(_VALID_START)
+    published = cast("Mapping[str, Any]", node)
+    valid_start = published.get(_VALID_START)
     return Edge(
-        tx_time=cast("dt.datetime", decode_canonical_wire(TIMESTAMP, node[_TX_START])),
+        tx_time=cast("dt.datetime", decode_canonical_wire(TIMESTAMP, published[_TX_START])),
         valid_time=None
         if valid_start is None
         else cast("dt.datetime", decode_canonical_wire(TIMESTAMP, valid_start)),
     )
 
 
-def _not_read_published(node: object) -> SnapshotInspectionError:
+def _wire_node_required(node: object, operation: str) -> SnapshotInspectionError:
     provenance: NodeProvenance | None = (
         getattr(node, "_provenance", None) if isinstance(node, _WireEntityNode) else None
     )
@@ -402,12 +404,12 @@ def _not_read_published(node: object) -> SnapshotInspectionError:
     held = (
         f"{type(node).__name__} carries no read publication"
         if entity is None or getattr(node, "_authoring", None) is None
-        else f"the {entity.canonical} node an insert answered stands on no read milestone"
+        else f"no read published the {entity.canonical} node an insert answered"
     )
     return SnapshotInspectionError(
         code="snapshot-node-required",
-        message=f"edge_of inspects a node a Snapshot read published; {held}",
-        operation="edge_of",
+        message=f"{operation} inspects a node a Snapshot read published; {held}",
+        operation=operation,
         entity=entity,
     )
 
@@ -662,7 +664,7 @@ def _put(rendered: dict[str, WireValue], key: str, value: WireValue) -> None:
     rendered[key] = value
 
 
-def _wire_scalar(neutral_type: NeutralType, value: object) -> WireValue:
+def _stated_wire_scalar(neutral_type: NeutralType, value: object) -> WireValue:
     """One scalar a write states, in its canonical Wire spelling."""
     if value is None:
         return None
@@ -673,10 +675,10 @@ def _wire_scalar(neutral_type: NeutralType, value: object) -> WireValue:
     return cast("WireValue", encode_managed_wire(neutral_type, cast("ManagedValue", value)))
 
 
-def _wire_collection(element_type: NeutralType, value: object) -> WireValue:
+def _stated_wire_collection(element_type: NeutralType, value: object) -> WireValue:
     """One scalar collection as the canonical immutable Wire array of its elements."""
     return _frozen_sequence(
-        _wire_scalar(element_type, element) for element in cast("Iterable[object]", value)
+        _stated_wire_scalar(element_type, element) for element in cast("Iterable[object]", value)
     )
 
 
@@ -741,7 +743,7 @@ def _occurrence_mapping(entries: Iterable[tuple[str, WireValue]]) -> WireValue:
     return _frozen_mapping(_FrozenMapping, entries)
 
 
-def _occurrence(
+def _stated_occurrence(
     value: object, declared: OccurrenceMetadata, carrier: OccurrenceCarrier
 ) -> WireValue:
     """One occurrence a write states, as the Wire value its carrier holds."""
@@ -750,7 +752,7 @@ def _occurrence(
         occurrence_shape(declared),
         declared.multiplicity,
         carrier,
-        encode_leaf=_wire_scalar,
+        encode_leaf=_stated_wire_scalar,
         build_object=_occurrence_mapping,
         build_array=_frozen_sequence,
     )
@@ -802,12 +804,12 @@ def opened_wire_entity(
             _put(
                 rendered,
                 name,
-                _wire_collection(binding.type, value)
+                _stated_wire_collection(binding.type, value)
                 if binding.multiplicity is Multiplicity.MANY
-                else _wire_scalar(binding.type, value),
+                else _stated_wire_scalar(binding.type, value),
             )
             continue
-        _put(rendered, name, _occurrence(value, binding, occurrences))
+        _put(rendered, name, _stated_occurrence(value, binding, occurrences))
     if layout.family_variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
     node = _frozen_mapping(_WireAuthoringNode, rendered)

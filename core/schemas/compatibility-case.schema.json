@@ -1560,7 +1560,7 @@
           }
         },
         "graphs": {
-          "description": "An ORDERED array of per-milestone snapshot graphs a `history` / `asOfRange` read materializes (m-snapshot-read, resolved Q5a), coexisting with the single-graph `then.graph` exactly as `then.rows` does: a single-instant read carries `graph`, a milestone-set read carries `graphs`. Each entry pairs a milestone `pin` — the EDGE coordinate this graph is pinned at, its OWN milestone's from-instant per as-of axis, NOT a shared root pin — with the assembled `graph` at that pin. So `history` returns one independently edge-pinned graph per milestone and `asOfRange` one per overlapping milestone (m-temporal-read edge-point reads). Each `graph` has the same root-class-keyed shape as `then.graph`.",
+          "description": "An ORDERED array of per-milestone snapshot graphs a `history` / `asOfRange` read materializes (m-snapshot-read, resolved Q5a), coexisting with the single-graph `then.graph` exactly as `then.rows` does: a single-instant read carries `graph`, a milestone-set read carries `graphs`. Each entry pairs a milestone `pin` — this graph's milestone pin, its OWN milestone's from-instant per as-of axis, NOT a shared root pin — with the assembled `graph` at that pin. So `history` returns one independently pinned graph per milestone and `asOfRange` one per overlapping milestone (m-temporal-read edge-point reads). Each `graph` has the same root-class-keyed shape as `then.graph`.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -1569,7 +1569,7 @@
             "required": ["pin", "graph"],
             "properties": {
               "pin": {
-                "description": "The milestone edge coordinate keyed by `valid-time` and/or `transaction-time`; each value is that milestone's own finite start instant.",
+                "description": "The milestone pin keyed by `valid-time` and/or `transaction-time`; each value is that milestone's own finite start instant.",
                 "type": "object",
                 "minProperties": 1,
                 "propertyNames": { "enum": ["valid-time", "transaction-time"] },

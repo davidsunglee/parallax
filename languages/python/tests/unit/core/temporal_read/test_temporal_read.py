@@ -2,7 +2,7 @@
 
 Exercises the injection templates (current-row / containment / range / scan), the
 explicit per-dimension selection rule, the Valid-Time-first bitemporal
-composition, relationship-hop perspective construction, the milestone edge-pin,
+composition, relationship-hop perspective construction, the milestone pin,
 and the ``Pin`` / ``Edge`` value model — independently of the Docker-gated
 compile/run sweeps. Each injection assertion
 compiles the rewritten predicate through ``m-sql`` so the fragment and bind order
@@ -433,7 +433,7 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Edge-pin + Pin / Edge value model.                                           #
+# Milestone pin + Pin / Edge value model.                                      #
 # --------------------------------------------------------------------------- #
 class _AxisCells:
     """Axis starts and ends one carrier holds by Attribute Identity, answered by

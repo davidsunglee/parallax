@@ -679,12 +679,10 @@ record and is authored as one.
 
 **When.** As its own claim. The snapshot sub-lane it deletes from is already a
 module of its own (`_lanes.snapshot`: `compile_scenario` / `run_scenario`), so
-the deletion lands in a named module rather than mid-lane. Two nearby gaps are
-deliberately NOT in its scope: a Wire per-root pin, which
-[COR-179](https://linear.app/flimflam/issue/COR-179/expose-per-root-pins-and-row-form-reads-on-the-wire-surface)
-owns along with deleting `_root_pin`; and `CompiledRead`'s
-projection accessor, whose own docstring already says no consumer should
-re-project a family superset, which is an unrelated obligation.
+the deletion lands in a named module rather than mid-lane. One nearby gap is
+deliberately NOT in its scope: `CompiledRead`'s projection accessor, whose own
+docstring already says no consumer should re-project a family superset, which is
+an unrelated obligation.
 
 ## Forwarding pointers
 
