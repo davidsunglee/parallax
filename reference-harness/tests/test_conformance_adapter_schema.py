@@ -60,7 +60,7 @@ def _valid_run(observations: dict) -> dict:
             "name": "parallax-core",
             "version": "0.1.0",
         },
-        "case": "core/compatibility/cases/m-read-planning-013-deferred-load-batches-latest.yaml",
+        "case": "core/compatibility/cases/m-snapshot-read-016-edit-keeps-loaded-items.yaml",
         "profile": "pg-full",
         "dialect": "postgres",
         "caseShape": "scenario",
@@ -271,9 +271,6 @@ def test_describe_accepts_snapshot_module_claim() -> None:
 
 
 def test_describe_rejects_bare_snapshot_module_claim() -> None:
-    # Cross-process coherence is module `m-snapshot-read`; a bare, un-prefixed
-    # "snapshot-read" claim does not match the `m-<slug>` module grammar, so an
-    # adapter MUST claim `m-snapshot-read` instead.
     describe = copy.deepcopy(_valid_describe())
     describe["capabilities"]["modules"] = ["m-core", "snapshot-read"]
 

@@ -639,8 +639,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 #
 # Every slice's tagged cases are internally consistent with its canonical claim,
 # and the tagged-case counts are drift tripwires — adding or losing a tagged case
-# fails the count. The two object-lifecycle slices share the non-lifecycle base
-# (dual-tagged cases, including the inheritance read AND write cases);
+# fails the count.
 
 
 def _slice_tag_count(slice_tag: str) -> list[str]:

@@ -264,10 +264,8 @@ def test_reverse_include_uses_canonical_directional_metadata(tmp_path: Path) -> 
 def test_elided_include_and_no_sql_reads_require_no_invented_statements(tmp_path: Path) -> None:
     step = _step()
     step["objectQuery"]["includes"] = [{"segments": [{"rel": "Account.wallets"}]}]
-    cached = _step()
-    cached.pop("statements")
-    cached["databaseCalls"] = 0
-    assert lint_tree(_corpus(tmp_path, [step, cached])) == []
+    access = {"action": "access", "on": 0, "path": "wallets", "databaseCalls": 0}
+    assert lint_tree(_corpus(tmp_path, [step, access])) == []
 
 
 def test_exists_predicate_table_is_not_a_materialized_entity(tmp_path: Path) -> None:

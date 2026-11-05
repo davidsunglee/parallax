@@ -56,7 +56,7 @@
       }
     },
     {
-      "description": "A scenario case (m-unit-work): ordered operation steps with per-step Database Call counts proving the cache/identity contract. Golden SQL lives per step, so `then.statements` is absent.",
+      "description": "A scenario case (m-unit-work): ordered reads, explicit writes, and snapshot actions with per-step observations. Golden SQL lives per step, so `then.statements` is absent.",
       "required": ["shape", "when"],
       "properties": {
         "shape": { "const": "scenario" },
@@ -296,6 +296,11 @@
               "scenario": {
                 "items": {
                   "required": ["databaseCalls"],
+                  "if": { "required": ["objectQuery"] },
+                  "then": {
+                    "required": ["statements"],
+                    "properties": { "statements": { "minItems": 1 } }
+                  },
                   "properties": {
                     "write": {
                       "if": { "type": "array" },
@@ -655,7 +660,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "lane": {
-      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a native-runtime or read-lock-matrix branch the wire harness cannot observe: the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it. Every `boundary`-shape and `edit`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-concurrency-046`, `m-concurrency-048`, and `m-concurrency-049`) are `read`-shape `api-conformance` cases.",
+      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a native-runtime or read-lock-matrix branch the wire harness cannot observe: the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it. Boundary, edit, and read-lock matrix observations require the native API runtime.",
       "enum": ["harness", "api-conformance"],
       "default": "harness"
     },
@@ -1000,6 +1005,14 @@
             ],
             "allOf": [
               {
+                "description": "Snapshot identity observations compare a retained relationship view during access, never independent reads.",
+                "if": { "required": ["sameObjectAs"] },
+                "then": {
+                  "required": ["action"],
+                  "properties": { "action": { "const": "access" } }
+                }
+              },
+              {
                 "description": "`set` is a MUTATE-only attribute-assignment map (the new attribute values a `mutate` action assigns). A step carrying `set` MUST be a `mutate` action step — `set` on a read / write step, or on a non-`mutate` action verb, is invalid.",
                 "if": { "required": ["set"] },
                 "then": {
@@ -1016,6 +1029,17 @@
                   }
                 },
                 "then": { "required": ["on"] }
+              },
+              {
+                "description": "Snapshot edit and access actions operate on retained values without SQL.",
+                "if": {
+                  "required": ["action"],
+                  "properties": { "action": { "enum": ["mutate", "access"] } }
+                },
+                "then": {
+                  "not": { "required": ["statements"] },
+                  "properties": { "databaseCalls": { "const": 0 } }
+                }
               },
               {
                 "description": "Access navigates a relationship already materialized by its source read, so it requires that relationship's path.",
@@ -1210,7 +1234,7 @@
                 "$ref": "#/$defs/referenceSql"
               },
               "sameObjectAs": {
-                "description": "Zero-based index of an earlier scenario step whose relationship view is preserved by this step. Snapshot access and edited copies retain the loaded view their source published.",
+                "description": "Zero-based index of an earlier scenario step whose relationship view is preserved by this step. Snapshot access retains the loaded view its source published; this member states an expectation and never selects the source.",
                 "type": "integer",
                 "minimum": 0
               },

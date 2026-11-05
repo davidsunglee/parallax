@@ -1,17 +1,3 @@
-# Person/Passport: a ONE-TO-ONE relationship model (m-descriptor cardinality, m-navigate).
-#
-# This descriptor is an instance of core/schemas/metamodel.schema.json. No other
-# model declares the `one-to-one` cardinality (orders is one-to-many / many-to-
-# one only), so this fills the relationship-kind gap. A Person has at most one
-# Passport and a Passport belongs to exactly one Person; the foreign key lives on
-# Passport (`person_id`) and is UNIQUE, which is what makes the relationship 1:1
-# rather than one-to-many. Navigation and deep fetch resolve a to-one peer (a
-# single object, or null when absent), exactly like a many-to-one — the harness
-# treats one-to-one as to-one (not to-many).
-#
-# Row data lives in the sibling fixtures/person.yaml; person 3 has NO passport,
-# so the to-one deep fetch attaches a null peer for that root (the 1:1 analogue
-# of the nullable many-to-one case m-read-planning-005).
 entities:
   - name: Person
     namespace: parallax.compatibility
@@ -29,10 +15,6 @@ entities:
         join:
           source: id
           target: { entity: parallax.compatibility.Passport, attribute: personId }
-        # cascade-deletes its Passport. This is the sole one-to-one `dependent`
-        # relationship in the corpus (orders' dependents are one-to-many), so it
-        # concern only; navigation / deep fetch (which drive the person read cases)
-        # ignore it, so those cases are unaffected.
         dependent: true
   - name: Passport
     namespace: parallax.compatibility

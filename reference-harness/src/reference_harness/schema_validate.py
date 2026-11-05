@@ -695,7 +695,7 @@ def _structurally_empty_read_problems(case: dict[str, Any], family: Family | Non
 
 
 def _navigated_position(source: _Position, path: str, family: Family | None) -> _Position | None:
-    """Where a `load` / `access` of *path* from *source* lands, or ``None``.
+    """Where a `access` of *path* from *source* lands, or ``None``.
 
     Each hop is resolved from EVERY concrete the source position holds, through the
     relationship APPLICABLE to that concrete — its own declaration or an ancestor's,
@@ -805,7 +805,7 @@ def _validate_scenario_edit(
     node's own materialized variant and this check cannot see. What it has instead
     is the position that node stands at (:func:`_step_position`) — the position the
     step's own ``on`` chain reaches, which is a relationship's target where the
-    chain runs through a `load` / `access` and the find's own result otherwise. The
+    chain runs through a `access` and the find's own result otherwise. The
     set must be one EVERY concrete of that position admits, WHOLE. That is what
     makes the static verdict the same verdict a validating executor reaches at run
     time: a set every candidate admits is admitted by whichever candidate the read

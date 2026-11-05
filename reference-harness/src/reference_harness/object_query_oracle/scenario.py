@@ -32,10 +32,9 @@ class ScenarioRowObservations:
             elif pairs:
                 observation = self._query(step_index, step, pairs, reader)
             else:
-                observation = retained.Observation(
-                    rows=self._reused_rows(step_index, step),
-                    entity=self._read_entity(step_index),
-                    includes=None,
+                raise CaseFailure(
+                    f"{self._case.path.name}: scenario[{step_index}] read step requires "
+                    "golden statements; independent reads cannot reuse earlier rows"
                 )
 
             self._assert_row_observables(step_index, step, observation.rows)
@@ -170,23 +169,12 @@ class ScenarioRowObservations:
     def _reused_rows(
         self, step_index: int, step: Mapping[str, Any]
     ) -> list[materialize.PublishedRow]:
-        """The rows a zero-Database-Call step reuses from the earlier step it names.
-
-        A snapshot access returns the SAME rows an
-        earlier step published, named by ``sameObjectAs`` or — on an action step —
-        by its ``on``. That the name is an EARLIER step is settled when the
-        Scenario is compiled; what only the run can answer is whether that step
-        OBSERVED anything (:func:`_observation`), because a step failing its own
-        observable publishes nothing. A step issuing nothing and naming nobody has
-        no source at all, which is an empty reuse: its own identity and
-        ``expectRows`` assertions would pass against nothing.
-        """
-        named = step.get("sameObjectAs", step.get("on"))
-        source = named
+        """The source rows whose already-materialized relationship access navigates."""
+        source = step.get("on")
         if not isinstance(source, int):
             raise CaseFailure(
                 f"{self._case.path.name}: scenario[{step_index}] issues no statement of its "
-                f"own and names no earlier step to reuse rows from — a zero-Database-Call "
+                f"own and names no earlier source step — a zero-Database-Call "
                 f"snapshot access answers with the rows an earlier step published."
             )
         return self._observation(step_index, source).rows
@@ -236,7 +224,7 @@ class ScenarioRowObservations:
                 f"{self._case.path.name}: scenario[{step_index}] names step {source}, "
                 f"which published no observation. A step reaching back for rows, a view, "
                 f"or an identity MUST name an earlier step that OBSERVED them — never a "
-                f"write, a boundary action, or a list construction that has not resolved."
+                f"write or a boundary action."
             )
         return observation
 
@@ -327,8 +315,6 @@ class ScenarioRowObservations:
         if "sameObjectAs" not in step:
             return
         source = step["sameObjectAs"]
-        # A Scenario case queries a single entity (cache / identity over one type),
-        # so an unstated identity attribute is the model root's own.
         identity_column = step.get("identityAttr", case.model.root_entity.identity_column)
         these = self._identity_keys(step_index, step_index, rows, identity_column)
         those = self._identity_keys(
@@ -338,7 +324,7 @@ class ScenarioRowObservations:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}] is declared to denote "
                 f"the same object(s) as step {source}, but their primary-key "
-                f"identities differ (one-object-per-PK violated).\n"
+                f"identities differ (retained snapshot view changed).\n"
                 f"  step {step_index}: {these!r}\n"
                 f"  step {source}: {those!r}"
             )

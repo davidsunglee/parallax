@@ -256,21 +256,8 @@ parallax.compatibility.Location:
           lon: 10.74
       phones: []
 
-# Depot rows (models/customer.yaml `Depot`, the many side of the to-many
-# `Customer.depots`). Each `address` is Depot's DIVERGENT flat composite
-# `{ line, postcode }` — a DIFFERENT declared structure than the recursive Customer /
-# Location `address`, loaded into Depot's own `address` document column. This is the
-# descriptor-divergence dataset the wrong-entity witnesses (m-read-planning-020,
-# descriptor drops `line`/`postcode` and yields `street`/`city`/`geo`/`phones`
-# instead, so a runner that materializes with the scenario root instead of Depot
-# fails observably.
-#
-#   id 200  customer 1 (Ada)  label Dock  address present, divergent { line, postcode }
-#   id 201  customer 1 (Ada)  label Yard  address NULL — the null-DOCUMENT child at DEPTH
-#
-# Customer 1 owns BOTH depots (200, 201 — ordered id asc per the relationship
-# orderBy); no other customer owns a depot, so an `all(Depot)` read returns exactly
-# these two.
+# These addresses use Depot's flat shape; Customer's recursive decoder would
+# replace line/postcode with different members. One child has a null document.
 parallax.compatibility.Depot:
   - id: 200
     customerId: 1
