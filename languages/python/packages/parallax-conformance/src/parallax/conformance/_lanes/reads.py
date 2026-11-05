@@ -207,17 +207,23 @@ def _conforming_row(
 ) -> object:
     """One published result position as the root a `then.rows` case grades.
 
-    A record whose every issue lies under a top-level Value Object `then.rows`
-    leaves out still reads as a row, because no diagnosis touches what the case
-    states, so its hydrated data is what is graded. Any other record is no row,
-    and this lane names the shape rather than grading it as though it were one:
-    graph cases grade `InvalidData` through `then.storedDataIssues`.
+    A record whose every issue lies on the root itself, under a top-level Value
+    Object `then.rows` leaves out, still reads as a row, because no diagnosis
+    touches what the case states, so its hydrated data is what is graded. Any
+    other record is no row, and this lane names the shape rather than grading it
+    as though it were one: graph cases grade `InvalidData` through
+    `then.storedDataIssues`.
+
+    The declaration alone cannot place an issue on the root: an Include reentering
+    the root's own family reaches a different object through the same inherited
+    occurrence, so the affected object is compared as well.
     """
     if not isinstance(root, read_delivery.InvalidData):
         return root
     record = cast("read_delivery.InvalidData[object]", root)
     if record.data is None or not all(
-        _outermost_occurrence(issue.member) in omitted for issue in record.issues
+        issue.object_key == record.object_key and _outermost_occurrence(issue.member) in omitted
+        for issue in record.issues
     ):
         raise EngineError(
             f"{case.path.name}: a `then.rows` read published an InvalidData record that is no "

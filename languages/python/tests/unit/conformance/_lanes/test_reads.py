@@ -39,6 +39,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery import InvalidData, StoredDataIssue
 from parallax.core.temporal_read import Pin
+from parallax.core.write_plan import ObjectKey
 from tests._support.case_corpus import case as corpus_case
 from tests._support.case_corpus import cases as corpus_cases
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort
@@ -510,18 +511,97 @@ def test_an_issue_under_an_included_nodes_value_object_is_refused_before_flatten
         reads.run_read_case(case, _classified_item_port(root_profile))
 
 
+_ALPHA_TARGET: Final = "snapshot.materialization.Alpha"
+
+
+def _same_family_reentry_case() -> case_format.Case:
+    """A read of Alpha reaching its own family again through Node.owner → Owner.nodes."""
+    model = "models/materialization-stress-columns.yaml"
+    query: dict[str, object] = {
+        "target": _ALPHA_TARGET,
+        "predicate": {"true": {}},
+        "includes": [
+            {
+                "segments": [
+                    {"rel": "snapshot.materialization.Node.owner"},
+                    {"rel": "snapshot.materialization.Owner.nodes"},
+                ]
+            }
+        ],
+    }
+    document: dict[str, object] = {
+        "model": model,
+        "when": {"objectQuery": query},
+        "then": {"rows": []},
+    }
+    return dataclasses.replace(_synthetic(document), model=model)
+
+
+def _alpha(node_id: int, primary_tag: DocumentValue) -> MappingRow:
+    return {
+        "id": node_id,
+        "owner_id": 7,
+        "kind": "alpha",
+        "primary_tag": StructuredDocument(primary_tag),
+    }
+
+
+def _same_family_reentry_port(
+    root_tag: DocumentValue, included_tag: DocumentValue = None
+) -> QueueDbPort:
+    root = _alpha(1, root_tag)
+    return QueueDbPort(
+        [
+            [root],
+            [{"id": 7, "name": "Owner", "favorite_id": None}],
+            [root, _alpha(2, included_tag)],
+        ]
+    )
+
+
+_WRONG_KIND_TAG: Final[DocumentValue] = {"details": 42}
+
+
+def test_an_issue_on_an_included_node_of_the_roots_own_family_is_refused_before_flattening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
+    case = _same_family_reentry_case()
+    _emissions, _graph, _calls, records = reads.run_graph_case(
+        case, _same_family_reentry_port(None, _WRONG_KIND_TAG)
+    )
+    assert records is not None
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads.run_read_case(case, _same_family_reentry_port(None, _WRONG_KIND_TAG))
+
+
+def test_the_roots_own_value_object_issue_reads_as_a_row_beside_a_conforming_reentry() -> None:
+    _emissions, rows, _calls = reads.run_read_case(
+        _same_family_reentry_case(), _same_family_reentry_port(_WRONG_KIND_TAG)
+    )
+    assert [row["id"] for row in rows] == [1]
+
+
 _CUSTOMER: Final = EntityIdentity("parallax.compatibility", "Customer")
 _ADDRESS: Final = ValueObjectIdentity(_CUSTOMER, ("address",))
+_ROOT_KEY: Final = ObjectKey(_CUSTOMER, (("id", 1),))
 
 
-def _hydrated_record(*members: MemberIdentity | None) -> InvalidData[object]:
+def _hydrated_record(
+    *members: MemberIdentity | None, affected: ObjectKey | None = _ROOT_KEY
+) -> InvalidData[object]:
     issues = frozenset(
         StoredDataIssue(
-            "stored-data-many-wrong-kind", _CUSTOMER, member, path=(), stored_value="wrong"
+            "stored-data-many-wrong-kind",
+            _CUSTOMER,
+            member,
+            affected,
+            path=(),
+            stored_value="wrong",
         )
         for member in members
     )
-    return InvalidData(issues, {"id": 1}, None, None, None, 0)
+    return InvalidData(issues, {"id": 1}, _ROOT_KEY, None, None, 0)
 
 
 @pytest.mark.parametrize(
@@ -567,6 +647,24 @@ def test_an_issue_outside_every_omitted_occurrence_is_refused(
             reads._conforming_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
                 _case("m-value-object-001"), frozenset({_ADDRESS}), record
             )
+
+
+@pytest.mark.parametrize(
+    "affected",
+    [
+        pytest.param(ObjectKey(_CUSTOMER, (("id", 2),)), id="another-object"),
+        pytest.param(None, id="an-object-whose-identity-did-not-decode"),
+    ],
+)
+def test_an_omitted_occurrence_issue_on_another_object_is_refused(
+    affected: ObjectKey | None,
+) -> None:
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads._conforming_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
+            _case("m-value-object-001"),
+            frozenset({_ADDRESS}),
+            _hydrated_record(_ADDRESS, affected=affected),
+        )
 
 
 def test_run_read_case_observes_a_wire_read() -> None:

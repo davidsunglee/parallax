@@ -46,10 +46,12 @@ from ..inheritance import (
     STRATEGY_TPCS,
     STRATEGY_TPH,
     Family,
+    QueryPosition,
     query_position,
     tag_value_to_subtype,
 )
 from ..storage_layout import (
+    AttributeContributor,
     ColumnSlot,
     DocumentMember,
     DocumentPath,
@@ -898,11 +900,12 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
 
     The read published every member; the assertion observes its scalars across the
     position's superset (`m-case-format` *Read result form*). So a Value Object
-    contributor leaves the row, a sibling's document-resident scalar the row's own
-    branch places nowhere is padded ``null`` exactly as a Column would have been, and
-    nothing else moves: a scalar collection, a document-resident scalar, and any
-    unexpected scalar column stay for the comparison to judge, including a scalar
-    reusing the Column a sibling's Value Object occupies.
+    contributor leaves the row, a sibling's scalar the row's own branch does not hold
+    is padded ``null`` — a document-resident one, or one whose repeated spelling only
+    its own branch restored (:func:`_tpcs_row_at_its_branch`) — exactly as any other
+    Column is, and nothing else moves: a scalar collection, a document-resident
+    scalar, and any unexpected scalar column stay for the comparison to judge,
+    including a scalar reusing the Column a sibling's Value Object occupies.
 
     Like :func:`narrow_to_variant_columns` this projects what a read published, so
     each row arrives with that provenance and leaves carrying it forward.
@@ -924,10 +927,13 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
         []
         if position is None
         else [
-            member.column
-            for entity in concretes
-            for member in case.model.storage_layout.document(entity.canonical_name).members
-            if member.type_spelling is not None
+            *(
+                member.column
+                for entity in concretes
+                for member in case.model.storage_layout.document(entity.canonical_name).members
+                if member.type_spelling is not None
+            ),
+            *_repeated_scalar_spellings(case, position),
         ]
     )
     scalars: list[PublishedRow] = []
@@ -947,6 +953,25 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
             )
         )
     return scalars
+
+
+def _repeated_scalar_spellings(case: Case, position: QueryPosition) -> list[str]:
+    """The scalar spellings a table-per-concrete-subtype *position* projects more than once.
+
+    Only these leave a row short of the superset: every other Column reaches each
+    branch under its own spelling, so its absence from a row stays a defect for the
+    comparison to find rather than something to pad.
+    """
+    if position.strategy != STRATEGY_TPCS:
+        return []
+    effective = read_effective_set(case, position.family, position.target)
+    union = _tpcs_position(case, position.family, effective)
+    return [
+        spelling
+        for column, spelling in zip(union.view.columns, union.superset, strict=True)
+        if isinstance(column.contributor, AttributeContributor)
+        and union.column_counts[spelling] > 1
+    ]
 
 
 # --- Value Object occurrences -----------------------------------------------

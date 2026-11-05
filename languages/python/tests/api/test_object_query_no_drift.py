@@ -183,8 +183,8 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
-    # Multi-concrete polymorphic INSTANCE-FORM reads: the SAME
-    # query expression as their row-form values-lane siblings
+    # Multi-concrete polymorphic `then.graph` reads: the SAME
+    # query expression as their `then.rows` siblings
     # (m-inheritance-003/-013/-015/-052 above), but built over the INSTALLED
     # `read_models` classes rather than the test-only `im`/`sm` mirrors — the
     # object-lane witness a real `db.find` executes against.

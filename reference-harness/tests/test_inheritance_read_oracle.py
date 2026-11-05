@@ -1143,6 +1143,74 @@ def test_a_scalar_reusing_a_siblings_value_object_column_stays_in_the_flat_view(
     assert flat["annotation"] == "stated"
 
 
+_REUSED_ANNOTATION_UNION = (
+    "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, "
+    "t0.annotation parallax_attr_0, cast(null as varchar(64)) body, "
+    "cast(null as decimal(18, 2)) paid_amount, false, "
+    "cast(null as jsonb) parallax_attr_1, 'Invoice' family_variant from invoice t0 "
+    "union all "
+    "select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, "
+    "cast(null as decimal(18, 2)) amount_due, cast(null as varchar(64)) parallax_attr_0, "
+    "t0.body, cast(null as decimal(18, 2)) paid_amount, not t0.annotation is null, "
+    "t0.annotation parallax_attr_1, 'Memo' family_variant from memo t0 "
+    "union all "
+    "select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, "
+    "cast(null as varchar(64)) parallax_attr_0, cast(null as varchar(64)) body, "
+    "t0.paid_amount, false, cast(null as jsonb) parallax_attr_1, "
+    "'Receipt' family_variant from receipt t0"
+)
+
+
+def _reused_annotation_case(rows: list[dict[str, Any]]) -> Case:
+    model = copy.deepcopy(_document_model())
+    invoice = next(entity for entity in model.entity_defs if entity["name"] == "Invoice")
+    invoice["attributes"].append(
+        {"name": "annotation", "type": "string", "maxLength": 64, "nullable": True}
+    )
+    raw = _document_case("Document", _REUSED_ANNOTATION_UNION, rows).raw
+    return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
+
+
+def _stored_document(variant: str, scalar: str | None, occurrence: Any) -> dict[str, Any]:
+    return {
+        "id": 1,
+        "title": variant,
+        "parallax_attr_0": scalar,
+        "parallax_attr_1": occurrence,
+        "family_variant": variant,
+    }
+
+
+def _stated_document(variant: str, annotation: str | None) -> dict[str, Any]:
+    return {"id": 1, "title": variant, "annotation": annotation, "familyVariant": variant}
+
+
+@pytest.mark.parametrize(
+    ("stored", "stated"),
+    [
+        pytest.param(
+            _stored_document("Invoice", "stated", None),
+            _stated_document("Invoice", "stated"),
+            id="the-scalars-own-branch",
+        ),
+        pytest.param(
+            _stored_document("Memo", None, {"author": "Ada"}),
+            _stated_document("Memo", None),
+            id="the-value-objects-own-branch",
+        ),
+        pytest.param(
+            _stored_document("Receipt", None, None),
+            _stated_document("Receipt", None),
+            id="a-branch-owning-neither",
+        ),
+    ],
+)
+def test_a_flat_row_states_a_scalar_sharing_its_spelling_with_a_value_object(
+    stored: dict[str, Any], stated: dict[str, Any]
+) -> None:
+    assert_case_read(_reused_annotation_case([stated]), _Reads([stored]))
+
+
 def test_tpcs_wrong_variant_literal_is_rejected() -> None:
     # A branch whose familyVariant literal is not its concrete subtype name.
     golden = _DOCUMENT_ROOT_UNION.replace("'Memo' family_variant", "'Note' family_variant")
