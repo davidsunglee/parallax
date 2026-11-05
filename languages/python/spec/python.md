@@ -88,8 +88,8 @@ reads the accepted Metamodel and the class index from `parallax.core.entity._mod
 over, and the selection's projections borrow that index (`ClassIndex`); and the
 read policy and the Typed predicate-write ingress reach the Typed predicate
 adapter in `parallax.core.entity._authored_resolver`
-(`typed_interpretation`). Each is a seam between two first-party packages that a developer
-never needs, so exporting the names to spell the reach publicly would widen the
+(`typed_predicate_interpretation`). Each is a seam between two first-party packages that a
+developer never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve the runtime and one lifecycle package.
 `tests/unit/test_source_enforcement_topology.py` holds the exact reach set. None of the
 reached modules takes a scope row of its own: they belong to

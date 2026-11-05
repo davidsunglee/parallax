@@ -135,7 +135,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
  read_graph(read, query, publication, planner)                        _read_pipeline
    │ interpreted(selected, query)
    │   ObjectQueryNode → itself
-   │   AuthoredQuery   → InterpretedQuery + typed_interpretation
+   │   AuthoredQuery   → InterpretedQuery + typed_predicate_interpretation
    ▼
  resolve_read_query(..., form="graph")                                  _read_query
    │ resolve the target → validate_object_query → refuse deferred_features
@@ -245,7 +245,7 @@ admission stay outside the cache.
 - `parallax.core._execution._read_pipeline:ReadQuery`
 - `parallax.core._execution._read_pipeline:interpreted`
 - `parallax.core.object_query._nodes:InterpretedQuery`
-- `parallax.core.entity._authored_resolver:typed_interpretation`
+- `parallax.core.entity._authored_resolver:typed_predicate_interpretation`
 - `parallax.core._execution._read_query:resolve_read_query`
 - `parallax.core.object_query.validate:validate_object_query`
 - `parallax.core._execution._features:deferred_features`

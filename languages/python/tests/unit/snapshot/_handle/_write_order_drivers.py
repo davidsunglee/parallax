@@ -51,7 +51,7 @@ from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._expressions import AttributeRef, AuthoredPath, UnfinishedOperation
+from parallax.core.entity._expressions import AttributeRef, AuthoredMemberPath, UnfinishedOperation
 from parallax.core.execution import ExecutionFailure
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.predicate._interpretation import COMPARE
@@ -1607,7 +1607,7 @@ def _typed_query(scenario: PredicateWriteScenario) -> ObjectQuery[EntityBase, En
         case "inverted":
             return entity.where(key.between(10, _PREDICATE_KEY))
         case "unbound":
-            path = AuthoredPath(entity.identity, ("missing",), unfinished=True)
+            path = AuthoredMemberPath(entity.identity, ("missing",), unfinished=True)
             return entity.where(
                 Predicate(UnfinishedOperation(path, COMPARE["eq"], (_PREDICATE_KEY,)))
             )

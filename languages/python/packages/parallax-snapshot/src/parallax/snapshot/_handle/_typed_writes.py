@@ -27,7 +27,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.preparation import EntityPreparation, WritePreparation
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._authored_resolver import typed_interpretation
+from parallax.core.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
@@ -114,7 +114,9 @@ def typed_selection(
     selection = mutation_selection(query)
     return PredicateSelection(
         selection.target.canonical,
-        typed_interpretation(selection.predicate, write_model.model.meta, write_model.classes),
+        typed_predicate_interpretation(
+            selection.predicate, write_model.model.meta, write_model.classes
+        ),
     )
 
 

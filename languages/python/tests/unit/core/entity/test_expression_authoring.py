@@ -229,7 +229,7 @@ def test_a_deferred_continuation_offers_every_candidate_operation() -> None:
     deferred = Basket.owner.name
     with pytest.raises(AttributeError):
         _ = deferred._private
-    assert repr(deferred) == f"DeferredExpr({_BASKET}.owner.name)"
+    assert repr(deferred) == f"UnfinishedExpr({_BASKET}.owner.name)"
     assert predicate_node(Basket.where(Basket.owner.tags.any()), MODEL) == Quantifier(
         "any", f"{_BASKET}.owner.tags"
     )

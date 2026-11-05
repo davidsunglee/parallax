@@ -13,7 +13,7 @@ from parallax.core.entity._expressions import (
     AssignableScalarExpr,
     AssignableValueObjectExpr,
     AttributeRef,
-    AuthoredPath,
+    AuthoredMemberPath,
     ManyRelationshipExpr,
     ManyScalarExpr,
     ManyValueObjectExpr,
@@ -24,7 +24,7 @@ from parallax.core.entity._expressions import (
     ValueObjectExpr,
     ValueObjectReceiver,
     member_expression,
-    relationship_hop,
+    root_segment,
 )
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.metamodel import (
@@ -580,7 +580,7 @@ class ElementAttr[T]:
     def __init__(self, py_name: str, index: int, owner: ValueObjectShape) -> None:
         self._index = index
         self._expression = member_expression(
-            AuthoredPath(ValueObjectReceiver(owner.shape), ()), owner, py_name
+            AuthoredMemberPath(ValueObjectReceiver(owner.shape), ()), owner, py_name
         )
 
     def __get__(self, obj: object | None, _owner: type | None = None) -> Any:
@@ -653,7 +653,7 @@ class Rel[T]:
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
     def __get__(self, obj: object | None, _owner: type | None = None) -> Any:
         if obj is None:
-            hop = relationship_hop(
+            hop = root_segment(
                 self._ref, self._py_name, self._target, _access_source(_owner), many=self._many
             )
             if self._many:

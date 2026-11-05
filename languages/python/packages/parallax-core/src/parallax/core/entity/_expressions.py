@@ -73,15 +73,14 @@ __all__ = [
     "AuthoredConstant",
     "AuthoredElement",
     "AuthoredGroup",
+    "AuthoredMemberPath",
     "AuthoredNarrow",
     "AuthoredNot",
     "AuthoredOr",
-    "AuthoredPath",
     "AuthoredPredicate",
     "AuthoredPresence",
     "AuthoredQuantifier",
     "AuthoredQuery",
-    "DeferredExpr",
     "IncludePath",
     "IncludeTraversal",
     "ManyRelationshipExpr",
@@ -95,6 +94,7 @@ __all__ = [
     "ScalarElementExpr",
     "ScalarExpr",
     "SortKey",
+    "UnfinishedExpr",
     "UnfinishedOperation",
     "ValueObjectExpr",
     "ValueObjectReceiver",
@@ -104,8 +104,8 @@ __all__ = [
     "managed_literal",
     "member_expression",
     "member_location",
-    "relationship_hop",
     "require_bound_elements",
+    "root_segment",
     "snake_to_camel",
     "subtype_selection",
 ]
@@ -182,7 +182,7 @@ type Receiver = EntityIdentity | ValueObjectReceiver
 
 
 @dataclass(frozen=True, slots=True)
-class AuthoredPath:
+class AuthoredMemberPath:
     """A member path read from ``receiver``: canonical member names where the
     declaration supplied them, or, when ``unfinished``, the Python member names
     a serving model's classes resolve.
@@ -195,8 +195,8 @@ class AuthoredPath:
     names: tuple[str, ...]
     unfinished: bool = False
 
-    def child(self, name: str) -> AuthoredPath:
-        return AuthoredPath(self.receiver, (*self.names, name), self.unfinished)
+    def child(self, name: str) -> AuthoredMemberPath:
+        return AuthoredMemberPath(self.receiver, (*self.names, name), self.unfinished)
 
     def described(self) -> str:
         receiver = self.receiver
@@ -208,10 +208,10 @@ class AuthoredPath:
 class AuthoredElement:
     """The element of the scalar collection ``collection`` names."""
 
-    collection: AuthoredPath
+    collection: AuthoredMemberPath
 
 
-type AuthoredSubject = AuthoredPath | AuthoredElement
+type AuthoredSubject = AuthoredMemberPath | AuthoredElement
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,7 +276,7 @@ class AuthoredQuantifier:
     collection holds."""
 
     kind: QuantifierKind
-    collection: AuthoredPath
+    collection: AuthoredMemberPath
     where: AuthoredPredicate | None = None
     binds: BoundElement | None = None
 
@@ -287,7 +287,7 @@ class AuthoredPresence:
     ``where``, whether its to-one target makes ``where`` true (or none does)."""
 
     negated: bool
-    target: AuthoredPath
+    target: AuthoredMemberPath
     where: AuthoredPredicate | None = None
 
 
@@ -300,7 +300,7 @@ class AuthoredNarrow:
     to: SubtypeSelection
     operand: AuthoredPredicate | None = None
     receiver: EntityIdentity | None = None
-    target: AuthoredPath | None = None
+    target: AuthoredMemberPath | None = None
 
 
 type AuthoredPredicate = (
@@ -709,7 +709,7 @@ class ScalarExpr[E, T](_ScalarAuthoring[E]):
 
     __slots__ = ("_leaf", "_path")
 
-    def __init__(self, path: AuthoredPath, leaf: _LeafFacts) -> None:
+    def __init__(self, path: AuthoredMemberPath, leaf: _LeafFacts) -> None:
         self._path = path
         self._leaf = leaf
 
@@ -754,7 +754,7 @@ class AssignableScalarExpr[E, T](ScalarExpr[E, T]):
     def __init__(
         self, ref: AttributeRef, member: AttributeMetadata, validate: MemberValidator
     ) -> None:
-        super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), member)
+        super().__init__(AuthoredMemberPath(_entity_identity(ref.entity), (ref.attribute,)), member)
         self._ref = ref
         self._member = member
         self._validate = validate
@@ -811,7 +811,7 @@ class ScalarElementExpr[S, T](_ScalarAuthoring[S]):
 
 def _quantified(
     kind: QuantifierKind,
-    collection: AuthoredPath,
+    collection: AuthoredMemberPath,
     predicate: Predicate[Any] | None,
     *,
     binds: BoundElement | None,
@@ -837,7 +837,7 @@ def _quantified(
 
 
 def _presence(
-    negated: bool, target: AuthoredPath, predicate: Predicate[Any] | None
+    negated: bool, target: AuthoredMemberPath, predicate: Predicate[Any] | None
 ) -> Predicate[Any]:
     """The presence of ``target``, or with ``predicate`` whether its related
     Entity makes that predicate true; the operand binds that Entity, so it reads
@@ -887,7 +887,7 @@ class ManyScalarExpr[S, T](_NotOneValue):
             "quantify its elements with any/all/none over .element"
         )
 
-    def __init__(self, path: AuthoredPath, leaf: _LeafFacts) -> None:
+    def __init__(self, path: AuthoredMemberPath, leaf: _LeafFacts) -> None:
         self._path = path
         self._leaf = leaf
 
@@ -920,7 +920,7 @@ class AssignableManyScalarExpr[E, T](ManyScalarExpr[E, T]):
     def __init__(
         self, ref: AttributeRef, member: AttributeMetadata, validate: MemberValidator
     ) -> None:
-        super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), member)
+        super().__init__(AuthoredMemberPath(_entity_identity(ref.entity), (ref.attribute,)), member)
         self._ref = ref
         self._member = member
         self._validate = validate
@@ -931,7 +931,7 @@ class AssignableManyScalarExpr[E, T](ManyScalarExpr[E, T]):
         return AttributeAssignment(attr=self._ref, value=value)
 
 
-def member_expression(path: AuthoredPath, shape: ValueObjectShape, py_name: str) -> Any:
+def member_expression(path: AuthoredMemberPath, shape: ValueObjectShape, py_name: str) -> Any:
     """The expression for ``shape``'s member ``py_name`` at ``path``."""
     canonical = shape.py_to_name.get(py_name)
     if canonical is None:
@@ -960,7 +960,7 @@ class ValueObjectExpr[E, V](_NotOneValue):
             "fields, or test its presence with exists()/not_exists()"
         )
 
-    def __init__(self, path: AuthoredPath, shape: ValueObjectShape) -> None:
+    def __init__(self, path: AuthoredMemberPath, shape: ValueObjectShape) -> None:
         self._path = path
         self._shape = shape
 
@@ -993,7 +993,7 @@ class AssignableValueObjectExpr[E, V](ValueObjectExpr[E, V]):
         shape: ValueObjectShape,
         validate: MemberValidator,
     ) -> None:
-        super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), shape)
+        super().__init__(AuthoredMemberPath(_entity_identity(ref.entity), (ref.attribute,)), shape)
         self._ref = ref
         self._member = member
         self._validate = validate
@@ -1016,7 +1016,7 @@ class ManyValueObjectExpr[E, V](_NotOneValue):
             "quantify its elements with any/all/none"
         )
 
-    def __init__(self, path: AuthoredPath, shape: ValueObjectShape) -> None:
+    def __init__(self, path: AuthoredMemberPath, shape: ValueObjectShape) -> None:
         self._path = path
         self._shape = shape
 
@@ -1048,7 +1048,7 @@ class AssignableManyValueObjectExpr[E, V](ManyValueObjectExpr[E, V]):
         shape: ValueObjectShape,
         validate: MemberValidator,
     ) -> None:
-        super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), shape)
+        super().__init__(AuthoredMemberPath(_entity_identity(ref.entity), (ref.attribute,)), shape)
         self._ref = ref
         self._member = member
         self._validate = validate
@@ -1163,7 +1163,7 @@ class IncludeTraversal:
 
 
 @dataclass(frozen=True, slots=True)
-class _Hop:
+class _RootSegment:
     """The first relationship hop a descriptor seeded."""
 
     ref: RelationshipRef
@@ -1175,15 +1175,15 @@ class _Hop:
     def traversal(self) -> IncludeTraversal:
         return IncludeTraversal((IncludeSegment(rel=str(self.ref)),), self.target, self.source)
 
-    def path(self) -> AuthoredPath:
-        return AuthoredPath(_entity_identity(self.ref.entity), (self.ref.relationship,))
+    def member_path(self) -> AuthoredMemberPath:
+        return AuthoredMemberPath(_entity_identity(self.ref.entity), (self.ref.relationship,))
 
 
-def relationship_hop(
+def root_segment(
     ref: RelationshipRef, py_name: str, target: str, source: str | None, *, many: bool
-) -> _Hop:
+) -> _RootSegment:
     """The first hop a relationship descriptor seeds, reached through ``source``."""
-    return _Hop(ref, py_name, target, source, many)
+    return _RootSegment(ref, py_name, target, source, many)
 
 
 def include_traversal(path: IncludePath[Any, Any]) -> IncludeTraversal:
@@ -1347,7 +1347,7 @@ def subtype_selection(spellings: tuple[str, ...]) -> SubtypeSelection:
 
 
 def _narrowed(
-    target: AuthoredPath,
+    target: AuthoredMemberPath,
     subtypes: tuple[type, ...],
     where: Predicate[Any] | None,
 ) -> Predicate[Any]:
@@ -1371,30 +1371,30 @@ class RelationshipExpr[E, R](IncludePath[E, R]):
 
     __slots__ = ("_hop",)
 
-    def __init__(self, hop: _Hop) -> None:
+    def __init__(self, hop: _RootSegment) -> None:
         super().__init__(hop.traversal())
         self._hop = hop
 
-    def __getattr__(self, name: str) -> DeferredExpr[Any]:
+    def __getattr__(self, name: str) -> UnfinishedExpr[Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return DeferredExpr(self._hop, (name,))
+        return UnfinishedExpr(self._hop, (name,))
 
     def exists(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether this relationship reaches an Entity; with ``predicate``,
         whether a reached Entity makes it true. False and unknown do not match."""
-        return _presence(False, self._hop.path(), predicate)
+        return _presence(False, self._hop.member_path(), predicate)
 
     def not_exists(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether this relationship reaches no Entity; with ``predicate``,
         whether no reached Entity makes it true."""
-        return _presence(True, self._hop.path(), predicate)
+        return _presence(True, self._hop.member_path(), predicate)
 
     def is_a[S](self, *subtypes: type[S], where: Predicate[S] | None = None) -> Predicate[Any]:
         """Whether the reached Entity belongs to ``subtypes`` and, with
         ``where``, makes it true there. An absent or unselected target is
         false; a selected one keeps ``where``'s unknown."""
-        return _narrowed(self._hop.path(), subtypes, where)
+        return _narrowed(self._hop.member_path(), subtypes, where)
 
 
 class ManyRelationshipExpr[E, R](IncludePath[E, R]):
@@ -1403,31 +1403,31 @@ class ManyRelationshipExpr[E, R](IncludePath[E, R]):
 
     __slots__ = ("_hop",)
 
-    def __init__(self, hop: _Hop) -> None:
+    def __init__(self, hop: _RootSegment) -> None:
         super().__init__(hop.traversal())
         self._hop = hop
 
-    def __getattr__(self, name: str) -> DeferredExpr[Any]:
+    def __getattr__(self, name: str) -> UnfinishedExpr[Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return DeferredExpr(self._hop, (name,))
+        return UnfinishedExpr(self._hop, (name,))
 
     def any(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether some related Entity makes ``predicate`` true; bare, whether
         any is related."""
-        return _quantified("any", self._hop.path(), predicate, binds="entity")
+        return _quantified("any", self._hop.member_path(), predicate, binds="entity")
 
     def all(self, predicate: Predicate[R]) -> Predicate[Any]:
         """Whether every related Entity makes ``predicate`` true."""
-        return _quantified("all", self._hop.path(), predicate, binds="entity")
+        return _quantified("all", self._hop.member_path(), predicate, binds="entity")
 
     def none(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether no related Entity makes ``predicate`` true; bare, whether
         none is related."""
-        return _quantified("none", self._hop.path(), predicate, binds="entity")
+        return _quantified("none", self._hop.member_path(), predicate, binds="entity")
 
 
-class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
+class UnfinishedExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
     """A dotted continuation past a relationship, whose member kind the serving
     model resolves.
 
@@ -1440,14 +1440,14 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
 
     __slots__ = ("_hop", "_names")
 
-    def __init__(self, hop: _Hop, names: tuple[str, ...]) -> None:
+    def __init__(self, hop: _RootSegment, names: tuple[str, ...]) -> None:
         self._traversal = None
         self._hop = hop
         self._names = names
 
-    def _path(self) -> AuthoredPath:
+    def _member_path(self) -> AuthoredMemberPath:
         receiver = _entity_identity(self._hop.ref.entity)
-        return AuthoredPath(receiver, (self._hop.py_name, *self._names), unfinished=True)
+        return AuthoredMemberPath(receiver, (self._hop.py_name, *self._names), unfinished=True)
 
     def _include(self) -> IncludeTraversal:
         traversal = self._hop.traversal()
@@ -1455,10 +1455,10 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
             traversal = _next_hop(traversal, name)
         return traversal
 
-    def __getattr__(self, name: str) -> DeferredExpr[E]:
+    def __getattr__(self, name: str) -> UnfinishedExpr[E]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return DeferredExpr(self._hop, (*self._names, name))
+        return UnfinishedExpr(self._hop, (*self._names, name))
 
     def _described(self) -> str:
         return ".".join((self._hop.ref.entity, self._hop.py_name, *self._names))
@@ -1467,7 +1467,7 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
         return None
 
     def _subject(self) -> AuthoredSubject:
-        return self._path()
+        return self._member_path()
 
     def is_null(self) -> Predicate[E]:
         return self._null_test("isNull")
@@ -1478,25 +1478,25 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
     @property
     def element(self) -> ScalarElementExpr[E, Any]:
         """The element a quantifier over this collection binds."""
-        return ScalarElementExpr(AuthoredElement(self._path()), None)
+        return ScalarElementExpr(AuthoredElement(self._member_path()), None)
 
     def any(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
-        return _quantified("any", self._path(), predicate, binds=None)
+        return _quantified("any", self._member_path(), predicate, binds=None)
 
     def all(self, predicate: Predicate[Any]) -> Predicate[E]:
-        return _quantified("all", self._path(), predicate, binds=None)
+        return _quantified("all", self._member_path(), predicate, binds=None)
 
     def none(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
-        return _quantified("none", self._path(), predicate, binds=None)
+        return _quantified("none", self._member_path(), predicate, binds=None)
 
     def exists(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
-        return _presence(False, self._path(), predicate)
+        return _presence(False, self._member_path(), predicate)
 
     def not_exists(self, predicate: Predicate[Any] | None = None) -> Predicate[E]:
-        return _presence(True, self._path(), predicate)
+        return _presence(True, self._member_path(), predicate)
 
     def is_a[S](self, *subtypes: type[S], where: Predicate[S] | None = None) -> Predicate[E]:
-        return _narrowed(self._path(), subtypes, where)
+        return _narrowed(self._member_path(), subtypes, where)
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
         return hash((self._hop, self._names))
@@ -1506,7 +1506,7 @@ class DeferredExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
 
 
 EXPRESSION_OPERATION_NAMES: Final[frozenset[str]] = frozenset(
-    name for name in dir(DeferredExpr) if not name.startswith("_")
+    name for name in dir(UnfinishedExpr) if not name.startswith("_")
 )
 """Every public name a member expression's dotted access answers itself rather
 than continuing to a member — the surface a member declaration may not reuse."""

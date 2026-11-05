@@ -49,7 +49,7 @@ from parallax.core._execution import _read_pipeline
 from parallax.core.base import INT64, ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, DatabaseAdapter, MappingRow
-from parallax.core.entity._authored_resolver import typed_interpretation
+from parallax.core.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.execution import (
     DeferredFeatureError,
     QueryTargetError,
@@ -316,7 +316,7 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
 def _counted_bindings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Each Typed predicate resolution a read performs, by queried Entity."""
     bindings: list[str] = []
-    bind = typed_interpretation
+    bind = typed_predicate_interpretation
 
     def counting(predicate: Any, model: Any, classes: Any) -> Any:
         interpret = bind(predicate, model, classes)
@@ -327,7 +327,7 @@ def _counted_bindings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
         return counted
 
-    monkeypatch.setattr(_read_pipeline, "typed_interpretation", counting)
+    monkeypatch.setattr(_read_pipeline, "typed_predicate_interpretation", counting)
     return bindings
 
 

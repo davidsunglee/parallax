@@ -9,10 +9,10 @@ from parallax.core.entity._expressions import (
     AuthoredAnd,
     AuthoredConstant,
     AuthoredGroup,
+    AuthoredMemberPath,
     AuthoredNarrow,
     AuthoredNot,
     AuthoredOr,
-    AuthoredPath,
     AuthoredPredicate,
     AuthoredPresence,
     AuthoredQuantifier,
@@ -92,10 +92,10 @@ from parallax.core.predicate.validate import (
 )
 from parallax.core.wire import encode_wire
 
-__all__ = ["object_query_node", "typed_interpretation"]
+__all__ = ["object_query_node", "typed_predicate_interpretation"]
 
 
-def typed_interpretation(
+def typed_predicate_interpretation(
     predicate: AuthoredPredicate, model: Metamodel, classes: ClassIndex | None
 ) -> PredicateInterpretation:
     """The Typed adapter: ``predicate`` resolved against the adopted ``model``.
@@ -285,7 +285,7 @@ class _Resolver:
         return exported, export_in
 
     def _subject(self, subject: AuthoredSubject, frame: PredicateFrame) -> ScalarSubject:
-        if isinstance(subject, AuthoredPath):
+        if isinstance(subject, AuthoredMemberPath):
             return FieldSubject(self._spelled(subject, frame))
         if not isinstance(frame, ScalarElementFrame):
             raise ModelRejectedError(
@@ -295,11 +295,11 @@ class _Resolver:
             )
         return CURRENT_SCALAR_ELEMENT
 
-    def _spelled(self, path: AuthoredPath, frame: PredicateFrame) -> str:
+    def _spelled(self, path: AuthoredMemberPath, frame: PredicateFrame) -> str:
         """``path``'s canonical spelling in ``frame``: Entity-qualified at the
         queried position, relative wherever a scope binds the object it is read
         from, and refused wherever its receiver is not the current object."""
-        names = self._canonical(path) if path.unfinished else path.names
+        names = self._canonical_names(path) if path.unfinished else path.names
         receiver = path.receiver
         if isinstance(receiver, EntityIdentity):
             if isinstance(frame, EntityFrame) and not frame.bound:
@@ -314,7 +314,7 @@ class _Resolver:
             )
         return ".".join(names)
 
-    def _canonical(self, path: AuthoredPath) -> tuple[str, ...]:  # noqa: C901 - one step per member kind
+    def _canonical_names(self, path: AuthoredMemberPath) -> tuple[str, ...]:  # noqa: C901 - one step per member kind
         """The canonical member names ``path``'s Python names denote, read
         through the serving model's own classes for each Entity they reach."""
         receiver = path.receiver

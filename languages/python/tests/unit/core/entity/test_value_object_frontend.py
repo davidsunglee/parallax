@@ -24,7 +24,7 @@ from parallax.core.entity import EntityDefinitionError, Predicate
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._expressions import (
     AssignableScalarExpr,
-    AuthoredPath,
+    AuthoredMemberPath,
     AuthoredPresence,
     ManyValueObjectExpr,
     PreparedOperation,
@@ -203,7 +203,7 @@ def test_a_single_value_object_hop_continues_the_relative_path() -> None:
     compared = (geo.country == "DE").authored
     present, absent = geo.exists().authored, geo.not_exists().authored
     assert isinstance(compared, PreparedOperation)
-    assert isinstance(compared.subject, AuthoredPath)
+    assert isinstance(compared.subject, AuthoredMemberPath)
     assert compared.subject.names == ("geo", "country")
     assert isinstance(present, AuthoredPresence) and isinstance(absent, AuthoredPresence)
     assert (present.negated, present.target.names) == (False, ("geo",))
