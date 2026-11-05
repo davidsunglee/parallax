@@ -89,7 +89,11 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.lowering_probes import lowered_steps
-from tests._support.model_capabilities import graph_construction_for, wire_facts_for
+from tests._support.model_capabilities import (
+    graph_construction_for,
+    prepared_view_keys_for,
+    wire_facts_for,
+)
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     NO_ROW_READS,
@@ -425,6 +429,7 @@ class _PreparedPage:
         self.page = fixture.page(fixture.node(entity, conforming), fixture.node(entity, invalid))
         self.cataloged = CatalogedModel(meta)
         self.construction = graph_construction_for(domain)
+        self.view_keys = prepared_view_keys_for(domain)
         self.identity = identity_of(meta, entity)
         self.includes = build_include_tree(
             queried=self.identity, root=(self.identity,), positions=()
@@ -445,7 +450,11 @@ class _PreparedPage:
             )
         selected = (
             typed_publication(
-                self.cataloged, self.construction, wire_facts_for(self.cataloged), "owned"
+                self.cataloged,
+                self.construction,
+                wire_facts_for(self.cataloged),
+                self.view_keys,
+                "owned",
             )
             if publication == "typed"
             else wire_publication(self.cataloged, wire_facts_for(self.cataloged), "owned")

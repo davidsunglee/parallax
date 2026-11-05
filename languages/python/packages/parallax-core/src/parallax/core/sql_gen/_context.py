@@ -15,10 +15,10 @@ from parallax.core.base import (
     Json,
     ManagedValue,
     NeutralType,
+    StructuredDocument,
     detach_json_container,
 )
-from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
-from parallax.core.dialect import Dialect
+from parallax.core.dialect import JSON_NULL, ArrayBind, Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.predicate import StringOp
@@ -437,8 +437,8 @@ def _wire_bind(value: object) -> WireValue:
         raise SqlGenError(_UNRENDERED)
     if isinstance(value, ArrayBind):
         return _array_wire_bind(value)
-    if isinstance(value, JsonDocument):
-        value = detach_json_container(value.value)
+    if isinstance(value, StructuredDocument):
+        value = detach_json_container(value.document)
     return _document_wire_bind(value)
 
 
@@ -457,7 +457,7 @@ def _document_wire_bind(value: object) -> WireValue:
 def _array_wire_bind(array: ArrayBind) -> WireValue:
     element_type = array.element_type
     if isinstance(element_type, Json):
-        # A literal JSON null projects as null, exactly as `JsonDocument(None)` does alone.
+        # A literal JSON null projects as null, exactly as `StructuredDocument(None)` does alone.
         return [
             None if element is JSON_NULL else _document_wire_bind(detach_json_container(element))
             for element in array.values
@@ -713,7 +713,7 @@ class StatementBuilder[RowScope = object]:
         for value in values:
             self.bind_structural(value)
 
-    def bind_document(self, value: JsonDocument) -> None:
+    def bind_document(self, value: StructuredDocument) -> None:
         self._append(value)
 
     def bind_array(self, value: ArrayBind) -> None:

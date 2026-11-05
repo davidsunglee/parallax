@@ -39,9 +39,9 @@ from parallax.core import (
 )
 from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core._execution._retention import ReadEvidenceContext
-from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
+from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
     DeferredFeatureError,
@@ -517,7 +517,7 @@ def _branch_row(*, address: dict[str, object] | None) -> MappingRow:
         "thru_z": INFINITY_INSTANT,
         "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "out_z": INFINITY_INSTANT,
-        "address": SQL_NULL if address is None else PresentDocument(cast("Any", address)),
+        "address": SQL_NULL if address is None else StructuredDocument(cast("Any", address)),
     }
 
 
@@ -581,7 +581,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
     # BOTH chained rectangles carry the document, not just the one whose
     # payload the edited copy supplied.
     for binds in inserted_rows(write_ops[1]):
-        assert binds[-1] == JsonDocument(value=address), binds
+        assert binds[-1] == StructuredDocument(cast("DocumentValue", address)), binds
 
 
 # One logical Bitemporal Entity under each Storage Layout: `route` nests a One
@@ -657,9 +657,9 @@ def _owned_row(layout: str) -> MappingRow:
     }
 
 
-def _present(stored: object) -> PresentDocument:
+def _present(stored: object) -> StructuredDocument:
     """``stored`` as a fresh decoded document the read takes ownership of."""
-    return PresentDocument(cast("DocumentValue", copy.deepcopy(stored)))
+    return StructuredDocument(cast("DocumentValue", copy.deepcopy(stored)))
 
 
 def _owned_find(reader: TxnContext, layout: str) -> Entity:
@@ -763,19 +763,19 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     assert handler.documents
     assert handler.mutated == []
     if layout == "document":
-        assert retained is cast("PresentDocument", row["payload"]).document
+        assert retained is cast("StructuredDocument", row["payload"]).document
         assert retained == _OWNED_DOCUMENT
-        carried = cast("JsonDocument", head[-1]).value
+        carried = cast("StructuredDocument", head[-1]).document
         assert type(carried) is FrozenMap
         assert carried == retained
-        changed = cast("JsonDocument", tail[-1]).value
+        changed = cast("StructuredDocument", tail[-1]).document
         assert _as_json(changed) == {**_OWNED_DOCUMENT, "title": "Southbound"}
         assert handler.documents == [carried, changed]
         return
     assert retained is None
     declared_route = {"name": "Coastal", "geo": {"country": "NO"}, "stops": [{"port": "Oslo"}]}
     for insert, title in ((head, "Northbound"), (tail, "Southbound")):
-        route, legs = (cast("JsonDocument", bind).value for bind in insert[-2:])
+        route, legs = (cast("StructuredDocument", bind).document for bind in insert[-2:])
         assert insert[1] == title
         assert _as_json(route) == declared_route
         assert _as_json(legs) == [{"port": "Bergen"}]

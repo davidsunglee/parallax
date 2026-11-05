@@ -25,7 +25,7 @@ from parallax.core.base import (
     ManagedValue,
 )
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
+from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
@@ -334,7 +334,7 @@ def test_an_array_bind_projects_each_element_under_its_own_element_type() -> Non
 def test_a_document_array_projects_sql_null_and_the_literal_json_null_alike_as_null() -> None:
     builder = _builder()
     builder.bind_array(ArrayBind(JSON, [None, JSON_NULL, FrozenMap({"a": (1, None)}), []]))
-    builder.bind_document(JsonDocument(None))
+    builder.bind_document(StructuredDocument(None))
 
     statement = builder.finish("select ?, ?")
 
@@ -932,7 +932,7 @@ _MIXED_ROW: tuple[_TypedBindSlot | None, ...] = (
 
 
 def _mixed_row(key: int, day: object) -> tuple[object, ...]:
-    return (key, JsonDocument({"key": key}), INFINITY, day)
+    return (key, StructuredDocument({"key": key}), INFINITY, day)
 
 
 def test_a_refused_managed_row_binds_nothing_after_valid_scalar_document_and_open_cells() -> None:

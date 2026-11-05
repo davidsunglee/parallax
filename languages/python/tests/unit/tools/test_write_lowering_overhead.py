@@ -42,10 +42,10 @@ from parallax.core.db_port import (
     ArrayBind,
     CanonicalWriteStatement,
     DocumentReadOrdinals,
-    JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
     Row,
+    StructuredDocument,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.write_plan.steps import PlannedInsert
@@ -390,7 +390,7 @@ def test_a_scalar_type_insert_writes_every_leaf_in_its_canonical_wire_spelling()
 # The fixture: what each keyed case lowers to, and what the driver dumps.      #
 # --------------------------------------------------------------------------- #
 def _documents(statement_binds: Sequence[object]) -> list[object]:
-    return [bind.value for bind in statement_binds if isinstance(bind, JsonDocument)]
+    return [bind.document for bind in statement_binds if isinstance(bind, StructuredDocument)]
 
 
 def _rows(statement: lowering_support.Executed) -> list[tuple[object, ...]]:
@@ -433,9 +433,10 @@ def test_every_keyed_case_lowers_its_stated_writes_and_dumps_each_document(
     for statement in lowered:
         assert len(statement.dumped) == len(statement.binds)
         for bind, buffer in zip(statement.binds, statement.dumped, strict=True):
-            if isinstance(bind, JsonDocument):
+            if isinstance(bind, StructuredDocument):
                 assert (
-                    bytes(buffer or b"") == json.dumps(detach_json_container(bind.value)).encode()
+                    bytes(buffer or b"")
+                    == json.dumps(detach_json_container(bind.document)).encode()
                 )
             elif isinstance(bind, ArrayBind) and isinstance(bind.element_type, Json):
                 dumped = bytes(buffer or b"")
@@ -1328,7 +1329,7 @@ def test_the_flush_port_serializes_every_statement_and_counts_one_flush_in_const
     ) == [(1,), (2,)]
     result = transport(
         [_Statement("update t set a = ? where b = ?", (1, 2)) for _ in range(3)]
-        + [_Statement("delete from t where b = ?", (JsonDocument({"b": 1}),))]
+        + [_Statement("delete from t where b = ?", (StructuredDocument({"b": 1}),))]
     )
     assert result == OrderedWriteResultComplete((1, 1, 1, 1))
     assert serialized == [2, 2, 2, 2, 2, 2, 1]
@@ -1779,7 +1780,7 @@ def test_production_codecs_dump_the_open_bound_documents_and_arrays_as_a_connect
     dumped = lowering_support.serialize(
         [
             INFINITY,
-            JsonDocument({"a": [1, None]}),
+            StructuredDocument({"a": [1, None]}),
             ArrayBind(TIMESTAMP, [instant, INFINITY, None]),
             ArrayBind(JSON, [None, JSON_NULL, *documents]),
             ArrayBind(INT64, [1, None]),

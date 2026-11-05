@@ -956,8 +956,9 @@ def test_nested_plain_union_inside_union_all_is_not_canonical() -> None:
 
 # --- MariaDB `union all` + `char` NULL-placeholder casts ----------------------
 # The TPCS abstract-read goldens run on BOTH dialects. MariaDB's CAST target grammar
-# does not accept `varchar`, so a bounded-string placeholder casts to `char(n)`
-# (m-dialect); `decimal(p, s)` is identical on both. The MariaDB golden must be a
+# accepts `varchar(n)` but rejects bare `varchar`, and `char` serves every string
+# placeholder, so a bounded-string placeholder casts to `char(n)` (m-dialect);
+# `decimal(p, s)` is identical on both. The MariaDB golden must be a
 # normalization fixed point under the `mariadb` dialect.
 _TPCS_ROOT_UNION_MARIADB = (
     "select t0.id, t0.title, t0.currency, t0.amount_due, "

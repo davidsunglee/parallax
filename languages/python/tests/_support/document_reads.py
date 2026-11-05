@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 
-from parallax.core.base import SQL_NULL, PresentDocument, SqlNull, is_document_value
+from parallax.core.base import SQL_NULL, SqlNull, StructuredDocument, is_document_value
 from parallax.core.db_port import DocumentReadOrdinals, MappingRow, Row
 
 
@@ -33,10 +33,10 @@ def fold_mapping_document_reads(
             managed[name] = value
         elif value is None:
             managed[name] = SQL_NULL
-        elif isinstance(value, (SqlNull, PresentDocument)):
+        elif isinstance(value, (SqlNull, StructuredDocument)):
             managed[name] = value
         elif is_document_value(value):
-            managed[name] = PresentDocument(value)
+            managed[name] = StructuredDocument(value)
         else:
             raise ValueError("a fake document cell is not a portable document value")
     try:

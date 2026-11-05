@@ -18,8 +18,21 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import animal_owner, read_models
-from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, rel
+from parallax.core import (
+    ONE_TO_MANY,
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    Rel,
+    TablePerHierarchy,
+    attr,
+    rel,
+)
+from parallax.core._execution._publication import read_projection
 from parallax.core.entity import UnloadedRelationshipError
+from parallax.core.execution import ModelSelection, ServingModel, prepare_model
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge
 from parallax.snapshot import (
     Database,
@@ -30,11 +43,16 @@ from parallax.snapshot import (
     pin_of,
     view,
 )
-from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES, snapshot_state_of
+from parallax.snapshot._inspection import (
+    SNAPSHOT_INSPECTION_CODES,
+    NarrowedViews,
+    snapshot_state_of,
+)
 from tests._support import snapshot_models as sm
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.root_ownership import own_root
 from tests.unit import _deep_include_support as deep
+from tests.unit._gc_reachability import reachable_objects
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
@@ -271,6 +289,40 @@ def test_an_unrequested_narrowed_view_answers_false_rather_than_raising() -> Non
     assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Cat)) is False
 
 
+def test_an_abstract_narrow_reads_the_view_its_concretes_key() -> None:
+    root = _narrowed_owner("pets[Cat,Dog]")
+    abstract = cast("tuple[Any, ...]", view(root, sm.AnimalOwner.pets.narrow(sm.Pet)))
+    assert [pet.id for pet in abstract] == [1]
+    assert view(root, sm.AnimalOwner.pets.narrow(sm.Cat, sm.Dog)) == abstract
+    assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Pet)) is True
+    assert is_view_loaded(root, sm.AnimalOwner.pets) is False
+
+
+def test_an_abstract_narrow_reads_a_loaded_empty_and_a_loaded_null_view() -> None:
+    pets = "parallax.compatibility.AnimalOwner.pets"
+    favorite = "parallax.compatibility.AnimalOwner.favorite"
+    keyed = "favorite[Cat,Dog,WildBoar]"
+    fixture = PageFixture(_ANIMAL, (pets, "pets[Cat,Dog]"), (favorite, keyed))
+    owner = fixture.node("AnimalOwner", _OWNER_ROW)
+    fixture.attach(owner, pets, (), narrowed="pets[Cat,Dog]")
+    fixture.attach(owner, favorite, None, narrowed=keyed)
+    (root,) = fixture.materialize(owner)
+
+    empty = sm.AnimalOwner.pets.narrow(sm.Pet)
+    null = sm.AnimalOwner.favorite.narrow(sm.Animal)
+    assert (view(root, empty), view(root, null)) == ((), None)
+    assert (is_view_loaded(root, empty), is_view_loaded(root, null)) == (True, True)
+    assert is_view_loaded(root, empty.name) is True
+
+
+def test_a_node_holding_no_narrowed_view_reports_a_narrow_by_its_authored_spelling() -> None:
+    fixture = PageFixture(_ANIMAL)
+    (root,) = fixture.materialize(fixture.node("AnimalOwner", _OWNER_ROW))
+    assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Pet)) is False
+    with pytest.raises(UnloadedRelationshipError, match=r"pets\[Pet\]"):
+        view(root, sm.AnimalOwner.pets.narrow(sm.Pet))
+
+
 def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None:
     # A to-one hop narrows exactly as a to-many one does, and its view value is
     # then a single node — or loaded-null — rather than a tuple.
@@ -381,6 +433,208 @@ def test_a_deep_path_past_a_narrowed_hop_continues_through_that_view() -> None:
     assert [m.id for m in cast("tuple[Any, ...]", view(root, narrowed.toys.maker))] == [100]
     assert [c.id for c in cast("tuple[Any, ...]", view(root, narrowed.gear))] == [5]
     assert is_view_loaded(root, deep.Keeper.animals.toys.maker) is False
+
+
+_DOG_ONLY: Final = DomainModel(
+    deep.Keeper, deep.Animal, deep.Dog, deep.Toy, deep.Maker, deep.Collar
+)
+_NARROWED_TO_ANIMAL: Final = deep.Keeper.animals.narrow(deep.Animal)
+
+
+def _keeper_query() -> Any:
+    return deep.Keeper.where(deep.Keeper.id == 1)
+
+
+def _found_root(database: Any, query: Any) -> Any:
+    return database.find(query).result()
+
+
+def _streamed_root(database: Any, query: Any) -> Any:
+    with database.stream(query, batch_size=10) as stream:
+        (root,) = list(stream)
+    return root
+
+
+@pytest.mark.parametrize("read", [_found_root, _streamed_root], ids=["eager", "streamed"])
+def test_a_deep_narrowed_path_is_inspected_as_it_was_included(read: Any) -> None:
+    path = _NARROWED_TO_ANIMAL.toys.maker
+    with ScriptedAdapter(*deep.family_reads()) as port:
+        database = own_root(Database.connect(port, deep.FAMILY)).using_database_login()
+        root = read(database, _keeper_query().include(path))
+
+    assert [maker.id for maker in cast("tuple[Any, ...]", view(root, path))] == [100]
+    assert is_view_loaded(root, path) is True
+    same = deep.Keeper.animals.narrow(deep.Dog, deep.Cat).toys.maker
+    assert view(root, same) == view(root, path)
+    assert is_view_loaded(root, deep.Keeper.animals) is False
+    assert is_view_loaded(root, deep.Keeper.animals.narrow(deep.Dog)) is False
+    with pytest.raises(UnloadedRelationshipError, match=r"animals\[Dog\]"):
+        view(root, deep.Keeper.animals.narrow(deep.Dog))
+
+
+def test_only_a_node_with_a_narrowed_view_holds_the_edition_s_keys() -> None:
+    selection = prepare_model(deep.FAMILY, edition="narrowed")
+    with ScriptedAdapter(*deep.family_reads()) as port:
+        database = own_root(Database.connect(port, ServingModel(selection)))
+        root = _found_root(
+            database.using_database_login(),
+            _keeper_query().include(_NARROWED_TO_ANIMAL.toys.maker),
+        )
+
+    state = snapshot_state_of(root)
+    assert state is not None and isinstance(state.views, NarrowedViews)
+    assert state.views.view_keys is read_projection(selection).narrowed_view_keys
+    for reached in cast("tuple[Any, ...]", view(root, _NARROWED_TO_ANIMAL)):
+        reached_state = snapshot_state_of(reached)
+        assert reached_state is not None
+        assert not isinstance(reached_state.views, NarrowedViews)
+
+
+def _animal_reads(*kinds: str) -> tuple[Read, ...]:
+    return (
+        Read(rows=[{"id": 1}]),
+        Read(
+            rows=[
+                {"id": 2 + index, "kind": kind, "keeper_id": 1, "vet_id": None}
+                for index, kind in enumerate(kinds)
+            ]
+        ),
+    )
+
+
+def test_a_retained_node_answers_under_the_edition_that_published_it() -> None:
+    wide = prepare_model(deep.FAMILY, edition="wide")
+    narrow = prepare_model(_DOG_ONLY, edition="narrow")
+    serving = ServingModel(wide)
+    query = _keeper_query().include(_NARROWED_TO_ANIMAL)
+    with ScriptedAdapter(*_animal_reads("dog", "cat"), *_animal_reads("dog")) as port:
+        database = own_root(Database.connect(port, serving)).using_database_login()
+        retained = _found_root(database, query)
+        serving.publish(narrow, expected=wide)
+        current = _found_root(database, query)
+
+    retained_animals = cast("tuple[Any, ...]", view(retained, _NARROWED_TO_ANIMAL))
+    assert [type(animal) for animal in retained_animals] == [deep.Dog, deep.Cat]
+    assert is_view_loaded(retained, _NARROWED_TO_ANIMAL) is True
+    current_animals = cast("tuple[Any, ...]", view(current, _NARROWED_TO_ANIMAL))
+    assert [type(animal) for animal in current_animals] == [deep.Dog]
+    assert is_view_loaded(retained, deep.Keeper.animals.narrow(deep.Dog)) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [deep.Keeper.animals.narrow(deep.Cat), deep.Keeper.animals.narrow(deep.Cat, deep.Dog)],
+    ids=["outside", "partly-outside"],
+)
+def test_a_selection_outside_the_model_is_an_unloaded_view(path: Any) -> None:
+    with ScriptedAdapter(*_animal_reads("dog")) as port:
+        database = own_root(Database.connect(port, _DOG_ONLY)).using_database_login()
+        root = _found_root(database, _keeper_query().include(_NARROWED_TO_ANIMAL))
+
+    assert is_view_loaded(root, _NARROWED_TO_ANIMAL) is True
+    assert is_view_loaded(root, path) is False
+    with pytest.raises(UnloadedRelationshipError, match=r"animals\[Cat"):
+        view(root, path)
+
+
+def _read_narrowed_under(selection: ModelSelection) -> Any:
+    port = ScriptedAdapter(*_animal_reads("dog"))
+    database = Database.connect(port, ServingModel(selection))
+    try:
+        return _found_root(
+            database.using_database_login(), _keeper_query().include(_NARROWED_TO_ANIMAL)
+        )
+    finally:
+        database.close()
+
+
+def test_a_retained_narrowed_node_does_not_keep_its_model_alive() -> None:
+    selection = prepare_model(_DOG_ONLY, edition="retired")
+    prepared = read_projection(selection)
+    root = _read_narrowed_under(selection)
+
+    reached = {id(value) for value in reachable_objects(root)}
+
+    assert id(prepared.narrowed_view_keys) in reached
+    assert reached.isdisjoint(
+        id(value)
+        for value in (
+            selection,
+            selection.model,
+            prepared,
+            prepared.model,
+            prepared.model.meta,
+            prepared.model.layouts,
+            prepared.construction,
+            prepared.classes,
+            prepared.wire,
+        )
+    )
+
+
+_KENNEL_NS = "parallax.tests.kennel"
+_ALPHA = f"{_KENNEL_NS}.alpha.Pack"
+_BETA = f"{_KENNEL_NS}.beta.Pack"
+
+
+class Kennel(Entity, table="kennel", namespace=_KENNEL_NS):
+    id: Attr[int] = attr(primary_key=True)
+    hounds: Rel[tuple[Hound, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "kennel_id"))
+
+
+class Hound(
+    Entity,
+    table="hound",
+    namespace=_KENNEL_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    kennel_id: Attr[int | None]
+
+
+class AlphaPack(
+    Hound,
+    name="Pack",
+    namespace=f"{_KENNEL_NS}.alpha",
+    inheritance=ConcreteSubtype(tag_value="alpha"),
+):
+    pass
+
+
+class BetaPack(
+    Hound,
+    name="Pack",
+    namespace=f"{_KENNEL_NS}.beta",
+    inheritance=ConcreteSubtype(tag_value="beta"),
+):
+    pass
+
+
+_KENNEL: Final = DomainModel(Kennel, Hound, AlphaPack, BetaPack)
+
+
+def test_a_concrete_sharing_its_local_name_is_read_by_its_qualified_key() -> None:
+    alpha = Kennel.hounds.narrow(AlphaPack)
+    both = Kennel.hounds.narrow(Hound)
+    hound_rows = [
+        {"id": 2, "kennel_id": 1, "kind": "alpha"},
+        {"id": 3, "kennel_id": 1, "kind": "beta"},
+    ]
+    with ScriptedAdapter(
+        Read(rows=[{"id": 1}]), Read(rows=hound_rows), Read(rows=hound_rows[:1])
+    ) as port:
+        database = own_root(Database.connect(port, _KENNEL)).using_database_login()
+        root = _found_root(database, Kennel.where(Kennel.id == 1).include(alpha, both))
+
+    assert [type(hound) for hound in cast("tuple[Any, ...]", view(root, alpha))] == [AlphaPack]
+    assert [hound.id for hound in cast("tuple[Any, ...]", view(root, both))] == [2, 3]
+    beta = Kennel.hounds.narrow(BetaPack)
+    assert is_view_loaded(root, beta) is False
+    with pytest.raises(UnloadedRelationshipError, match=rf"hounds\[{_BETA}\]"):
+        view(root, beta)
+    state = snapshot_state_of(root)
+    assert state is not None
+    assert set(state.views) == {f"hounds[{_ALPHA}]", f"hounds[{_ALPHA},{_BETA}]"}
 
 
 def test_a_sibling_never_answers_a_root_segment_it_merely_shares_a_name_with() -> None:
@@ -536,6 +790,7 @@ def test_non_temporal_nodes_without_narrowed_views_share_one_state_per_concrete(
 
     assert first_state is second_state
     assert order_state is not first_state
+    assert not isinstance(first_state.views, NarrowedViews)
     assert order_state.provenance.entity == sm.SnapOrder.identity
     assert first_state.provenance.entity == sm.SnapOrderItem.identity
     with pytest.raises(SnapshotInspectionError) as no_pin:

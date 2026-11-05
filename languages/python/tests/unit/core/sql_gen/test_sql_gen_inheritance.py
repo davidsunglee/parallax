@@ -20,7 +20,7 @@ import pytest
 from parallax.core import continuation, inheritance, read_planning, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
@@ -1990,7 +1990,7 @@ _WRAPPED_TPCS_ROWS: dict[str, tuple[dict[str, object], ...]] = {
             "digest": None,
             "note": "memo",
             "tags": ["a"],
-            "origin": PresentDocument(None),
+            "origin": StructuredDocument(None),
             "family_variant": "Plain",
         },
         {

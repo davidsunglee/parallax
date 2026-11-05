@@ -21,7 +21,7 @@ from parallax.conformance import case_format, engine, models, vo_models, write_v
 from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.execution import prepare_model
@@ -328,7 +328,7 @@ def test_the_second_source_builds_its_own_value_objects_at_every_depth() -> None
                 {
                     "id": 7,
                     "name": "Ada",
-                    "address": PresentDocument(
+                    "address": StructuredDocument(
                         {
                             "street": "1 Park Ave",
                             "city": "Oslo",

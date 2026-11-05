@@ -16,7 +16,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WriteInstructionError
@@ -42,7 +42,7 @@ _ACCOUNT_QUERY: dict[str, object] = {
 _CONTACT_ROW: MappingRow = {
     "id": 1,
     "name": "Ada",
-    "address": PresentDocument(
+    "address": StructuredDocument(
         {"street": "S", "city": "C", "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}}}
     ),
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal, NamedTuple, TypeGuard
@@ -43,6 +44,7 @@ from parallax.core.object_query._resolved import (
     ResolvedTemporalSelection,
     resolved_order_term,
 )
+from parallax.core.predicate import SubtypeSelection
 from parallax.core.predicate._execution_values import (
     NO_EXECUTION_VALUE_SOURCES,
     ExecutionValueSources,
@@ -72,6 +74,7 @@ __all__ = [
     "BackReferenceFetchStep",
     "FetchStep",
     "IncludeTree",
+    "NarrowedViewKeys",
     "ObjectQueryPlan",
     "ParentRef",
     "PlannedEntityQuery",
@@ -81,6 +84,8 @@ __all__ = [
     "RelationshipViewKey",
     "RenderToken",
     "RootRef",
+    "narrowed_view_key",
+    "narrowed_view_keys",
     "plan",
     "plan_coverage_read",
     "plan_root",
@@ -822,8 +827,69 @@ def _attach_key(
     single-concrete narrow still derives a bracketed view key)."""
     if not narrowed:
         return rel_local
-    variants = (inheritance.family_variant_name(facet, identity) for identity in position)
-    return f"{rel_local}[{','.join(variants)}]"
+    return narrowed_view_key(
+        rel_local, [inheritance.family_variant_name(facet, identity) for identity in position]
+    )
+
+
+def narrowed_view_key(relationship: str, variants: Sequence[str]) -> str:
+    """The derived view key of ``relationship`` narrowed to ``variants``: a
+    position's family variant spellings, in that position's own order."""
+    return f"{relationship}[{','.join(variants)}]"
+
+
+class NarrowedViewKeys:
+    """The narrowed view keys of one model, for a caller holding a Subtype
+    Selection rather than a plan.
+
+    Holds strings alone, so whatever retains it pins no model.
+    """
+
+    __slots__ = ("_effective", "_variants")
+
+    def __init__(
+        self, effective: Mapping[str, tuple[str, ...]], variants: Mapping[str, str]
+    ) -> None:
+        self._effective = effective
+        self._variants = variants
+
+    def for_selection(self, relationship: str, narrow_to: SubtypeSelection) -> str | None:
+        """The key the planner derives for ``relationship`` narrowed to
+        ``narrow_to``, or ``None`` when an alternative names no Entity of the
+        model."""
+        selected: set[str] = set()
+        for spelling in narrow_to:
+            concretes = self._effective.get(spelling)
+            if concretes is None:
+                return None
+            selected.update(concretes)
+        return narrowed_view_key(
+            relationship,
+            [variant for concrete, variant in self._variants.items() if concrete in selected],
+        )
+
+
+def narrowed_view_keys(model: Metamodel) -> NarrowedViewKeys:
+    """``model``'s narrowed view keys, its variants in ``model.entities`` order as
+    a resolved position's are.
+
+    An alternative resolves as an Entity reference does: by its canonical
+    spelling, or by a local name exactly one Entity carries.
+    """
+    families = inheritance.view(model)
+    local_names = Counter(entity.identity.name for entity in model.entities)
+    effective: dict[str, tuple[str, ...]] = {}
+    variants: dict[str, str] = {}
+    for entity in model.entities:
+        identity = entity.identity
+        concretes = tuple(
+            concrete.canonical for concrete in _entity_view(families, identity).concrete_subtypes
+        )
+        effective[identity.canonical] = concretes
+        if local_names[identity.name] == 1:
+            effective[identity.name] = concretes
+        variants[identity.canonical] = inheritance.family_variant_name(families, identity)
+    return NarrowedViewKeys(effective, variants)
 
 
 _SORT_DIRECTIONS: Final[Mapping[SortDirection, Literal["asc", "desc"]]] = {

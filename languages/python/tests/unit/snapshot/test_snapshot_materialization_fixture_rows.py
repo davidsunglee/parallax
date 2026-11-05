@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from parallax.core._execution._publication import read_projection
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.execution import prepare_model
 from tests._support.document_reads import folded_names
 from tests.unit._snapshot_materialization_support import (
@@ -75,18 +75,18 @@ def test_materialization_driver_rows_preserve_the_sparse_fixture_payload() -> No
             "node-0-0",
             *([None] * _UNAUTHORED_SCALARS),
             SQL_NULL,
-            PresentDocument([]),
+            StructuredDocument([]),
         ),
     )
 
     document = _first_rows("document")
     assert document[0] == (
         ("id", "favorite_id", "payload"),
-        (1000, 10000, PresentDocument({"name": "owner-0"})),
+        (1000, 10000, StructuredDocument({"name": "owner-0"})),
     )
     assert document[1] == (
         ("id", "kind", "owner_id", "payload"),
-        (10000, "alpha", 1000, PresentDocument({"label": "node-0-0", "tags": []})),
+        (10000, "alpha", 1000, StructuredDocument({"label": "node-0-0", "tags": []})),
     )
 
 

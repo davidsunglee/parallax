@@ -55,8 +55,8 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ArrayBind,
-    JsonDocument,
     MappingRow,
+    StructuredDocument,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
@@ -1355,7 +1355,9 @@ def test_a_later_group_step_composes_onto_a_pending_document_insert() -> None:
     assert [
         (emission.case_pointer, emission.sql.split(" ", 1)[0]) for emission in run.emissions
     ] == [("/scenario/1/write", "insert")]
-    (document,) = (bind.value for bind in run.emissions[0].binds if isinstance(bind, JsonDocument))
+    (document,) = (
+        bind.document for bind in run.emissions[0].binds if isinstance(bind, StructuredDocument)
+    )
     assert cast("Mapping[str, object]", document)["title"] == "Southern Run"
 
 
@@ -1397,7 +1399,9 @@ def test_a_restated_occurrence_is_assigned_literally_beside_the_stored_keys_it_l
     )
     _close, successor = emissions
 
-    (document,) = (bind.value for bind in successor.binds if isinstance(bind, JsonDocument))
+    (document,) = (
+        bind.document for bind in successor.binds if isinstance(bind, StructuredDocument)
+    )
     assert dict(cast("Mapping[str, object]", document)) == {
         "title": "Southbound",
         "crew": 12,
@@ -4270,7 +4274,7 @@ def test_a_target_replacement_step_completes_what_its_row_omits() -> None:
     )
     scenario.run_write_sequence_case(_load_case("m-unit-work-043"), port)
     _close, successor = port.writes
-    assert successor[1][-2:] == [None, JsonDocument(())]
+    assert successor[1][-2:] == [None, StructuredDocument(())]
 
 
 @pytest.mark.parametrize(

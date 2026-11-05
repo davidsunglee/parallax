@@ -99,7 +99,7 @@ only a non-SQL-null `Document`, so JSON null, an array, or a scalar can reach re
 materialization even though every codec-produced Entity document is an object.
 Such a value cannot create a root cursor. `locateEntityMember` accepts the raw
 carrier instead: for an object it locates the requested direct Entity member as
-`PresentDocument` or `Missing`, and for a non-object it locates that member as
+`StructuredDocument` or `Missing`, and for a non-object it locates that member as
 `Missing`. `decodeLocatedMemberClassified` then applies the member's existing
 rules to that located input. A required member produces its existing absent
 finding, a nullable member remains missing, and a `Many` uses its accepted
@@ -149,7 +149,7 @@ decodeClassified(cursor: LogicalJudgingCursor,
 LocatedMemberInput =
     SqlNull
   | Missing
-  | PresentDocument(document: Document)
+  | StructuredDocument(document: Document)
 
 DecodedMember
   presence: Presence | Unavailable
@@ -235,7 +235,7 @@ sequence of member names and never addresses an array position.
 `locateEntityMember` is the only operation that accepts a raw Entity document
 carrier. `root` MUST be the Entity's Logical Judging Root and `member` MUST name
 one direct document-resident member of it. When `document` is an object, the
-operation returns `PresentDocument` with that key's raw value or `Missing` when
+operation returns `StructuredDocument` with that key's raw value or `Missing` when
 the key is absent. When it is JSON null, an array, or a scalar, the operation
 also returns `Missing`. It creates no cursor for the non-object carrier and
 inspects no other member. An Entity root not derived from accepted Metadata or
@@ -244,14 +244,14 @@ input, not a caller error.
 
 `decodeLocatedMemberClassified` is the Entity-root form of classified decoding.
 It accepts the carrier-independent input for one located document-valued Entity
-member. For a direct Structured Column, `SqlNull` and `PresentDocument` are the
+member. For a direct Structured Column, `SqlNull` and `StructuredDocument` are the
 two arms of the `m-core` `DocumentRead` already formed at the database boundary;
 the materializer MUST NOT infer either arm from its payload. `Missing` arises
 after codec-owned Entity-document location found no member. A
-`PresentDocument` from either placement arm carries the raw parsed document
+`StructuredDocument` from either placement arm carries the raw parsed document
 value. `member` MUST name that
 direct member in the Entity root. `SqlNull` has the same member presence as an
-absent key; `PresentDocument` preserves JSON null and every other document kind
+absent key; `StructuredDocument` preserves JSON null and every other document kind
 for classification. The operation applies the member's declared nullability,
 multiplicity, and type exactly once. In particular, a direct `One` may classify
 as absent, explicit null, present object, or `OneWrongKind`, and a direct `Many`
@@ -289,9 +289,9 @@ creates no cursor. The requested descendant therefore never reaches strict
 
 Materialization obtains a requested top-level occurrence carrier before using its
 root. Under `Columns`, the occurrence's Structured Column supplies the port's
-`DocumentRead` as `SqlNull` or `PresentDocument` without the materializer
+`DocumentRead` as `SqlNull` or `StructuredDocument` without the materializer
 interpreting the document value. Under `Document`,
-`locateEntityMember` supplies `Missing` or `PresentDocument` from the raw Entity
+`locateEntityMember` supplies `Missing` or `StructuredDocument` from the raw Entity
 document. Both arms pass that input to `decodeLocatedMemberClassified` before
 entering the occurrence root. The materializer then classifies only the requested
 branch, advancing a cursor after each conforming occurrence. Thus `address.city`

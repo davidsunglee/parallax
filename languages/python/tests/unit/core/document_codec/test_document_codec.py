@@ -37,7 +37,7 @@ from parallax.core.base import (
     DocumentValue,
     FrozenMap,
     NeutralType,
-    PresentDocument,
+    StructuredDocument,
 )
 from parallax.core.document_codec import (
     MISSING,
@@ -123,7 +123,7 @@ def _undecodable(reading: _Reading) -> bool:
 def _decoded(shape: MemberShape, document: object) -> DecodedMember:
     """A whole stored document classified and reduced against ``shape``."""
     return MemberDecodePlan(OccurrenceDefinition("", Multiplicity.ONE, False, shape)).classified(
-        PresentDocument(cast("DocumentValue", document))
+        StructuredDocument(cast("DocumentValue", document))
     )
 
 
@@ -374,7 +374,7 @@ def test_classified_decoding_constructs_positional_output_during_the_shared_walk
     decoded = MemberDecodePlan(
         OccurrenceDefinition("", Multiplicity.ONE, False, shape),
         DecodeOutput(positional_object, lambda values: tuple(values)),
-    ).classified(PresentDocument(stored))
+    ).classified(StructuredDocument(stored))
 
     assert decoded.presence == Present(
         (unavailable, unavailable, (unavailable,), ((7,), (unavailable,)))
@@ -453,7 +453,7 @@ def test_every_member_state_reaches_the_builders_as_one_stream_with_one_finding_
     recorded = MemberDecodePlan(
         OccurrenceDefinition("", Multiplicity.ONE, False, shape),
         DecodeOutput(record_object, record_many),
-    ).classified(PresentDocument(stored))
+    ).classified(StructuredDocument(stored))
     mapping = _decoded(shape, stored)
 
     assert recorded.presence == Present(("object", 3))
@@ -522,7 +522,7 @@ def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -
     )
     wrong_many = MemberDecodePlan(
         OccurrenceDefinition("", Multiplicity.MANY, False, shape)
-    ).classified(PresentDocument([{"required": 1}, "wrong"]))
+    ).classified(StructuredDocument([{"required": 1}, "wrong"]))
     assert absent.findings[0].code == "required-member-absent"
     assert wrong_many.findings[0].code == "many-wrong-kind"
     assert cast("Present", wrong_many.presence).value == []
@@ -535,10 +535,10 @@ def test_document_classification_rejects_container_subclasses() -> None:
 
     wrong_many = MemberDecodePlan(
         OccurrenceDefinition("", Multiplicity.MANY, False, shape)
-    ).classified(PresentDocument(tuple_subclass(({"required": 1},))))
+    ).classified(StructuredDocument(tuple_subclass(({"required": 1},))))
     wrong_one = MemberDecodePlan(
         OccurrenceDefinition("", Multiplicity.ONE, False, shape)
-    ).classified(PresentDocument(dict_subclass(required=1)))
+    ).classified(StructuredDocument(dict_subclass(required=1)))
 
     assert wrong_many.findings[0].code == "many-wrong-kind"
     assert wrong_one.findings[0].code == "one-wrong-kind"

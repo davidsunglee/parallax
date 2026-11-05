@@ -32,7 +32,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import JSON, FrozenMap, retain_document_value
-from parallax.core.db_port import ArrayBind, JsonDocument
+from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import _managed as managed
 from parallax.core.document_codec import persisted_document_equal
@@ -75,7 +75,7 @@ def _lower(instruction: WriteInstruction, model: Metamodel = DOCUMENT) -> list[L
 
 
 def _document(statement: LoweredStatement, index: int = -1) -> object:
-    return cast("JsonDocument", statement.binds[index]).value
+    return cast("StructuredDocument", statement.binds[index]).document
 
 
 def _documents(statement: LoweredStatement, index: int = -1) -> list[object]:
@@ -198,7 +198,7 @@ def test_a_predicate_replacement_completes_every_omitted_member_at_its_own_path(
         "{address}",
         "null",
         "{tags}",
-        JsonDocument(()),
+        StructuredDocument(()),
         1,
     )
 
@@ -213,7 +213,7 @@ def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() ->
     assert statement.sql == (
         "update person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
     )
-    assert statement.binds == ("{address}", JsonDocument({"city": "Bodo"}), 1)
+    assert statement.binds == ("{address}", StructuredDocument({"city": "Bodo"}), 1)
 
 
 def test_assigning_null_to_a_one_occurrence_writes_json_null() -> None:
@@ -225,7 +225,7 @@ def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
     (statement,) = _lower(
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
     )
-    assert statement.binds == ("{tags}", JsonDocument(({"label": "member"},)), 1)
+    assert statement.binds == ("{tags}", StructuredDocument(({"label": "member"},)), 1)
 
 
 def test_one_and_many_assignments_render_the_identical_statement_shape() -> None:
@@ -250,7 +250,7 @@ def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> Non
             ({"id": 1, "address": {"geo": {"country": "NO"}}},),
         )
     )
-    assert statement.binds == ("{address}", JsonDocument({"geo": {"country": "NO"}}), 1)
+    assert statement.binds == ("{address}", StructuredDocument({"geo": {"country": "NO"}}), 1)
 
 
 def test_a_direct_member_still_assigns_its_own_column() -> None:

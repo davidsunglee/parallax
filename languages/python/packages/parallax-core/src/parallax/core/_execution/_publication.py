@@ -9,6 +9,7 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import ClassIndex
+from parallax.core.read_planning import NarrowedViewKeys
 from parallax.core.wire._facts import WireModelFacts
 
 __all__ = [
@@ -61,7 +62,8 @@ class SelectedReadModel:
     rebuilt, or ``None`` for a descriptor-backed model; Typed predicate
     resolution reads Python member names through it. ``wire`` is how every
     Entity of the model renders as Wire, prepared for every model alike,
-    since a Wire read needs no class.
+    since a Wire read needs no class. ``narrowed_view_keys`` is how a node
+    published under this edition finds its narrowed views, prepared alike.
     """
 
     edition: str
@@ -69,6 +71,7 @@ class SelectedReadModel:
     construction: EntityGraphConstruction | None
     classes: ClassIndex | None
     wire: WireModelFacts
+    narrowed_view_keys: NarrowedViewKeys
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +143,7 @@ def select_model(
     classes: ClassIndex | None,
     construction: EntityGraphConstruction | None,
     wire: WireModelFacts,
+    narrowed_view_keys: NarrowedViewKeys,
     preparation: WritePreparation,
     planner: WritePlanner,
 ) -> ModelSelection:
@@ -158,7 +162,12 @@ def select_model(
     """
     checked = check_edition(edition)
     read = SelectedReadModel(
-        edition=checked, model=catalog, construction=construction, classes=classes, wire=wire
+        edition=checked,
+        model=catalog,
+        construction=construction,
+        classes=classes,
+        wire=wire,
+        narrowed_view_keys=narrowed_view_keys,
     )
     write = SelectedWriteModel(
         edition=checked,

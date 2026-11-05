@@ -25,7 +25,7 @@ import pytest
 
 from parallax.core import Attr, Document, DomainModel, TxTemporal, ValueObject, attr
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import DocumentLeafAssignment
 from parallax.core.document_codec import apply_prepared_patches, persisted_document_equal
@@ -192,14 +192,14 @@ def test_prepared_patches_persist_what_applying_them_in_memory_predicts(
 ) -> None:
     _seed(profile_run, json.dumps(_STORED))
     before = _persisted(profile_run)
-    assert isinstance(before, PresentDocument)
+    assert isinstance(before, StructuredDocument)
     payload, patched = _prepared(_assignments(patch))
     predicted = apply_prepared_patches(before.document, patched.patches)
 
     assert _execute(profile_run, _revision(payload.assignments), payload) == 1
 
     persisted = _persisted(profile_run)
-    assert isinstance(persisted, PresentDocument)
+    assert isinstance(persisted, StructuredDocument)
     assert persisted_document_equal(predicted, persisted.document), (predicted, persisted.document)
     for undeclared in ("legacy", "newerKey"):
         assert persisted_document_equal(predicted[undeclared], _STORED[undeclared])

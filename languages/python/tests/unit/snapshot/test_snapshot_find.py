@@ -46,7 +46,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY, INT64, PresentDocument
+from parallax.core.base import INFINITY, INT64, StructuredDocument
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
     ArrayBind,
@@ -2623,7 +2623,7 @@ def test_a_document_layout_temporal_read_renders_its_own_operand_and_coordinates
 ) -> None:
     earlier = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     later = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-    stored = Read(rows=[_milestoned({"id": 1, "payload": PresentDocument({"route": "North"})})])
+    stored = Read(rows=[_milestoned({"id": 1, "payload": StructuredDocument({"route": "North"})})])
     port = ScriptedAdapter(stored, stored, stored)
     root = own_root(Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL))
     db = root.using_database_login()

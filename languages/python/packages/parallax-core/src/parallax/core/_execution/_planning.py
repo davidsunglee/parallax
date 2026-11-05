@@ -21,6 +21,7 @@ from parallax.core.metamodel import (
     ScalarDefinition,
 )
 from parallax.core.read_delivery._page import ABSENT
+from parallax.core.read_planning import narrowed_view_keys
 from parallax.core.wire._facts import (
     OCCURRENCE,
     WireEntityFacts,
@@ -57,6 +58,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         classes=classes,
         construction=construction,
         wire=wire_model_facts(catalog),
+        narrowed_view_keys=narrowed_view_keys(catalog.meta),
         preparation=build_write_preparation(catalog.meta, positional=positional),
         planner=build_write_planner(catalog.meta),
     )

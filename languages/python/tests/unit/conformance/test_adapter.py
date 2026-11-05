@@ -35,7 +35,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import INFINITY, NeutralType, PresentDocument, ScalarConverter
+from parallax.core.base import INFINITY, NeutralType, ScalarConverter, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
@@ -1549,7 +1549,7 @@ def test_run_case_graph_observation_reports_the_positions_a_read_classified() ->
             # The case's own `given.corrupt` reads the addressed document back
             # before it writes over it (m-case-format), ahead of the read.
             [{"profile": {"street": "4 Main", "city": "Boston"}}],
-            [{"id": 1, "profile": PresentDocument({"city": "Oslo"})}],
+            [{"id": 1, "profile": StructuredDocument({"city": "Oslo"})}],
             [],
         ]
     )

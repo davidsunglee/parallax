@@ -44,8 +44,10 @@ from ..storage_layout import (
     ValueObjectContributor,
 )
 from .execute import (
+    assert_lists_every_key,
     assert_union_all_only,
     document_presence_ordinals,
+    key_membership,
     projection_expr,
     string_literal_value,
     union_branch_selects,
@@ -542,42 +544,29 @@ def _assert_branch_keyed(
     case: Case, branch: Any, position: int, name: str, level: LevelUnion
 ) -> None:
     """Assert one level branch compares the gathered keys and consumes its own binds."""
-    where = branch.args.get("where")
-    membership = where.this if where is not None else None
-    while isinstance(membership, exp.And):
-        membership = membership.this
-    if not isinstance(membership, exp.EQ if level.key_array is not None else exp.In) or not (
-        isinstance(membership.this, exp.Column) and membership.this.name == level.key_column
-    ):
+    subject = f"{case.path.name}: `union all` branch {position} ({name!r})"
+    form = exp.EQ if level.key_array is not None else exp.In
+    membership = key_membership(branch, level.key_column, form)
+    if membership is None:
         raise CaseFailure(
-            f"{case.path.name}: `union all` branch {position} ({name!r}) of a deep-fetch "
-            f"level is not keyed by {level.key_column!r}. Every branch shares the level's "
-            f"gathered key set (m-sql / m-read-planning)."
+            f"{subject} of a deep-fetch level is not keyed by {level.key_column!r}. Every "
+            f"branch shares the level's gathered key set (m-sql / m-read-planning)."
         )
     if level.key_array is not None:
         engine = sqlglot_dialect(level.dialect)
         expected = sqlglot.parse_one(f"t0.key = any({level.key_array})", read=engine)
         if membership.expression != expected.expression:
             raise CaseFailure(
-                f"{case.path.name}: `union all` branch {position} ({name!r}) does not compare "
-                f"its gathered keys through {level.key_array!r}. A PostgreSQL child level "
-                f"casts its one key array to the array of the key's own type "
-                f"(m-sql / m-dialect)."
+                f"{subject} does not compare its gathered keys through {level.key_array!r}. "
+                f"A PostgreSQL child level casts its one key array to the array of the key's "
+                f"own type (m-sql / m-dialect)."
             )
     placeholders = sum(1 for _ in branch.find_all(exp.Placeholder))
     if placeholders != level.branch_binds:
         raise CaseFailure(
-            f"{case.path.name}: `union all` branch {position} ({name!r}) of a deep-fetch "
-            f"level consumes {placeholders} bind(s), expected {level.branch_binds}. Every "
-            f"branch shares the level's one gathered key set (m-sql / m-read-planning)."
+            f"{subject} of a deep-fetch level consumes {placeholders} bind(s), expected "
+            f"{level.branch_binds}. Every branch shares the level's one gathered key set "
+            f"(m-sql / m-read-planning)."
         )
-    if level.key_array is None and not (
-        len(membership.expressions) == level.key_count
-        and all(isinstance(key, exp.Placeholder) for key in membership.expressions)
-    ):
-        raise CaseFailure(
-            f"{case.path.name}: `union all` branch {position} ({name!r}) does not compare "
-            f"its {level.key_count} gathered key(s) through its membership list, which reads "
-            f"{membership.sql(dialect=sqlglot_dialect(level.dialect))!r}. A child level "
-            f"renders one placeholder per key (m-sql)."
-        )
+    if level.key_array is None:
+        assert_lists_every_key(subject, membership, level.key_count, level.dialect)

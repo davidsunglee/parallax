@@ -3,7 +3,7 @@
 The public exports are ``PostgresAdapter``, ``PostgresRole``, the two retention
 policies, and ``isolation_spelling`` (§8 topology); psycopg bind mechanics and the scoped
 connection under an acquisition stay internal. The bind-adaptation seam — the
-neutral ``JsonDocument`` carrier becoming a psycopg ``Jsonb`` at the adapter
+neutral ``StructuredDocument`` carrier becoming a psycopg ``Jsonb`` at the adapter
 boundary — the `m-db-error` port-boundary re-raise (every psycopg exception
 translated to a neutral ``DatabaseError``), and the per-connection setup and
 transaction phases are all provable over a fake connection here; the
@@ -53,9 +53,10 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
+    DocumentValue,
     FrozenMap,
     NeutralType,
-    PresentDocument,
+    StructuredDocument,
     TemporalBound,
 )
 from parallax.core.base import Decimal as DecimalType
@@ -71,7 +72,6 @@ from parallax.core.db_port import (
     CommitFailed,
     Committed,
     DatabaseConnection,
-    JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
@@ -153,7 +153,7 @@ def test_every_portable_level_has_exactly_one_postgres_spelling() -> None:
 
 
 def testadapt_binds_wraps_json_documents_and_passes_scalars_through() -> None:
-    adapted = adapt_binds([1, "x", JsonDocument({"city": "Oslo"}), None])
+    adapted = adapt_binds([1, "x", StructuredDocument({"city": "Oslo"}), None])
     assert adapted[0] == 1
     assert adapted[1] == "x"
     assert isinstance(adapted[2], Jsonb)
@@ -161,26 +161,31 @@ def testadapt_binds_wraps_json_documents_and_passes_scalars_through() -> None:
 
 
 def testadapt_binds_wraps_the_document_value() -> None:
-    document = {"geo": {"lat": 1}}
-    (adapted,) = adapt_binds([JsonDocument(document)])
+    document: DocumentValue = {"geo": {"lat": 1}}
+    (adapted,) = adapt_binds([StructuredDocument(document)])
     assert isinstance(adapted, Jsonb)
     assert adapted.obj == document
 
 
 def test_frozen_documents_dump_byte_equal_to_the_standard_json_settings() -> None:
     mutable = {"city": "Oslo", "tags": [{"label": "home"}], "active": True}
-    frozen = FrozenMap({"city": "Oslo", "tags": ({"label": "home"},), "active": True})
+    frozen = cast(
+        "DocumentValue",
+        FrozenMap({"city": "Oslo", "tags": ({"label": "home"},), "active": True}),
+    )
     transformer = Transformer(postgres.adapters)
 
     baseline = transformer.dump_sequence([Jsonb(mutable)], [PyFormat.AUTO])
-    actual = transformer.dump_sequence(adapt_binds([JsonDocument(frozen)]), [PyFormat.AUTO])
+    actual = transformer.dump_sequence(adapt_binds([StructuredDocument(frozen)]), [PyFormat.AUTO])
 
     assert actual == baseline
 
 
 def test_frozen_document_dump_preserves_standard_unsupported_leaf_errors() -> None:
     transformer = Transformer(postgres.adapters)
-    adapted = adapt_binds([JsonDocument(FrozenMap({"unsupported": object()}))])
+    adapted = adapt_binds(
+        [StructuredDocument(cast("DocumentValue", FrozenMap({"unsupported": object()})))]
+    )
 
     with pytest.raises(TypeError, match="not JSON serializable"):
         transformer.dump_sequence(adapted, [PyFormat.AUTO])
@@ -201,7 +206,7 @@ def test_a_patched_successor_binds_its_retained_numbers_with_their_exact_meaning
         stored, prepare_patches(shape, [SetScalar(("city",), Present("Bergen"))])
     )
     (dumped,) = Transformer(postgres.adapters).dump_sequence(
-        adapt_binds([JsonDocument(successor)]), [PyFormat.AUTO]
+        adapt_binds([StructuredDocument(cast("DocumentValue", successor))]), [PyFormat.AUTO]
     )
 
     assert dumped is not None
@@ -1012,7 +1017,11 @@ def test_a_paired_result_folds_sql_null_and_present_json_null_by_presence() -> N
 
     rows = _direct_execution(connection).execute("select id, present, document", [], ((1, 2),))
 
-    assert rows == [(1, SQL_NULL), (2, PresentDocument(None)), (3, PresentDocument({"value": 1}))]
+    assert rows == [
+        (1, SQL_NULL),
+        (2, StructuredDocument(None)),
+        (3, StructuredDocument({"value": 1})),
+    ]
     assert connection.result_cursors[0].row_factory_kind == "folding"
 
 
@@ -1020,17 +1029,17 @@ def test_a_paired_result_folds_sql_null_and_present_json_null_by_presence() -> N
     ("document_reads", "record", "expected"),
     [
         ((), (7, None), (7, None)),
-        (((0, 1),), (True, {"a": 1}, "tail"), (PresentDocument({"a": 1}), "tail")),
+        (((0, 1),), (True, {"a": 1}, "tail"), (StructuredDocument({"a": 1}), "tail")),
         (((2, 3),), ("head", 7, False, None), ("head", 7, SQL_NULL)),
         (
             ((1, 2), (4, 5)),
             (7, True, {"value": 1}, "kept", False, None),
-            (7, PresentDocument({"value": 1}), "kept", SQL_NULL),
+            (7, StructuredDocument({"value": 1}), "kept", SQL_NULL),
         ),
         (
             ((4, 5), (1, 2)),
             (7, True, {"value": 1}, "kept", True, None),
-            (7, PresentDocument({"value": 1}), "kept", PresentDocument(None)),
+            (7, StructuredDocument({"value": 1}), "kept", StructuredDocument(None)),
         ),
     ],
     ids=["no-pairs", "leading-pair", "trailing-pair", "two-pairs", "unordered-pairs"],
@@ -1121,7 +1130,7 @@ def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync()
         )
     )
 
-    assert rows == [[(1,), (2,)], [(SQL_NULL,), (PresentDocument(None),)]]
+    assert rows == [[(1,), (2,)], [(SQL_NULL,), (StructuredDocument(None),)]]
     assert rows[0] is records
     assert connection.pipeline_events == [
         "pipeline-enter",
@@ -1811,7 +1820,7 @@ def test_a_read_pipeline_broken_in_transport_is_submitted_once_more_whole_on_a_r
         rows = scoped.execute_pipeline(_DOCUMENT_BATCH, read_only=True)
         assert _first_send(context) == "spent"
 
-    assert rows == [[(PresentDocument({"a": 1}),), (SQL_NULL,)], [(7,)]]
+    assert rows == [[(StructuredDocument({"a": 1}),), (SQL_NULL,)], [(7,)]]
     assert pool.checkouts == 2
     assert pool.returned == [broken, fresh]
     assert not any(event.endswith(("-attach", "-fetch")) for event in broken.pipeline_events)

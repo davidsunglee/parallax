@@ -73,9 +73,9 @@ from parallax.core._execution._write_lowering import (
 )
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, FrozenMap
+from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, DocumentValue, FrozenMap
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import ArrayBind, JsonDocument
+from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -321,7 +321,7 @@ def test_delete_is_keyed_by_the_primary_key() -> None:
 
 
 def test_value_object_document_binds_as_one_json_document_in_column_order() -> None:
-    # A value-object member rides its Document-tier slot as one JsonDocument — the
+    # A value-object member rides its Document-tier slot as one StructuredDocument — the
     # whole document, never decomposed (m-sql valueObject atomic document write).
     # The document is COMPOSED through the codec rather than bound as the write
     # input carried it, so presence is the codec's answer: `phones` is a `many`
@@ -337,7 +337,9 @@ def test_value_object_document_binds_as_one_json_document_in_column_order() -> N
     )[0]
     assert statement.sql == "insert into customer(id, name, address) values (?, ?, ?)"
     assert statement.binds[:2] == (1, "Ada")
-    assert statement.binds[2] == JsonDocument({"street": "1 Main", "city": "Oslo", "phones": []})
+    assert statement.binds[2] == StructuredDocument(
+        {"street": "1 Main", "city": "Oslo", "phones": []}
+    )
 
 
 def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() -> None:
@@ -364,7 +366,7 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
         ),
         CUSTOMER,
     )[0]
-    assert statement.binds[2] == JsonDocument(
+    assert statement.binds[2] == StructuredDocument(
         {
             "street": "2 Main",
             "city": "Bergen",
@@ -1200,14 +1202,16 @@ def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
     # A DB-computed marker is a SCALAR cell's shape. A value-object member
     # resolves to its own Value Object identity, so its whole-document mapping is
     # never offered to the marker classification at all — it still lowers to one
-    # JsonDocument bind, marker-shaped or not.
+    # StructuredDocument bind, marker-shaped or not.
     insert = KeyedWriteInstruction(
         "insert",
         "Customer",
         ({"id": 5, "name": "Vera", "address": {"street": "3 Main", "city": "Berlin"}},),
     )
     statement = _lower(insert, CUSTOMER)[0]
-    assert statement.binds[-1] == JsonDocument({"street": "3 Main", "city": "Berlin", "phones": []})
+    assert statement.binds[-1] == StructuredDocument(
+        {"street": "3 Main", "city": "Berlin", "phones": []}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1285,10 +1289,10 @@ def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document
 
     statement = lowered(step, LayoutPayloadPreparer(CUSTOMER), CUSTOMER, POSTGRES)
 
-    assert statement.binds[-1] == JsonDocument(
+    assert statement.binds[-1] == StructuredDocument(
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
     )
-    document = cast("JsonDocument", statement.binds[-1]).value
+    document = cast("StructuredDocument", statement.binds[-1]).document
     assert type(document) is FrozenMap
     assert type(cast("FrozenMap[str, object]", document)["phones"]) is tuple
 
@@ -1585,7 +1589,7 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
     )
     statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
     assert statement.sql == "insert into crate(id, labels) values (?, ?)"
-    assert statement.binds == (7, JsonDocument(()))
+    assert statement.binds == (7, StructuredDocument(()))
 
 
 def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -> None:
@@ -1753,7 +1757,7 @@ def test_lowering_reuses_backing_an_entry_already_carries() -> None:
 
     statement = lowered(step, _Unprepared(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
 
-    assert statement.binds == (7, "n", JsonDocument(()))
+    assert statement.binds == (7, "n", StructuredDocument(()))
     assert carried == entry
     with pytest.raises(ValueError, match="the payload prepared from it"):
         entry.with_prepared(
@@ -1815,9 +1819,9 @@ def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
 
     statement = compile_write_step(step, payload, document, POSTGRES)
 
-    assert JsonDocument(occurrence.value) in statement.binds
-    (bound,) = (bind for bind in statement.binds if isinstance(bind, JsonDocument))
-    assert bound.value is occurrence.value
+    assert StructuredDocument(cast("DocumentValue", occurrence.value)) in statement.binds
+    (bound,) = (bind for bind in statement.binds if isinstance(bind, StructuredDocument))
+    assert bound.document is occurrence.value
     assert name.value == "Ada"
 
 
@@ -2125,7 +2129,7 @@ def test_one_entry_binds_its_cells_and_compacts_its_typed_runs() -> None:
         None,
         _BUILDER_OPENED,
         OPEN_BOUND,
-        JsonDocument(FrozenMap({"label": "shelf-3"})),
+        StructuredDocument(FrozenMap({"label": "shelf-3"})),
     )
     assert statement.typed_bind_spans == (
         _TypedBindSpan(0, 2, INT64, "MANAGED"),

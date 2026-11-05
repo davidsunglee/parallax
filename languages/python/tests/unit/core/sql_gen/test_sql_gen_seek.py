@@ -18,7 +18,7 @@ from typing import Final
 import pytest
 
 from parallax.core import continuation, read_planning
-from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
+from parallax.core.base import INFINITY, INFINITY_LITERAL, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
@@ -780,7 +780,7 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
     )
     cells = {
         "id": 1,
-        "payload": PresentDocument({"parallax_seek_0": 3}),
+        "payload": StructuredDocument({"parallax_seek_0": 3}),
         "parallax_seek_1": 3,
         "parallax_seek_2": 1,
     }

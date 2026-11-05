@@ -47,7 +47,7 @@ from parallax.core.base import (
     UUID,
     Decimal,
     NeutralType,
-    PresentDocument,
+    StructuredDocument,
 )
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
@@ -90,7 +90,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
-from tests._support.model_capabilities import graph_construction_for
+from tests._support.model_capabilities import graph_construction_for, prepared_view_keys_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
@@ -807,7 +807,7 @@ def test_a_converted_row_answers_the_whole_row_with_documents_decoded() -> None:
     row: dict[str, object] = {
         "id": 1,
         "name": "Ada",
-        "address": PresentDocument({"street": "1 Park Ave", "city": "Oslo"}),
+        "address": StructuredDocument({"street": "1 Park Ave", "city": "Oslo"}),
     }
     columns = _state_row(CUSTOMER, "Customer", row)
     assert columns["id"] == 1
@@ -879,7 +879,11 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     ref, *_ = customers.record_row(customer, builder, source=ROOT_LEVEL)
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
-    publisher = TypedRootPublisher(CUSTOMER, graph_construction_for(vo_models.CUSTOMER_MODEL))
+    publisher = TypedRootPublisher(
+        CUSTOMER,
+        graph_construction_for(vo_models.CUSTOMER_MODEL),
+        prepared_view_keys_for(vo_models.CUSTOMER_MODEL),
+    )
 
     def publish_root(view: RootView, ordinal: int) -> tuple[object, ...]:
         assert view.invalid_root is None

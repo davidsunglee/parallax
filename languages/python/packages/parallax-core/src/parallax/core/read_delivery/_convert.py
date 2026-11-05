@@ -8,8 +8,8 @@ from typing import Final, cast
 from parallax.core.base import (
     SQL_NULL,
     DocumentValue,
-    PresentDocument,
     SqlNull,
+    StructuredDocument,
     UnknownFamilyTag,
     check_stored_scalar,
 )
@@ -532,15 +532,15 @@ def occurrence_completer(
     return complete
 
 
-def _occurrence_input(raw: object) -> SqlNull | PresentDocument:
+def _occurrence_input(raw: object) -> SqlNull | StructuredDocument:
     """The input an occurrence stored in a Column of its own is classified
     from: the driver's ``None`` is SQL null."""
     return (
         raw
-        if isinstance(raw, (SqlNull, PresentDocument))
+        if isinstance(raw, (SqlNull, StructuredDocument))
         else SQL_NULL
         if raw is None
-        else PresentDocument(cast("DocumentValue", raw))
+        else StructuredDocument(cast("DocumentValue", raw))
     )
 
 

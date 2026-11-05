@@ -44,7 +44,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument
 from parallax.core.db_port import Row
 from parallax.core.entity import GraphConstructionError
 from parallax.core.entity._layout import CatalogedModel
@@ -369,7 +369,7 @@ def test_one_converter_publishes_each_page_it_converts_as_a_fresh_converter_woul
     converter = encoded_identity_read()
     for rows in (
         ((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)),
-        ((None, None, SQL_NULL), (OTHER_KEY_TEXT, None, PresentDocument({"street": "Main"}))),
+        ((None, None, SQL_NULL), (OTHER_KEY_TEXT, None, StructuredDocument({"street": "Main"}))),
     ):
         published = _published_page(converter, rows)
 
@@ -395,7 +395,7 @@ def _published_page(converter: ReadRowConverter, rows: tuple[Row, ...]) -> list[
 
 def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
     page = encoded_identity_page(
-        (None, None, PresentDocument({"street": "1 Park Ave", "phones": {"type": "home"}})),
+        (None, None, StructuredDocument({"street": "1 Park Ave", "phones": {"type": "home"}})),
     )
 
     (root,) = observed_roots(page, ENCODED_IDENTITY)

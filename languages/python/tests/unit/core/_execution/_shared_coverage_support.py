@@ -29,7 +29,7 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     target_write,
 )
-from parallax.core.base import INFINITY, DocumentValue, PresentDocument
+from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._model import model_of
@@ -149,7 +149,7 @@ def physical_row(entity: type[Bitemporal], row: PredecessorRow) -> dict[str, obj
             "amount": cast("int", members["amount"]),
             "label": cast("str", members["label"]),
         }
-        return {"id": members["id"], **axes, "payload": PresentDocument(document)}
+        return {"id": members["id"], **axes, "payload": StructuredDocument(document)}
     return {"id": members["id"], "amount": members["amount"], "label": members["label"], **axes}
 
 

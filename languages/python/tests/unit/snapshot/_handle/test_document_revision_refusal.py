@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from parallax.core import Attr, Document, DomainModel, TxTemporal, attr
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.unit_work import RollbackOnlyError
 from parallax.snapshot import TxnContext
@@ -45,10 +45,10 @@ class ColumnsLog(TxTemporal, table="columns_log", namespace="document.revision")
 _MODEL = DomainModel(RevisedLog, ColumnsLog)
 
 _NON_OBJECT_DOCUMENTS = {
-    "json-null": PresentDocument(None),
+    "json-null": StructuredDocument(None),
     "sql-null": SQL_NULL,
-    "array": PresentDocument(["legacy", "old"]),
-    "scalar": PresentDocument("legacy"),
+    "array": StructuredDocument(["legacy", "old"]),
+    "scalar": StructuredDocument("legacy"),
 }
 
 
@@ -57,7 +57,7 @@ def _row(key: int, payload: object) -> dict[str, object]:
 
 
 def _stored(key: int) -> dict[str, object]:
-    return _row(key, PresentDocument({"amount": 1, "label": "a"}))
+    return _row(key, StructuredDocument({"amount": 1, "label": "a"}))
 
 
 def _kinds(calls: list[PortCall]) -> list[str]:

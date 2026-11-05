@@ -25,6 +25,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+import sqlglot
+from sqlglot import exp
+
 from .. import portable_literal
 from .._postgres_arrays import column_array_parameter
 from ..case import Case, Entity, Model
@@ -40,6 +43,7 @@ from ..inheritance import (
     resolve_root_source_set,
     tag_value_to_subtype,
 )
+from ..sql_canonical import sqlglot_dialect
 from . import execute, materialize, tpcs
 from .executor import ReadExecutor
 
@@ -636,6 +640,20 @@ def _checked_branch_binds(
     return executed_keys + list(step.tag_binds) + expected_suffix
 
 
+def _assert_level_lists_keys(
+    label: str, level_sql: str, key_column: str, key_count: int, dialect: str
+) -> None:
+    """Assert a level with no `union all` lists its gathered keys over *key_column*."""
+    tree = sqlglot.parse_one(level_sql, read=sqlglot_dialect(dialect))
+    membership = execute.key_membership(tree, key_column, exp.In)
+    if membership is None:
+        raise CaseFailure(
+            f"{label} is not keyed by {key_column!r}. A child level compares its gathered "
+            f"keys through one membership list (m-sql / m-read-planning)."
+        )
+    execute.assert_lists_every_key(label, membership, key_count, dialect)
+
+
 def execute_fetch_levels(
     case: Case,
     reader: ReadExecutor,
@@ -720,6 +738,7 @@ def execute_fetch_levels(
             )
         ]
 
+        child_col = column_of(step.child_entity, step.child_attr)
         key_array = column_array_parameter(key_type) if dialect == "postgres" else None
         if key_array is not None and f"= any({key_array})" not in level_sql:
             raise CaseFailure(
@@ -727,9 +746,10 @@ def execute_fetch_levels(
                 f"'= any({key_array})'. A PostgreSQL child level casts its one key array to "
                 f"the array of the key's own type (m-sql / m-dialect)."
             )
+        if key_array is None and step.union_set is None:
+            _assert_level_lists_keys(label, level_sql, child_col, len(parent_keys), dialect)
 
         child_rows = execute.query_rows(case, reader, level_sql, executed_binds)
-        child_col = column_of(step.child_entity, step.child_attr)
         # The level is materialized WHOLE by the seam that owns its kind of
         # position, which it states its own facts to: the raw tag column a
         # polymorphic (abstract-target, table-per-hierarchy) hop projects and the

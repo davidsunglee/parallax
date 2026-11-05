@@ -76,10 +76,10 @@ A lowered statement retains driver-ready binds as one plain ordered tuple. SQL
 chooses the physical representation of each typed value: a direct typed column or
 typed document cast binds the managed carrier, while document text extraction
 binds canonical comparison text supplied by `m-document-codec`. No per-bind
-wrapper carries a scalar's value, type, and form together. Only the port's
-document and array carriers (`m-db-port`) wrap a bind, because a driver cannot
-type either from its value; an array carrier names its element type itself, one
-wrapper per array rather than per element.
+wrapper carries a scalar's value, type, and form together. Only `m-core`'s
+`StructuredDocument` and `m-dialect`'s array carrier wrap a bind, because a driver
+cannot type either from its value; an array carrier names its element type itself,
+one wrapper per array rather than per element.
 
 Where canonical compatibility projection needs declared-type information, the
 statement carries compact private metadata over that tuple:
@@ -118,7 +118,7 @@ carrier's own element type, in order, with a null element as `null` and the open
 upper bound as its canonical literal. It never infers a `NeutralType` from a
 runtime carrier.
 An unannotated bind in a publicly constructible statement may pass through only
-when it is already an ordinary Wire Value, a document wrapper, or an array
+when it is already an ordinary Wire Value, a `StructuredDocument`, or an array
 carrier; any other carrier is a SQL-generation error rather than a guessed
 encoding.
 
@@ -296,7 +296,7 @@ For each physical branch, SQL selects from the layout values as follows:
    for a requested document-resident member, so a row-form read of direct members
    alone emits no document extraction and no document projection at all. The
    Structured Column is never a result field: the row transform unwraps a
-   `PresentDocument` and passes its document to `m-document-codec`'s
+   `StructuredDocument` and passes its document to `m-document-codec`'s
    Entity-member locator, then fans the classified
    inputs out into the requested logical members — none, where the read requested
    none — and the raw value is not among them. The fan-out references the
@@ -345,7 +345,7 @@ The database port consumes those ordinal pairs and replaces each pair with one
 the discriminator cell. Consequently no row transform sees a provider value for
 a document slot, and neither SQL `NULL` nor JSON null is inferred from a
 host-language null sentinel. The row transform receives `SqlNull` or
-`PresentDocument(document)`, retains the latter's document unchanged when it is
+`StructuredDocument(document)`, retains the latter's document unchanged when it is
 an observation carrier, and sends the same tagged input to classified
 materialization when the slot is a logical occurrence carrier.
 
@@ -513,7 +513,7 @@ subject compares in, through the `m-dialect` **array parameter cast form** — t
 column's own type, or, for a document extraction, the type its typed cast form
 casts to and otherwise text — so the comparison stays same-typed however the
 driver types the array. The statement's text and bind arity are therefore
-independent of the list's length. The bind is one array carrier (`m-db-port`)
+independent of the list's length. The bind is one array carrier (`m-dialect`)
 whose elements are managed values of the subject's declared type, or, for a
 text-compared extraction, the `string` comparison texts it compares with.
 MariaDB has no array parameter and renders `t0.col in (?, ?, …)` with one
@@ -1519,7 +1519,7 @@ whatever N is:
 
 Each array holds its Column's value from every row, in row order, so the arrays
 are equally long and their elements at one index are one row. Each bind is one
-array carrier (`m-db-port`) of the Column's own Neutral Type; a nullable
+array carrier (`m-dialect`) of the Column's own Neutral Type; a nullable
 Column's array holds SQL NULL where a row states that member null. A Column
 storing a whole document — a Value Object, a scalar collection, or the shared
 Structured Column — binds a `json` array holding one complete document per row,
@@ -2657,7 +2657,7 @@ finer granularity.
 A **broad polymorphic read** resolves the variant tag first and decodes only that
 variant's applicable document shape, so projection needs no partitioning: the
 Structured Column is projected as its document read pair and the row transform
-chooses the shape from the resulting `PresentDocument`.
+chooses the shape from the resulting `StructuredDocument`.
 Under table-per-concrete-subtype each branch projects its own Structured Column
 and decodes against its own applicable shape before the union result is
 normalized.

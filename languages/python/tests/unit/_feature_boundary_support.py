@@ -24,7 +24,7 @@ from parallax.core import (
 from parallax.core._execution._publication import SelectedReadModel, read_projection
 from parallax.core._execution._read_pipeline import interpreted
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, PresentDocument
+from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, StructuredDocument
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
@@ -226,7 +226,7 @@ class _ScalarDriver:
                 raw = [f"{index % 4}.25" for index in range(size)]
             case _:
                 raise KeyError(scalar_type)
-        self._stored = PresentDocument(raw)
+        self._stored = StructuredDocument(raw)
 
     def prepare(self) -> None:
         self._plan = MemberDecodePlan(self._member)

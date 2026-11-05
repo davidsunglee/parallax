@@ -55,7 +55,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES, scalar_result
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -336,18 +336,18 @@ def _observed(prepared: _Prepared, stored: Mapping[str, object]) -> dict[str, ob
     return physical_members(rows.layouts[index], root.member_values[0])
 
 
-def _stored_document(members: Mapping[str, object]) -> PresentDocument:
+def _stored_document(members: Mapping[str, object]) -> StructuredDocument:
     """One Structured Column present in a row, carrying ``members`` in the
     portable spelling a document stores them in."""
-    return PresentDocument(cast("DocumentValue", dict(members)))
+    return StructuredDocument(cast("DocumentValue", dict(members)))
 
 
 _ONE_DECK: Final = "aft"
 
 
-def _stored_decks() -> PresentDocument:
+def _stored_decks() -> StructuredDocument:
     """One stored ``decks`` array, the Many occurrence only `Barge` declares."""
-    return PresentDocument(cast("DocumentValue", [{"label": _ONE_DECK}]))
+    return StructuredDocument(cast("DocumentValue", [{"label": _ONE_DECK}]))
 
 
 # --------------------------------------------------------------------------- #
@@ -762,7 +762,7 @@ def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
 # --------------------------------------------------------------------------- #
 # A read binds the occurrences it fetched by identity, never by spelling.      #
 # --------------------------------------------------------------------------- #
-_HOME: Final = PresentDocument({"home": {"city": "Oslo"}, "origin": {"city": "Rome"}})
+_HOME: Final = StructuredDocument({"home": {"city": "Oslo"}, "origin": {"city": "Rome"}})
 
 
 def _matrix_row(strategy: projection_support.Strategy, concrete: str) -> dict[str, object]:
@@ -808,7 +808,7 @@ def _narrowed_matrix_row(layout: projection_support.Layout, concrete: str) -> di
         return _matrix_row("tph", concrete)
     # The narrowed statement projects `Left`'s Column alone, which a sibling's
     # row leaves null.
-    spot = PresentDocument({"city": "Rome"})
+    spot = StructuredDocument({"city": "Rome"})
     home = spot if concrete == "Left" else SQL_NULL
     return {
         "id": 1,
@@ -1029,7 +1029,7 @@ def _delivered(
         pytest.param(
             REGISTER,
             "Register",
-            {"id": 1, "payload": PresentDocument(cast("DocumentValue", dict(_ADA)))},
+            {"id": 1, "payload": StructuredDocument(cast("DocumentValue", dict(_ADA)))},
             (1, ()),
             {
                 "id": 1,
@@ -1243,12 +1243,12 @@ def _milestone(entity: str, **bounds: object) -> dict[str, object]:
     stored = {"from_z": _VALID_FROM, "thru_z": INFINITY, "in_z": _OPENED, "out_z": INFINITY}
     stored |= bounds
     if entity == "MilestoneDocument":
-        return {"id": 1, **stored, "payload": PresentDocument(cast("DocumentValue", members))}
+        return {"id": 1, **stored, "payload": StructuredDocument(cast("DocumentValue", members))}
     return {
         "id": 1,
         "title": "Ada",
-        "address": PresentDocument(cast("DocumentValue", members["address"])),
-        "tags": PresentDocument(cast("DocumentValue", members["tags"])),
+        "address": StructuredDocument(cast("DocumentValue", members["address"])),
+        "tags": StructuredDocument(cast("DocumentValue", members["tags"])),
         **stored,
     }
 
@@ -1483,7 +1483,7 @@ def _diagnoses(root: RootObservation) -> list[tuple[object, ...]]:
 def test_payload_findings_keep_their_attribute_positions_after_native_routing() -> None:
     failing = _holding(
         digest_hex="yy",
-        terms=PresentDocument({"label": 7}),
+        terms=StructuredDocument({"label": 7}),
     )
     root, refusal = _consumed(failing)
     undecodable = "stored-data-leaf-undecodable"

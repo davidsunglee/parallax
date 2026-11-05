@@ -44,7 +44,7 @@ from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.base import detach_json_container
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement
@@ -188,10 +188,10 @@ def _forming_twice(form: Callable[..., Any]) -> Callable[..., Any]:
 def _copying_binds(serialize: Callable[..., Any]) -> Callable[..., Any]:
     def serialized(binds: Sequence[object]) -> Any:
         copies = [
-            detach_json_container(bind.value)
+            detach_json_container(bind.document)
             for _ in range(BIND_COPIES)
             for bind in binds
-            if isinstance(bind, JsonDocument)
+            if isinstance(bind, StructuredDocument)
         ]
         result = serialize(binds)
         del copies

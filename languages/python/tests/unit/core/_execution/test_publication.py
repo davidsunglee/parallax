@@ -47,6 +47,7 @@ from parallax.core.metamodel import UnresolvedEntityDeclaration
 from tests._support import mirrored_models as mm
 
 _ACCOUNT: Final = mm.ACCOUNT_MODEL
+_ACCOUNT_SPELLING: Final = mm.Account.identity.canonical
 _BALANCE: Final = Decimal("5.00")
 
 _RENDEZVOUS: Final = 10.0
@@ -140,6 +141,7 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preparation_module, "_entity_preparation", refuse)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
     monkeypatch.setattr(planning_module, "_wire_entity_facts", refuse)
+    monkeypatch.setattr(planning_module, "narrowed_view_keys", refuse)
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +164,7 @@ def test_a_class_backed_model_prepares_every_product_for_every_entity() -> None:
     assert set(write.preparation._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.construction._facts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.wire._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert read.narrowed_view_keys.for_selection("rel", (_ACCOUNT_SPELLING,)) == "rel[Account]"
 
 
 def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None:
@@ -173,6 +176,7 @@ def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None
     assert set(read.wire._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(write.preparation._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert write.preparation.entity(mm.Account.identity).typed_class is None
+    assert read.narrowed_view_keys.for_selection("rel", (_ACCOUNT_SPELLING,)) == "rel[Account]"
 
 
 @pytest.mark.parametrize("edition", ["", None, 7], ids=["empty", "none", "not-a-string"])

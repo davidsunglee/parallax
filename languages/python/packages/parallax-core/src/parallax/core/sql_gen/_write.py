@@ -5,9 +5,17 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY, INFINITY_LITERAL, FrozenMap, NeutralType
-from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
+from parallax.core.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    DocumentValue,
+    FrozenMap,
+    NeutralType,
+    StructuredDocument,
+)
 from parallax.core.dialect import (
+    JSON_NULL,
+    ArrayBind,
     Dialect,
     DocumentAssignment,
     DocumentLeafAssignment,
@@ -104,7 +112,7 @@ def _bind(ctx: StatementBuilder, value: object, neutral_type: NeutralType | None
         ctx.bind_framework(value)
     elif neutral_type is not None and value is not None:
         ctx.bind_managed(value, neutral_type)
-    elif isinstance(value, JsonDocument):
+    elif isinstance(value, StructuredDocument):
         ctx.bind_document(value)
     else:
         ctx.bind_structural(value)
@@ -722,7 +730,7 @@ def _assignment_clause(
         if isinstance(value, PatchedDocument):
             value = _document_assignments(value.patches, entity)
         elif document and value is not None:
-            value = JsonDocument(value)
+            value = StructuredDocument(cast("DocumentValue", value))
         if column == version_column:
             advance = (column, value, neutral_type)
         else:
@@ -770,13 +778,15 @@ def _document_binds(binds: Sequence[object]) -> tuple[object, ...]:
     """The document mutation expression's binds as managed carriers.
 
     The dialect decides each assigned value's SQL-level form — the document
-    itself for a composite, its JSON text for a scalar (`m-dialect`) — and names
-    no Database Port, so wrapping a composite in the neutral `m-db-port` carrier
-    the adapter hands to its driver's structured-document bind happens here,
-    exactly as it does for a whole-document cell one clause family over.
+    itself for a composite, its JSON text for a scalar (`m-dialect`) — so wrapping
+    a composite in the `m-core` document value the adapter hands to its driver's
+    structured-document bind happens here, exactly as it does for a whole-document
+    cell one clause family over.
     """
     return tuple(
-        JsonDocument(bind) if type(bind) in (dict, list, FrozenMap, tuple) else bind
+        StructuredDocument(cast("DocumentValue", bind))
+        if type(bind) in (dict, list, FrozenMap, tuple)
+        else bind
         for bind in binds
     )
 
@@ -954,13 +964,15 @@ def _temporal_gate(
 
 
 def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[object]:
-    """One row's bind values: each stored document wrapped as the port's
-    structured-document carrier, every other value as it is, ``None``
+    """One row's bind values: each stored document wrapped as a
+    :class:`StructuredDocument`, every other value as it is, ``None``
     included, so a null Value Object binds SQL NULL."""
     if not any(documents):
         return values
     return [
-        JsonDocument(value) if document and value is not None else value
+        StructuredDocument(cast("DocumentValue", value))
+        if document and value is not None
+        else value
         for value, document in zip(values, documents, strict=True)
     ]
 

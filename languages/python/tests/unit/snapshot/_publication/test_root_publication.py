@@ -15,7 +15,7 @@ from typing import Any, Final, Literal, cast
 
 import pytest
 
-from parallax.core.base import NeutralType, PresentDocument
+from parallax.core.base import NeutralType, StructuredDocument
 from parallax.core.entity import UNLOADED
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.read_delivery import InvalidData
@@ -34,7 +34,11 @@ from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of
 from parallax.snapshot._publication._wire_render import WireRootPublisher
-from tests._support.model_capabilities import graph_construction_for, wire_facts_for
+from tests._support.model_capabilities import (
+    graph_construction_for,
+    prepared_view_keys_for,
+    wire_facts_for,
+)
 from tests.unit._root_publication_support import each_root, observed
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS, EncodedOrder
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of, invalid_record
@@ -45,7 +49,7 @@ _BY_CODE: Final = f"{_NS}.EncodedOrder.itemsByCode"
 _ITEM_ORDER: Final = f"{_NS}.EncodedOrderItem.order"
 _NARROWED: Final = "items[EncodedOrderItem]"
 _UNDECODABLE: Final = "not-hex"
-_WRONG_KIND: Final = PresentDocument("not-a-document")
+_WRONG_KIND: Final = StructuredDocument("not-a-document")
 
 type _Form = Literal["typed", "wire"]
 
@@ -789,7 +793,11 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_however_a_root_ends(
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture, address=_WRONG_KIND if hydrates else None, badge=None)
     fixture.attach(order, _ITEMS, (_item(fixture, 11, code="0c" if hydrates else _UNDECODABLE),))
-    publisher = TypedRootPublisher(fixture.model, graph_construction_for(ENCODED_ORDERS))
+    publisher = TypedRootPublisher(
+        fixture.model,
+        graph_construction_for(ENCODED_ORDERS),
+        prepared_view_keys_for(ENCODED_ORDERS),
+    )
     held: list[RootView | None] = []
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
@@ -809,7 +817,11 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_when_construction_fails(
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture)
     fixture.attach(order, _ITEMS, (_item(fixture, 11),))
-    publisher = TypedRootPublisher(fixture.model, graph_construction_for(ENCODED_ORDERS))
+    publisher = TypedRootPublisher(
+        fixture.model,
+        graph_construction_for(ENCODED_ORDERS),
+        prepared_view_keys_for(ENCODED_ORDERS),
+    )
 
     def failing_state(*_args: object) -> object:
         raise _Boom

@@ -32,7 +32,7 @@ may consume a freshly parsed, ownership-transferred document directly; it need
 not retain an immutable copy unless a predecessor, diagnostic, or other
 long-lived owner requires one.
 
-## Provider-neutral document reads
+## Provider-neutral documents
 
 A `DocumentValue` is any value in the JSON data model, including a bare JSON
 null. It is a portable tree of object, array, string, number, boolean, and null
@@ -49,15 +49,22 @@ A structured-document result cell crosses that seam as this closed tagged value:
 ```text
 DocumentRead =
     SqlNull
-  | PresentDocument(document: DocumentValue)
+  | StructuredDocument(document: DocumentValue)
 ```
 
-`SqlNull` means the SQL column itself was `NULL`. `PresentDocument` means the SQL
+`SqlNull` means the SQL column itself was `NULL`. `StructuredDocument` means the SQL
 column was not `NULL` and preserves every parsed document kind, including
-`PresentDocument(document: JSON null)`. The tag is therefore semantically
+`StructuredDocument(document: JSON null)`. The tag is therefore semantically
 required even when a driver represents SQL `NULL` and JSON null with the same
-host-language sentinel. A `DocumentRead` is a transport value rather than a
-`NeutralValue`; the no-wrapper rule below applies only where a declaration has
+host-language sentinel.
+
+`StructuredDocument` crosses the database seam in both directions. A read produces
+it inside a `DocumentRead`, and a structured-document bind (`m-db-port`) carries
+its document in the same value, because a driver cannot type a document from its
+value alone. A bind states SQL `NULL` as a bare null rather than `SqlNull`, so
+`StructuredDocument(document: JSON null)` is how a bind spells the JSON null
+document. `StructuredDocument` and `DocumentRead` are transport values rather than
+`NeutralValue`s; the no-wrapper rule below applies only where a declaration has
 already fixed one neutral value space.
 
 ## The `NeutralType` algebra

@@ -27,8 +27,8 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ArrayBind,
     DatabaseAdapter,
-    JsonDocument,
     MappingRow,
+    StructuredDocument,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution_lifecycle import (
@@ -173,8 +173,8 @@ class WriteDocumentBinds:
         if not isinstance(event, DatabaseCallStarted) or event.kind != "write":
             return
         for bind in event.statement.binds:
-            if isinstance(bind, JsonDocument):
-                self._deliver(bind.value)
+            if isinstance(bind, StructuredDocument):
+                self._deliver(bind.document)
             elif isinstance(bind, ArrayBind) and isinstance(bind.element_type, Json):
                 for document in bind.values:
                     self._deliver(document)

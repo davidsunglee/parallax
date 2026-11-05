@@ -607,6 +607,42 @@ def test_a_postgres_level_casts_its_keys_to_the_key_type(
         assert_case_read(case, ScriptedReads(results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS]))
 
 
+@pytest.mark.parametrize(
+    "membership",
+    [
+        "t0.keeper_id in (?, ?) and not ? is null",
+        "t0.keeper_id in (?, ?, 12) and not ? is null",
+    ],
+    ids=["short-list", "literal-member"],
+)
+def test_a_mariadb_level_spending_a_key_outside_its_membership_is_refused(
+    damaged_case: CaseLoader, membership: str
+) -> None:
+    case = damaged_case(_PARTIAL_TPH_INCLUDE)
+    child = case.then["statements"][1]
+    child["sql"]["mariadb"] = child["sql"]["mariadb"].replace(
+        "t0.keeper_id in (?, ?, ?)", membership
+    )
+
+    with pytest.raises(CaseFailure, match=r"level 1 \(beasts\) does not compare its 3 gathered"):
+        assert_case_read(
+            case, ScriptedReads(dialect="mariadb", results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS])
+        )
+
+
+def test_a_mariadb_level_keyed_by_another_column_is_refused(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_PARTIAL_TPH_INCLUDE)
+    child = case.then["statements"][1]
+    child["sql"]["mariadb"] = child["sql"]["mariadb"].replace(
+        "t0.keeper_id in (?, ?, ?)", "t0.id in (?, ?, ?)"
+    )
+
+    with pytest.raises(CaseFailure, match=r"level 1 \(beasts\).*not keyed by 'keeper_id'"):
+        assert_case_read(
+            case, ScriptedReads(dialect="mariadb", results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS])
+        )
+
+
 def test_a_narrowed_singleton_hop_keeps_its_guard_over_the_whole_composed_family(
     corpus_case: CaseLoader,
 ) -> None:

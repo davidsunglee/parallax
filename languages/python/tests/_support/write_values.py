@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from parallax.conformance.vo_models import Customer
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.read_delivery import InvalidData
 from parallax.snapshot import connect
@@ -20,7 +20,7 @@ def invalid_customer_root(model: DomainModel) -> Entity:
                     {
                         "id": 6,
                         "name": "Rin",
-                        "address": PresentDocument(
+                        "address": StructuredDocument(
                             {
                                 "street": "6 Kastanien Allee",
                                 "city": "Berlin",

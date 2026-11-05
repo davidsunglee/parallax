@@ -9,19 +9,22 @@ exactly what preparation builds, from the same two accessors, and nothing else.
 
 from __future__ import annotations
 
-from parallax.core._execution._planning import wire_model_facts
+from parallax.core._execution._planning import prepare_model, wire_model_facts
+from parallax.core._execution._publication import read_projection
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.metamodel import Metamodel
+from parallax.core.read_planning import NarrowedViewKeys
 from parallax.core.wire._facts import WireModelFacts
 
 __all__ = [
     "cataloged_for",
     "graph_construction_for",
     "preparation_for",
+    "prepared_view_keys_for",
     "wire_facts_for",
 ]
 
@@ -48,3 +51,8 @@ def preparation_for(model: DomainModel | Metamodel) -> WritePreparation:
 def wire_facts_for(model: DomainModel | CatalogedModel) -> WireModelFacts:
     """The Wire facts over ``model``'s layouts."""
     return wire_model_facts(model if isinstance(model, CatalogedModel) else cataloged_for(model))
+
+
+def prepared_view_keys_for(model: DomainModel) -> NarrowedViewKeys:
+    """The narrowed view keys a prepared selection of ``model`` carries."""
+    return read_projection(prepare_model(model, edition="fixture")).narrowed_view_keys

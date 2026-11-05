@@ -50,7 +50,7 @@ from parallax.core import (
 )
 from parallax.core.base import INT64, JSON, Json
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
+from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.execution_lifecycle import (
@@ -395,7 +395,7 @@ def test_a_literal_json_null_document_stays_json_null_alone_and_in_a_column_arra
     profile_run.reset(model_of(_MODEL), {})
     profile_run.port.execute_write(
         "insert into mri_wide(id, place, tags, counts) values (%s, %s, %s, %s)",
-        [1, JsonDocument(None), JsonDocument([]), JsonDocument([])],
+        [1, StructuredDocument(None), StructuredDocument([]), StructuredDocument([])],
     )
     profile_run.port.execute_write(
         "insert into mri_wide(id, place, tags, counts) select * from unnest("

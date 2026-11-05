@@ -4,8 +4,8 @@ from collections.abc import Sequence
 from typing import cast
 
 from parallax.core.base import (
-    PresentDocument,
     SqlNull,
+    StructuredDocument,
     UnknownFamilyTag,
     inert_scalar,
     unwrap_document_read,
@@ -166,8 +166,8 @@ def require_arity(contract: ReadResultContract, row: Row) -> None:
         )
 
 
-def _document_read(document_read: object) -> SqlNull | PresentDocument:
-    if not isinstance(document_read, (SqlNull, PresentDocument)):
+def _document_read(document_read: object) -> SqlNull | StructuredDocument:
+    if not isinstance(document_read, (SqlNull, StructuredDocument)):
         raise _not_a_document_read(document_read)
     return document_read
 

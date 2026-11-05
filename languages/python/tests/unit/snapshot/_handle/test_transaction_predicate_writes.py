@@ -48,9 +48,10 @@ from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work import instructions
 from parallax.core.base import (
     INFINITY,
+    DocumentValue,
     FrozenMap,
 )
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
     MemberShape,
@@ -205,7 +206,7 @@ def test_readless_document_many_assignment_replaces_the_array_at_its_path() -> N
             POSTGRES.to_driver_sql(
                 "update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
             ),
-            ("{tags}", JsonDocument((FrozenMap({"label": "founder"}),)), 1),
+            ("{tags}", StructuredDocument((FrozenMap({"label": "founder"}),)), 1),
         ),
         CommitCall(),
     ]
@@ -218,14 +219,14 @@ def test_readless_document_many_assignment_replaces_the_array_at_its_path() -> N
             mm.SCALAR_COLLECTION_COLUMNS_MODEL,
             mm.ColumnsCollectionTwinItem,
             "update collection_twin set counts = ?, tags = ? where id < ?",
-            (JsonDocument((5, 5)), JsonDocument(("b",)), 3),
+            (StructuredDocument((5, 5)), StructuredDocument(("b",)), 3),
         ),
         (
             mm.SCALAR_COLLECTION_DOCUMENT_MODEL,
             mm.DocumentCollectionTwinItem,
             "update collection_twin set payload = jsonb_set(jsonb_set(payload, ?, "
             "cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?",
-            ("{counts}", JsonDocument((5, 5)), "{tags}", JsonDocument(("b",)), 3),
+            ("{counts}", StructuredDocument((5, 5)), "{tags}", StructuredDocument(("b",)), 3),
         ),
     ],
     ids=["columns", "document"],
@@ -267,8 +268,11 @@ def test_readless_nested_document_many_assignment_replaces_the_whole_occurrence(
     own_root(
         Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
-    route = FrozenMap(
-        {"name": "Coastal", "segment": FrozenMap({"stops": (FrozenMap({"port": "Oslo"}),)})}
+    route = cast(
+        "DocumentValue",
+        FrozenMap(
+            {"name": "Coastal", "segment": FrozenMap({"stops": (FrozenMap({"port": "Oslo"}),)})}
+        ),
     )
     assert port.calls == [
         BeginCall(),
@@ -277,7 +281,7 @@ def test_readless_nested_document_many_assignment_replaces_the_whole_occurrence(
                 "update nested_readless_voyage set payload = "
                 "jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
             ),
-            ("{route}", JsonDocument(route), 1),
+            ("{route}", StructuredDocument(route), 1),
         ),
         CommitCall(),
     ]
@@ -361,7 +365,7 @@ def test_readless_replace_where_completes_each_omitted_member_at_its_document_pa
                 "{address}",
                 "null",
                 "{tags}",
-                JsonDocument(()),
+                StructuredDocument(()),
                 1,
             ),
         ),

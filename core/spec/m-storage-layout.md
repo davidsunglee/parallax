@@ -142,8 +142,8 @@ conversion. Under `Document` a scalar collection is located in the shared
 document like any other document-resident Attribute. Under `Document`, classified Entity-member decoding obtains
 the occurrence carrier by passing the Entity's shared Structured Column to
 `locateEntityMember`. The Columns arm supplies the database port's already-tagged
-`m-core` `DocumentRead` as `SqlNull` or `PresentDocument`;
-the Document arm supplies `Missing` or `PresentDocument`. Both pass that located
+`m-core` `DocumentRead` as `SqlNull` or `StructuredDocument`;
+the Document arm supplies `Missing` or `StructuredDocument`. Both pass that located
 input to `decodeLocatedMemberClassified`, so SQL null, JSON null, object, scalar,
 array, and malformed-array carriers receive the occurrence's same presence and
 kind verdict before the materializer enters its root. The occurrence carrier

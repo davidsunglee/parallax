@@ -22,7 +22,7 @@ from parallax.core import (
     TemporalBound,
     attr,
 )
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.unit_work import InstructionRejectedError
 from parallax.snapshot import TxnContext, WireEntity
@@ -79,7 +79,7 @@ _MODEL = DomainModel(Archive, Register, Catalog, Ledger, Journal, Publication, P
 _ARCHIVE_ROW: Final[Mapping[str, object]] = {"id": 1, "title": "stored", "version": 1}
 _CATALOG_ROW: Final[Mapping[str, object]] = {
     "id": 1,
-    "payload": PresentDocument({"title": "stored"}),
+    "payload": StructuredDocument({"title": "stored"}),
 }
 _LEDGER_ROW: Final[Mapping[str, object]] = {
     "id": 1,

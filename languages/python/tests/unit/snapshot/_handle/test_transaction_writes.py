@@ -32,7 +32,7 @@ from parallax.conformance.vo_models import (
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
 from parallax.core._execution._options import OMITTED
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import INT64, DocumentValue, InstantError, PresentDocument
+from parallax.core.base import INT64, DocumentValue, InstantError, StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
@@ -181,7 +181,7 @@ def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source(
         "phones": [],
     }
     port = ScriptedAdapter(
-        Transact(Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(stored))}]))
+        Transact(Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument(dict(stored))}]))
     )
 
     def fn(tx: TxnContext) -> None:

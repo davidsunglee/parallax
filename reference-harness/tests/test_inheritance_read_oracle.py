@@ -1227,8 +1227,8 @@ def test_tpcs_mariadb_char_cast_golden_is_accepted() -> None:
 
 
 def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
-    # A MariaDB golden that used `varchar` (a Postgres-only CAST target) is rejected by
-    # the per-dialect cast-type check.
+    # A MariaDB golden that used `varchar` (MariaDB's placeholder spelling is `char`) is
+    # rejected by the per-dialect cast-type check.
     bad_mariadb = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)")  # leaves varchar(3)
     case = _document_case("Document")
     case.raw["then"]["statements"][0]["sql"] = {"mariadb": bad_mariadb}

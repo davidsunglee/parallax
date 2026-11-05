@@ -47,7 +47,7 @@ from typing import Any, Final, Literal, cast
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
 from parallax.core import DomainModel, Predicate, object_query
 from parallax.core._execution._unit_work.instructions import InstructionRejectedError
-from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
@@ -515,7 +515,7 @@ CONTACT_TARGET: Final = Target(
     gate="none",
     model=CONTACT,
     entity=_CONTACT,
-    row={"id": 1, "name": "Ada", "address": PresentDocument(dict(_STORED_DOCUMENT))},
+    row={"id": 1, "name": "Ada", "address": StructuredDocument(dict(_STORED_DOCUMENT))},
     typed_query=_contact_query(),
     wire_query=_wire_query(_CONTACT, 1),
     # The row a fresh insert opens holds the value the STORED row holds, not the
@@ -524,7 +524,7 @@ CONTACT_TARGET: Final = Target(
     # no-op, which is what the net-zero rows beside it are for.
     fresh=lambda: mm.Contact(id=4, name="Newton", address=_STORED_ADDRESS),
     payload={"id": 4, "name": "Newton", "address": dict(_STORED_DOCUMENT)},
-    inserted_row={"id": 4, "name": "Newton", "address": PresentDocument(dict(_STORED_DOCUMENT))},
+    inserted_row={"id": 4, "name": "Newton", "address": StructuredDocument(dict(_STORED_DOCUMENT))},
     inserted_typed_query=_contact_query(4),
     inserted_wire_query=_wire_query(_CONTACT, 4),
     change_typed={"address": _OTHER_ADDRESS},

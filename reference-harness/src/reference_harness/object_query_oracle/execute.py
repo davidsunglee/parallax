@@ -63,6 +63,39 @@ def union_branch_selects(tree: Any) -> list[Any]:
     return []
 
 
+def key_membership(select: Any, key_column: str, form: type[Any]) -> Any | None:
+    """A child level's key term, or ``None`` when *select* does not lead with one.
+
+    m-sql places the key membership first in a level's `where`, so the term is the
+    leftmost conjunct, and it counts only as a *form* comparison of *key_column*.
+    """
+    where = select.args.get("where")
+    term: Any = where.this if where is not None else None
+    while isinstance(term, exp.And):
+        term = term.this
+    keyed = (
+        isinstance(term, form)
+        and isinstance(term.this, exp.Column)
+        and term.this.name == key_column
+    )
+    return term if keyed else None
+
+
+def assert_lists_every_key(subject: str, membership: Any, key_count: int, dialect: str) -> None:
+    """Assert an expanded membership list is one placeholder per gathered key (m-sql).
+
+    A bind count cannot show this, since a placeholder outside the list still consumes
+    a key's bind, so the list itself is what is graded.
+    """
+    keys = membership.expressions
+    if len(keys) != key_count or not all(isinstance(key, exp.Placeholder) for key in keys):
+        raise CaseFailure(
+            f"{subject} does not compare its {key_count} gathered key(s) through its "
+            f"membership list, which reads {membership.sql(dialect=sqlglot_dialect(dialect))!r}. "
+            f"A child level renders one placeholder per key (m-sql)."
+        )
+
+
 def _select_branches(tree: Any) -> list[Any]:
     """Every SELECT a statement projects through: a union's arms, else the one SELECT."""
     branches = union_branch_selects(tree)

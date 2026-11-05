@@ -14,8 +14,8 @@ derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by `m-sql` and run by the execution runtime
 (`m-execution`) through the step-execution, flush, and row-acquisition
-ports this module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
-`m-navigate` in turn depend on `m-unit-work`, because a list is an
+ports this module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list`
+in turn depends on `m-unit-work`, because a list is a
 query-backed view resolved within a unit of work.)
 
 Layered on the unit of work are three modules: bounded automatic retry
