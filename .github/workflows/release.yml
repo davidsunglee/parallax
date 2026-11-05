@@ -353,6 +353,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.15'
       - uses: actions/download-artifact@v8
         with:
           name: release-candidate-${{ github.run_id }}-${{ github.run_attempt }}
@@ -366,9 +369,6 @@ jobs:
         run: |
           tar -czf pypi-evidence.tar.gz production
           gh release upload "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" pypi-evidence.tar.gz
-          {
-            printf 'Parallax %s is published to PyPI.\n\n' "$VERSION"
-            printf 'Production artifact downloads match the validated manifest for source `%s`.\n\n' "$SOURCE"
-            printf '[Release notes](https://github.com/%s/blob/%s/languages/python/docs/releases.md)\n' "$GITHUB_REPOSITORY" "$SOURCE"
-          } > published-notes.md
+          git fetch --no-tags origin "$SOURCE"
+          python languages/python/tools/release_notes.py --bundle candidate --repository "$GITHUB_REPOSITORY" --publication-run-id "$GITHUB_RUN_ID" --output published-notes.md
           gh release create "v$VERSION" candidate/dist/* candidate/release-manifest.json candidate/wheel-manifest.json candidate/ci.json pypi-evidence.tar.gz --target "$SOURCE" --title "Parallax $VERSION" --notes-file published-notes.md
