@@ -750,6 +750,7 @@ def execute_fetch_levels(
                 statement=level_sql,
                 dialect=dialect,
                 key_column=child_col,
+                key_count=len(parent_keys),
                 key_array=key_array,
                 branch_binds=len(executed_binds) // step.branch_count,
             ),

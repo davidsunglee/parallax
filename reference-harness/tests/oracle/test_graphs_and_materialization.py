@@ -1342,6 +1342,25 @@ def test_uneven_branch_placeholders_are_refused_though_the_flat_binds_match(
         assert_case_read(case, ScriptedReads(dialect="mariadb", results=_chain()))
 
 
+@pytest.mark.parametrize(
+    "membership",
+    ["t0.id in (?, ?) and not ? is null", "t0.id in (?, ?, 7) and not ? is null"],
+    ids=["short-list", "literal-member"],
+)
+def test_a_mariadb_branch_spending_a_key_outside_its_membership_is_refused(
+    damaged_case: CaseLoader, membership: str
+) -> None:
+    case = _with_vehicle_sql(
+        damaged_case(_THREE_HOP),
+        "mariadb",
+        "traversal_bike t0 where t0.id in (?, ?, ?)",
+        f"traversal_bike t0 where {membership}",
+    )
+
+    with pytest.raises(CaseFailure, match=r"branch 0 \('Bike'\) does not compare its 3 gathered"):
+        assert_case_read(case, ScriptedReads(dialect="mariadb", results=_chain()))
+
+
 def test_a_branch_keyed_by_another_column_is_refused(damaged_case: CaseLoader) -> None:
     case = _with_vehicle_sql(
         damaged_case(_THREE_HOP),
