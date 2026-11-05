@@ -244,7 +244,7 @@ jobs:
             echo "Source: $SOURCE"
             echo "Release manifest SHA-256: $(sha256sum candidate/release-manifest.json | cut -d ' ' -f 1)"
             echo "CI: $(jq -r .run.html_url candidate/ci.json)"
-            echo "All 25 artifact downloads match; all six distributions passed the TestPyPI installation smoke test."
+            echo "All $(jq '.artifacts | length' candidate/release-manifest.json) artifact downloads match; all six distributions passed the TestPyPI installation smoke test."
             echo "Full validation, PostgreSQL, provenance and timing evidence is retained in the candidate draft release and workflow artifacts."
             echo 'Production requires Dave’s explicit approval of the protected pypi environment.'
           } >> "$GITHUB_STEP_SUMMARY"

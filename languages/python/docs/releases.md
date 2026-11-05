@@ -31,6 +31,12 @@ structured-document bind as `StructuredDocument`, exported from the same module,
 and reads its value from `document` rather than `value`. SQL NULL still binds as a
 bare `None`.
 
+Starting with `0.2.0`, Parallax no longer supports Intel macOS or musl Linux, including
+Alpine, and publishes no `parallax-postgres` wheels for them. Published `0.1.0` wheels
+remain available. Move Intel macOS deployments to a supported host and Alpine
+deployments to a glibc-based Linux environment. Building from source on a removed
+platform does not make it supported.
+
 ## 0.1.0
 
 First coordinated release for early adopters.

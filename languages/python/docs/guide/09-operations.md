@@ -29,7 +29,8 @@ from parallax.snapshot import Database, connect
 
 Use the [production installation](01-getting-started.md#install) in each worker's
 environment and keep all installed first-party distributions at one release.
-Python, platform and PostgreSQL support declarations are linked there. Wheels
+Python, platform and PostgreSQL support declarations are linked there, along with
+the platforms `0.2.0` removes. Wheels
 are the normal route; the [driver build](../postgresql-lifecycle.md#driver-build)
 section covers psycopg compiled against a system libpq. Install the AWS
 `postgres` extra only when the deployment uses RDS IAM authentication.

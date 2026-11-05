@@ -18,8 +18,9 @@ from typing import Any, cast
 from interpreter_matrix import WORKSPACE, supported_minors
 from python_workspace import load_workspace
 from validate_source import identities, production_paths
+from wheel_build import TARGETS
+from wheel_build import targets as current_targets
 
-_TARGETS = Path(__file__).with_name("wheel_targets.json")
 _DRIVERS = ("binary", "c")
 type Document = dict[str, Any]
 
@@ -428,7 +429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--attempt", type=int, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--targets", type=Path, default=_TARGETS)
+    parser.add_argument("--targets", type=Path, default=TARGETS)
     parser.add_argument("--jobs", type=Path)
     parser.add_argument("--run", type=Path)
     args = parser.parse_args(argv)
@@ -440,12 +441,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "findings": [],
     }
     try:
-        raw_targets: Any = json.loads(args.targets.read_text(encoding="utf-8"))
-        if not isinstance(raw_targets, list):
-            raise ValueError("target declaration must hold a list")
-        targets = cast("list[Document]", raw_targets)
-        if len(targets) != 7:
-            raise ValueError("target declaration must contain seven platform/architecture targets")
+        targets = current_targets(args.targets)
+        if not targets:
+            raise ValueError("target declaration names no current target")
         if len({target["id"] for target in targets}) != len(targets):
             raise ValueError("target declaration contains duplicate ids")
         if (args.jobs is None) != (args.run is None):

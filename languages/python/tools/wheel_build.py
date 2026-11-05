@@ -27,17 +27,37 @@ PYTHONS = supported_minors()
 CIBUILDWHEEL = "4.3.5"
 
 
-def targets() -> list[dict[str, str]]:
-    return json.loads(TARGETS.read_text())
+def targets(declaration: Path = TARGETS) -> list[dict[str, str]]:
+    return [target for target in json.loads(declaration.read_text()) if "retired" not in target]
 
 
-def matrix() -> list[dict[str, str]]:
+def _minor(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split(".")[:2])
+
+
+def _cells(selected: list[dict[str, str]]) -> list[dict[str, str]]:
     metadata = tomllib.loads((PY_ROOT / "packages/parallax-postgres/pyproject.toml").read_text())
     # The declared floor and the selected CPython minors must move together.
     floor = metadata["project"]["requires-python"]
     if floor != f">={PYTHONS[0]}":
         raise ValueError(f"review wheel Python selection for requires-python {floor!r}")
-    return [{**target, "python": minor} for target in targets() for minor in PYTHONS]
+    return [{**target, "python": minor} for target in selected for minor in PYTHONS]
+
+
+def matrix() -> list[dict[str, str]]:
+    return _cells(targets())
+
+
+def release_matrix(version: str) -> list[dict[str, str]]:
+    """The cells a release must have validated, including targets retired after its minor."""
+    declared: list[dict[str, str]] = json.loads(TARGETS.read_text())
+    return _cells(
+        [
+            target
+            for target in declared
+            if "retired" not in target or _minor(version) < _minor(target["retired"])
+        ]
+    )
 
 
 def newest_postgres() -> str:
@@ -135,8 +155,7 @@ def _build(target: dict[str, str], python: str, output: Path, env: dict[str, str
         "CIBW_ENABLE": "cpython-prerelease",
     }
     if target["platform"] == "linux":
-        policy = "MUSLLINUX" if target["build"].startswith("musllinux") else "MANYLINUX"
-        build_env[f"CIBW_{policy}_{target['arch'].upper()}_IMAGE"] = target["image"]
+        build_env[f"CIBW_MANYLINUX_{target['arch'].upper()}_IMAGE"] = target["image"]
     _run(
         [
             sys.executable,
@@ -242,8 +261,8 @@ def _validate(
         _run([sys.executable, str(validator), *arguments], output / "validation.log", env)
         return
     interpreter = f"/opt/python/cp{python.replace('.', '')}-cp{python.replace('.', '')}/bin/python"
-    # Use the same policy image as the build so a musl wheel cannot be tested
-    # accidentally in the host's glibc environment. Docker has no emulation setup.
+    # Use the same policy image as the build so a wheel is tested against its
+    # declared libc rather than the host's. Docker has no emulation setup.
     translated = [
         str(Path("/project") / Path(arg).relative_to(REPO)) if arg.startswith(str(REPO)) else arg
         for arg in arguments

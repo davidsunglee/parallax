@@ -19,7 +19,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from typing import Any
 
-from wheel_build import matrix
+from wheel_build import release_matrix
 
 REPO = Path(__file__).resolve().parents[3]
 CONFIG = REPO / ".github/release/configuration.json"
@@ -148,16 +148,13 @@ def _drivers(proof: Document) -> None:
 
 
 def _evidence_header(evidence: Document) -> None:
-    expected = {(target["id"], target["python"]) for target in matrix()}
     cells = evidence["targets"]
     if (
         evidence.get("schema_version") != 1
         or evidence.get("status") != "passed"
         or evidence.get("findings") != []
-        or evidence.get("expected_targets") != len(expected)
-        or evidence.get("validated_targets") != len(expected)
-        or len(cells) != len(expected)
-        or {(cell["target"], cell["python"]) for cell in cells} != expected
+        or evidence.get("expected_targets") != len(cells)
+        or evidence.get("validated_targets") != len(cells)
     ):
         raise ValueError("complete successful native wheel validation is required")
     if not re.fullmatch(r"[a-f0-9]{40}", evidence["source_sha"]):
@@ -166,6 +163,18 @@ def _evidence_header(evidence: Document) -> None:
         raise ValueError("validation must identify a CI run")
     if type(evidence["run_attempt"]) is not int or evidence["run_attempt"] <= 0:
         raise ValueError("validation must identify a CI attempt")
+
+
+def _require_coverage(evidence: Document, version: str) -> int:
+    """Coverage comes from the release's version, never from the evidence describing itself."""
+    required = {(cell["id"], cell["python"]) for cell in release_matrix(version)}
+    cells = evidence["targets"]
+    if (
+        len(cells) != len(required)
+        or {(cell["target"], cell["python"]) for cell in cells} != required
+    ):
+        raise ValueError("complete successful native wheel validation is required")
+    return len(required)
 
 
 def _validated_cell(
@@ -229,13 +238,14 @@ def _release_manifest(evidence_path: Path, paths: Sequence[Path]) -> Document:
     version = _metadata(paths[0])["Version"]
     if not isinstance(version, str) or not re.fullmatch(r"0\.\d+\.\d+", version):
         raise ValueError("release requires a normal coordinated pre-1.0 version")
+    adapter_wheels = _require_coverage(evidence, version)
     for path in sorted(paths, key=lambda candidate: candidate.name):
         if validated[path.name] != identity(path)["sha256"]:
             raise ValueError(f"{path.name}: not the validated bytes")
         artifacts.append(_artifact(path, version, projects))
     for name in projects:
         kinds = [artifact["kind"] for artifact in artifacts if artifact["project"] == name]
-        expected_wheels = len(matrix()) if name == "parallax-postgres" else 1
+        expected_wheels = adapter_wheels if name == "parallax-postgres" else 1
         if kinds.count("sdist") != 1 or kinds.count("wheel") != expected_wheels:
             raise ValueError(f"{name}: incomplete release artifacts")
     return {

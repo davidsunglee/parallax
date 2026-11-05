@@ -23,13 +23,10 @@ def test_every_supported_runtime_has_the_complete_native_platform_matrix() -> No
     expected = {
         "manylinux2014-x86_64",
         "manylinux_2_28-aarch64",
-        "musllinux-x86_64",
-        "musllinux-aarch64",
         "macos-arm64",
-        "macos-x86_64",
         "windows-amd64",
     }
-    assert len(cells) == 14
+    assert len(cells) == 8
     for runtime in ("3.14", "3.15"):
         assert {cell["id"] for cell in cells if cell["python"] == runtime} == expected
     arm_linux = [
@@ -38,13 +35,31 @@ def test_every_supported_runtime_has_the_complete_native_platform_matrix() -> No
     assert all(cell["runner"] == "ubuntu-24.04-arm" for cell in arm_linux)
 
 
+@pytest.mark.parametrize("version", ["0.1.0", "0.1.9"])
+def test_a_release_before_a_retirement_still_covers_the_retired_targets(version: str) -> None:
+    current = {cell["id"] for cell in wheel_build.matrix()}
+    retired = {"musllinux-x86_64", "musllinux-aarch64", "macos-x86_64"}
+    cells = wheel_build.release_matrix(version)
+    assert len(cells) == 14
+    assert {cell["id"] for cell in cells} == current | retired
+
+
+@pytest.mark.parametrize("version", ["0.2.0", "0.2.7", "0.10.0"])
+def test_a_release_from_the_retiring_minor_onward_covers_only_current_targets(
+    version: str,
+) -> None:
+    assert wheel_build.release_matrix(version) == wheel_build.matrix()
+
+
 def test_an_emulated_linux_arm_build_is_refused_before_building(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(platform, "machine", lambda: "x86_64")
-    target = next(target for target in wheel_build.targets() if target["id"] == "musllinux-aarch64")
+    target = next(
+        target for target in wheel_build.targets() if target["id"] == "manylinux_2_28-aarch64"
+    )
     with pytest.raises(ValueError, match="native aarch64 runner required"):
         wheel_build.build(target["id"], "3.15", tmp_path / "cell", "18.6")
 

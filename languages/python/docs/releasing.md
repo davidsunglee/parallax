@@ -29,7 +29,10 @@ release must preserve that contract within a minor line. A changed public
 contract belongs in its binding owner and release notes with migration guidance.
 
 Python and dependency support belong to package metadata; platform support
-belongs to the [wheel targets](../tools/wheel_targets.json). PostgreSQL support
+belongs to the [wheel targets](../tools/wheel_targets.json). A retired target
+names the minor that dropped it: that minor and later ones neither build nor publish
+it, and verification still holds an earlier release to the coverage it shipped
+with. PostgreSQL support
 belongs to the [binding contract](../spec/execution.md#supported-postgresql),
 which links its package configuration. The main database suite tests the floor
 and newest supported release, collapsing identical versions; scheduled checks
@@ -55,7 +58,7 @@ alone does not verify ownership.
 1. Choose a source revision whose required CI checks pass. Prepare one complete
    artifact set through the shared build and validation path. It contains the
    production wheels and sdists; conformance companions are test evidence only.
-   Source-install proof builds from the retained sdists on every declared target.
+   Source-install proof builds from the retained sdists on every current target.
 2. Retain the artifact manifest, filenames and SHA-256 hashes tied to that source,
    successful validation results, logs, provenance and timing summaries. Wheel
    timings distinguish setup, build/repair and both driver checks; queue delay,
@@ -134,7 +137,7 @@ revision, manifest and rehearsed artifact bytes remain unchanged in either case.
 
 Each candidate has a durable draft GitHub release named
 `release-candidate-RUN_ID-ATTEMPT`. Its `candidate.tar.gz` retains the original
-25 production files, release and wheel manifests, source CI and database proof,
+production files, release and wheel manifests, source CI and database proof,
 native validation records and timing evidence. The archive has a GitHub build
 provenance attestation and retained signature bundle. TestPyPI and production
 verification archives are added as those stages succeed. Keep these evidence

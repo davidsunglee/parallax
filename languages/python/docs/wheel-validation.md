@@ -1,7 +1,7 @@
 # Validated adapter wheels
 
 The reusable [wheel workflow](../../../.github/workflows/wheels.yml) builds the
-[declared native targets](../tools/wheel_targets.json) for the Python minors
+current [declared native targets](../tools/wheel_targets.json) for the Python minors
 selected from workspace metadata by `interpreter_matrix.supported_minors`.
 The ordinary CI workflow calls it for relevant pull requests and main pushes;
 [wheel relevance](../tools/wheel_relevance.py) owns the exact input paths.
@@ -18,9 +18,8 @@ candidate wheel's dependency metadata.
 ## Build and validation
 
 Run on the native target runner with its CPython minor, Docker on Linux,
-Homebrew on ARM macOS, a C compiler on Intel macOS, and the Windows C build
-toolchain on Windows. Intel macOS provisions PostgreSQL from the exact release
-source with its published checksum; Windows uses the published EDB archive.
+Homebrew on macOS, and the Windows C build toolchain on Windows. Windows
+provisions PostgreSQL from the published EDB archive.
 For example, from the repository root on native Linux ARM:
 
 ```bash
@@ -79,7 +78,7 @@ bytes need validation again. Artifacts expire under the workflow's retention
 settings; a release owner must retain the validated set as release evidence.
 Per-target artifacts retain available build, database, installation and test
 logs, JUnit, and test timing streams on both success and failure. The aggregate
-verdict fails if any declared target or driver proof is absent or unsuccessful.
+verdict fails if any current target or driver proof is absent or unsuccessful.
 
 ## Timings
 
