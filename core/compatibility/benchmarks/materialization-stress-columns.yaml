@@ -1,4 +1,3 @@
-# Five-level Columns materialization stress shape.
 tags: [m-perf-bench, m-snapshot-read, materialization-stress]
 model: models/materialization-stress-columns.yaml
 dataset:
@@ -20,12 +19,3 @@ objectQuery:
         - rel: snapshot.materialization.Node.owner
 delivery:
   pageSizes: [1, 32, 128]
-workloads:
-  - name: materialization-stress-columns
-    iterations: 20
-    expectDatabaseCalls: 4
-    statements:
-      - sql: { postgres: select t0.id from materialization_owner t0, mariadb: select t0.id from materialization_owner t0 }
-      - sql: { postgres: select t0.id from materialization_node t0, mariadb: select t0.id from materialization_node t0 }
-      - sql: { postgres: select t0.id from materialization_node t0, mariadb: select t0.id from materialization_node t0 }
-      - sql: { postgres: select t0.id from materialization_node t0, mariadb: select t0.id from materialization_node t0 }

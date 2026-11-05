@@ -3,7 +3,7 @@
 # version must be observed before it is written, and one readless statement
 # observes nothing.
 model: models/account.yaml
-tags: [m-batch-write, m-concurrency, rejected, predicate-write, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-concurrency, rejected, predicate-write, slice-snapshot-1]
 shape: rejected
 when:
   write:

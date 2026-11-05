@@ -3,7 +3,7 @@
 # names both root selections, and navigation propagates them to Coverage, so the
 # child correlated sub-select and outer Policy each carry `thru_z = ? and out_z = ?`.
 model: models/policy.yaml
-tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, explicit-selection, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, explicit-selection, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -34,8 +34,8 @@ from .conftest import ScriptedReads
 
 CaseLoader = Callable[[str], Case]
 
-_ORDERED_ITEMS = "m-read-planning-009-ordered-items-desc.yaml"
-_EMPTY_ROOT = "m-read-planning-006-empty-root.yaml"
+_ORDERED_ITEMS = "m-snapshot-read-008-declared-child-ordering.yaml"
+_EMPTY_ROOT = "m-snapshot-read-004-empty-root.yaml"
 _NARROWED_PETS = "m-inheritance-065-tph-deepfetch-narrowed-pets-dog.yaml"
 _BROAD_AND_NARROWED_PETS = "m-inheritance-068-tph-deepfetch-broad-and-redundant-narrow.yaml"
 _PARTIAL_TPH_INCLUDE = "m-inheritance-148-partial-tph-broad-singleton-include-unknown-tag.yaml"
@@ -80,6 +80,14 @@ _ORDER_ONE_ITEMS: list[dict[str, Any]] = [
     {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": "2024-02-15"},
     {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
 ]
+
+_ORDER_ONE_TAGS: list[dict[str, Any]] = [
+    {"id": 3, "order_id": 1, "label": "fragile", "priority": 5},
+    {"id": 2, "order_id": 1, "label": "gift", "priority": 2},
+    {"id": 1, "order_id": 1, "label": "urgent", "priority": 2},
+]
+
+_ORDERED_RESULTS = [_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE_ITEMS, _ORDER_ONE_TAGS, _ORDER_ONE]
 
 _PEOPLE: list[dict[str, Any]] = [
     {"id": 10, "name": "Alice"},
@@ -250,16 +258,16 @@ def _customer_identities(case: Case, ids: list[int]) -> list[dict[str, Any]]:
 
 def test_a_deep_fetch_assembles_the_authored_graph(corpus_case: CaseLoader) -> None:
     case = corpus_case(_ORDERED_ITEMS)
-    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+    reads = ScriptedReads(results=_ORDERED_RESULTS)
 
     assert_case_read(case, reads)
 
-    assert reads.statements[:2] == case.golden_statements("postgres")
+    assert reads.statements[:4] == case.golden_statements("postgres")
 
 
 def test_the_child_level_is_keyed_by_the_gathered_parent_keys(corpus_case: CaseLoader) -> None:
     case = corpus_case(_ORDERED_ITEMS)
-    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+    reads = ScriptedReads(results=_ORDERED_RESULTS)
 
     assert_case_read(case, reads)
 
@@ -269,7 +277,7 @@ def test_the_child_level_is_keyed_by_the_gathered_parent_keys(corpus_case: CaseL
 def test_a_child_level_keyed_by_anything_else_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_ORDERED_ITEMS)
     case.then["statements"][1]["binds"] = {"postgres": [[2]], "mariadb": [2]}
-    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+    reads = ScriptedReads(results=_ORDERED_RESULTS)
 
     with pytest.raises(CaseFailure, match="key-set binds"):
         assert_case_read(case, reads)
@@ -303,7 +311,9 @@ def test_children_returned_out_of_the_declared_order_are_refused(
 ) -> None:
     case = corpus_case(_ORDERED_ITEMS)
     ascending = list(reversed(_ORDER_ONE_ITEMS))
-    reads = ScriptedReads(results=[_ORDER_ONE, ascending, _ORDER_ONE])
+    reads = ScriptedReads(
+        results=[_ORDER_ONE, ascending, _ORDER_ONE_ITEMS, _ORDER_ONE_TAGS, _ORDER_ONE]
+    )
 
     with pytest.raises(CaseFailure, match="not in declared orderBy order"):
         assert_case_read(case, reads)
@@ -314,7 +324,9 @@ def test_an_orderby_key_the_child_did_not_project_is_refused(corpus_case: CaseLo
     unprojected = [
         {key: value for key, value in row.items() if key != "id"} for row in _ORDER_ONE_ITEMS
     ]
-    reads = ScriptedReads(results=[_ORDER_ONE, unprojected, _ORDER_ONE])
+    reads = ScriptedReads(
+        results=[_ORDER_ONE, unprojected, _ORDER_ONE_ITEMS, _ORDER_ONE_TAGS, _ORDER_ONE]
+    )
 
     with pytest.raises(CaseFailure, match="orderBy column"):
         assert_case_read(case, reads)
@@ -693,7 +705,9 @@ def test_a_child_level_carrying_the_wrong_as_of_suffix_is_refused(
 def test_a_deep_fetch_graph_the_case_did_not_author_is_refused(corpus_case: CaseLoader) -> None:
     case = corpus_case(_ORDERED_ITEMS)
     missing_child = [_ORDER_ONE_ITEMS[0]]
-    reads = ScriptedReads(results=[_ORDER_ONE, missing_child, _ORDER_ONE])
+    reads = ScriptedReads(
+        results=[_ORDER_ONE, missing_child, _ORDER_ONE_ITEMS, _ORDER_ONE_TAGS, _ORDER_ONE]
+    )
 
     with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
         assert_case_read(case, reads)
@@ -701,7 +715,9 @@ def test_a_deep_fetch_graph_the_case_did_not_author_is_refused(corpus_case: Case
 
 def test_the_deep_fetch_reference_oracle_grades_the_root_rows(corpus_case: CaseLoader) -> None:
     case = corpus_case(_ORDERED_ITEMS)
-    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, []])
+    reads = ScriptedReads(
+        results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE_ITEMS, _ORDER_ONE_TAGS, []]
+    )
 
     with pytest.raises(CaseFailure, match="referenceSql root rows"):
         assert_case_read(case, reads)
@@ -1097,7 +1113,7 @@ def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(
         "materialize_read",
         lambda _read, rows: [dict(row) for row in rows],
     )
-    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+    reads = ScriptedReads(results=_ORDERED_RESULTS)
 
     with pytest.raises(CaseFailure, match="did not come through the materialization seam"):
         assert_case_read(case, reads)
@@ -1352,7 +1368,7 @@ def test_binds_that_cannot_cover_every_branch_are_refused(
 def test_a_level_authoring_no_binds_at_all_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_ORDERED_ITEMS)
     del case.then["statements"][1]["binds"]
-    reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
+    reads = ScriptedReads(results=_ORDERED_RESULTS)
 
     with pytest.raises(CaseFailure, match="key-set binds"):
         assert_case_read(case, reads)

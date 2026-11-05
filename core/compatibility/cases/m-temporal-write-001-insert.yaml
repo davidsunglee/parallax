@@ -1,7 +1,7 @@
 # Audit-only INSERT opens a single current milestone [txInstant, infinity) with no
 # prior row to close — the simplest write contract (m-temporal-write).
 model: models/balance.yaml
-tags: [m-temporal-write, m-sql, write-sequence, insert, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, write-sequence, insert, audit-only, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

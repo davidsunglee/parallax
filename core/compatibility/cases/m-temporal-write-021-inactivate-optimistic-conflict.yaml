@@ -9,7 +9,7 @@
 # fates and the state the race leaves: the winner's close and changed successor
 # stand, and the loser's close changes no row.
 model: models/position.yaml
-tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, optimistic-lock-conflict, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, optimistic-lock-conflict, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

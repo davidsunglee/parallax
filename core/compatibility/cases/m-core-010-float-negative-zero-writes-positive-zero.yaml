@@ -1,5 +1,5 @@
 model: models/writable-scalars.yaml
-tags: [m-core, m-wire, m-sql, scalar, write-sequence, insert, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-wire, m-sql, scalar, write-sequence, insert, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -2,7 +2,7 @@
 # ONE observed state and one temporal region merge into a single write, and the
 # later authored value wins a member both of them name.
 model: models/account.yaml
-tags: [m-unit-work, m-concurrency, m-sql, coalescing, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-concurrency, m-sql, coalescing, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

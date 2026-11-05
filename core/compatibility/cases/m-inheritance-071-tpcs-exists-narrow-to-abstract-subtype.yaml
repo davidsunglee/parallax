@@ -1,7 +1,7 @@
 # `exists` over a TABLE-PER-CONCRETE-SUBTYPE polymorphic target NARROWED to an
 # abstract subtype (m-navigate, m-predicate, m-inheritance, m-sql, resolved Q7 + Q10).
 model: models/document.yaml
-tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -1,6 +1,6 @@
 # Negative (m-inheritance): one Subtype Selection contains overlapping alternatives.
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-object-query, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, rejected, negative, narrow, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

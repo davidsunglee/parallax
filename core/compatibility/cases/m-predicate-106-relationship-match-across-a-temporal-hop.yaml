@@ -1,5 +1,5 @@
 model: models/policy.yaml
-tags: [m-predicate, relationship, to-one, exists, matching, m-temporal-read, temporal, propagation, bitemporal, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, exists, matching, m-temporal-read, temporal, propagation, bitemporal, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

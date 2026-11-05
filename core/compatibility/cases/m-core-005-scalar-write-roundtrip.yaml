@@ -2,7 +2,7 @@
 # float64, bytes, time, uuid — on Postgres AND MariaDB (the dialect IS the
 # assertion, m-core / m-dialect).
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, m-dialect, scalar, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, m-dialect, scalar, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

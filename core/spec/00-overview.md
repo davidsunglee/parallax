@@ -44,7 +44,7 @@ idiomatic developer experience while still guaranteeing parity.
 
 - **Observable behavior** — query results, the SQL emitted (per dialect, after
   normalization), deep-fetch Database Call counts, temporal semantics,
-  transaction / identity-cache / optimistic-lock rules.
+  transaction / optimistic-lock rules.
 - **Protocol seams** — the metamodel (introspection **and** serde), the
   Predicate algebra (**and** its serde), the canonical model-descriptor schema,
   and the database-dialect interface.
@@ -114,7 +114,7 @@ freshly-provisioned real database:
 - **`then.referenceSql`** — a deliberately *naive, obviously-correct* second
   formulation of the same query, written so it is unlikely to share a bug with
   the golden `then.statements`. It is an **independent oracle**. It is **REQUIRED
-  for non-trivial cases** (joins, deep fetch, aggregation, temporal predicates)
+  for non-trivial cases** (joins, deep fetch, temporal predicates)
   and **OPTIONAL for trivial single-table predicate cases** where `then.rows` is
   obviously verifiable by eye.
 
@@ -127,7 +127,7 @@ contract and the case-envelope schema.
 
 Concrete language implementations prove themselves through the
 [`m-conformance-adapter.md`](m-conformance-adapter.md) seam: a
-small `describe` / `compile` / `run` / `benchmark` interface that accepts corpus
+small `describe` / `compile` / `run` interface that accepts corpus
 files and emits JSON validated by
 [`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json).
 Database support is tested in three reusable layers — pure dialect contract,

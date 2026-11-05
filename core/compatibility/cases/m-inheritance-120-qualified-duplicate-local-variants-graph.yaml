@@ -2,7 +2,7 @@
 # an abstract TPCS read must emit and materialize each exact qualified identity, preserve
 # branch-specific values, and never collapse either row to a bare ambiguous local name.
 model: models/materialization-key-compatibility.yaml
-tags: [m-inheritance, m-sql, m-api-conformance, table-per-concrete-subtype, union-all, familyVariant, graph, instance-form, entity-identity, positive, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, m-api-conformance, table-per-concrete-subtype, union-all, familyVariant, graph, instance-form, entity-identity, positive, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

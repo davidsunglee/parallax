@@ -5,7 +5,7 @@
 # lock, B is ADMITTED and succeeds without blocking. Both reads observe Linus /
 # 250.00 / version 1 on their own held session.
 model: models/account.yaml
-tags: [m-concurrency, m-dialect, concurrency, shared-lock-compatible, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, concurrency, shared-lock-compatible, slice-snapshot-1]
 shape: concurrencySuccess
 compileEligibility:
   mode: run-only

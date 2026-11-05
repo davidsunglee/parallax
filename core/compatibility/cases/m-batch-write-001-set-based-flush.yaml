@@ -1,6 +1,6 @@
 # Batched-write case (m-batch-write): buffered writes flush as set-based SQL.
 model: models/wallet.yaml
-tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

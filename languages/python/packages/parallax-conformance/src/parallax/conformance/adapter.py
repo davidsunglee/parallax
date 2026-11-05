@@ -31,7 +31,6 @@ __all__ = [
     "error",
     "run_case",
     "unsupported",
-    "unsupported_command",
 ]
 
 SCHEMA_VERSION: Final[str] = "1"
@@ -112,12 +111,6 @@ def _transport_diagnostic(case: case_format.Case, port: CaseDatabase) -> Diagnos
             f"case carries {ORDERED_WRITE_TRANSPORT_TAG!r} and the run connection holds none",
         )
     return None
-
-
-def unsupported_command(command: str, adapter: Adapter = ADAPTER) -> Envelope:
-    """An ``unsupported`` envelope for a command the adapter never claims."""
-    diagnostic = Diagnostic("unsupported-command", f"command {command!r} is not claimed")
-    return _non_ok(command, "unsupported", diagnostic, adapter)
 
 
 def error(command: str, diagnostic: Diagnostic, adapter: Adapter = ADAPTER) -> Envelope:

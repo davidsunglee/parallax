@@ -368,9 +368,7 @@ def test_every_connection_a_provider_opens_counts_the_rows_it_matches(
     owner = MariaDbProvider(None, "harness", {"user": "u", "client_flag": 0})
     with owner.open_session("read-committed"):
         pass
-    with owner.open_peer():
-        pass
     assert [
         (parameters["client_flag"], parameters["autocommit"]) for parameters in driver.parameters
-    ] == [(CONNECTION_FLAGS, False), (CONNECTION_FLAGS, True)]
+    ] == [(CONNECTION_FLAGS, False)]
     assert all(parameters["user"] == "u" for parameters in driver.parameters)

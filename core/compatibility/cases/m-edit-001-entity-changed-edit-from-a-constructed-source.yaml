@@ -1,6 +1,6 @@
 # A changed Entity edit preserves application-owned auxiliary state by shallow identity with independent bindings, invokes no setter hook while carrying it, drops a warm declared cache even though the authored body assignment is unrelated to that cache, and leaves the constructed source unchanged.
 model: models/note.yaml
-tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+tags: [m-edit, m-value-object, slice-snapshot-1]
 shape: edit
 lane: api-conformance
 when:

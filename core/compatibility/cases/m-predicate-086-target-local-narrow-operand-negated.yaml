@@ -1,7 +1,7 @@
 # Negating the narrowing complements a false result and keeps an unknown one: the cat
 # and the absent pet match, while Fido, whose bark is unknown, matches neither form.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, negation, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, negation, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

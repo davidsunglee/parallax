@@ -1,6 +1,6 @@
 # A string operation over the bound element: some tag contains `RG` ignoring case.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, contains, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, contains, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

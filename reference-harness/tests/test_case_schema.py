@@ -55,7 +55,7 @@ def _is_valid(doc: dict[str, Any]) -> bool:
 def _read_case() -> dict[str, Any]:
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-agg"],
+        "tags": ["m-object-query"],
         "shape": "read",
         "when": {"objectQuery": {"target": "Order", "predicate": {"true": {}}}},
         "then": {
@@ -171,7 +171,7 @@ def _action_scenario_case() -> dict[str, Any]:
     """
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-read-planning", "m-op-list"],
+        "tags": ["m-read-planning", "m-snapshot-read"],
         "shape": "scenario",
         "when": {
             "scenario": [
@@ -192,7 +192,7 @@ def _action_scenario_case() -> dict[str, Any]:
                     "expectRows": [{"id": 1}, {"id": 2}],
                 },
                 {
-                    "action": "load",
+                    "action": "access",
                     "on": 0,
                     "path": "items",
                     "databaseCalls": 1,
@@ -286,7 +286,7 @@ def _action_identity_error_case() -> dict[str, Any]:
     """A scenario exercising `differentObjectFrom` and `expectError`."""
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-identity-map"],
+        "tags": ["m-snapshot-read"],
         "shape": "scenario",
         "when": {
             "scenario": [
@@ -310,7 +310,6 @@ def _action_identity_error_case() -> dict[str, Any]:
                         "predicate": {"eq": {"path": "Order.id", "value": 1}},
                     },
                     "databaseCalls": 0,
-                    "differentObjectFrom": 0,
                 },
                 {
                     "action": "mutate",
@@ -383,36 +382,6 @@ def _conflict_case() -> dict[str, Any]:
             ],
             "affectedRows": 0,
             "tableState": {"account": [{"id": 2, "version": 2}]},
-        },
-    }
-
-
-def _coherence_case() -> dict[str, Any]:
-    step_sql = [{"sql": {"postgres": "select t0.id from account t0 where t0.id = ?"}, "binds": [2]}]
-    return {
-        "model": "models/account.yaml",
-        "tags": ["m-coherence"],
-        "shape": "coherence",
-        "when": {
-            "coherence": [
-                {
-                    "node": "B",
-                    "kind": "read",
-                    "objectQuery": {"target": "Account", "predicate": {"true": {}}},
-                    "statements": step_sql,
-                    "observeRows": [{"id": 2}],
-                },
-                {
-                    "node": "A",
-                    "kind": "write",
-                    "statements": [
-                        {
-                            "sql": {"postgres": "update account set balance = ? where id = ?"},
-                            "binds": [9, 2],
-                        }
-                    ],
-                },
-            ]
         },
     }
 
@@ -897,7 +866,6 @@ VALID_CASES = {
     "scenario-keyed-write-value": _write_value_scenario_case,
     "conflict": _conflict_case,
     "conflict-retry": _conflict_retry_case,
-    "coherence": _coherence_case,
     "error": _error_case,
     "error-concurrency": _error_concurrency_case,
     "concurrencySuccess": _concurrency_success_case,
@@ -936,7 +904,7 @@ def test_schema_accepts_minimal_case_for_every_shape(shape: str) -> None:
     ],
 )
 def test_schema_accepts_every_expect_error_code(code: str) -> None:
-    # The closed application-lifecycle vocabulary: m-identity-map's finite-pin
+    # The closed application-lifecycle vocabulary: m-temporal-write's finite-pin
     # refusal plus m-unit-work's three write-value provenance refusals. The
     # `action-unknown-expect-error` rejection fixture pins the other direction.
     doc = _action_identity_error_case()
@@ -1008,7 +976,7 @@ def _legacy_layout() -> dict[str, Any]:
     """The pre-migration flat layout: no shape, positional goldenSql/binds."""
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-agg"],
+        "tags": ["m-object-query"],
         "objectQuery": {"target": "Order", "predicate": {"true": {}}},
         "goldenSql": {"postgres": "select t0.id from orders t0"},
         "binds": [],
@@ -1089,14 +1057,6 @@ def _scenario_find_missing_query() -> dict[str, Any]:
     """A scenario read step carrying no `objectQuery` (Q1): the branch requires it."""
     doc = _scenario_case()
     del doc["when"]["scenario"][0]["objectQuery"]
-    return doc
-
-
-def _coherence_read_missing_query() -> dict[str, Any]:
-    """A coherence read step carrying no `objectQuery` (Q1): the read conditional
-    requires it."""
-    doc = _coherence_case()
-    del doc["when"]["coherence"][0]["objectQuery"]
     return doc
 
 
@@ -1416,6 +1376,7 @@ def _expect_graph_on_a_non_access_action() -> dict[str, Any]:
     """`expectGraph` on a `load` — a step that RESOLVES the relationship rather
     than reading an already-materialized one, so it grades a fresh fetch."""
     doc = _action_scenario_case()
+    doc["when"]["scenario"][1]["action"] = "mutate"
     doc["when"]["scenario"][1]["expectGraph"] = {"OrderItem": [{"id": 11}]}
     return doc
 
@@ -1944,7 +1905,6 @@ REJECTED_CASES = {
     "cross-shape-when-member": _cross_shape_when_member,
     "read-missing-target": _read_missing_target,
     "scenario-find-missing-query": _scenario_find_missing_query,
-    "coherence-read-missing-query": _coherence_read_missing_query,
     "rejected-without-rule": _rejected_without_rule,
     "rejected-unknown-rule": _rejected_unknown_rule,
     "rejected-with-golden-statements": _rejected_with_golden_statements,

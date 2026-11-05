@@ -5,7 +5,7 @@
 # and Priya (10) only because their wrong-kind `phones` do; Nils (7) has a null
 # `country` and a real phone, so it falls to the second operand.
 model: models/customer.yaml
-tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, "null", exists, absence-collapse, array-traversal, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, "null", exists, absence-collapse, array-traversal, materialization, graph, to-one, to-many, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

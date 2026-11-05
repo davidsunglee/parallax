@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype INSERT: writing a concrete subtype targets its OWN table,
 # with no tag, supplying the full ancestry chain (m-inheritance, m-sql).
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

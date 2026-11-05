@@ -1090,13 +1090,21 @@ def test_the_edited_copy_story_answers_the_source_nodes_unloaded_view() -> None:
 
 def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
     # The canned port refuses execute_write, proving rejection precedes DML.
-    db = own_root(
-        Database.connect(_TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"])
-    ).using_database_login()
+    model = MODELS["balance"]
+    db = _RecordingDatabase(
+        _TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), model, group_finds=True
+    )
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
     ):
         graph_stories.a_finite_transaction_time_pinned_view_is_read_only(db)
+    case_id = "m-temporal-write-092"
+    assert [canonical_document(query, model) for query in db.queries] == _scenario_object_queries(
+        case_id
+    )
+    [(step_index, query, authored)] = _authored_reads(case_id)
+    assert len(db.reads) == 1
+    _assert_authored_observation(case_id, step_index, query, authored, db.reads[0].snapshot.wire())
 
 
 def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> None:

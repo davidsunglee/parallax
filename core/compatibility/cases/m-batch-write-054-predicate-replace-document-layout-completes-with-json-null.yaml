@@ -5,7 +5,7 @@
 # declares nowhere, which only `given.apply` can store, sits at no member's path,
 # so it survives (m-batch-write, m-storage-layout).
 model: models/document-layout.yaml
-tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, replace, scenario, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, replace, scenario, update, json, document-layout, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

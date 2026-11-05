@@ -72,18 +72,6 @@ def test_every_authored_scenario_is_judged_clean_before_any_database(scenario_ca
                 pass  # judged clean, then asked for a database
 
 
-def test_cache_hit_scenario_has_a_zero_database_call_step(corpus_case) -> None:
-    case = corpus_case("m-process-cache-001-hit.yaml")
-    assert "cache-hit" in case.tags
-    # A cache-hit scenario must contain a step that costs zero Database Calls and
-    # lists no golden SQL (it is served from the query cache).
-    hits = [step for step in case.scenario if step["databaseCalls"] == 0]
-    assert hits, "cache-hit scenario has no zero-Database-Call (hit) step"
-    for hit in hits:
-        assert not hit.get("statements"), "a cache-hit step must list no golden SQL"
-    assert_judged(case)
-
-
 def test_rollback_scenario_step_is_discovered_and_self_describes(corpus_case) -> None:
     case = corpus_case("m-unit-work-002-rollback-discards-writes.yaml")
     abandoned = {
@@ -231,34 +219,11 @@ def test_a_settling_writes_on_reference_is_bounded_by_the_same_rule(damaged_case
         assert_unit_work_scenario(case, RefusingProvider())
 
 
-def test_a_read_verbs_on_reference_must_name_an_earlier_step(damaged_case) -> None:
-    # A `load` walks a relationship from the object an earlier step named. The
-    # oracle that walks it resolves that reference rather than bounding it, so a
-    # forward or self index is refused here, before a container exists — the rule
-    # has one owner however many readers follow the reference afterwards.
-    case = damaged_case("m-op-list-002-deep-fetch-population-stable.yaml")
-    case.when["scenario"][1]["on"] = 1
-    with pytest.raises(CaseFailure, match="not a real EARLIER step"):
-        assert_unit_work_scenario(case, RefusingProvider())
-
-
-def test_a_reuse_naming_a_step_that_is_not_earlier_is_refused(damaged_case) -> None:
-    # The other half of the same rule: a zero-Database-Call cache hit / re-access
-    # names its source with `sameObjectAs`, and an empty reuse would let the
-    # step's own identity and `expectRows` assertions pass against nothing.
-    # Whether the step it names PUBLISHED anything only a run can answer, and the
-    # row observation oracle answers it there.
-    case = damaged_case("m-op-list-002-deep-fetch-population-stable.yaml")
-    case.when["scenario"][2]["sameObjectAs"] = 2
-    with pytest.raises(CaseFailure, match=r"sameObjectAs=2 is not a real EARLIER step"):
-        assert_unit_work_scenario(case, RefusingProvider())
-
-
-def test_a_coordinate_grouped_on_names_each_source_once(damaged_case) -> None:
+def test_an_action_on_requires_one_earlier_source(damaged_case) -> None:
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
     mutate["on"] = [0, 0]
-    with pytest.raises(CaseFailure, match="DUPLICATE source"):
+    with pytest.raises(CaseFailure, match="not a real EARLIER step"):
         assert_unit_work_scenario(case, RefusingProvider())
 
 

@@ -5,7 +5,7 @@
 # transaction B updates account 2, blocks on A's shared lock, and raises
 # lockWaitTimeout on the session's lowered lock-wait budget.
 model: models/account.yaml
-tags: [m-concurrency, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-snapshot-1]
 shape: error
 compileEligibility:
   mode: run-only

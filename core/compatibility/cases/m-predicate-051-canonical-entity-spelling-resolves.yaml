@@ -2,7 +2,7 @@
 # CANONICALLY, so a local name two namespaces of the model declare names exactly
 # one Entity and the read lowers to SQL against that Entity's table.
 model: models/shared-local-name.yaml
-tags: [m-predicate, relationship, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

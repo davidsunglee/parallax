@@ -1,7 +1,7 @@
 # Table-per-hierarchy abstract-root read over the intermediate-abstract Animal family
 # (m-inheritance, m-sql).
 model: models/animal.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

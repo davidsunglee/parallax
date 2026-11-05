@@ -3,7 +3,7 @@
 # same `code`; the authored unique index ends with `out_z`, so the closed and the
 # current milestone differ on it and the successor insert succeeds.
 model: models/temporal-authored-index.yaml
-tags: [m-temporal-write, m-sql, m-storage-layout, write-sequence, update, audit-only, unique-index, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, m-storage-layout, write-sequence, update, audit-only, unique-index, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

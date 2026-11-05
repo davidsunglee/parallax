@@ -2,7 +2,7 @@
 # dialect's SINGLE-precision type (m-document-codec, m-dialect typed cast form,
 # m-sql), on Postgres AND MariaDB.
 model: models/document-codec.yaml
-tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

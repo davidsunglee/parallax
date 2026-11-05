@@ -70,7 +70,7 @@ _CATALOG_HEADING = "the module catalog"
 _CATALOG_STATUSES = frozenset({"active", "deferred"})
 _CATALOG_COVERAGES = frozenset({"cases", "contract"})
 
-# The eleven case shapes the schema `oneOf` keys on, read directly from each case's
+# The case shapes the schema `oneOf` keys on, read directly from each case's
 # explicit top-level `shape` field (cases are self-describing; no key-sniffing).
 _CASE_SHAPES = frozenset(
     {
@@ -78,7 +78,6 @@ _CASE_SHAPES = frozenset(
         "writeSequence",
         "scenario",
         "conflict",
-        "coherence",
         "error",
         "concurrencySuccess",
         "boundary",

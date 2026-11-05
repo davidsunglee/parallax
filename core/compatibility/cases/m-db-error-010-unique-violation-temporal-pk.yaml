@@ -1,7 +1,7 @@
 # Different starts distinguish these rows under a start-keyed primary key;
 # equal ends make them collide under the required end-keyed temporal key.
 model: models/policy.yaml
-tags: [m-db-error, uniqueViolation, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+tags: [m-db-error, uniqueViolation, temporal, bitemporal, slice-snapshot-1]
 shape: error
 then:
   statements:

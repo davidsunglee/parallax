@@ -1,7 +1,7 @@
 # A dealer name read around the unproven vehicle hop is missing wherever any hop
 # reaches nothing: no parking, no vehicle, or a car without a dealer.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, relationship, to-one, traversal, isNull, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, isNull, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

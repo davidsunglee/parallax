@@ -2,7 +2,7 @@
 # name two namespaces of the model declare, so it resolves to no Entity at all and
 # is refused before any SQL.
 model: models/shared-local-name.yaml
-tags: [m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, rejected, negative, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

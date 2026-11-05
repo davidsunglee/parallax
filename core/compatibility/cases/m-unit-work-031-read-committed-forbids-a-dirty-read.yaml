@@ -2,7 +2,7 @@
 # opened at `when.uow.isolation: read-committed` never observes another unit of
 # work's uncommitted write.
 model: models/account.yaml
-tags: [m-unit-work, isolation, read-committed, dirty-read, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, isolation, read-committed, dirty-read, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

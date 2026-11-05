@@ -2,7 +2,7 @@
 # unit of work inherits the level or repeats it, and naming a different one is
 # refused before its callback runs — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-unit-work, m-api-conformance, isolation, join, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-api-conformance, isolation, join, slice-snapshot-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

@@ -2,7 +2,7 @@
 # vehicle, and the ticket with no parking, while car 7's unknown seats match
 # neither form.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, negation, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, negation, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

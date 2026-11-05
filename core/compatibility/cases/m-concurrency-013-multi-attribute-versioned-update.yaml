@@ -1,7 +1,7 @@
 # Multi-attribute versioned UPDATE (m-concurrency): a versioned update that sets
 # SEVERAL domain columns advances + gates the version exactly once.
 model: models/account.yaml
-tags: [m-concurrency, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-sql, success, optimistic-lock-success, slice-snapshot-1]
 shape: conflict
 compileEligibility:
   mode: run-only

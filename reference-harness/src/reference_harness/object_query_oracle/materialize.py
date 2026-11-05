@@ -13,7 +13,6 @@ document is fanned out at the concrete variant a row names, so the variant must
 already be resolved, and each derivation's own absence is invisible until the one
 after it runs. So the sequence is offered whole, once per kind of position a row
 can stand at — :func:`materialize_read` for the position an Object Query names,
-:func:`materialize_navigated` for one a relationship declaration reached, and
 :func:`materialize_hop_level` for one level of a deep fetch — and the steps it is
 composed of are private. What comes back is a :class:`PublishedRow`, whose
 constructor demands a token this module keeps and which is what the consumers of a
@@ -234,7 +233,7 @@ def _refuse_an_unpublished_row(case: Case, step: str, row: Mapping[str, Any]) ->
     raise CaseFailure(
         f"{case.path.name}: {step} projects a row a read PUBLISHED, but this one did "
         f"not come through the materialization seam (materialize_read / "
-        f"materialize_navigated / materialize_hop_level), so it may still carry the "
+        f"materialize_hop_level), so it may still carry the "
         f"storage those derivations take out."
     )
 
@@ -293,33 +292,6 @@ def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRo
     return [
         _published(_with_direct_collections_decoded(read.model, target, row))
         for row in _materialize_family_variant(read, materialized)
-    ]
-
-
-def materialize_navigated(
-    case: Case, entity: Entity, rows: list[dict[str, Any]]
-) -> list[PublishedRow]:
-    """The rows a read of a position reached by relationship declaration publishes.
-
-    A relationship names its target, so this position carries no Object Query:
-    there is no ``narrowTo`` to read and no whole-read projection superset to
-    assert, the level's own golden being what fixes the shape. Navigating is
-    instance-form, and *rows* may stand at more than one position — a multi-hop
-    load aggregates the levels it walked through as well as the one it ended at —
-    so the document fan-out is taken per row, at whichever concrete that row's own
-    derived ``familyVariant`` names.
-    """
-    return [
-        _published(
-            _with_direct_collections_decoded(
-                case.model,
-                entity,
-                _materialize_document_layout(case, variant_entity(case.model, entity, row), [row])[
-                    0
-                ],
-            )
-        )
-        for row in _materialize_navigated_family_variant(case, entity, rows)
     ]
 
 
@@ -787,66 +759,6 @@ def level_order_binds(
     family = Family(case.model.entity_defs)
     position = _tpcs_position(case, family, concretes)
     return tpcs.level_order_binds(case, position.view, position.branch_variants, order_by, dialect)
-
-
-def _materialize_navigated_family_variant(
-    case: Case, entity: Entity, rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """``familyVariant`` for rows read at a NAVIGATED position rather than a queried one.
-
-    A relationship reaches its target by declaration, so the position carries no
-    Object Query and its own family fixes the concrete set — there is no ``narrowTo``
-    to read and no whole-read superset to assert, the level's own golden being what
-    fixes the projection shape (:func:`_materialize_hop_variant`, the eager
-    counterpart). A position resolving to ONE concrete already names its variant and
-    carries no branch carrier at all; a multi-concrete one is polymorphic under both
-    strategies, publishing ``familyVariant`` from a table-per-hierarchy tag or from
-    the ``union all`` branch literal a table-per-concrete-subtype hop projects
-    (`m-read-planning`).
-
-    A row carrying no branch carrier stands somewhere else — a multi-hop load
-    aggregates the levels it walked THROUGH as well as the one it ended at — and is
-    left as it came back, exactly as the owner-node decode beside it leaves a column
-    the golden did not project.
-    """
-    position = query_position({"target": entity.canonical_name}, case.model.entity_defs)
-    if position is None:
-        return rows
-    family, target = position.family, position.target
-    if len(family.effective_concrete_set(target)) < 2:
-        return rows
-    if position.strategy == STRATEGY_TPCS:
-        if not any(tpcs.VARIANT_COLUMN in row for row in rows):
-            return rows
-        tpcs_position = _tpcs_position(case, family, family.effective_concrete_set(target))
-        return [
-            _tpcs_row_at_its_branch(
-                case, tpcs_position, row, subject=f"navigated position {target}"
-            )
-            if tpcs.VARIANT_COLUMN in row
-            else row
-            for row in rows
-        ]
-    if position.strategy != STRATEGY_TPH:
-        return rows
-    tag_column = family.tag_column_of(target)
-    if tag_column is None:
-        return rows
-    variant_map = tag_value_to_subtype(case.model.entity_defs)
-    family_root = _family_root(case, target)
-    return [
-        _with_family_variant(
-            case,
-            dict(row),
-            tag_column=tag_column,
-            variant_map=variant_map,
-            family_root=family_root,
-            subject=f"navigated position {target}",
-        )
-        if tag_column in row
-        else row
-        for row in rows
-    ]
 
 
 def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:

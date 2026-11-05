@@ -51,7 +51,7 @@ def _refuse_unpublished_roots(case: Case, root_rows: Sequence[materialize.Publis
     raise CaseFailure(
         f"{case.path.name}: a Snapshot Graph is assembled from the roots a read "
         f"PUBLISHED, but these did not come through the materialization seam "
-        f"(materialize_read / materialize_navigated), so they may still carry storage "
+        f"(materialize_read / materialize_hop_level), so they may still carry storage "
         f"the read never asked for."
     )
 

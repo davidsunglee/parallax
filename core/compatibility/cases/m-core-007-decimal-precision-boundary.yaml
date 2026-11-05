@@ -1,7 +1,7 @@
 # Decimal precision/scale WRITE boundary (m-core): a decimal(18,4) value round-trips
 # all four fractional digits exactly.
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

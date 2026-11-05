@@ -314,33 +314,32 @@ def test_a_chained_edit_is_judged_against_the_find_its_chain_started_from() -> N
 
 
 def test_an_edit_after_a_relationship_step_is_judged_at_the_relationship_target() -> None:
-    # A `load` / `access` result is the relationship TARGET, so an edit of one states
+    # An `access` result is the relationship TARGET, so an edit of one states
     # a member of the ITEM. Judging it against the find's own Entity would be wrong,
     # and judging it against nothing at all would let every invalid assignment on a
     # relationship result through the gate the corpus refuses one by.
-    for verb in ("load", "access"):
-        undeclared: list[Any] = [
-            {"objectQuery": {"target": _ORDER}},
-            {"action": verb, "on": 0, "path": "items"},
-            {"action": "mutate", "on": 1, "set": {"nickname": "Nick"}},
-        ]
-        assert _judged("models/orders.yaml", undeclared, 2) == [
-            "probe: `mutate` set OrderItem.nickname: names no assignable attribute or value object"
-        ]
-        source_member: list[Any] = [
-            {"objectQuery": {"target": _ORDER}},
-            {"action": verb, "on": 0, "path": "items"},
-            {"action": "mutate", "on": 1, "set": {"name": "Mutant"}},
-        ]
-        assert _judged("models/orders.yaml", source_member, 2) == [
-            "probe: `mutate` set OrderItem.name: names no assignable attribute or value object"
-        ]
-        admitted: list[Any] = [
-            {"objectQuery": {"target": _ORDER}},
-            {"action": verb, "on": 0, "path": "items"},
-            {"action": "mutate", "on": 1, "set": {"sku": "COPY-ONLY"}},
-        ]
-        assert _judged("models/orders.yaml", admitted, 2) == []
+    undeclared: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "access", "on": 0, "path": "items"},
+        {"action": "mutate", "on": 1, "set": {"nickname": "Nick"}},
+    ]
+    assert _judged("models/orders.yaml", undeclared, 2) == [
+        "probe: `mutate` set OrderItem.nickname: names no assignable attribute or value object"
+    ]
+    source_member: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "access", "on": 0, "path": "items"},
+        {"action": "mutate", "on": 1, "set": {"name": "Mutant"}},
+    ]
+    assert _judged("models/orders.yaml", source_member, 2) == [
+        "probe: `mutate` set OrderItem.name: names no assignable attribute or value object"
+    ]
+    admitted: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "access", "on": 0, "path": "items"},
+        {"action": "mutate", "on": 1, "set": {"sku": "COPY-ONLY"}},
+    ]
+    assert _judged("models/orders.yaml", admitted, 2) == []
 
 
 def test_a_multi_hop_path_is_judged_at_its_terminal_position() -> None:
@@ -349,7 +348,7 @@ def test_a_multi_hop_path_is_judged_at_its_terminal_position() -> None:
     # relationship, which returns to the entity the path started from.
     forward: list[Any] = [
         {"objectQuery": {"target": _ORDER}},
-        {"action": "load", "on": 0, "path": "items.statuses"},
+        {"action": "access", "on": 0, "path": "items.statuses"},
         {"action": "mutate", "on": 1, "set": {"sku": "A-100"}},
     ]
     assert _judged("models/orders.yaml", forward, 2) == [
@@ -357,24 +356,11 @@ def test_a_multi_hop_path_is_judged_at_its_terminal_position() -> None:
     ]
     back: list[Any] = [
         {"objectQuery": {"target": _ORDER}},
-        {"action": "load", "on": 0, "path": "items.order"},
+        {"action": "access", "on": 0, "path": "items.order"},
         {"action": "mutate", "on": 1, "set": {"quantity": 2}},
     ]
     assert _judged("models/orders.yaml", back, 2) == [
         "probe: `mutate` set Order.quantity: names no assignable attribute or value object"
-    ]
-
-
-def test_a_path_less_access_stands_where_its_source_does() -> None:
-    # The path-less `access` form navigates no relationship — it resolves a
-    # query-backed list, whose members are the source's own position.
-    steps: list[Any] = [
-        {"objectQuery": {"target": _ORDER}},
-        {"action": "access", "on": 0},
-        {"action": "mutate", "on": 1, "set": {"id": 2}},
-    ]
-    assert _judged("models/orders.yaml", steps, 2) == [
-        "probe: `mutate` set Order.id: primary-key fields may not be assigned"
     ]
 
 
@@ -393,33 +379,18 @@ def test_a_derivation_rooted_at_a_relationship_result_keeps_that_position() -> N
     ]
 
 
-def test_a_grouped_load_stands_where_its_sources_do() -> None:
-    # An `on` ARRAY spans sources at different lowered coordinates — one position
-    # pinned several ways — so the load lands at the same relationship target a
-    # single-source load would.
-    steps: list[Any] = [
-        {"objectQuery": {"target": _ORDER}},
-        {"objectQuery": {"target": _ORDER}},
-        {"action": "load", "on": [0, 1], "path": "items"},
-        {"action": "mutate", "on": 2, "set": {"nickname": "Nick"}},
-    ]
-    assert _judged("models/orders.yaml", steps, 3) == [
-        "probe: `mutate` set OrderItem.nickname: names no assignable attribute or value object"
-    ]
-
-
 def test_a_polymorphic_relationship_target_is_judged_as_every_concrete_it_reaches() -> None:
     # A navigated position is judged by the same whole-set/every-concrete rule a read's
     # own is: `Person.animals` reaches the whole family, `Person.pets` only Pet's branch.
     root_member: list[Any] = [
         {"objectQuery": {"target": _PERSON}},
-        {"action": "load", "on": 0, "path": "animals"},
+        {"action": "access", "on": 0, "path": "animals"},
         {"action": "mutate", "on": 1, "set": {"name": "Mutant"}},
     ]
     assert _judged("models/animal.yaml", root_member, 2) == []
     branch_member: list[Any] = [
         {"objectQuery": {"target": _PERSON}},
-        {"action": "load", "on": 0, "path": "animals"},
+        {"action": "access", "on": 0, "path": "animals"},
         {"action": "mutate", "on": 1, "set": {"licenseId": "L-1"}},
     ]
     assert _judged("models/animal.yaml", branch_member, 2) == [
@@ -429,7 +400,7 @@ def test_a_polymorphic_relationship_target_is_judged_as_every_concrete_it_reache
     ]
     narrower_relationship: list[Any] = [
         {"objectQuery": {"target": _PERSON}},
-        {"action": "load", "on": 0, "path": "pets"},
+        {"action": "access", "on": 0, "path": "pets"},
         {"action": "mutate", "on": 1, "set": {"licenseId": "L-1"}},
     ]
     assert _judged("models/animal.yaml", narrower_relationship, 2) == []
@@ -443,30 +414,28 @@ def test_an_inherited_relationship_is_navigable_from_every_concrete_that_inherit
     # source's own declarations alone would find nothing on `Dog` and let every
     # invalid assignment behind an inherited hop through the gate.
     for source in (_DOG, _PET, _ANIMAL):
-        for verb in ("load", "access"):
-            undeclared: list[Any] = [
-                {"objectQuery": {"target": source}},
-                {"action": verb, "on": 0, "path": "owner"},
-                {"action": "mutate", "on": 1, "set": {"nope": 1}},
-            ]
-            assert _judged("models/animal.yaml", undeclared, 2) == [
-                "probe: `mutate` set Person.nope: names no assignable attribute or value object"
-            ]
-            source_member: list[Any] = [
-                {"objectQuery": {"target": source}},
-                {"action": verb, "on": 0, "path": "owner"},
-                {"action": "mutate", "on": 1, "set": {"barkVolume": 9}},
-            ]
-            assert _judged("models/animal.yaml", source_member, 2) == [
-                "probe: `mutate` set Person.barkVolume: names no assignable attribute or "
-                "value object"
-            ]
-            admitted: list[Any] = [
-                {"objectQuery": {"target": source}},
-                {"action": verb, "on": 0, "path": "owner"},
-                {"action": "mutate", "on": 1, "set": {"name": "Ann"}},
-            ]
-            assert _judged("models/animal.yaml", admitted, 2) == []
+        undeclared: list[Any] = [
+            {"objectQuery": {"target": source}},
+            {"action": "access", "on": 0, "path": "owner"},
+            {"action": "mutate", "on": 1, "set": {"nope": 1}},
+        ]
+        assert _judged("models/animal.yaml", undeclared, 2) == [
+            "probe: `mutate` set Person.nope: names no assignable attribute or value object"
+        ]
+        source_member: list[Any] = [
+            {"objectQuery": {"target": source}},
+            {"action": "access", "on": 0, "path": "owner"},
+            {"action": "mutate", "on": 1, "set": {"barkVolume": 9}},
+        ]
+        assert _judged("models/animal.yaml", source_member, 2) == [
+            "probe: `mutate` set Person.barkVolume: names no assignable attribute or value object"
+        ]
+        admitted: list[Any] = [
+            {"objectQuery": {"target": source}},
+            {"action": "access", "on": 0, "path": "owner"},
+            {"action": "mutate", "on": 1, "set": {"name": "Ann"}},
+        ]
+        assert _judged("models/animal.yaml", admitted, 2) == []
 
 
 def test_an_inherited_hop_survives_a_later_hop_and_a_later_derivation() -> None:
@@ -526,7 +495,7 @@ def test_a_path_naming_no_relationship_reaches_no_position() -> None:
     # target here would judge the edit against an Entity the step never reaches.
     steps: list[Any] = [
         {"objectQuery": {"target": _ORDER}},
-        {"action": "load", "on": 0, "path": "nope"},
+        {"action": "access", "on": 0, "path": "nope"},
         {"action": "mutate", "on": 1, "set": {"nickname": "Nick"}},
     ]
     assert _judged("models/orders.yaml", steps, 2) == []

@@ -1,6 +1,6 @@
 # Optimistic-lock conflict (m-concurrency): a stale-version UPDATE affects ZERO rows.
 model: models/account.yaml
-tags: [m-concurrency, m-sql, conflict, optimistic-lock-conflict, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-sql, conflict, optimistic-lock-conflict, slice-snapshot-1]
 shape: conflict
 compileEligibility:
   mode: run-only

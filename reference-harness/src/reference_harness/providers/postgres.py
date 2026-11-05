@@ -12,7 +12,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import psycopg
 from psycopg.abc import QueryNoTemplate
@@ -29,9 +29,6 @@ from ..document_codec import ParsedJsonString, is_document
 from ..portable_literal import AuthoredNumber
 from . import Catalog, build_catalog, register
 from ._binds import adapt_document_scalar_binds
-
-if TYPE_CHECKING:
-    from . import Node
 
 # The provisioning seam pins a stable Postgres major (m-case-format/DQ15).
 POSTGRES_IMAGE = "postgres:18"
@@ -376,7 +373,7 @@ class PostgresProvider:
 
         Deadlock / lock-wait-timeout cases need two connections each holding a row
         lock across a barrier, so this session does NOT autocommit (unlike the
-        provider's own connection and ``open_peer``). Lock-contention tuning is
+        provider's own connection). Lock-contention tuning is
         applied + committed on open so a blocked lock fails fast instead of
         hanging the suite: ``deadlock_timeout`` shortens PG's cycle-detector delay
         and ``lock_timeout`` bounds a plain lock wait.
@@ -408,23 +405,6 @@ class PostgresProvider:
             yield session
         finally:
             session.close()
-
-    @contextmanager
-    def open_peer(self) -> Iterator[Node]:
-        """Yield a second, independent connection to the SAME Postgres database.
-
-        Cross-process coherence: node B is a fresh ``PostgresProvider``
-        bound to the same connection URL — its own socket, its own session — so a
-        write COMMITTED on node A (this provider, autocommit) is visible to a read
-        on node B, exactly as two app servers sharing one database would observe.
-        Only the read/write surface (``query`` / ``execute`` / ``dialect``) is used
-        on the peer; provisioning stays on node A.
-        """
-        peer = PostgresProvider(self._url)
-        try:
-            yield peer
-        finally:
-            peer.close()
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:

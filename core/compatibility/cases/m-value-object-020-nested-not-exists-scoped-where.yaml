@@ -2,7 +2,7 @@
 # (m-value-object to-many, m-predicate quantifiers, m-dialect array-traversal form),
 # on Postgres AND MariaDB.
 model: models/customer.yaml
-tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

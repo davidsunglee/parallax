@@ -1,5 +1,5 @@
 model: models/customer.yaml
-tags: [m-predicate, m-value-object, rejected, negative, matching, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, matching, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

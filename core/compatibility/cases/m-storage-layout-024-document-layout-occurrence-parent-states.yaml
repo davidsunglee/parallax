@@ -7,7 +7,7 @@
 # both engines create only the FINAL path segment, and a top-level occurrence's parent
 # is the document root, which every governed row already carries.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-dialect, m-document-codec, m-value-object, m-sql, scenario, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-dialect, m-document-codec, m-value-object, m-sql, scenario, update, json, document-layout, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -2,7 +2,7 @@
 # UPDATE, and a DELETE flushes them in the combined canonical order — inserts,
 # then updates, then deletes.
 model: models/account.yaml
-tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

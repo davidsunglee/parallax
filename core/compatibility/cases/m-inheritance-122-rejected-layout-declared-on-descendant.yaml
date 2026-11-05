@@ -1,7 +1,7 @@
 # Negative (m-inheritance): a conventionally-mapped table-per-hierarchy root
 # whose concrete subtype declares its own Relational Document Layout.
 model: models/payment.yaml
-tags: [m-inheritance, m-storage-layout, m-model-formation, m-descriptor, rejected, negative, table-per-hierarchy, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-storage-layout, m-model-formation, m-descriptor, rejected, negative, table-per-hierarchy, document-layout, slice-snapshot-1]
 shape: rejected
 when:
   model:

@@ -1,6 +1,6 @@
 # orderBy + limit — directives composed over `true`.
 model: models/orders.yaml
-tags: [m-object-query, m-predicate, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, orderBy, limit, directive, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

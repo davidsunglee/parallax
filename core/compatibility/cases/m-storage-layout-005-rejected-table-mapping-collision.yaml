@@ -4,7 +4,7 @@
 # can fully supply, so Storage Layout must reject the later canonical owner at
 # its mapping provenance before physical Column collision validation.
 model: models/member-column-defaults.yaml
-tags: [m-storage-layout, m-inheritance, m-model-formation, m-descriptor, rejected, negative, table-mapping, standalone, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-model-formation, m-descriptor, rejected, negative, table-mapping, standalone, slice-snapshot-1]
 shape: rejected
 when:
   model:

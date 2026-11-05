@@ -6,7 +6,7 @@
 # pair. Its twin authors the same operation and graph under Relational Document
 # Layout.
 model: models/scalar-collection-layout-twin-columns.yaml
-tags: [m-storage-layout, m-document-codec, m-value-object, m-sql, read, json, nested, to-many, graph, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-document-codec, m-value-object, m-sql, read, json, nested, to-many, graph, layout-twin, columns, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

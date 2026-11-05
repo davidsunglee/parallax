@@ -1,7 +1,7 @@
 # A narrowed polymorphic hop carrying its OWN branch predicate binds that predicate
 # BEFORE the injected tag guard (m-sql "Grouped branch predicates", m-navigate).
 model: models/animal.yaml
-tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -35,7 +35,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import pymysql
 from pymysql.constants import CLIENT, FIELD_TYPE
@@ -47,9 +47,6 @@ from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
 from . import Catalog, build_catalog, register
 from ._binds import adapt_document_scalar_binds
-
-if TYPE_CHECKING:
-    from . import Node
 
 # The graded MariaDB floor (m-db-port *Adapter profile*). Below it
 # `innodb_snapshot_isolation` either refuses a row an uncommitted writer holds before
@@ -452,35 +449,6 @@ class MariaDbProvider:
             raise
         session.end(saved)
 
-    @contextmanager
-    def open_peer(self) -> Iterator[Node]:
-        """Yield a second, independent connection to the SAME MariaDB database.
-
-        Cross-process coherence: node B reconnects with the provider's
-        own connection parameters and ``USE``\\ s the working database, so it shares
-        node A's data while holding its own session. MariaDB ``execute`` COMMITs,
-        so a write on node A is visible to a read on node B — the observable half
-        of cross-process coherence. Provisioning stays on node A; only the peer's
-        read/write surface is used.
-
-        The peer connects with ``autocommit=True`` so each read is its OWN
-        transaction with a FRESH snapshot. Under MariaDB/InnoDB's default
-        ``REPEATABLE READ`` a long-lived transaction would pin the snapshot taken
-        at node B's first read and never see node A's later commit — which is the
-        very thing a coherence re-fetch must observe. Autocommit reads model the
-        app server's behavior exactly: a re-fetch after invalidation is a new
-        query, not a read inside the stale snapshot. (Postgres' provider is already
-        autocommit, so this aligns the two dialects.)
-        """
-        connection = pymysql.connect(
-            database=self._dbname, **_counting(self._connect_params, autocommit=True)
-        )
-        peer = MariaDbProvider(connection, self._dbname, self._connect_params)
-        try:
-            yield peer
-        finally:
-            peer.close()
-
     def close(self) -> None:
         if self._conn is not None and self._conn.open:
             self._conn.close()
@@ -678,10 +646,8 @@ def _counting(params: dict[str, Any], *, autocommit: bool) -> dict[str, Any]:
 def _connect_params(container: MySqlContainer) -> dict[str, Any]:
     """The pymysql connection parameters for the booted container (sans database).
 
-    Shared by the provider's own connection, the peer connection, and every held
-    session, so a coherence case's node B reaches the same server with the same
-    credentials; each of them adds the capabilities it negotiates
-    (:func:`_counting`).
+    The provider and each held session use the same server and credentials,
+    adding the capabilities each connection negotiates (:func:`_counting`).
     """
     return {
         "host": container.get_container_host_ip(),

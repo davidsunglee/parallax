@@ -24,7 +24,6 @@ from .conftest import Affected, RefusingProvider, Rows, ScriptedProvider
 _SETTLED = "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
 _RYOW = "m-unit-work-005-ryow-update.yaml"
 _ABORT = "m-concurrency-012-conflict-aborts-uow.yaml"
-_IDENTITY = "m-identity-map-001-same-transaction-identity.yaml"
 
 
 def _named_once(failure: CaseFailure, case_name: str, step: int) -> None:
@@ -78,40 +77,6 @@ def test_an_execution_refusal_from_the_read_oracle_names_its_step_once(damaged_c
     _named_once(raised.value, case.path.name, 0)
 
 
-@pytest.mark.parametrize(
-    "raised",
-    [
-        "the storage layout resolves no position for the effective concrete set",
-        "m-identity-map-001-same-transaction-identity.yaml: the Continuation Order names "
-        "a member this read resolves to no single Structured Column",
-    ],
-    ids=["names neither", "names the case only"],
-)
-def test_a_subordinate_refusal_is_reported_against_the_step_that_reached_it(
-    corpus_case, monkeypatch: pytest.MonkeyPatch, raised: str
-) -> None:
-    """The step boundary is unconditional, so no route has to be remembered.
-
-    Every oracle a read step reaches — delivery, seek derivation, materialization,
-    Include levels, graph assembly — speaks of the READ it was handed rather than
-    the Scenario position that handed it over, so a refusal from any of them
-    arrives naming at most the case. Standing in for all of them is a refusal
-    raised from the statement execution every SQL-issuing workflow shares.
-    """
-    case = corpus_case(_IDENTITY)
-
-    def refuse(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
-        raise CaseFailure(raised)
-
-    monkeypatch.setattr(oracle_execute, "query_rows", refuse)
-
-    with pytest.raises(CaseFailure) as caught:
-        assert_unit_work_scenario(case, ScriptedProvider())
-
-    detail = raised.removeprefix(f"{case.path.name}: ")
-    assert str(caught.value) == f"{case.path.name}: scenario[0] {detail}"
-
-
 # --- what is not an authored failure ----------------------------------------
 
 
@@ -129,24 +94,6 @@ def test_a_driver_exception_arrives_unchanged(corpus_case) -> None:
 # --- which defect a doubly-broken case reports ------------------------------
 
 
-def test_the_callers_shared_checks_precede_this_packages_own(corpus_case) -> None:
-    """A Scenario case broken in two places reports its serialization or
-    equivalent-encoding defect ahead of its Scenario-structural one.
-
-    Those checks belong to the caller and run before it delegates, so this is the
-    order the pipeline states rather than an accident of where a call happened to
-    sit. m-identity-map-003 declares an equivalent encoding on step 0; this breaks
-    that encoding AND the step's own Database Call accounting, and the encoding is
-    what surfaces.
-    """
-    case = copy.deepcopy(corpus_case("m-identity-map-003-omitted-vs-explicit-latest.yaml"))
-    case.when["scenario"][0]["equivalentEncodings"][0]["target"] = "parallax.compatibility.Nope"
-    case.when["scenario"][0]["databaseCalls"] += 1
-
-    with pytest.raises(CaseFailure, match="does not canonicalize to the step query"):
-        run_case(case, RefusingProvider())
-
-
 def test_a_structural_defect_precedes_a_dialect_keyed_one(damaged_case) -> None:
     # Compilation is dialect-free and runs on every dialect; the cross-checks that
     # read golden SQL run only where the executing dialect carries one. A case
@@ -159,3 +106,57 @@ def test_a_structural_defect_precedes_a_dialect_keyed_one(damaged_case) -> None:
     for dialect in ("postgres", "mariadb"):
         with pytest.raises(CaseFailure, match="not a real EARLIER step"):
             assert_unit_work_scenario(case, RefusingProvider(dialect))
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        "the storage layout resolves no position for the effective concrete set",
+        "m-unit-work-005-ryow-update.yaml: the Continuation Order names "
+        "a member this read resolves to no single Structured Column",
+    ],
+    ids=["names neither", "names the case only"],
+)
+def test_a_subordinate_refusal_is_reported_against_the_step_that_reached_it(
+    corpus_case, monkeypatch: pytest.MonkeyPatch, raised: str
+) -> None:
+    """The step boundary is unconditional, so no route has to be remembered.
+
+    Every oracle a read step reaches — delivery, seek derivation, materialization,
+    Include levels, graph assembly — speaks of the READ it was handed rather than
+    the Scenario position that handed it over, so a refusal from any of them
+    arrives naming at most the case. Standing in for all of them is a refusal
+    raised from the statement execution every SQL-issuing workflow shares.
+    """
+    case = corpus_case(_RYOW)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise CaseFailure(raised)
+
+    monkeypatch.setattr(oracle_execute, "query_rows", refuse)
+
+    with pytest.raises(CaseFailure) as caught:
+        assert_unit_work_scenario(case, ScriptedProvider())
+
+    detail = raised.removeprefix(f"{case.path.name}: ")
+    assert str(caught.value) == f"{case.path.name}: scenario[0] {detail}"
+
+
+def test_the_callers_shared_checks_precede_this_packages_own(corpus_case) -> None:
+    """A Scenario case broken in two places reports its serialization or
+    equivalent-encoding defect ahead of its Scenario-structural one.
+
+    Those checks belong to the caller and run before it delegates, so this is the
+    order the pipeline states rather than an accident of where a call happened to
+    sit. The first read declares an equivalent encoding; this breaks
+    that encoding AND the step's own Database Call accounting, and the encoding is
+    what surfaces.
+    """
+    case = copy.deepcopy(corpus_case(_RYOW))
+    case.when["scenario"][0]["equivalentEncodings"] = [
+        {**case.scenario[0]["objectQuery"], "target": "parallax.compatibility.Nope"}
+    ]
+    case.when["scenario"][0]["databaseCalls"] += 1
+
+    with pytest.raises(CaseFailure, match="does not canonicalize to the step query"):
+        run_case(case, RefusingProvider())

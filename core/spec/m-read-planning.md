@@ -18,9 +18,8 @@ produced at ingress), `m-relationship` (compiled relationship directions),
 visibility and per-hop propagation), and `m-inheritance` (effective positions).
 SQL emission belongs to `m-sql`; execution, read-plan caching, paging execution,
 and Page assembly belong to `m-read-delivery`. Planning performs no database work
-and publishes no lifecycle objects. The lifecycle result surfaces — query-backed
-lists (`m-op-list`) and snapshot graphs (`m-snapshot-read`) — consume its plans
-through their read execution paths.
+and publishes no lifecycle objects. Snapshot publication (`m-snapshot-read`)
+consumes its plans through read delivery.
 
 ## Include planning and deep fetch
 
@@ -278,39 +277,6 @@ list (and per-dialect `IN`-clause limits) degrades.
 A deep fetch as of an instant yields a **point-in-time-consistent object graph**.
 The per-hop as-of propagation rule (matched by axis, defaulting unpinned axes to
 latest) is owned by `m-navigate` and applies inside each per-level child query.
-
-## Deferred relationship load
-
-A **deferred relationship load** resolves declared relationship paths for an
-**ad-hoc set of already-materialized managed objects** — the
-query-many/navigate-few pattern ("load `customer` for these 10 of my 1000
-orders") without an up-front include and without N+1. It is the same machinery
-as deep fetch, applied after materialization (Reladomo's ad-hoc list deep fetch
-is the prior art). The semantic is **one**, and it is this module's; only the
-**trigger** is per-language idiom:
-
-- an **explicit load call** over the object set (always available);
-- **transparent relationship access** on a managed object, permitted in
-  synchronous languages (where property access can resolve) — the access *is*
-  the trigger, the semantics are identical;
-- eager `includes` at query time remain the third form of the same load.
-
-The normative planning rules, whatever the trigger:
-
-- It propagates **each source object's pinned as-of coordinates** (`m-navigate`,
-  applied at the object level), batching sources **per coordinate group**: one
-  child statement per relationship level per distinct coordinate group. The
-  common all-latest set collapses to exactly the deep-fetch form — one statement
-  per level.
-- Database Calls stay query-determined: a deferred load is an explicit
-  resolution point whose statement count follows the same
-  one-statement-per-non-empty-level contract, so scenario cases can declare it.
-
-When a deferred load may resolve at all is a lifetime rule of the managed surface,
-not of planning (`m-op-list` *Deferred relationship load lifetime*).
-
-A plain-value graph (`m-snapshot-read`) has **no trigger at all**: a snapshot
-graph is closed-world and never issues SQL after materialization.
 
 ## Resolved flat reads and generated key membership
 

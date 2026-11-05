@@ -1,6 +1,6 @@
 # Optimistic-lock success (m-concurrency): a fresh-version UPDATE affects exactly ONE row.
 model: models/account.yaml
-tags: [m-concurrency, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-sql, success, optimistic-lock-success, slice-snapshot-1]
 shape: conflict
 compileEligibility:
   mode: run-only

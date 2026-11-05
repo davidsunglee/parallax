@@ -1,5 +1,5 @@
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, exists, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, exists, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

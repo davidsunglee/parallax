@@ -3,7 +3,7 @@
 # member outside them rides forward as stored. Its twin authors the same update and
 # the same expected row under Relational Document Layout.
 model: models/write-transparency-layout-twin-columns.yaml
-tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-concurrency, m-sql, scenario, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-concurrency, m-sql, scenario, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

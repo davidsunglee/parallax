@@ -2,7 +2,7 @@
 # in): an element-scoped range whose bounds cannot denote the declared leaf is refused
 # as a neutral literal type mismatch, not as an inverted range.
 model: models/customer.yaml
-tags: [m-predicate, m-wire, m-value-object, rejected, negative, nested, between, scoped, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-wire, m-value-object, rejected, negative, nested, between, scoped, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

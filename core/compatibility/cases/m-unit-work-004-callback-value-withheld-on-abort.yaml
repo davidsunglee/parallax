@@ -1,7 +1,7 @@
 # Boundary case (m-unit-work abort contract / ADR 0006): the transaction callback's return
 # value is WITHHELD on abort — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-unit-work, m-api-conformance, abort, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-api-conformance, abort, slice-snapshot-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

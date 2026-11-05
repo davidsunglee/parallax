@@ -1,7 +1,7 @@
 # A top-level Value Object is one Document-tier slot after every scalar tier
 # (m-storage-layout, m-value-object).
 model: models/storage-layout.yaml
-tags: [m-storage-layout, m-value-object, m-sql, json, document, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-value-object, m-sql, json, document, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

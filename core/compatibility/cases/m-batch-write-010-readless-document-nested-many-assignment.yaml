@@ -4,7 +4,7 @@
 # the nested array included, without inspecting the authored shape to choose a
 # route. The row the predicate does not match keeps its stored document.
 model: models/document-layout-nested-many.yaml
-tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, document-layout, nested, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, document-layout, nested, to-many, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

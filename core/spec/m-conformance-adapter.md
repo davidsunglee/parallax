@@ -46,11 +46,10 @@ language-native wrapper that accepts the same commands.
 parallax-conformance describe
 parallax-conformance compile --case <case.yaml> --dialect <dialect>
 parallax-conformance run --case <case.yaml> --profile <profile>
-parallax-conformance benchmark --benchmark <benchmark.yaml> --profile <profile>
 ```
 
 `compile` executes nothing, so it is asked for a dialect: there is no adapter to
-read one off. `run` and `benchmark` execute, so they are asked for a **profile** —
+read one off. `run` executes, so it is asked for a **profile** —
 the declared database matrix profile
 ([`database-provider-test-contract.md`](database-provider-test-contract.md)) naming
 the adapter configuration to run against — and the dialect they report is the one
@@ -75,7 +74,7 @@ Human-readable logs MAY be written to stderr.
 
 The `unsupported` result is only valid when the adapter has not claimed the
 requested command, dialect, case shape, module tags, or case-tag selection in
-`describe`, or when a `run` or `benchmark` names a profile the implementation does
+`describe`, or when a `run` names a profile the implementation does
 not declare. The `run-only` result is only valid for a `compile` command on a
 **claimed** case the corpus declares run-only (`compileEligibility`, `m-case-format`).
 
@@ -148,7 +147,7 @@ Example:
     "dialects": ["postgres"],
     "caseShapes": ["read"],
     "caseTags": {
-      "exclude": ["groupBy", "having"]
+      "exclude": ["snapshot-history-includes"]
     },
     "commands": ["describe", "compile", "run"],
     "provisioning": "external-url"
@@ -158,11 +157,8 @@ Example:
 
 Capability claims are deliberately **case-tag aware**. `modules`,
 `dialects`, and `caseShapes` are broad filters; `caseTags` is an optional
-fine-grained filter over the compatibility case's own `tags` array. This lets a
-partial implementation honestly claim, for example, `m-predicate` predicate reads
-while deferring aggregation (`m-agg`) reads, or `m-unit-work` transaction/write
-cases while deferring the `m-process-cache` query-cache and identity-cache
-scenarios.
+fine-grained filter over the compatibility case's own `tags` array. This lets a partial implementation claim a module while deferring an explicitly
+feature-tagged subset, such as history reads with includes.
 
 Inheritance capability follows this same shape and needs **no**
 inheritance-specific adapter surface. An adapter claims it by listing
@@ -193,7 +189,7 @@ A case command is claimed only when **all** of these are true:
   tag in `caseTags.exclude`
 
 `caseTags.include` and `caseTags.exclude` use exact tag strings from case files,
-including tags that contain spaces such as `identity cache`. The filters are
+including tags that contain spaces such as `document layout`. The filters are
 evaluated after the broad module/dialect/shape filters. If `caseTags` is omitted,
 then the module, dialect, and shape claims are all-or-nothing for matching cases.
 
@@ -205,7 +201,7 @@ first failed filter, such as `unsupported-case-tag` or `unsupported-case-shape`.
 
 `provisioning` is one of:
 
-- `external-url`: `run` and `benchmark` expect the caller to provide a database
+- `external-url`: `run` expects the caller to provide a database
   URL or equivalent language-specific connection configuration.
 - `self-managed`: the adapter provisions its own clean database, for example
   with Testcontainers. The adapter owns the reset lifecycle needed to make each
@@ -326,7 +322,6 @@ Example:
 - `/writeSequence/0`
 - `/scenario/0/objectQuery`
 - `/scenario/1/write`
-- `/coherence/1/objectQuery`
 
 For deep-fetch and write-sequence cases, `emissions` contains one item per
 statement in execution order — per physical statement, not per Planned Step, so
@@ -366,7 +361,7 @@ The adapter is responsible for using a clean database according to its declared
 provisioning mode, applying schema and fixtures, executing the implementation's
 public behavior, and reporting observations. A runner may compare those
 observations to `then.rows`, `then.graph`, `then.graphs`, `then.tableState`,
-`then.affectedRows`, cache/identity expectations, and `then.databaseCalls`.
+`then.affectedRows` and `then.databaseCalls`.
 
 The `databaseCalls` a `run` reports is what its execution actually cost: every
 database call the run made, a failed, not-executed, or unconfirmed one included,
@@ -433,14 +428,13 @@ assert different things:
   `storedDataIssues` for it on the same terms (see *Streamed reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
-- scenario cases report `identityChecks` and `databaseCalls`, plus `stepRows` for the
-  values their read steps and row-observing `mutate` steps published,
+- scenario cases report `databaseCalls` and any declared `identityChecks`, plus
+  `stepRows` for the values their read steps and row-observing `mutate` steps published,
   `stepAffectedRows` for the count each direct predicate-write step's verb returned,
   `errors` for any step or submission declaring
   `expectError`, `units` for the fate of each `uow` group, and `tableState` where
   the case states one; a state-graded scenario reports no emissions (see *Unit fates*,
   below)
-- coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
 - error cases with a single-connection trigger (top-level `then.statements`)
   report `errorClass` — the neutral `m-db-error` category the final trigger
   statement's raised failure classified to — paired with `nativeCode`, the
@@ -589,7 +583,7 @@ declaring `expectError`, and one per buffered submission declaring it, each
   `write-value-not-stored` / `write-value-already-stored` /
   `write-value-foreign-lifecycle` / `write-evidence-unavailable`, and for a
   submission `write-evidence-already-claimed` /
-  `write-evidence-inserted` / `write-evidence-consumed` — `m-identity-map` /
+  `write-evidence-inserted` / `write-evidence-consumed` — `m-temporal-write` /
   `m-unit-work`, **distinct** from the
   `m-db-error` taxonomy), and an optional `native` witness carrying the raw
   implementation error. A refused submission is one its verb refused at the call,
@@ -598,7 +592,7 @@ declaring `expectError`, and one per buffered submission declaring it, each
 
 It is additive and optional: an adapter that observes no raised error simply
 omits it, so an existing `run` output (`databaseCalls` plus
-`rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
+`rows` / `graph` / `storedDataIssues`) stays valid unchanged.
 
 ### Unit fates (`units`)
 
@@ -711,14 +705,14 @@ It is additive and optional in the same sense as `errors`: a run
 whose case declares no `expectGraph` omits it, and every existing `run` output
 stays valid unchanged.
 
-An **`identityCheck`'s semantics are the claiming module's identity contract**, not
-a single fixed rule. For a **wire-level** scenario check (the PK-value one-object-
-per-PK rule the harness itself grades) `same` means **primary-key-value equality**.
-For a **managed-slice lifecycle** check (`differentObjectFrom`, and identity checks
-on managed objects generally) `same` means **reference identity** — value equality
-is insufficient, because two finite coordinates in one milestone have identical row
-values yet are distinct pinned views (`m-identity-map`). An adapter grading a
-managed-slice case therefore compares object references, not sorted PK values.
+An **`identityCheck`** reports `{ left, right, same }`: `left` and `right`
+are JSON Pointers naming the compared steps, and `same` says whether the check
+held. An optional `identity` carries its identity witness.
+For a wire-level snapshot access check, `same` means primary-key equality of
+the already-materialized view's objects. The API Conformance Suite grades the
+same declaration as reference identity: accessing a retained view after an edit
+or write still reaches the objects its original read populated. No check
+promises interning across separate reads.
 
 An **abstract-target read** — an abstract query `target`, or an abstract position
 still abstract after the query's `narrowTo` (`m-object-query`) — materializes complete concrete
@@ -732,65 +726,6 @@ implementation materializes `familyVariant` from the tag metadata map, and under
 (`m-inheritance` / `m-sql`). It rides inside the already-open `rows` / `graph`
 observation objects, so the adapter output gains no field for it. A
 concrete-target read carries no `familyVariant`.
-
-## `benchmark`
-
-`benchmark` runs one benchmark fixture and reports measurements using the
-`m-perf-bench` methodology. The command returns the same report shape
-`m-perf-bench` calls `report.json`, wrapped in the standard adapter envelope. For a
-single `--benchmark <b.yaml>` invocation, `report.benchmarks` contains one entry
-for that requested fixture. Adapters MAY also write the same `report` object to a
-local `report.json` artifact for CI collection, but stdout is the normative adapter
-output.
-
-Example:
-
-```json
-{
-  "schemaVersion": "1",
-  "command": "benchmark",
-  "status": "ok",
-  "adapter": {
-    "language": "typescript",
-    "name": "@parallax/typescript",
-    "version": "0.1.0"
-  },
-  "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
-  "profile": "pg-full",
-  "report": {
-    "generatedAt": "2026-06-27T00:00:00+00:00",
-    "dialect": "postgres",
-    "benchmarks": [
-      {
-        "fixture": "read-mix.yaml",
-        "model": "models/account.yaml",
-        "datasetRows": 1000,
-        "workloads": [
-          {
-            "name": "point-read",
-            "iterations": 200,
-            "wallTimeMs": {
-              "p50": 2.8,
-              "p95": 4.7
-            },
-            "databaseCalls": 1,
-            "expectDatabaseCalls": 1,
-            "databaseCallsOk": true
-          }
-        ]
-      }
-    ],
-    "memory": {
-      "peakBytes": 12582912,
-      "steadyBytes": 10485760
-    }
-  }
-}
-```
-
-Benchmarks are required only when a language implementation claims `m-perf-bench`
-support. The benchmark envelope MUST NOT use the legacy single-workload `metrics`
-object; the report object is the machine-readable performance artifact.
 
 ## Comparison Rules
 

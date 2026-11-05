@@ -2,7 +2,7 @@
 # its own, but that Column holds a structured document, so a Secondary Index naming
 # it is refused exactly as one naming a document-resident Attribute is.
 model: models/member-column-defaults.yaml
-tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, columns, index, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, columns, index, slice-snapshot-1]
 shape: rejected
 when:
   model:

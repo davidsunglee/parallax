@@ -72,10 +72,10 @@ class LockConsistency:
         self.models: dict[Path, _ModelReads] = {}
 
     def read(self, raw: dict[str, Any], step: dict[str, Any], sequence: str) -> ReadLocks | None:
-        """The lock expectation of one scenario/coherence step's read, if it emits SQL."""
-        if sequence not in ("scenario", "coherence") or "objectQuery" not in step:
+        """The lock expectation of one scenario step's read, if it emits SQL."""
+        if sequence not in ("scenario",) or "objectQuery" not in step:
             return None
-        # A cache hit or a refused read emits nothing for this rule to grade.
+        # A statementless or refused read emits nothing for this rule to grade.
         if not step.get("statements"):
             return None
         metadata = self._metadata(raw)

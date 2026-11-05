@@ -1,5 +1,5 @@
 model: models/read-only-inheritance.yaml
-tags: [m-unit-work, write, rejected, read-only, target-write, inheritance, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, write, rejected, read-only, target-write, inheritance, slice-snapshot-1]
 shape: rejected
 when:
   write:

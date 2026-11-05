@@ -1,6 +1,6 @@
 # Timestamp UTC preservation at the boundary (m-core timezone rule).
 model: models/event.yaml
-tags: [m-core, m-sql, m-dialect, timestamp, timezone, utc, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, m-dialect, timestamp, timezone, utc, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

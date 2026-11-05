@@ -1,7 +1,7 @@
 # A universal over a `many` value object: every parcel has a positive quantity, which
 # the basket with no parcels satisfies and the one with a zero-quantity parcel does not.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, all, m-value-object, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, all, m-value-object, to-many, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

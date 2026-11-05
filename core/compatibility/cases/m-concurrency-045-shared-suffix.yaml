@@ -1,6 +1,6 @@
 # Read-lock case (m-concurrency): an in-transaction read acquires a shared row lock.
 model: models/account.yaml
-tags: [m-concurrency, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, slice-snapshot-1]
 shape: read
 when:
   uow:

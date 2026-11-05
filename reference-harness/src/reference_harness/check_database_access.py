@@ -111,7 +111,6 @@ CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 # one; the two CLI entry points reach `provider_for` themselves.
 SEAMS: frozenset[str] = frozenset(
     {
-        "reference_harness.benchmark.main",
         "reference_harness.matrix.main",
         "reference_harness.providers.provider_for",
         "testcontainers.community.mysql.MySqlContainer",

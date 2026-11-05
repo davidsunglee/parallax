@@ -2,7 +2,7 @@
 # object opens [August, infinity) beside the closed [January, August). Intervals
 # are half-open, so the two milestones meet without overlapping and both stand.
 model: models/balance.yaml
-tags: [m-temporal-write, m-sql, write-sequence, terminate, insert, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, write-sequence, terminate, insert, audit-only, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

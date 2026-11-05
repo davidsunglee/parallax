@@ -2,7 +2,7 @@
 # Column exactly once (m-read-planning x m-storage-layout x m-sql *Read projection*), on
 # Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-read-planning, m-object-query, m-storage-layout, m-relationship, m-sql, m-value-object, read, json, to-many, relationship, document-layout, graph, materialization, slice-snapshot-1, slice-managed-1]
+tags: [m-read-planning, m-object-query, m-storage-layout, m-relationship, m-sql, m-value-object, read, json, to-many, relationship, document-layout, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

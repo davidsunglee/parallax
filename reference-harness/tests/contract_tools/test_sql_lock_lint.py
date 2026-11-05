@@ -124,10 +124,9 @@ def _corpus(
     *,
     concurrency: str | None = None,
     default: str | None = None,
-    coherence: bool = False,
     model: dict[str, Any] | None = None,
 ) -> Path:
-    sequence = "coherence" if coherence else "scenario"
+    sequence = "scenario"
     case: dict[str, Any] = {
         "model": "models/model.yaml",
         "shape": sequence,
@@ -139,8 +138,6 @@ def _corpus(
         case["when"]["uow"] = {"concurrency": concurrency}
     if default is not None:
         case["given"] = {"databaseOptions": {"concurrency": default}}
-    if coherence:
-        case.pop("then")
     return _store(tmp_path, case, model)
 
 
@@ -222,24 +219,11 @@ def test_optimistic_read_forbids_shared_lock(tmp_path: Path, dialect: str) -> No
     assert "forbidden lock" in _lock_errors(root)[0]
 
 
-@pytest.mark.parametrize("coherence", [False, True])
 @pytest.mark.parametrize("target", ["Account", "Wallet"])
-def test_standalone_and_peer_reads_forbid_lock_even_with_locking_root(
-    tmp_path: Path, coherence: bool, target: str
-) -> None:
+def test_standalone_reads_forbid_lock_even_with_locking_root(tmp_path: Path, target: str) -> None:
     sql = _ACCOUNT if target == "Account" else _WALLET
     step = _step(sql + " for share of t0", target=target, grouped=False)
-    if coherence:
-        step["node"] = "B"
-        step["kind"] = "read"
-        step["observeRows"] = step.pop("expectRows")
-        step.pop("databaseCalls")
-        seed = copy.deepcopy(step)
-        seed["statements"] = [_entry(sql)]
-        steps = [seed, step]
-    else:
-        steps = [step]
-    root = _corpus(tmp_path, steps, default="locking", coherence=coherence)
+    root = _corpus(tmp_path, [step], default="locking")
     assert "forbidden lock" in _lock_errors(root)[0]
 
 

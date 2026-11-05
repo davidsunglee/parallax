@@ -81,7 +81,7 @@
           }
         },
         "temporality": {
-          "$comment": "Root-owned Temporality Profile. Placed at the same entity position for every family participant without structurally forbidding it on a descendant: the family rule is not expressible per entity and is deferred to whole-model formation (inheritance-temporality-not-root-owned). A lone valid-time axis belongs to the separately catalogued m-validtime-only formation and has no spelling here.",
+          "$comment": "Root-owned Temporality Profile. Placed at the same entity position for every family participant without structurally forbidding it on a descendant: the family rule is not expressible per entity and is deferred to whole-model formation (inheritance-temporality-not-root-owned). Only the declared temporal profiles have a descriptor spelling.",
           "description": "The Entity family's temporal profile. Axis attributes, axis structure, and the primary-key index are derived from it.",
           "enum": ["nontemporal", "transaction-time", "bitemporal"],
           "default": "nontemporal"
@@ -330,7 +330,7 @@
           "pattern": "^[^.\\s]+(?:\\.[^.\\s]+)+$"
         },
         "dependent": {
-          "description": "True when the target is owned by this entity (participates in cascade, m-cascade-delete).",
+          "description": "True when the target is owned by this entity.",
           "type": "boolean",
           "default": false
         },

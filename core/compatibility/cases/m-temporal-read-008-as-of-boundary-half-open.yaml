@@ -1,6 +1,6 @@
 # Transaction-Time as-of exactly on a half-open milestone boundary.
 model: models/ledger.yaml
-tags: [m-temporal-read, m-object-query, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -3,7 +3,7 @@
 # so the second insert repeats the whole end-keyed key and is refused as a
 # uniqueViolation. Distinct ids keep the primary key out of it.
 model: models/temporal-authored-index.yaml
-tags: [m-db-error, uniqueViolation, m-storage-layout, temporal, audit-only, unique-index, slice-snapshot-1, slice-managed-1]
+tags: [m-db-error, uniqueViolation, m-storage-layout, temporal, audit-only, unique-index, slice-snapshot-1]
 shape: error
 then:
   statements:

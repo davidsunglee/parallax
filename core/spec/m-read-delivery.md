@@ -10,9 +10,9 @@ depends on `m-read-planning` for pure flat-read and include planning, `m-sql` fo
 executes, `m-document-codec` for stored-document judgement, `m-db-port` for the
 calls it makes, `m-temporal-read` for the pins a fetch propagates,
 `m-concurrency` for the lock each fetch takes, and `m-execution-lifecycle` for
-the activities it opens. It names no lifecycle: snapshot graphs
-(`m-snapshot-read`) and managed objects are alternative Publications over the
-same delivery, and neither depends on the other.
+the activities it opens. Delivery does not depend on snapshot publication
+(`m-snapshot-read`): it judges Entity States before publication chooses their
+value representation.
 
 Delivery runs inside the conditions `m-execution` establishes: the adopted Model
 Edition, the resolved options and captured authority, the connection, and the

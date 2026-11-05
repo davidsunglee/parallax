@@ -186,38 +186,6 @@ def test_an_ungrouped_rolled_back_write_opens_its_own_single_step_session(corpus
     ]
 
 
-def test_a_boundary_action_commits_its_dml_on_the_providers_own_connection(corpus_case) -> None:
-    # The schema forbids `uow` on an action step, so a `flush` never runs on a held
-    # session however the steps around it are grouped.
-    # m-identity-map-006: a buffered write that issues nothing, the `flush` that
-    # emits its INSERT, and the find that observes the interned row.
-    case = corpus_case("m-identity-map-006-app-assigned-key-interns-on-buffer.yaml")
-    (interned,) = _observed(case)
-    with ScriptedProvider(script=[Affected(1), interned]) as db:
-        assert_unit_work_scenario(case, db)
-
-    assert db.sessions == 0
-    assert [call for call in db.chronology if isinstance(call, (Queried, Executed))] == [
-        Executed(None, *_pair(case, 1)),
-        Queried(None, *_pair(case, 2)),
-    ]
-
-
-def test_an_unresolved_list_step_issues_nothing(corpus_case) -> None:
-    # m-op-list-001: the construction of a query-backed list costs zero Database Calls
-    # and makes no call at all; the observation is deferred to the later step that
-    # accesses it, and the re-access after that issues nothing either.
-    case = corpus_case("m-op-list-001-construction-first-access-reaccess.yaml")
-    (resolved,) = _observed(case)
-    with ScriptedProvider(script=[resolved]) as db:
-        assert_unit_work_scenario(case, db)
-
-    assert db.sessions == 0
-    assert [call for call in db.chronology if isinstance(call, (Queried, Executed))] == [
-        Queried(None, *_pair(case, 1))
-    ]
-
-
 # --- the conflict-abort proof a doomed group is closed under ----------------
 #
 # A rolled-back unit of work must be the CONSEQUENCE of a detected optimistic-lock
@@ -329,16 +297,6 @@ def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> Non
 def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damaged_case) -> None:
     case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     case.then["units"]["ours"]["flushFailure"]["at"] = 3
-    with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
-        assert_judged(case)
-
-
-def test_a_list_constructed_after_pending_writes_leaves_them_to_commit(damaged_case) -> None:
-    case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
-    steps = case.when["scenario"]
-    steps.insert(4, {"uow": "ours", "objectQuery": steps[0]["objectQuery"], "databaseCalls": 0})
-    assert_judged(case)
-    case.then["units"]["ours"]["flushFailure"]["at"] = 4
     with pytest.raises(CaseFailure, match="last flush runs at 'commit'"):
         assert_judged(case)
 

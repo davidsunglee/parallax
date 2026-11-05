@@ -1,7 +1,7 @@
 # One quantifier's complete predicate binds one element: only [15] has a single
 # element both above 10 and below 20 (contrast m-predicate-062).
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

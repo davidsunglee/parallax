@@ -1,30 +1,4 @@
-"""Observing the row-publishing steps of one Unit Work Scenario, one at a time.
-
-A Scenario states its observations as steps, and every fact one needs —
-which operation it is, which earlier steps it names, which relationship it walks,
-which identity it claims — is already written in the step. So the operation here
-takes an index and a reader and nothing else: repeating that intent as interface
-parameters would put a second authority on what a step means beside the case that
-authored it.
-
-The workflows stay behaviorally distinct behind the one operation. A query
-runs its own golden statement and then its own Include levels. A relationship
-`load` resolves a deferred fetch, one statement per coordinate group or level. A
-named reuse returns the very rows an earlier step published, issuing nothing. And
-an `access` navigates the view an earlier read materialized, issuing nothing —
-unless it is the first access of a query-backed list, which resolves the list once
-by following the step's own ``on`` index back to the constructor's Object Query.
-A row-observing `mutate` instead derives and publishes one Wire copy of the
-source it names, issuing no SQL.
-
-What is NOT here is Scenario orchestration: which kind each step is, step order,
-reader selection, transaction lifecycle, writes, non-observing boundary actions, unresolved list
-construction, and accounting across the whole Scenario all belong to
-:mod:`..unit_work_scenario`, whose execution phase calls this once per
-row-publishing step with the reader that step's lifecycle selected. This module is
-that package's collaborator rather than an offering of the oracle's own
-interface, and it holds no second opinion about what it is handed.
-"""
+"""Compile and observe explicit scenario steps over snapshot values."""
 
 from __future__ import annotations
 
@@ -39,44 +13,14 @@ from .executor import ReadExecutor
 
 
 class ScenarioRowObservations:
-    """Every accepted row observation of one Unit Work Scenario and what it retains.
-
-    Requires
-        one instance per Compatibility Case; :mod:`..unit_work_scenario` compiles
-        the Scenario once and then calls every row-publishing step, in Scenario
-        order, exactly once, with the reader its lifecycle selected. The steps
-        that compilation keeps are never passed: a write, an action other than
-        `load`, `access`, or a `mutate` declaring `expectRows`, and the
-        zero-Database-Call construction of a query-backed list that has not resolved.
-        That every reference resolved
-        here — a step's ``on`` and its ``sameObjectAs`` anchor — names an earlier
-        step is settled there too, so what one resolves to is only ever a step
-        this Scenario authored.
-    Guarantees
-        a step's observables are asserted atomically: what it published is retained
-        under its own index only once every observable it states has passed, so a
-        failed step leaves nothing behind for a later step to read. Ordering makes
-        that guarantee usable rather than checks: the store is keyed by the
-        authored step index, so a reference reaches the observation of the step it
-        names or none at all, and naming a step that published none is refused.
-        Every failure names the case path and the step index; a driver exception
-        passes through unchanged.
-    """
+    """The accepted row observations of one Unit Work Scenario."""
 
     def __init__(self, case: Case) -> None:
         self._case = case
         self._retained: dict[int, retained.Observation] = {}
 
     def assert_step(self, step_index: int, reader: ReadExecutor) -> None:
-        """Assert the observables of the row-publishing step at *step_index*.
-
-        Which workflow runs is read off the step: a ``stream``
-        member makes it a delivery, listed ``statements`` make it a query or a
-        resolving load, a read-verb ``action`` over an already-materialized view
-        makes it an access, and a step that lists nothing and names an earlier one
-        is a reuse. A ``mutate`` declaring ``expectRows`` derives a Wire copy
-        from the earlier observation it names.
-        """
+        """Resolve a scenario observation from its authored source and result position."""
         with reported_against(self._case, step_index):
             step = self._case.scenario[step_index]
             pairs = entry_pairs(step.get("statements"), reader.dialect)
@@ -84,7 +28,7 @@ class ScenarioRowObservations:
             if "stream" in step:
                 observation = self._deliver(step_index, step, reader)
             elif "action" in step:
-                observation = self._act(step_index, step, pairs, reader)
+                observation = self._act(step_index, step, pairs)
             elif pairs:
                 observation = self._query(step_index, step, pairs, reader)
             else:
@@ -188,54 +132,18 @@ class ScenarioRowObservations:
         step_index: int,
         step: Mapping[str, Any],
         pairs: list[tuple[str, list[Any]]],
-        reader: ReadExecutor,
     ) -> retained.Observation:
-        """A row-observing action: ``mutate``, ``load``, or ``access``.
-
-        A `mutate` derives a Wire mapping by laying its whole accepted assignments
-        over the one source row and publishes that copy without issuing SQL. A
-        `load` resolves a deferred fetch and lists one statement per lowered
-        coordinate group or per level, whose rows are aggregated in listed order.
-        So does the FIRST access of a query-backed list, which resolves the list
-        the construction step built by following this step's own ``on`` index
-        back to that step's authored Object Query — the read is resolved from the
-        case, never handed across as an unresolved value. Every later access
-        issues nothing: a snapshot is closed-world and a populated list is already
-        populated, so it answers the rows its source already published.
-        """
-        case = self._case
+        if pairs:
+            raise CaseFailure(
+                f"{self._case.path.name}: scenario[{step_index}] snapshot actions issue no SQL"
+            )
         if step.get("action") == "mutate":
             return self._mutate(step_index, step)
-        _assert_coordinate_batching(case, step_index, step, pairs)
-        entity = self._read_entity(step_index)
-        if not pairs:
-            return retained.Observation(
-                rows=self._reused_rows(step_index, step), entity=entity, includes=None
-            )
-        if entity is None:
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{step_index}] resolved no entity for the rows "
-                f"its statements returned. A read verb publishes objects, so the position "
-                f"they stand at — the relationship's declared target, or the query-backed "
-                f"list's own — MUST be resolvable from the case."
-            )
-        returned: list[dict[str, Any]] = []
-        for statement, binds in pairs:
-            returned.extend(execute.query_rows(case, reader, statement, binds))
-        # The two shapes stand at different KINDS of position, so each is
-        # materialized by the seam that owns its kind. A first access resolves the
-        # construction step's own Object Query, which is one read spread over two
-        # steps. A `load` navigates a relationship, which no Object Query
-        # describes, and may aggregate the levels it walked through as well as the
-        # one it ended at.
-        list_read = _resolved_list_read(case, step)
-        published = (
-            materialize.materialize_navigated(case, entity, returned)
-            if list_read is None
-            else materialize.materialize_read(list_read, returned)
+        return retained.Observation(
+            rows=self._reused_rows(step_index, step),
+            entity=self._read_entity(step_index),
+            includes=None,
         )
-        rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
-        return retained.Observation(rows=rows, entity=entity, includes=None)
 
     def _mutate(self, step_index: int, step: Mapping[str, Any]) -> retained.Observation:
         """Publish the one Wire row a ``mutate`` derives from its source."""
@@ -264,7 +172,7 @@ class ScenarioRowObservations:
     ) -> list[materialize.PublishedRow]:
         """The rows a zero-Database-Call step reuses from the earlier step it names.
 
-        A cache hit, a re-access, or a repeated find returns the SAME rows an
+        A snapshot access returns the SAME rows an
         earlier step published, named by ``sameObjectAs`` or — on an action step —
         by its ``on``. That the name is an EARLIER step is settled when the
         Scenario is compiled; what only the run can answer is whether that step
@@ -274,12 +182,12 @@ class ScenarioRowObservations:
         ``expectRows`` assertions would pass against nothing.
         """
         named = step.get("sameObjectAs", step.get("on"))
-        source = named[0] if isinstance(named, list) and named else named
+        source = named
         if not isinstance(source, int):
             raise CaseFailure(
                 f"{self._case.path.name}: scenario[{step_index}] issues no statement of its "
                 f"own and names no earlier step to reuse rows from — a zero-Database-Call "
-                f"cache hit / re-access answers with the rows an earlier step published."
+                f"snapshot access answers with the rows an earlier step published."
             )
         return self._observation(step_index, source).rows
 
@@ -333,28 +241,14 @@ class ScenarioRowObservations:
         return observation
 
     def _read_entity(self, step_index: int) -> Entity | None:
-        """The entity a step's observed rows belong to, for value-object decode.
-
-        Resolving the PER-STEP read entity — rather than assuming the Scenario
-        root — is what lets a step reading a different, value-object-bearing
-        entity decode its document column with the RIGHT composite schema (m-sql
-        *Read projection*, slot 4; m-case-format *Read result form*). A read step
-        names its queried position inside its own ``objectQuery.target``. Every
-        action step reaching this oracle is a read verb, which navigates from an
-        earlier object (``on``, required for those verbs): with a ``path`` its rows
-        are the path's TERMINAL entity; a path-less query-backed-list ``access``
-        resolves the constructed list's own source entity, which is why this reads
-        the source step out of the CASE rather than out of what was observed — the
-        construction step it may name published nothing and is never observed at
-        all.
-        """
+        """The entity a step observes, following an edited value or loaded relationship."""
         case = self._case
         step = case.scenario[step_index]
         if "objectQuery" in step:
             return case.model.entity(step["objectQuery"]["target"])
         if "action" in step:
             named = step["on"]
-            source = named[0] if isinstance(named, list) else named
+            source = named
             start = self._read_entity(source)
             path = step.get("path")
             if path is None or start is None:
@@ -409,26 +303,7 @@ class ScenarioRowObservations:
     def _assert_row_observables(
         self, step_index: int, step: Mapping[str, Any], rows: list[materialize.PublishedRow]
     ) -> None:
-        """Assert a step's ``expectRows`` and its ``sameObjectAs`` identity claim.
-
-        ``expectRows`` compares the step's published rows to the fixture-derived
-        expectation; ``sameObjectAs`` checks the one-object-per-PK rule against an
-        earlier step. The reference-identity and error observables
-        (``differentObjectFrom``, ``expectError``) are adapter-delegated — validated by the
-        schema and graded by each language's API Conformance Suite — so the wire
-        harness skips them here.
-
-        A STREAMED step compares positionally: its rows are the roots its delivery
-        handed over in the Continuation Order, and nothing else in the case grades
-        the order inside a page (m-case-format *Streamed read steps*).
-
-        What ``expectRows`` states is the LOGICAL result, so the rows it grades are
-        the ones the materialization seam published — a raw physical row would be
-        compared against members the golden never projected under names it never
-        carried. Nothing re-checks that here: these rows come from a
-        :class:`retained.Observation`, which refuses an unpublished one at
-        construction.
-        """
+        """Assert the expected rows and preserved identity of a snapshot observation."""
         case = self._case
         expect = step.get("expectRows")
         entity = self._read_entity(step_index)
@@ -586,36 +461,8 @@ def _reference_sql_for(step: Mapping[str, Any], dialect: str) -> str | None:
     return raw
 
 
-def _assert_coordinate_batching(
-    case: Case, step_index: int, step: Mapping[str, Any], pairs: list[tuple[str, list[Any]]]
-) -> None:
-    """Hold a read verb's executed statement groups to the sources it references.
-
-    A coordinate-grouped ``load`` emits one child statement per lowered-coordinate
-    group, so it MUST NOT execute MORE statement groups than it references sources
-    — every executed group is accounted for by a referenced source (m-read-planning
-    batching contract). That those sources are real earlier steps is settled when
-    the Scenario is compiled; what is read-verb-only is this count, and it is
-    dialect-keyed because the groups it counts are the golden's own.
-    """
-    on = step.get("on")
-    indices = list(on) if isinstance(on, list) else []
-    if isinstance(on, list) and len(pairs) > len(indices):
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{step_index}] executes {len(pairs)} statement "
-            f"group(s) but references only {len(indices)} coordinate source(s); a "
-            f"coordinate-grouped load emits at most one statement per referenced source, "
-            f"so every executed group MUST be accounted for by a referenced source."
-        )
-
-
 def _relationship_path_target(case: Case, start: Entity, path: str) -> Entity:
-    """The terminal entity of a dotted relationship *path* walked from *start*.
-
-    A ``load`` / ``access`` navigates one hop (``items``) or a dotted multi-hop
-    path (``items.statuses``) from the source object, so its rows are of the entity
-    the LAST hop targets — the entity whose value-object schema decodes them.
-    """
+    """The terminal entity of a loaded relationship path."""
     entity = start
     for rel_name in path.split("."):
         relationship = entity.relationship_metadata_by_name(rel_name)
@@ -641,28 +488,6 @@ def _step_as_read(case: Case, step_index: int) -> Case:
         step.get("statements", []),
         grouped=isinstance(step.get("uow"), str),
     )
-
-
-def _resolved_list_read(case: Case, step: Mapping[str, Any]) -> Case | None:
-    """A first ``access`` of a query-backed list, presented as the read it resolves.
-
-    Such an access navigates no relationship: it resolves the list an earlier step
-    constructed, so one read is spread over two steps — the position and its Subtype
-    Selection are the CONSTRUCTION step's Object Query, the projection shape is THIS
-    step's golden. A ``load`` / ``access`` that walked a ``path`` stands at a
-    navigated position instead, which no Object Query describes, and answers ``None``
-    (:func:`materialize.materialize_navigated`).
-    """
-    if step.get("path") is not None:
-        return None
-    named = step.get("on")
-    source = named[0] if isinstance(named, list) else named
-    if not isinstance(source, int):
-        return None
-    query = case.scenario[source].get("objectQuery")
-    if not isinstance(query, Mapping):
-        return None
-    return _as_read(case, {"objectQuery": query}, step.get("statements", []))
 
 
 def _as_read(

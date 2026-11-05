@@ -1,6 +1,6 @@
 # PK generation `max` (m-pk-gen) — allocate into an EMPTY table.
 model: models/pk-max.yaml
-tags: [m-pk-gen, m-unit-work, max, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-pk-gen, m-unit-work, max, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

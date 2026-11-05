@@ -31,7 +31,7 @@ topology are three different views:
   styles.
 - A **lifecycle extension** is a separately deployable production artifact that
   implements exactly one supported object lifecycle style, such as snapshot
-  graphs or managed objects, over the common runtime.
+  graphs, over the common runtime.
 - A **database adapter** is a separately deployable production artifact that
   implements the abstract database port for exactly one database type over one
   concrete driver.
@@ -111,9 +111,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
 | `m-predicate` | Predicate algebra (the recursive selection grammar) | active | cases |
 | `m-object-query` | Object Query (the flat query value for full objects) | active | cases |
-| `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | contract |
 | `m-sql` | SQL generation & equivalence contract | active | cases |
-| `m-sql-agg` | SQL lowering for aggregation | deferred | contract |
 | `m-dialect` | Pure dialect rules (quoting, lock suffix, casing) | active | cases |
 | `m-db-port` | Database execution port | active | contract |
 | `m-db-error` | Database error classification | active | cases |
@@ -121,28 +119,22 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-read-planning` | Flat and write-acquisition read planning, include graphs, and N+1 elimination | active | cases |
 | `m-read-delivery` | Execution-plan preparation and caching, Page assembly, stored-data judgement, and delivery | active | cases |
 | `m-snapshot-read` | Snapshot graph publication (plain value graphs) | active | cases |
-| `m-op-list` | Query-backed list results | active | cases |
 | `m-batch-write` | Set-based / batched writes | active | cases |
-| `m-cascade-delete` | Cascade delete | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-write-plan` | Planned Step algebra, State Observations, and predecessor evidence | active | cases |
 | `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
 | `m-execution` | Database Roots, execution scopes, option resolution, Model Edition serving, and transaction attempts | active | cases |
 | `m-execution-lifecycle` | Transient execution observability | active | cases |
-| `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
-| `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
 | `m-temporal-write` | Temporal writes: coverage transforms and predecessor expansion | active | cases |
-| `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
 | `m-concurrency` | Concurrency policy: strategy derivation, version sources, version arithmetic | active | cases |
 | `m-model-evolution` | Model-altitude description of the difference between two accepted Metamodels | active | cases |
 | `m-schema-delta` | Ordered dialect schema statements for a Unilateral Evolution | active | cases |
 | `m-case-format` | Compatibility case format | active | cases |
 | `m-conformance-adapter` | Conformance-adapter contract | active | cases |
 | `m-api-conformance` | API Conformance Suite contract | active | cases |
-| `m-perf-bench` | Performance & benchmark harness | active | cases |
-| `m-coherence` | Cross-process cache coherence | deferred | cases |
+| `m-perf-bench` | Shared performance workloads | active | cases |
 
 ## The dependency graph
 
@@ -190,7 +182,6 @@ m-object-query --> m-predicate
 m-object-query --> m-metamodel
 m-object-query --> m-inheritance
 m-object-query --> m-wire
-m-agg --> m-predicate
 m-sql --> m-predicate
 m-sql --> m-object-query
 m-sql --> m-dialect
@@ -202,8 +193,6 @@ m-sql --> m-document-codec
 m-sql --> m-wire
 m-sql --> m-write-plan
 m-sql --> m-read-planning
-m-sql-agg --> m-agg
-m-sql-agg --> m-sql
 m-dialect --> m-core
 m-db-port --> m-core
 m-db-port --> m-dialect
@@ -245,15 +234,8 @@ m-execution-lifecycle --> m-db-port
 m-execution-lifecycle --> m-db-error
 m-execution-lifecycle --> m-unit-work
 m-execution-lifecycle --> m-auto-retry
-m-identity-map --> m-unit-work
-m-identity-map --> m-temporal-read
-m-process-cache --> m-unit-work
-m-op-list --> m-object-query
-m-op-list --> m-unit-work
 m-batch-write --> m-unit-work
 m-batch-write --> m-concurrency
-m-cascade-delete --> m-op-list
-m-cascade-delete --> m-unit-work
 m-navigate --> m-predicate
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
@@ -264,7 +246,6 @@ m-read-planning --> m-object-query
 m-read-planning --> m-inheritance
 m-read-planning --> m-predicate
 m-read-planning --> m-wire
-m-op-list --> m-read-planning
 m-snapshot-read --> m-read-planning
 m-snapshot-read --> m-document-codec
 m-snapshot-read --> m-metamodel
@@ -299,8 +280,6 @@ m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
 m-temporal-read --> m-inheritance
-m-validtime-only --> m-temporal-read
-m-validtime-only --> m-unit-work
 m-concurrency --> m-temporal-read
 m-concurrency --> m-metamodel
 m-concurrency --> m-model-formation
@@ -318,14 +297,12 @@ m-schema-delta --> m-dialect
 m-case-format --> m-core
 m-conformance-adapter --> m-case-format
 m-api-conformance --> m-case-format
-m-perf-bench --> m-conformance-adapter
-m-coherence --> m-process-cache
+m-perf-bench --> m-case-format
+m-perf-bench --> m-object-query
 ```
 
-**No active module depends on a deferred module.** Deferral is a leaf property:
-`m-agg`, `m-sql-agg`, `m-validtime-only`, `m-process-cache`, and `m-coherence` are
-only ever depended on by other deferred modules. The DAG checker asserts this
-mechanically.
+**No active module depends on a deferred module.** The DAG checker asserts
+this mechanically.
 
 The **conformance family** (`m-case-format`, `m-conformance-adapter`,
 `m-api-conformance`, `m-perf-bench`) declares only the structural edges above; by
@@ -414,18 +391,10 @@ construction it may reference any behavioral module it harnesses.
   Relationship Facet is the one place a reverse direction's swapped join exists,
   so SQL lowering reads the compiled direction rather than re-pairing a reverse
   declaration with its defining peer and exchanging the sides itself.
-- **`m-op-list --> m-read-planning`.** A relationship predicate is a *predicate*
-  and yields no list; deep fetch is a pure per-level fetch
-  algorithm. The lifecycle result surfaces — query-backed lists for the
-  managed lifecycle, snapshot graphs for the plain-value lifecycle — sit
-  *above* it and are populated by it, mirroring the documented
-  `m-snapshot-read --> m-read-planning` bullet below: the two are peers, and
-  neither depends on the other.
+
 - **`m-navigate --> m-predicate`.** The quantifiers, presence tests, and dotted
   to-one paths navigation gives behavior are algebra vocabulary, so navigation
-  references the algebra directly; before this edge, `m-predicate` was reachable from
-  navigate only transitively, through the now-removed `m-navigate -->
-  m-op-list` edge.
+  references the algebra directly.
 - **`m-navigate --> m-inheritance`.** A relationship target may be a **polymorphic
   position** (`m-inheritance`): navigation resolves it to its effective
   concrete-subtype set (single-`EXISTS` interior tag predicate under
@@ -533,8 +502,8 @@ construction it may reference any behavioral module it harnesses.
   or transaction construct.
 - **`m-unit-work --> m-wire`.** Serialized keyed rows, assignments, and
   predicate-selected writes decode resolved scalar leaves once before they become
-  buffered prepared-write products. Managed-object mutation remains developer
-  input governed by `m-core`.
+  buffered prepared-write products. Developer-value conversion remains governed
+  by `m-core`.
 - **`m-sql --> m-read-planning`, `--> m-write-plan`, `--> m-wire`.** SQL's private
   compilers consume resolved flat reads and planned steps. The Wire edge exists
   for canonical document values and carrier contracts, not to authorize SQL to
@@ -552,14 +521,9 @@ construction it may reference any behavioral module it harnesses.
   requires provider-owned authorization to bracket one acquisition. Neutral
   planning, query, and materialization modules do not depend on authority, and
   the authority contract introduces no concrete provider dependency.
-- **`m-identity-map --> m-temporal-read`.** A temporal object's identity key
-  includes its **lowered as-of coordinates** — a managed temporal object is a
-  view pinned at a coordinate, so the identity module references the as-of read
-  model, not just the unit of work that owns the map.
+
 - **`m-snapshot-read --> m-read-planning`.** A snapshot graph is *populated by*
-  deep fetch; navigation, as-of propagation, and lists are reached transitively.
-  Snapshot reads and managed reads (`m-identity-map`) are alternative
-  materializations over the same query stack — neither depends on the other.
+  deep fetch; navigation and as-of propagation are reached transitively.
 - **`m-snapshot-read --> m-document-codec`.** Snapshot materialization decodes
   document leaves and reduces occurrences to their declared members through the
   codec's single shape-aware operation. The codec remains independent of lifecycle
@@ -588,8 +552,8 @@ construction it may reference any behavioral module it harnesses.
   reachable through `m-execution` and is named for the reason the model edges
   above are, so the vocabulary a snapshot graph is published from is legible
   rather than an accident of the runtime's closure. Neither runtime module
-  depends on a lifecycle, which is what lets a managed-object surface reuse both
-  unchanged.
+  depends on snapshot publication; execution conditions and Page assembly stay
+  separate from the values a snapshot publishes.
 - **`m-read-delivery --> m-read-planning`, `--> m-sql`, `--> m-db-port`,
   `--> m-document-codec`, `--> m-temporal-read`, `--> m-execution-lifecycle`.**
   Read delivery turns a validated read into a judged Page: it requests flat-read
@@ -654,11 +618,6 @@ construction it may reference any behavioral module it harnesses.
   `m-inheritance`'s compiled facet and not a fact any Column set implies: an
   ancestor declaring nothing still stands over a position. The edge runs one way:
   `m-model-evolution` names no dialect and no statement.
-- **Aggregation is deferred through two modules.** `m-agg` (algebra) and
-  `m-sql-agg` (lowering) are both deferred; core SQL generation (`m-sql`) never
-  references aggregation constructs.
-- **`m-coherence --> m-process-cache`.** Coherence keeps process caches coherent
-  across servers; `m-unit-work` stays reachable transitively.
 
 ## Enforcement
 
@@ -688,13 +647,13 @@ uv run python -m reference_harness.dep_graph_check --coverage core/spec core/com
 
 ## Out of scope (round 1)
 
-The catalog is a near-superset of an ORM's core behavior; a few capabilities are
-explicitly declined for round 1. These are decisions, not oversights.
+The catalog describes the supported behavior. The following capabilities are
+explicitly outside it.
 
 | Excluded item | Decision | Rationale |
 |---|---|---|
 | **Source attributes / sharding** | Excluded — but **not a one-way door** | Threading a source through the database layer is pervasive; we don't build it now, but the `m-dialect` / `m-db-port` seam MUST stay able to grow a per-tenant / per-source routing hook. Nothing in the design may *preclude* it. |
-| **Conversation scope (a session spanning transactions)** | Excluded — but **not a one-way door** | The identity map's scope is the unit of work (`m-identity-map`), and cross-transaction read reuse is a freshness claim belonging to the deferred `m-process-cache` family. Cross-transaction identity is **not promised but never mandated-distinct** — no spec text or compatibility case may assert that two transactions MUST return different instances. The word "session" stays unspent, reserved for the wider scope if it ever exists. |
+| **Conversation scope (a session spanning transactions)** | Excluded | Snapshot graphs carry values from their own read; no cross-transaction identity or query-result cache is promised. |
 | **Remote / client-server** | Excluded | Three-tier remoting is cleanly separable and not needed to prove the thesis. |
 | **Off-heap storage** | Excluded | An implementation detail with no observable-behavior contract; per-language if ever. |
 | **XML config as a mandate** | Excluded | The canonical YAML / JSON descriptor is the mandated model-input format. |

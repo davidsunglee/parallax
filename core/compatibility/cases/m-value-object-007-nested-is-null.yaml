@@ -1,7 +1,7 @@
 # valueObject presence test: isNull over a shallow field (m-value-object,
 # m-predicate absence collapse), on Postgres AND MariaDB.
 model: models/customer.yaml
-tags: [m-value-object, m-predicate, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

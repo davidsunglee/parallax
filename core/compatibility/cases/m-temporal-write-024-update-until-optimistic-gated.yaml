@@ -4,7 +4,7 @@
 # whole gated split (close + head/middle/tail) is witnessed, not just the single
 # gated UPDATE that -020/-021 pin (m-temporal-write + m-concurrency).
 model: models/position.yaml
-tags: [m-temporal-write, m-concurrency, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1]
 shape: writeSequence
 when:
   uow:

@@ -63,7 +63,7 @@ __all__ = [
 
 class TransactionTimePinReadOnlyError(ValueError):
     """A mutation verb's source view is pinned at a finite Transaction-Time
-    instant (`m-temporal-read`'s finite-pin mutation row; `m-identity-map`):
+    instant:
     the Transaction-Time past records what the system knew and is never
     rewritten, so the verb refuses at the call — before any buffering — and
     emits no DML. This is the neutral application-lifecycle error the

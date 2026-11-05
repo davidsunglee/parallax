@@ -1,7 +1,7 @@
 # Rollback / abort scenario for DELETE (m-unit-work): a DELETE performed inside a
 # unit of work that ABORTS is discarded — a post-abort find observes the ORIGINAL row.
 model: models/account.yaml
-tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

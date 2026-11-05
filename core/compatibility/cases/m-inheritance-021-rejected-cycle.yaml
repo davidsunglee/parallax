@@ -1,6 +1,6 @@
 # Negative (m-inheritance, resolved Q3/Q4): parent links form a cycle.
 model: models/payment.yaml
-tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1]
 shape: rejected
 when:
   model:

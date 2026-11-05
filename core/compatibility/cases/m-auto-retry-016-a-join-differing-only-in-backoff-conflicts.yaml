@@ -1,5 +1,5 @@
 model: models/account.yaml
-tags: [m-auto-retry, m-unit-work, m-api-conformance, join, slice-snapshot-1, slice-managed-1]
+tags: [m-auto-retry, m-unit-work, m-api-conformance, join, slice-snapshot-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

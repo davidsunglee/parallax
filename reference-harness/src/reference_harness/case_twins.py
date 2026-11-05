@@ -45,7 +45,6 @@ TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState",
 _STEP_STATEMENT_PATHS = frozenset(
     {
         ("when", "scenario", "[]"),
-        ("when", "coherence", "[]"),
         ("when", "attempts", "[]"),
         ("when", "concurrency", "rounds", "[]", "A"),
         ("when", "concurrency", "rounds", "[]", "B"),

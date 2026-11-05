@@ -3,7 +3,7 @@
 # model-aware validation refuses the query before SQL instead of reading the
 # literal as one element of it. No element is reached implicitly.
 model: models/scalar-collection-layout-twin-columns.yaml
-tags: [m-predicate, rejected, negative, eq, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, rejected, negative, eq, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

@@ -1,7 +1,7 @@
 # Negative (m-inheritance): a TEMPORAL table-per-hierarchy root whose concrete
 # subtype declares a Temporality Profile of its own.
 model: models/payment.yaml
-tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-hierarchy, slice-snapshot-1]
 shape: rejected
 when:
   model:

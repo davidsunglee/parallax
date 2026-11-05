@@ -1,6 +1,6 @@
 # history(transaction-time): the FULL milestone set, no as-of predicate injected.
 model: models/balance.yaml
-tags: [m-temporal-read, m-object-query, m-sql, history, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, history, audit-only, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

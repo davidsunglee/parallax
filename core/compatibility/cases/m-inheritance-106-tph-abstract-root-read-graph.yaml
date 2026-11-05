@@ -1,7 +1,7 @@
 # Table-per-hierarchy ABSTRACT-ROOT read, INSTANCE-FORM sibling: the developer-surface
 # per-variant node shape (m-inheritance, m-case-format, m-sql).
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, graph, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -669,10 +669,15 @@ def test_classify_admits_an_in_claim_case() -> None:
 @pytest.mark.parametrize(
     ("command", "dialect", "case", "code"),
     [
-        ("benchmark", "postgres", _case(), "unsupported-command"),
+        ("inspect", "postgres", _case(), "unsupported-command"),
         ("compile", "mariadb", _case(), "unsupported-dialect"),
-        ("compile", "postgres", _case(shape="coherence"), "unsupported-case-shape"),
-        ("compile", "postgres", _case(tags=("m-agg", "slice-snapshot-1")), "unsupported-module"),
+        ("compile", "postgres", _case(shape="unknown-shape"), "unsupported-case-shape"),
+        (
+            "compile",
+            "postgres",
+            _case(tags=("m-unclaimed", "slice-snapshot-1")),
+            "unsupported-module",
+        ),
         ("compile", "postgres", _case(tags=("m-predicate",)), "unsupported-case-tag"),
     ],
 )
@@ -1081,20 +1086,7 @@ def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
 
 
 _TX_PAST_READ_ONLY_CASE = (
-    case_format.default_cases_dir() / "m-identity-map-010-transaction-time-past-is-read-only.yaml"
-)
-# A test-only claim admitting exactly the managed-lifecycle pin case above:
-# `spec/python.md` defers the managed-object lifecycle, so the public
-# `SNAPSHOT_CLAIM` never claims `m-identity-map` or the `slice-managed-1`
-# tag — grading this case through the real run path needs a claim scoped to
-# the case's own routing (its module tags, shape, and slice tag).
-_TX_PAST_READ_ONLY_CLAIM = Claim(
-    modules=("m-edit", "m-identity-map", "m-temporal-read"),
-    case_shapes=("scenario",),
-    include=("slice-managed-1",),
-    exclude=(),
-    commands=("run",),
-    provisioning="self-managed",
+    case_format.default_cases_dir() / "m-temporal-write-092-transaction-time-past-is-read-only.yaml"
 )
 
 
@@ -1135,21 +1127,8 @@ class _BalancePort(ConnectsAsItself):
         return body_outcome(self, body)
 
 
-def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() -> None:
-    # The managed-lifecycle read-only-pin case (m-identity-map / m-temporal-
-    # read's finite-pin mutation row) runs END-TO-END through the real
-    # adapter/engine path: the pinned find materializes through the port, and
-    # the mutate step's `expectError: transaction-time-pin-read-only` is
-    # GRADED through the `errorObservation.errorClass` contract
-    # (`m-conformance-adapter`), not schema-validated only. The `errors`
-    # assertion fails if the run lane ever stops reporting the observation;
-    # the write-raising port and the single find emission prove the refused
-    # mutation emitted no DML.
-    envelope = adapter.run_case(
-        _TX_PAST_READ_ONLY_CASE,
-        _PROFILE.on_stand_in(_BalancePort()),
-        claim=_TX_PAST_READ_ONLY_CLAIM,
-    )
+def test_run_case_grades_the_transaction_time_past_refusal_through_the_public_claim() -> None:
+    envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, _PROFILE.on_stand_in(_BalancePort()))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
@@ -1157,17 +1136,6 @@ def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() 
     assert envelope["observations"]["errors"] == [
         {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
     ]
-
-
-def test_the_public_snapshot_claim_still_classifies_the_managed_pin_case_out() -> None:
-    # Under the public claim the same case stays `unsupported` (first failed
-    # filter: its `m-identity-map` module tag) — the deferred managed
-    # lifecycle is graded only through the scoped test claim above, never by
-    # widening `SNAPSHOT_CLAIM`.
-    envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, _PROFILE.on_stand_in(_BalancePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "unsupported"
-    assert envelope["diagnostics"][0]["code"] == "unsupported-module"
 
 
 def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
@@ -1210,14 +1178,6 @@ def test_unsupported_helper_envelope() -> None:
     envelope = adapter.unsupported("compile", adapter.Diagnostic("unsupported-dialect", "nope"))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
-
-
-def test_unsupported_command_envelope() -> None:
-    envelope = adapter.unsupported_command("benchmark")
-    validate_adapter_envelope(envelope)
-    assert envelope["command"] == "benchmark"
-    assert envelope["status"] == "unsupported"
-    assert envelope["diagnostics"][0]["code"] == "unsupported-command"
 
 
 def test_error_envelope() -> None:

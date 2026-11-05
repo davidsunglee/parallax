@@ -4,7 +4,7 @@
 # although its Valid-Time start differs. Distinct ids keep the primary key and
 # the logical-key exclusion out of it.
 model: models/temporal-authored-index.yaml
-tags: [m-db-error, uniqueViolation, m-storage-layout, temporal, bitemporal, unique-index, slice-snapshot-1, slice-managed-1]
+tags: [m-db-error, uniqueViolation, m-storage-layout, temporal, bitemporal, unique-index, slice-snapshot-1]
 shape: error
 then:
   statements:

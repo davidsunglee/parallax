@@ -1,5 +1,5 @@
 model: models/position.yaml
-tags: [m-temporal-write, m-unit-work, write, rejected, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-unit-work, write, rejected, temporal, bitemporal, slice-snapshot-1]
 shape: rejected
 when:
   write:

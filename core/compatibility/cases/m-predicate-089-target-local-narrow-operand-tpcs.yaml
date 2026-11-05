@@ -1,7 +1,7 @@
 # With an operand over a table-per-concrete-subtype target, the selected branch reads
 # its own field and the unselected one answers false: a car with more than two seats.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

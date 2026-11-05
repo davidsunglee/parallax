@@ -1,6 +1,6 @@
 # An owner whose active is null makes the operand unknown, which does not match.
 model: models/predicate-collections.yaml
-tags: [m-predicate, relationship, to-one, traversal, notExists, matching, negation, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, notExists, matching, negation, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

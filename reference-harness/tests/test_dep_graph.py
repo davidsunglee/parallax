@@ -50,7 +50,6 @@ def test_real_dependency_graph_is_a_legal_dag() -> None:
     assert ("m-sql", "m-predicate") in edges  # sanity: a known edge is present
     assert ("m-sql", "m-storage-layout") in edges
     assert ("m-read-planning", "m-navigate") in edges  # the "surprising" direction is declared
-    assert ("m-coherence", "m-process-cache") in edges  # coherence keeps caches coherent
     assert {dependency for owner, dependency in edges if owner == "m-execution-authority"} == {
         "m-db-port",
         "m-unit-work",
@@ -88,10 +87,10 @@ def _catalog_md(rows: list[tuple[str, str, str]], edges: list[str] | None = None
 
 def test_parse_catalog_reads_status_and_coverage() -> None:
     catalog = parse_catalog(
-        _catalog_md([("m-core", "active", "cases"), ("m-agg", "deferred", "cases")])
+        _catalog_md([("m-core", "active", "cases"), ("m-deferred-example", "deferred", "cases")])
     )
     assert catalog["m-core"] == {"status": "active", "coverage": "cases"}
-    assert catalog["m-agg"] == {"status": "deferred", "coverage": "cases"}
+    assert catalog["m-deferred-example"] == {"status": "deferred", "coverage": "cases"}
 
 
 def test_real_catalog_matches_the_graph() -> None:
@@ -101,7 +100,6 @@ def test_real_catalog_matches_the_graph() -> None:
     # The catalog table and the dependency graph list exactly the same modules.
     assert graph_modules == set(catalog)
     assert catalog["m-db-port"]["coverage"] == "contract"  # the sole contract-covered module
-    assert catalog["m-agg"]["status"] == "deferred"  # aggregation is deferred
     assert catalog["m-core"]["status"] == "active"
     assert catalog["m-storage-layout"] == {"status": "active", "coverage": "cases"}
     assert catalog["m-execution-authority"] == {"status": "active", "coverage": "cases"}
@@ -354,17 +352,17 @@ def test_deferred_and_contract_modules_are_excluded_from_the_gate() -> None:
 
 def test_active_to_deferred_edge_is_rejected() -> None:
     markdown = _catalog_md(
-        [("m-predicate", "active", "cases"), ("m-agg", "deferred", "cases")],
-        edges=["m-predicate --> m-agg"],
+        [("m-predicate", "active", "cases"), ("m-deferred-example", "deferred", "cases")],
+        edges=["m-predicate --> m-deferred-example"],
     )
     errors = active_deferred_edge_errors(markdown)
-    assert any("m-predicate" in e and "m-agg" in e for e in errors)
+    assert any("m-predicate" in e and "m-deferred-example" in e for e in errors)
 
 
 def test_deferred_to_active_edge_is_allowed() -> None:
     markdown = _catalog_md(
-        [("m-predicate", "active", "cases"), ("m-agg", "deferred", "cases")],
-        edges=["m-agg --> m-predicate"],
+        [("m-predicate", "active", "cases"), ("m-deferred-example", "deferred", "cases")],
+        edges=["m-deferred-example --> m-predicate"],
     )
     assert active_deferred_edge_errors(markdown) == []
 
@@ -515,14 +513,14 @@ def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -
 def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     _write_case(cases, "m-predicate-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
-    # m-identity-map is on a tagged case but not in the claim's modules.
+    # m-unclaimed-example is on a tagged case but not in the claim's modules.
     _write_case(
         cases,
         "m-predicate-002.yaml",
-        _clean_read_case(["m-predicate", "m-identity-map", "slice-example-1"]),
+        _clean_read_case(["m-predicate", "m-unclaimed-example", "slice-example-1"]),
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
-    assert any("m-predicate-002.yaml" in e and "'m-identity-map'" in e for e in errors)
+    assert any("m-predicate-002.yaml" in e and "'m-unclaimed-example'" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None:
@@ -643,8 +641,6 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # and the tagged-case counts are drift tripwires — adding or losing a tagged case
 # fails the count. The two object-lifecycle slices share the non-lifecycle base
 # (dual-tagged cases, including the inheritance read AND write cases);
-# slice-snapshot-1 excludes the m-op-list-tagged cases and adds the
-# m-snapshot-read cases; slice-managed-1 adds the m-identity-map cases.
 
 
 def _slice_tag_count(slice_tag: str) -> list[str]:
@@ -665,17 +661,16 @@ def test_real_corpus_profile_is_consistent() -> None:
     assert profile_errors(slices, _COMPATIBILITY_ROOT) == []
 
 
-def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
+def test_real_corpus_declares_the_snapshot_slice() -> None:
     slices = (_SPEC_DIR / "slices.md").read_text(encoding="utf-8")
     claims = parse_profile_claims(slices)
-    assert sorted(claims) == ["slice-managed-1", "slice-snapshot-1"]
+    assert sorted(claims) == ["slice-snapshot-1"]
 
 
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 919),
-        ("slice-managed-1", 692),
+        ("slice-snapshot-1", 920),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

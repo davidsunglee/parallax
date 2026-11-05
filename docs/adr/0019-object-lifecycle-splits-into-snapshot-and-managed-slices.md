@@ -1,5 +1,7 @@
 # Object lifecycle splits into a snapshot slice and a managed slice
 
+Superseded in part by [ADR 0085](0085-the-supported-lifecycle-is-snapshot-and-performance-contracts-own-workloads.md).
+
 The ORM landscape divides along two separable axes — identity/uniquing scope
 (none → graph-local → transaction → process) and change tracking (explicit
 writes → operation-buffered mutation → flush-time dirty checking). Parallax

@@ -1,6 +1,6 @@
 # group (precedence) — GROUPED form: `(qty >= 25 OR qty <= 5) AND active = true`.
 model: models/orders.yaml
-tags: [m-predicate, group, boolean, precedence, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, group, boolean, precedence, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

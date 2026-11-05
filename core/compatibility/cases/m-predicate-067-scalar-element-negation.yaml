@@ -1,7 +1,7 @@
 # Negation inside the quantifier complements the element test: some element of
 # `tags` differs from `urgent` (contrast m-predicate-068).
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, negation, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, negation, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -3,7 +3,7 @@
 # absent; a `geo` whose every leaf is JSON null (7), or that carries only `zip` (5), is
 # present.
 model: models/customer.yaml
-tags: [m-predicate, m-value-object, presence, json, absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, presence, json, absence-collapse, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

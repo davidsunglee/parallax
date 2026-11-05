@@ -32,16 +32,15 @@ def _authored_queries() -> list[tuple[str, dict[str, Any]]]:
         query: Any = when.get("objectQuery")
         if isinstance(query, dict):
             found.append((case.case_id, cast("dict[str, Any]", query)))
-        for key in ("scenario", "coherence"):
-            steps: Any = when.get(key)
-            if not isinstance(steps, list):
+        steps: Any = when.get("scenario")
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(cast("list[Any]", steps)):
+            if not isinstance(step, dict):
                 continue
-            for index, step in enumerate(cast("list[Any]", steps)):
-                if not isinstance(step, dict):
-                    continue
-                inner: Any = cast("dict[str, Any]", step).get("objectQuery")
-                if isinstance(inner, dict):
-                    found.append((f"{case.case_id}/{key}/{index}", cast("dict[str, Any]", inner)))
+            inner: Any = cast("dict[str, Any]", step).get("objectQuery")
+            if isinstance(inner, dict):
+                found.append((f"{case.case_id}/scenario/{index}", cast("dict[str, Any]", inner)))
     return found
 
 

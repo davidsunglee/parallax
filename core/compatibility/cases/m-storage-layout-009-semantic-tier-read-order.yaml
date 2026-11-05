@@ -1,7 +1,7 @@
 # Canonical semantic tier order decides a read's projection, not declaration
 # position or ancestry (m-storage-layout x m-sql).
 model: models/storage-layout.yaml
-tags: [m-storage-layout, m-object-query, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-object-query, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

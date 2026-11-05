@@ -1,7 +1,7 @@
 # Table-per-hierarchy UPDATE of an ABSTRACT-ANCESTOR attribute: still tag-guarded
 # (m-inheritance, m-sql).
 model: models/animal.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

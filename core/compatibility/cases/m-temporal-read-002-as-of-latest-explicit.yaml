@@ -2,7 +2,7 @@
 # selection. It lowers to the current-row predicate (`out_z = infinity`) that an
 # omitted Transaction-Time selection normalizes to before canonical execution.
 model: models/balance.yaml
-tags: [m-temporal-read, m-object-query, m-sql, as-of, audit-only, explicit, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, as-of, audit-only, explicit, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

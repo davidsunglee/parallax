@@ -8,9 +8,8 @@ connection — and the rows a script hands back are PHYSICAL, so every passing t
 is also a test that the logical result the step's own ``expectRows`` states was
 derived from them.
 
-A query and a resolving load issue exactly the statements their step lists; a
-reuse, an already-materialized access, and a row-observing mutation issue none at
-all, which is asserted by the run's chronology carrying nothing for those steps.
+A query issues exactly the statements its step lists; an already-materialized
+access and a row-observing mutation issue none, as the run's chronology asserts.
 """
 
 from __future__ import annotations
@@ -39,9 +38,6 @@ from .conftest import (
 
 CaseLoader = Callable[[str], Case]
 
-_CONSTRUCTION = "m-op-list-001-construction-first-access-reaccess.yaml"
-_POPULATED_LIST = "m-op-list-002-deep-fetch-population-stable.yaml"
-_VALUE_OBJECT_LIST = "m-op-list-004-first-access-divergent-value-object-list.yaml"
 _EDIT_KEEPS_ITEMS = "m-snapshot-read-016-edit-keeps-loaded-items.yaml"
 _EDIT_ONE_OCCURRENCE = "m-edit-010-mutate-replaces-a-one-occurrence-whole.yaml"
 _EDIT_MANY_OCCURRENCE = "m-edit-011-mutate-replaces-a-many-occurrence-whole.yaml"
@@ -50,11 +46,7 @@ _READ_YOUR_OWN_WRITES = "m-unit-work-029-ryow-relationship.yaml"
 _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later-write.yaml"
 _ABSTRACT_FIND = "m-inheritance-130-tph-abstract-find-licenses-concrete-update.yaml"
 _FIND_AFTER_A_WRITE = "m-batch-write-005-predicate-delete-readless.yaml"
-_ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
 _TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
-_POLYMORPHIC_OWNER = "m-identity-map-005-family-root-vs-leaf.yaml"
-_DOCUMENT_LAYOUT_DEEP_FETCH = "m-read-planning-024-document-layout-graph.yaml"
-_DOCUMENT_LAYOUT_TPH_READ = "m-inheritance-123-document-layout-tph-broad-read.yaml"
 
 
 def _order(
@@ -80,14 +72,6 @@ _ORDERS: list[dict[str, Any]] = [
     _order(42, "Grace", "A-999", 30, "99.99", True, "2024-06-30"),
 ]
 _ORDER_ONE = [_ORDERS[0]]
-
-_ALL_ITEMS: list[dict[str, Any]] = [
-    {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-    {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": "2024-02-15"},
-    {"id": 21, "order_id": 2, "sku": "A-300", "quantity": 4, "shipped_on": "2024-02-20"},
-    {"id": 421, "order_id": 42, "sku": "A-999", "quantity": 3, "shipped_on": "2024-03-10"},
-    {"id": 422, "order_id": 42, "sku": "B-200", "quantity": 5, "shipped_on": "2024-02-05"},
-]
 
 # `Order.items` declares `id desc`, so a child level must return 12 before 11.
 _ORDER_ONE_ITEMS: list[dict[str, Any]] = [
@@ -119,8 +103,6 @@ _STATUS_ITEMS: list[dict[str, Any]] = [
 def _account(id_: int, owner: str, balance: str, version: int) -> dict[str, Any]:
     return {"id": id_, "owner": owner, "balance": Decimal(balance), "version": version}
 
-
-_LINUS = [_account(2, "Linus", "250.00", 1)]
 
 _FIRST_DELIVERY = [
     [
@@ -171,23 +153,26 @@ def _sql(db: ScriptedProvider) -> list[str]:
 
 def test_a_find_runs_its_own_golden_and_grades_its_expectRows(corpus_case: CaseLoader) -> None:
     """The rows the script hands back are physical; `expectRows` states the result."""
-    case = corpus_case(_POPULATED_LIST)
-    with ScriptedProvider(script=_rows(_ORDERS, _ALL_ITEMS)) as db:
+    case = corpus_case(_EDIT_KEEPS_ITEMS)
+    with ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS)) as db:
         assert_unit_work_scenario(case, db)
 
     assert _sql(db) == [
-        "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0",
+        "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on "
+        "from orders t0 where t0.id = ?",
         "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 "
-        "where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc",
+        "where t0.order_id = any(cast(? as bigint[])) order by t0.id desc",
     ]
 
 
 def test_a_find_whose_rows_disagree_with_expectRows_is_refused(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_POPULATED_LIST)
+    case = damaged_case(_EDIT_KEEPS_ITEMS)
     _steps(case)[0]["expectRows"][0]["name"] = "Someone else"
 
     with pytest.raises(CaseFailure, match=r"scenario\[0\] rows != expectRows"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
+        assert_unit_work_scenario(
+            case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS))
+        )
 
 
 # --- a row-observing mutation -------------------------------------------------
@@ -426,14 +411,12 @@ def test_an_observation_find_step_is_graded_in_the_instance_form_it_reads(
 def test_a_find_listing_sql_for_levels_its_query_declares_none_of_is_refused(
     damaged_case: CaseLoader,
 ) -> None:
-    case = damaged_case(_POPULATED_LIST)
+    case = damaged_case(_EDIT_KEEPS_ITEMS)
     step = _steps(case)[0]
-    step["statements"].append(copy.deepcopy(_steps(case)[1]["statements"][0]))
-    step["databaseCalls"] += 1
-    case.then["databaseCalls"] += 1
+    del step["objectQuery"]["includes"]
 
     with pytest.raises(CaseFailure, match="its objectQuery declares no `includes`"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
+        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDER_ONE)))
 
 
 # --- a find with Include Paths, and the graph it materialized -----------------
@@ -470,287 +453,12 @@ def test_a_read_step_declaring_expectGraph_without_includes_is_refused(
     damaged_case: CaseLoader,
 ) -> None:
     """The contents a read step states are the ones its OWN Include Paths fetched."""
-    case = damaged_case(_POPULATED_LIST)
+    read = damaged_case("m-predicate-002-eq.yaml")
+    case = _as_a_one_step_scenario(read, read.then["rows"])
     _steps(case)[0]["expectGraph"] = {"Order": []}
 
     with pytest.raises(CaseFailure, match="carries no `objectQuery.includes`"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
-
-
-# --- a relationship load ------------------------------------------------------
-
-
-def test_a_load_resolves_its_levels_and_publishes_the_rows_they_returned(
-    corpus_case: CaseLoader,
-) -> None:
-    """A deferred fetch batches the whole parent set into ONE child statement."""
-    case = corpus_case(_POPULATED_LIST)
-    with ScriptedProvider(script=_rows(_ORDERS, _ALL_ITEMS)) as db:
-        assert_unit_work_scenario(case, db)
-
-    queries = [call for call in _calls(db) if isinstance(call, Queried)]
-    assert len(queries) == 2
-    assert queries[1].binds == (1, 2, 3, 4, 5, 42)
-
-
-_OWNER_SQL = "select t0.id, t0.name from person t0 where t0.id = ?"
-_ANIMALS_SQL = (
-    "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
-    "t0.bark_volume, t0.tusk_length from animal t0 where t0.owner_id in (?)"
-)
-
-_OWNED_ANIMALS: list[dict[str, Any]] = [
-    {
-        "id": 1,
-        "kind": "dog",
-        "name": "Rex",
-        "owner_id": 10,
-        "license_id": "L-100",
-        "indoor": None,
-        "bark_volume": 7,
-        "tusk_length": None,
-    },
-    {
-        "id": 2,
-        "kind": "cat",
-        "name": "Tom",
-        "owner_id": 10,
-        "license_id": "L-200",
-        "indoor": True,
-        "bark_volume": None,
-        "tusk_length": None,
-    },
-]
-
-_OWNED_ANIMAL_ROWS: list[dict[str, Any]] = [
-    {key: value for key, value in row.items() if key != "kind"}
-    | {"familyVariant": "Dog" if row["kind"] == "dog" else "Cat"}
-    for row in _OWNED_ANIMALS
-]
-
-
-def _as_a_load_of_the_owners_animals(case: Case) -> Case:
-    """*case*'s family reached through the deferred load of a polymorphic relationship.
-
-    The corpus authors no `load` over a relationship whose target is abstract, so the
-    navigation is fabricated in a private copy. `Person.animals` is declared against
-    the abstract ROOT, so the position the load walks to owns no rows: each row names
-    its own concrete with the shared table's raw tag, and the step stands where a
-    query-backed read would carry a `narrowTo` and a superset the golden must state.
-    """
-    case.raw["when"] = {
-        "scenario": [
-            {
-                "objectQuery": {
-                    "target": "parallax.compatibility.Person",
-                    "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 10}},
-                },
-                "databaseCalls": 1,
-                "statements": [{"sql": {"postgres": _OWNER_SQL}, "binds": [10]}],
-            },
-            {
-                "action": "load",
-                "on": 0,
-                "path": "animals",
-                "databaseCalls": 1,
-                "statements": [{"sql": {"postgres": _ANIMALS_SQL}, "binds": [10]}],
-                "expectRows": _OWNED_ANIMAL_ROWS,
-            },
-        ]
-    }
-    case.raw["then"] = {"databaseCalls": 2}
-    return case
-
-
-def test_a_load_to_an_abstract_position_publishes_familyVariant_not_the_raw_tag(
-    damaged_case: CaseLoader,
-) -> None:
-    """A navigated position is polymorphic too, and the tag is never a result field.
-
-    The two loaded rows sit in one shared table under one relationship and resolve to
-    DIFFERENT concretes, so the variant is derived per row from the tag the golden
-    projects rather than read off the position, which names none of them.
-    """
-    case = _as_a_load_of_the_owners_animals(damaged_case(_POLYMORPHIC_OWNER))
-
-    with ScriptedProvider(script=_rows([{"id": 10, "name": "Ada"}], _OWNED_ANIMALS)) as db:
-        assert_unit_work_scenario(case, db)
-
-
-_FOLDER_SQL = "select t0.id, t0.name from folder t0 where t0.id = ?"
-
-
-def _keyed_by_folder(union_all: str) -> str:
-    """m-inheritance-137's `union all`, each branch keyed by the parent `IN` list.
-
-    A polymorphic table-per-concrete-subtype hop is ONE `union all` whose branches
-    share the parent-id list (m-read-planning), so the level projects the same aligned
-    superset the abstract root read projects and differs from it only by that key.
-    """
-    return " union all ".join(
-        f"{branch} where t0.folder_id in (?)" for branch in union_all.split(" union all ")
-    )
-
-
-def _as_a_load_of_the_folders_documents(case: Case) -> Case:
-    """*case*'s table-per-concrete-subtype family reached through a deferred load.
-
-    `Folder.documents` targets the abstract root Document, so the position the load
-    walks to owns no table of its own: each row names its concrete with the branch
-    literal its own `union all` arm projects.
-    """
-    union_all = case.raw["then"]["statements"][0]["sql"]["postgres"]
-    case.raw["shape"] = "scenario"
-    case.raw["when"] = {
-        "scenario": [
-            {
-                "objectQuery": {
-                    "target": "parallax.compatibility.Folder",
-                    "predicate": {"eq": {"path": "parallax.compatibility.Folder.id", "value": 100}},
-                },
-                "databaseCalls": 1,
-                "statements": [{"sql": {"postgres": _FOLDER_SQL}, "binds": [100]}],
-            },
-            {
-                "action": "load",
-                "on": 0,
-                "path": "documents",
-                "databaseCalls": 1,
-                "statements": [{"sql": {"postgres": _keyed_by_folder(union_all)}, "binds": [100]}],
-                "expectRows": _DOCUMENT_FAMILY_ROWS,
-            },
-        ]
-    }
-    case.raw["then"] = {"databaseCalls": 2}
-    return case
-
-
-def test_a_load_to_an_abstract_tpcs_position_publishes_familyVariant_not_the_branch_literal(
-    damaged_case: CaseLoader,
-) -> None:
-    """A `union all` hop's branch literal is no more a result field than a raw tag is.
-
-    The position is navigated, so its own family fixes the concrete set and the
-    level's own golden fixes the projection shape — but what each row publishes is
-    the `familyVariant` its branch literal names, restored to that branch's own
-    physical spellings and decoded through that branch's own placements.
-    """
-    case = _as_a_load_of_the_folders_documents(damaged_case(_TPCS_INSTANCE_FORM_READ))
-
-    with ScriptedProvider(script=_rows([{"id": 100, "name": "Alpha"}], _DOCUMENT_FAMILY)) as db:
-        assert_unit_work_scenario(case, db)
-
-
-_TRAVELER_SQL = "select t0.id, not t0.payload is null, t0.payload from traveler t0 where t0.id = ?"
-_TRIPS_SQL = (
-    "select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 "
-    "where t0.traveler_id in (?) order by t0.id asc"
-)
-_TRAVELER_ROW = {
-    "id": 1,
-    "__parallax_document_presence_1": True,
-    "payload": '{"displayName": "Ada", "score": 7, "joinedOn": "2026-01-15", "tags": []}',
-}
-_TRIP_ROWS: list[dict[str, Any]] = [
-    {
-        "id": 51,
-        "traveler_id": 1,
-        "__parallax_document_presence_2": True,
-        "payload": '{"destination": "Oslo", "nights": 3}',
-    },
-    {
-        "id": 52,
-        "traveler_id": 1,
-        "__parallax_document_presence_2": True,
-        "payload": '{"destination": "Bergen", "nights": 1}',
-    },
-]
-_TRIP_ROWS_PUBLISHED: list[dict[str, Any]] = [
-    {"id": 51, "traveler_id": 1, "destination": "Oslo", "nights": 3},
-    {"id": 52, "traveler_id": 1, "destination": "Bergen", "nights": 1},
-]
-
-
-def _as_a_load_of_the_travelers_trips(case: Case) -> Case:
-    """*case*'s deep fetch restated as the deferred load of the same relationship."""
-    case.raw["shape"] = "scenario"
-    case.raw["when"] = {
-        "scenario": [
-            {
-                "objectQuery": {
-                    "target": "parallax.compatibility.Traveler",
-                    "predicate": {"eq": {"path": "parallax.compatibility.Traveler.id", "value": 1}},
-                },
-                "databaseCalls": 1,
-                "statements": [{"sql": {"postgres": _TRAVELER_SQL}, "binds": [1]}],
-            },
-            {
-                "action": "load",
-                "on": 0,
-                "path": "trips",
-                "databaseCalls": 1,
-                "statements": [{"sql": {"postgres": _TRIPS_SQL}, "binds": [1]}],
-                "expectRows": _TRIP_ROWS_PUBLISHED,
-            },
-        ]
-    }
-    case.raw["then"] = {"databaseCalls": 2}
-    return case
-
-
-def test_a_load_fans_a_relational_document_layout_out_into_its_members(
-    damaged_case: CaseLoader,
-) -> None:
-    """The Structured Column is never a result field, at a navigated position either.
-
-    The loaded level projects `trip`'s shared Column once and publishes neither it
-    nor the document it carried: `destination` and `nights` come back under the
-    result names a `Columns` layout would have given them, decoded through the
-    level's OWN entity.
-    """
-    case = _as_a_load_of_the_travelers_trips(damaged_case(_DOCUMENT_LAYOUT_DEEP_FETCH))
-
-    with ScriptedProvider(script=_rows([_TRAVELER_ROW], _TRIP_ROWS)) as db:
-        assert_unit_work_scenario(case, db)
-
-
-def test_a_load_running_more_statement_groups_than_sources_is_refused(
-    damaged_case: CaseLoader,
-) -> None:
-    """A coordinate-grouped load emits at most one statement per referenced source.
-
-    The batching contract is what makes the grouped form observable: every executed
-    group must be accounted for by a source the step references, or a load could
-    issue statements no coordinate group asked for and still pass on the rows they
-    returned.
-    """
-    case = damaged_case(_POPULATED_LIST)
-    step = _steps(case)[1]
-    step["on"] = [0]
-    step["statements"] = [*step["statements"], *step["statements"]]
-    step["databaseCalls"] += 1
-    case.then["databaseCalls"] += 1
-
-    with pytest.raises(CaseFailure, match="coordinate source"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
-
-
-def test_a_load_whose_source_step_observed_nothing_is_refused(damaged_case: CaseLoader) -> None:
-    """A read verb publishes objects, so the position they stand at must be resolvable.
-
-    A `load` walks a relationship from the object an earlier step named, and reads
-    that step's position out of the CASE. A source step that states no read — a
-    write, or a lifecycle action — names no position for the walk to start from, so
-    the rows its statements returned would be published standing nowhere.
-    """
-    case = damaged_case(_POPULATED_LIST)
-    source = _steps(case)[0]
-    del source["objectQuery"]
-    del source["expectRows"]
-    source["write"] = {"mutation": "insert", "target": {"entity": "parallax.compatibility.Order"}}
-
-    with pytest.raises(CaseFailure, match="resolved no entity for the rows"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=[Affected(1)]))
+        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS[-1:])))
 
 
 # --- an access over an already-materialized view ------------------------------
@@ -804,163 +512,17 @@ def test_an_access_naming_a_relationship_the_read_never_included_is_refused(
         )
 
 
-# --- a query-backed list's first access ---------------------------------------
-
-
-def _as_a_constructed_list_first_accessed(case: Case, expect_rows: list[dict[str, Any]]) -> Case:
-    """A shipped `read` case restated as the query-backed list a first access resolves.
-
-    The construction step carries the Object Query and costs nothing; the access
-    carries the golden that resolves it. So the read is one thing spread over two
-    steps, which is what the corpus's own path-less `access` shape declares.
-    """
-    read = case.raw["when"]["objectQuery"]
-    statements = case.raw["then"]["statements"]
-    case.raw["shape"] = "scenario"
-    case.raw["when"] = {
-        "scenario": [
-            {"objectQuery": read, "databaseCalls": 0},
-            {
-                "action": "access",
-                "on": 0,
-                "databaseCalls": len(statements),
-                "statements": statements,
-                "expectRows": expect_rows,
-            },
-        ]
-    }
-    case.raw["then"] = {"databaseCalls": len(statements)}
-    return case
-
-
-def test_a_first_access_resolves_the_constructors_object_query_from_the_case(
-    corpus_case: CaseLoader,
-) -> None:
-    """The construction step is never asserted, and its query is still reachable.
-
-    Step 0 built the list and published nothing; step 1's ``on`` names it, and the
-    read it resolves is that step's own authored Object Query — read out of the
-    accepted case rather than handed across the seam as an unresolved value.
-    """
-    case = corpus_case(_CONSTRUCTION)
-    with ScriptedProvider(script=_rows(_ORDERS)) as db:
-        assert_unit_work_scenario(case, db)
-
-    assert len(_calls(db)) == 1
-
-
-def test_a_first_access_decodes_with_the_constructed_lists_own_entity(
-    corpus_case: CaseLoader,
-) -> None:
-    """A value-object-bearing list decodes its document with the SOURCE's schema.
-
-    The rows are Depot rows, so the flat ``address`` document projects through
-    Depot's own composite — resolving the entity from the constructor the access
-    names, never from the Scenario root.
-    """
-    depots = [
-        {
-            "id": 200,
-            "customer_id": 1,
-            "label": "Dock",
-            "__parallax_document_presence_3": True,
-            "address": {"line": "1 Dock St", "postcode": "0193"},
-        },
-        {
-            "id": 201,
-            "customer_id": 1,
-            "label": "Yard",
-            "__parallax_document_presence_3": False,
-            "address": None,
-        },
-    ]
-    case = corpus_case(_VALUE_OBJECT_LIST)
-    with ScriptedProvider(script=_rows(depots)) as db:
-        assert_unit_work_scenario(case, db)
-
-    assert len(_calls(db)) == 1
-
-
-def test_a_first_access_of_an_abstract_list_is_graded_as_the_read_it_resolves(
-    damaged_case: CaseLoader,
-) -> None:
-    """The list's position is the CONSTRUCTION step's; the projection is the access's.
-
-    A path-less access navigates nothing — it resolves the Object Query an earlier
-    step authored — so what it publishes is that read's own result: the `union all`
-    branch literal materialized as `familyVariant`, and each row's `Document` slot
-    decoded at the concrete the literal names rather than at the abstract position,
-    which declares none of its members. Presenting a golden without that slot the same
-    way is refused for the column it omits, which is what pins that the read carried
-    over is graded as the instance-form read it is.
-    """
-    resolved = _as_a_constructed_list_first_accessed(
-        damaged_case(_TPCS_INSTANCE_FORM_READ), _DOCUMENT_FAMILY_ROWS
-    )
-    with ScriptedProvider(script=_rows(_DOCUMENT_FAMILY)) as db:
-        assert_unit_work_scenario(resolved, db)
-
-    omitting = _as_a_constructed_list_first_accessed(
-        _without_annotation(damaged_case(_TPCS_INSTANCE_FORM_READ)), []
-    )
-    with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
-        assert_unit_work_scenario(omitting, ScriptedProvider(script=_rows([])))
-
-
-_PAYMENT_FAMILY: list[dict[str, Any]] = [
-    {
-        "id": 1,
-        "kind": "card",
-        "__parallax_document_presence_2": True,
-        "payload": '{"detail": "visa-4242", "authorizationCode": "AUTH-7"}',
-    },
-    {
-        "id": 2,
-        "kind": "cash",
-        "__parallax_document_presence_2": True,
-        "payload": '{"detail": "12.50"}',
-    },
-]
-_PAYMENT_FAMILY_ROWS: list[dict[str, Any]] = [
-    {
-        "id": 1,
-        "familyVariant": "CardPayment",
-        "detail": "visa-4242",
-        "authorization_code": "AUTH-7",
-    },
-    {"id": 2, "familyVariant": "CashPayment", "detail": "12.50"},
-]
-
-
-def test_a_first_access_fans_a_relational_document_layout_out_at_the_rows_own_variant(
-    damaged_case: CaseLoader,
-) -> None:
-    """The resolved list publishes members, and each row's own branch decodes them.
-
-    The two variants store `detail` at the same Document Path under different
-    declared types, so the fan-out has to stand at the variant the raw tag names —
-    which is what makes the access publish `12.50` as a decimal and give the cash
-    node no `authorization_code` member from its sibling.
-    """
-    case = _as_a_constructed_list_first_accessed(
-        damaged_case(_DOCUMENT_LAYOUT_TPH_READ), _PAYMENT_FAMILY_ROWS
-    )
-
-    with ScriptedProvider(script=_rows(_PAYMENT_FAMILY)) as db:
-        assert_unit_work_scenario(case, db)
-
-
 # --- a named reuse ------------------------------------------------------------
 
 
 def test_a_named_reuse_returns_the_rows_its_source_published_without_sql(
     corpus_case: CaseLoader,
 ) -> None:
-    case = corpus_case(_POPULATED_LIST)
-    with ScriptedProvider(script=_rows(_ORDERS, _ALL_ITEMS)) as db:
+    case = corpus_case(_EDIT_KEEPS_ITEMS)
+    with ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS)) as db:
         assert_unit_work_scenario(case, db)
 
-    # The find and the load; the re-access after them issues nothing.
+    # The included find; the edit and access after it issue nothing.
     assert len(_calls(db)) == 2
 
 
@@ -983,42 +545,16 @@ def test_a_reuse_naming_a_step_that_published_nothing_is_refused(
         )
 
 
-def test_two_finds_declared_to_denote_one_object_are_checked_on_identity(
-    corpus_case: CaseLoader,
-) -> None:
-    """Two independent queries, one managed object: `sameObjectAs` grades the PKs."""
-    case = corpus_case(_ONE_OBJECT_TWO_FINDS)
-    with ScriptedProvider(script=_rows(_LINUS, _LINUS)) as db:
-        assert_unit_work_scenario(case, db)
-
-    assert len(_calls(db)) == 2
-
-
-def test_two_finds_reaching_different_rows_break_the_one_object_rule(
-    damaged_case: CaseLoader,
-) -> None:
-    """`sameObjectAs` is the one-object-per-PK rule, not a second row comparison.
-
-    The damage moves BOTH the second find's expectRows and the row it is handed to
-    a different account, so its own row comparison still passes and only the
-    identity claim against step 0 refuses it.
-    """
-    case = damaged_case(_ONE_OBJECT_TWO_FINDS)
-    _steps(case)[1]["expectRows"] = [{"id": 3, "owner": "Linus", "balance": "10.00", "version": 1}]
-    script = _rows(_LINUS, [_account(3, "Linus", "10.00", 1)])
-
-    with pytest.raises(CaseFailure, match="primary-key identities differ"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=script))
-
-
 def test_a_step_whose_rows_do_not_carry_the_identity_column_is_refused(
     damaged_case: CaseLoader,
 ) -> None:
-    case = damaged_case(_ONE_OBJECT_TWO_FINDS)
-    _steps(case)[1]["identityAttr"] = "account_number"
+    case = damaged_case(_EDIT_KEEPS_ITEMS)
+    _steps(case)[2]["identityAttr"] = "account_number"
 
     with pytest.raises(CaseFailure, match="do not carry the identity column"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_LINUS, _LINUS)))
+        assert_unit_work_scenario(
+            case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS))
+        )
 
 
 # --- the streamed placement ---------------------------------------------------
@@ -1135,24 +671,6 @@ def test_a_retained_observation_outlives_the_session_that_produced_it(
     assert db.chronology[-1] == Committed(0)
 
 
-def test_a_reuse_after_its_session_closed_needs_no_reader_at_all(
-    damaged_case: CaseLoader,
-) -> None:
-    """A reuse answers from what its source published, never from a connection."""
-    case = damaged_case(_CONSTRUCTION)
-    _steps(case)[1]["uow"] = "resolved"
-
-    with ScriptedProvider(script=_rows(_ORDERS)) as db:
-        assert_unit_work_scenario(case, db)
-
-    assert db.sessions == 1
-    assert [call.session for call in _calls(db)] == [0]
-    assert db.chronology[-1] == Committed(0)
-
-
-# --- what a step publishes ----------------------------------------------------
-
-
 def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(
     corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1168,7 +686,9 @@ def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(
         "materialize_variant_owner_node",
         lambda _case, _entity, row: dict(row),
     )
-    case = corpus_case(_POPULATED_LIST)
+    case = corpus_case(_EDIT_KEEPS_ITEMS)
 
     with pytest.raises(TypeError, match="did not come through the publication seam"):
-        assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
+        assert_unit_work_scenario(
+            case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS))
+        )

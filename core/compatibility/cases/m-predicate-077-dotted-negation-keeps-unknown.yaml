@@ -1,7 +1,7 @@
 # Negating a dotted comparison keeps its unknown: a basket with no owner, and one
 # whose owner's `active` is null, satisfy neither the comparison nor its negation.
 model: models/predicate-collections.yaml
-tags: [m-predicate, relationship, to-one, traversal, negation, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, negation, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -1,7 +1,7 @@
 # A path-targeted narrowing with an operand reads the dog's own field: Rex's bark is
 # loud, Fido's is unknown, the cat is unselected and the absent pet is false.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

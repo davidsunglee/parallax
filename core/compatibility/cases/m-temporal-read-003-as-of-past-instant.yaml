@@ -3,7 +3,7 @@
 # (`in_z <= ? and out_z > ?`, because axes are half-open), NOT the current-row form.
 # The pin instant appears as TWO binds (one per interval bound).
 model: models/balance.yaml
-tags: [m-temporal-read, m-object-query, m-sql, as-of, audit-only, past, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, as-of, audit-only, past, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

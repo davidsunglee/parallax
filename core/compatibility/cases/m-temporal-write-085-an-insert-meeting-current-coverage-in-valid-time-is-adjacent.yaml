@@ -2,7 +2,7 @@
 # [September, December): the rectangles share Transaction Time but meet at September
 # in Valid Time without overlapping, so both stand.
 model: models/position.yaml
-tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -1,6 +1,6 @@
 # A null check past a missing manager sees the missing value.
 model: models/predicate-collections.yaml
-tags: [m-predicate, relationship, to-one, traversal, isNull, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, isNull, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

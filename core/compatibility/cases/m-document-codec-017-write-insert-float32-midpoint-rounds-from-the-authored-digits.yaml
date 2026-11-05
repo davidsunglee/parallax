@@ -5,7 +5,7 @@
 # consumer that rounds from that spelling rather than the authored digits names the
 # upper value instead.
 model: models/document-codec.yaml
-tags: [m-document-codec, m-wire, m-value-object, m-sql, write-sequence, insert, json, slice-snapshot-1, slice-managed-1]
+tags: [m-document-codec, m-wire, m-value-object, m-sql, write-sequence, insert, json, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

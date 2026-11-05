@@ -1,7 +1,7 @@
 # Negative (m-metamodel): an authored Index claims the name the Entity's derived
 # primary-key Index already bears.
 model: models/person.yaml
-tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, slice-snapshot-1, slice-managed-1]
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, slice-snapshot-1]
 shape: rejected
 when:
   model:

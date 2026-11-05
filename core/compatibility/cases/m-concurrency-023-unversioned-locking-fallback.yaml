@@ -1,7 +1,7 @@
 # The mandatory Locking fallback under the DEFAULT Concurrency Preference
 # (m-unit-work "Strategy selection"; m-concurrency).
 model: models/wallet.yaml
-tags: [m-concurrency, m-unit-work, m-sql, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-unit-work, m-sql, scenario, slice-snapshot-1]
 shape: scenario
 given:
   fixtures: true

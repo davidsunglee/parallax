@@ -108,19 +108,13 @@ def test_a_reference_the_case_schema_types_is_left_to_the_case_schema() -> None:
 # --- which step an identity observable anchors to ---------------------------
 
 
-def test_both_identity_observables_anchor_to_an_earlier_step() -> None:
-    # `sameObjectAs` and `differentObjectFrom` are graded in different places — one
-    # by the wire harness as primary-key identity, the other adapter-delegated to
-    # each language's API Conformance Suite — but an anchor that is not an earlier
-    # step names no result either grader could compare against.
+def test_a_snapshot_identity_observable_anchors_to_an_earlier_step() -> None:
     assert not _anchored({"sameObjectAs": 0}, 1)
-    assert not _anchored({"differentObjectFrom": 0}, 1)
     assert _anchored({"sameObjectAs": 1}, 1) == [
         "probe: sameObjectAs names step 1, which is not a real EARLIER step (0 <= source < 1)"
     ]
-    assert _anchored({"differentObjectFrom": 999}, 1) == [
-        "probe: differentObjectFrom names step 999, which is not a real EARLIER step "
-        "(0 <= source < 1)"
+    assert _anchored({"sameObjectAs": 999}, 1) == [
+        "probe: sameObjectAs names step 999, which is not a real EARLIER step (0 <= source < 1)"
     ]
 
 
@@ -128,7 +122,7 @@ def test_an_anchor_the_case_schema_types_is_left_to_the_case_schema() -> None:
     # An anchor whose shape the schema already refuses is reported there, in the
     # schema's own vocabulary, rather than a second time here in a different one.
     assert not _anchored({"sameObjectAs": "0"}, 1)
-    assert not _anchored({"differentObjectFrom": True}, 1)
+    assert not _anchored({"sameObjectAs": True}, 1)
 
 
 # --- the dialect maps a step carries ----------------------------------------
@@ -213,10 +207,10 @@ def test_whole_tree_validation_asks_every_rule_of_an_api_conformance_case(tmp_pa
     # An independent oracle authored for the one dialect this read has no golden for.
     steps[0]["referenceSql"] = {"mariadb": "select id from orders where id = 3"}
     # An identity observable anchored to a step the Scenario never authored.
-    steps[2]["differentObjectFrom"] = 999
+    steps[2]["sameObjectAs"] = 999
     case_path.write_text(yaml.safe_dump(case, sort_keys=False), encoding="utf-8")
 
     errors = validate_tree(core / "compatibility")
     assert [error for error in errors if "not a find step of its own `uow` group" in error]
     assert [error for error in errors if "referenceSql map keys" in error]
-    assert [error for error in errors if "differentObjectFrom names step 999" in error]
+    assert [error for error in errors if "sameObjectAs names step 999" in error]

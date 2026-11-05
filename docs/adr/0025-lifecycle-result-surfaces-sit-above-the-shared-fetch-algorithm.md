@@ -1,5 +1,7 @@
 # Lifecycle result surfaces sit above the shared fetch algorithm
 
+Superseded in part by [ADR 0085](0085-the-supported-lifecycle-is-snapshot-and-performance-contracts-own-workloads.md).
+
 `modules.md` declared `m-navigate --> m-op-list` and `m-deep-fetch --> m-op-list`,
 reasoning that "navigation *yields* lists and deep fetch *populates* them." That
 framing folded the **managed lifecycle's** list result surface into the shared
@@ -48,6 +50,6 @@ The normative edges and their rationale are recorded in
 [`core/spec/modules.md`](../../core/spec/modules.md); the header prose of
 [`core/spec/m-navigate.md`](../../core/spec/m-navigate.md),
 [`core/spec/m-read-planning.md`](../../core/spec/m-read-planning.md), and
-[`core/spec/m-op-list.md`](../../core/spec/m-op-list.md) restate the inverted
+[`core/spec/m-op-list.md`](https://github.com/davidsunglee/parallax/blob/d6916cc5a/core/spec/m-op-list.md) restate the inverted
 direction consistently. The Python side is
 [`languages/python/spec/python.md`](../../languages/python/spec/python.md).

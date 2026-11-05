@@ -1,7 +1,7 @@
 # A bare `any` tests occupancy: every basket whose `tags` holds an element, on
 # PostgreSQL and on MariaDB's guarded occupancy lane.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

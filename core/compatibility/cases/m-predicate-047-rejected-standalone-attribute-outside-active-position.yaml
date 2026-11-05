@@ -1,7 +1,7 @@
 # Negative (m-predicate positional rule): a predicate reference names an unrelated
 # entity in a model that declares NO inheritance family at all.
 model: models/orders.yaml
-tags: [m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, rejected, negative, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

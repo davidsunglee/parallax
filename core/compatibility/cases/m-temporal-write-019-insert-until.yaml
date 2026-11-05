@@ -1,7 +1,7 @@
 # Write sequence: insertUntil — the third of the *Until trio (DQ11). Insert a
 # bitemporal value scoped to a BOUNDED Valid-Time window, with no prior row to close.
 model: models/position.yaml
-tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, insert-until, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -1,6 +1,6 @@
 # A change-free Entity edit still derives a distinct value from a read-produced source, preserves application-owned auxiliary state by shallow identity with independent bindings, invokes no setter hook while carrying it, drops a warm declared cache, retains Snapshot provenance, and leaves the source unchanged.
 model: models/note.yaml
-tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+tags: [m-edit, m-value-object, slice-snapshot-1]
 shape: edit
 lane: api-conformance
 when:

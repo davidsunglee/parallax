@@ -2,7 +2,7 @@
 # authoring form is retained under `equivalentEncodings`; canonical normalization
 # makes Transaction Time explicit as Latest, so the golden SQL includes out_z = infinity.
 model: models/position.yaml
-tags: [m-temporal-read, m-object-query, m-sql, bitemporal, temporal, as-of, default-transaction-time, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, bitemporal, temporal, as-of, default-transaction-time, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

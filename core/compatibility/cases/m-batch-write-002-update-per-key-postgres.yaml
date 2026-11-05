@@ -1,5 +1,5 @@
 model: models/wallet.yaml
-tags: [m-batch-write, m-sql, write-sequence, per-key, grouped-effect, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-sql, write-sequence, per-key, grouped-effect, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

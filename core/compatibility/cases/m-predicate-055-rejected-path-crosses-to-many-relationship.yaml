@@ -1,7 +1,7 @@
 # Negative (m-predicate explicit quantification): a field path continues past a
 # to-many relationship, which only an any / all / none quantifier binds.
 model: models/orders.yaml
-tags: [m-predicate, m-navigate, rejected, negative, to-many, relationship, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-navigate, rejected, negative, to-many, relationship, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

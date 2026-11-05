@@ -1,7 +1,7 @@
 # Versioned update, locking mode (m-unit-work strategy selection + m-concurrency): a keyed update on
 # a versioned entity ADVANCES the version but emits NO gate.
 model: models/account.yaml
-tags: [m-concurrency, m-unit-work, m-sql, locking-mode, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-unit-work, m-sql, locking-mode, write-sequence, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

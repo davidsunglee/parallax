@@ -2,7 +2,7 @@
 # typed-cast seam, so a document-mapped member compares and orders in VALUE order
 # (m-storage-layout x m-sql x m-dialect), on Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-sql, m-dialect, m-predicate, m-object-query, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-dialect, m-predicate, m-object-query, read, json, document-layout, cast, order-by, limit, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

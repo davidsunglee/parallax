@@ -2,7 +2,7 @@
 # loaded through it, and a read that answers what a `Columns` model would
 # (m-storage-layout x m-sql x m-document-codec), on Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-sql, m-document-codec, m-descriptor, read, json, document-layout, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-document-codec, m-descriptor, read, json, document-layout, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

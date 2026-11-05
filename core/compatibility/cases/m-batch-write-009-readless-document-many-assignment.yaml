@@ -4,7 +4,7 @@
 # row stored there — an equal leading element and an empty array alike — and every
 # other key of each document survives. No stored element is read or written alone.
 model: models/document-layout.yaml
-tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, document-layout, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, update, json, document-layout, to-many, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

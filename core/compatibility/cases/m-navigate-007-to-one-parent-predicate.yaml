@@ -2,7 +2,7 @@
 # 'Ada'. Presence keeps the filter two-valued where the dotted comparison alone
 # would be unknown for a child with no parent; the name is non-nullable.
 model: models/orders.yaml
-tags: [m-navigate, navigate, relationship, to-one, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, navigate, relationship, to-one, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

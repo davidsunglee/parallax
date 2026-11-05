@@ -1,7 +1,7 @@
 # A path-targeted narrowing over a table-per-concrete-subtype target: every declared
 # concrete table contributes a candidate, an unselected one answering false.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

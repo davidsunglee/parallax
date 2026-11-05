@@ -1,7 +1,7 @@
 # An abstract table-per-hierarchy find licenses the CONCRETE subtype's own gated update
 # (m-inheritance x m-concurrency x m-unit-work).
 model: models/vehicle.yaml
-tags: [m-inheritance, m-concurrency, m-unit-work, table-per-hierarchy, tag, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-concurrency, m-unit-work, table-per-hierarchy, tag, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

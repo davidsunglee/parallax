@@ -2,7 +2,7 @@
 # store and patch the arrays in each table's shared document, which carries no
 # member a sibling declares. Its twin authors the same writes under Columns.
 model: models/scalar-collection-lifecycle-layout-twin-document.yaml
-tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, m-unit-work, table-per-hierarchy, table-per-concrete-subtype, write-sequence, insert, update, json, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, m-unit-work, table-per-hierarchy, table-per-concrete-subtype, write-sequence, insert, update, json, layout-twin, document-layout, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

@@ -2,7 +2,7 @@
 # entity flush as ONE set-based `DELETE` over a membership of their keys, not one
 # per row.
 model: models/wallet.yaml
-tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

@@ -3,7 +3,7 @@
 # and gets the same answer, across a peer transaction that committed a change to it
 # in between.
 model: models/account.yaml
-tags: [m-unit-work, isolation, repeatable-read, nonrepeatable-read, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, isolation, repeatable-read, nonrepeatable-read, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -6,7 +6,7 @@
 # unassigned collection rides forward as stored. Its twin authors the same writes and
 # table state under Relational Document Layout.
 model: models/scalar-collection-layout-twin-columns.yaml
-tags: [m-storage-layout, m-document-codec, m-value-object, m-unit-work, m-concurrency, m-sql, scenario, insert, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-document-codec, m-value-object, m-unit-work, m-concurrency, m-sql, scenario, insert, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

@@ -1,6 +1,6 @@
 # Defaulted Transaction-Time authoring (normalization to explicit Latest, made observable).
 model: models/balance.yaml
-tags: [m-temporal-read, m-object-query, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

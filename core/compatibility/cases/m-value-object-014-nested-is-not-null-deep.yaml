@@ -1,7 +1,7 @@
 # valueObject presence test: isNotNull over a two-level path (m-value-object,
 # m-predicate), on Postgres AND MariaDB.
 model: models/customer.yaml
-tags: [m-value-object, m-predicate, m-sql, nested, json, absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, nested, json, absence-collapse, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

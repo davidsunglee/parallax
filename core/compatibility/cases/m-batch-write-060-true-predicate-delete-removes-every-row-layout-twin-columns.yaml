@@ -1,5 +1,5 @@
 model: models/storage-layout-transparency-layout-twin-columns.yaml
-tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, delete, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, delete, layout-twin, columns, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

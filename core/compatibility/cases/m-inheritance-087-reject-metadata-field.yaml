@@ -1,7 +1,7 @@
 # Rejected write — a payload carrying framework-owned METADATA (m-inheritance write
 # protocol).
 model: models/payment.yaml
-tags: [m-inheritance, table-per-hierarchy, tag, write, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, table-per-hierarchy, tag, write, slice-snapshot-1]
 shape: rejected
 when:
   write: { id: 10, amount: 200.00, tagValue: card }

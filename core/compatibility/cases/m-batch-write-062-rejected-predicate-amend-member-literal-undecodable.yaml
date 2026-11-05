@@ -1,5 +1,5 @@
 model: models/wallet.yaml
-tags: [m-batch-write, m-unit-work, m-wire, rejected, predicate-write, readless, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, m-wire, rejected, predicate-write, readless, slice-snapshot-1]
 shape: rejected
 when:
   write:

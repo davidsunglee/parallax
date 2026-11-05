@@ -121,11 +121,7 @@ def _table_in_section(markdown: str, title: str) -> _Table | None:
 
 def _lifecycle(capabilities: dict[str, Any]) -> str | None:
     modules = {module for module in capabilities.get("modules", []) if isinstance(module, str)}
-    snapshot = "m-snapshot-read" in modules
-    managed = "m-identity-map" in modules
-    if snapshot == managed:
-        return None
-    return "snapshot" if snapshot else "managed-object"
+    return "snapshot" if "m-snapshot-read" in modules else None
 
 
 def _check_table_shape(

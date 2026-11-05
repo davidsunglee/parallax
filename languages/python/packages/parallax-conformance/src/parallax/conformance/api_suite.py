@@ -22,7 +22,11 @@ from parallax.conformance import (
     target_write_stories,
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
-from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
+from parallax.conformance.graph_stories import (
+    GRAPH_STORIES,
+    a_finite_transaction_time_pinned_view_is_read_only,
+    graph_story_snippet,
+)
 from parallax.conformance.guide_models import (
     Address,
     BankTransfer,
@@ -873,6 +877,11 @@ class Partition:
 # Registered idiomatic examples mirror corpus cases and are checked by the
 # query no-drift guard, which serializes each example to its case's Object Query.
 EXAMPLES: Final[list[Example]] = [
+    Example(
+        "m-temporal-write-092",
+        "A finite Transaction-Time pin refuses amendment",
+        _sources(Balance, a_finite_transaction_time_pinned_view_is_read_only),
+    ),
     # The Predicate / temporal-read / navigate / single-concrete-inheritance
     # read examples: each is an executable read story
     # (`parallax.conformance.read_stories`) — the snippet is `read_story_

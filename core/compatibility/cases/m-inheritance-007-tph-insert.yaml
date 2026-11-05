@@ -1,7 +1,7 @@
 # Table-per-hierarchy INSERT: writing a concrete subtype persists the TAG
 # (m-inheritance, m-sql).
 model: models/payment.yaml
-tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -6,18 +6,14 @@ pointers, pinned whole-graph at one set of as-of coordinates, and **closed
 world**. Per the dependency graph, `m-snapshot-read` depends on `m-execution`
 (a snapshot read runs under its adopted model, options, and connection policy),
 `m-read-delivery` (whose judged Page a snapshot graph is published from),
-`m-read-planning` (graph population is deep fetch; navigation, as-of propagation,
-and lists are reached transitively), and `m-edit` (derivation carries a
-materialized value's state by complement). It is the **plain-value** read
-surface; a managed-object surface materializes managed objects through
-`m-identity-map` instead.
+`m-read-planning` (graph population is deep fetch; navigation and as-of
+propagation are reached transitively), and `m-edit` (derivation carries a materialized
+value's state by complement).
 
 A snapshot read is **execute → value**: one explicit execution materializes the
-whole graph, and nothing about the graph is live afterwards. There is no
-managed lifecycle, no identity map, no change tracking, and no write-back —
-changes are persisted through the explicit write modules (`m-batch-write`,
-`m-temporal-write`, `m-cascade-delete`), never by diffing a
-graph.
+whole graph, and nothing about the graph is live afterwards. Changes are
+persisted through explicit writes (`m-unit-work`, `m-batch-write`,
+`m-temporal-write`), never by diffing a graph.
 
 ## Publishing a snapshot graph
 
@@ -152,7 +148,7 @@ Within **one Root View**, one row key is **one node**:
 
 - Two include paths that reach the same row — the diamond — materialize a
   **single** node referenced from both positions, never two equal copies. The
-  resolution key is the same triple as `m-identity-map`'s: **(entity family,
+  resolution key is **(entity family,
   primary key, lowered as-of coordinate per declared axis)** — family-normalized
   (`m-inheritance`), coordinate-aware, degrading to (family, primary key) for a
   non-temporal entity.
@@ -208,15 +204,13 @@ After materialization a snapshot graph **never issues SQL**:
 - Navigating a relationship the read did not include finds it **absent**; how
   absence surfaces (a missing property, a typed empty marker, an error on
   access) is per-language, but issuing a load is **not** a legal surfacing.
-  There is no lazy loading and no deferred-load trigger of any kind — the
-  deferred relationship load (`m-read-planning`) belongs to the managed-object
-  surface and requires a live unit of work, which a snapshot graph never has.
+  There is no lazy loading or deferred-load trigger.
 - A snapshot graph is never enrolled in a unit of work: mutating a node is a
   plain in-memory change with no persistence meaning. Persisting a change means
   reformulating it as an explicit write.
 - Wanting more data means issuing another read — including the batched
   second-query form (`find` with an `in` predicate over gathered keys), which
-  costs the same single Database Call a deferred load would.
+  costs one Database Call.
 
 Every clause above survives **composition**. Deriving a node from a
 materialized one, and persisting a write, are the two things that happen to a
@@ -247,10 +241,7 @@ program would answer differently per language.
 ## Database Calls
 
 A snapshot graph's statements are its delivery's (`m-read-delivery` *Database
-Calls*): at most `1 + L` statements for `L` distinct relationship hops. (For the
-managed-object surface this Database Call observability rides the lazy
-query-backed list, `m-op-list`; a snapshot read is **not** a query-backed list —
-the count is pinned here instead, on the same golden statements.)
+Calls*): at most `1 + L` statements for `L` distinct relationship hops.
 
 ## What the suite pins down
 

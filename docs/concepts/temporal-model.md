@@ -36,9 +36,7 @@ Each Inheritance Family has one temporality profile, declared by its root:
 | Transaction-Time-Only | Transaction Time | every state the object held, and when it was on record |
 | Bitemporal | Valid Time and Transaction Time | every state, when each was true in the world, and when it was on record |
 
-A fourth combination, Valid Time without Transaction Time, is deferred
-([`m-validtime-only`](../../core/spec/m-validtime-only.md)). The supported profiles all
-include Transaction Time, which is also what makes a temporal Entity's optimistic
+Every supported temporal profile includes Transaction Time, which is also what makes a temporal Entity's optimistic
 version: the Transaction-Time start of the milestone a read observed
 ([version sources](../../core/spec/m-concurrency.md#version-sources)).
 

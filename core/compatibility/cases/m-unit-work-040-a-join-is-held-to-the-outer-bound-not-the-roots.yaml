@@ -3,7 +3,7 @@
 # root's own bound is a conflict where the outer call overrode it —
 # `api-conformance` lane.
 model: models/account.yaml
-tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

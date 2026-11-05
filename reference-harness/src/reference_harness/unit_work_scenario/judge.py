@@ -88,8 +88,7 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
     """Each step's declared databaseCalls MUST equal its golden SQL statement count
     plus the resolving reads it owes.
 
-    A cache HIT lists no golden SQL and declares ``databaseCalls: 0``; a cache MISS
-    that executes one statement declares ``databaseCalls: 1``. An ungrouped write
+    An action over loaded data issues no SQL. An ungrouped write
     step declares its DML beside the read its keyed verbs' sources require, which
     it lists no SQL for — the framework composes that read from the model rather
     than from the case. The steps' total MUST equal the case-level
@@ -108,7 +107,7 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
                 f"{case.path.name}: scenario[{step.index}] declares databaseCalls "
                 f"{declared} but lists {len(statements)} golden SQL statement(s) "
                 f"for {dialect} and owes {reads} resolving read(s). A step's declared "
-                f"Database Calls MUST equal the number of calls it makes (a cache hit = 0)."
+                f"Database Calls MUST equal the number of calls it makes."
             )
         total += declared
     if total != case.database_calls:
