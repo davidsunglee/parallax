@@ -11,8 +11,7 @@ from parallax.core.base import (
     DocumentReadOrdinals,
     ManagedValue,
 )
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import Dialect
+from parallax.core.dialect import ArrayBind, Dialect
 from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view

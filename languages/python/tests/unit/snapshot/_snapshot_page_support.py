@@ -32,9 +32,9 @@ from parallax.core.base import (
     SQL_NULL,
     DocumentValue,
     NeutralType,
-    PresentDocument,
     SqlNull,
     StoredScalarVerdict,
+    StructuredDocument,
     check_stored_scalar,
 )
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
@@ -66,7 +66,11 @@ from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication, wire_publication
-from tests._support.model_capabilities import graph_construction_for, wire_facts_for
+from tests._support.model_capabilities import (
+    graph_construction_for,
+    prepared_view_keys_for,
+    wire_facts_for,
+)
 from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
 from tests.unit._root_publication_support import RootObservation, observed_roots
 
@@ -135,9 +139,9 @@ def driver_row(compiled: CompiledRead, columns: Mapping[str, object]) -> dict[st
 def _carried(value: object) -> object:
     if value is None:
         return SQL_NULL
-    if isinstance(value, (SqlNull, PresentDocument)):
+    if isinstance(value, (SqlNull, StructuredDocument)):
         return value
-    return PresentDocument(cast("DocumentValue", value))
+    return StructuredDocument(cast("DocumentValue", value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,6 +470,7 @@ class PageFixture:
             self._cataloged,
             graph_construction_for(self._domain),
             wire_facts_for(self._cataloged),
+            prepared_view_keys_for(self._domain),
             "fixture",
         )
         queried = self._model.entities[0].identity

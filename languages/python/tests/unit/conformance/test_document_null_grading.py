@@ -10,7 +10,7 @@ import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.core.base import INT64, JSON, STRING
-from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
+from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from tests._support.bind_positions import assert_document_nulls, whole_document_binds
 from tests._support.case_corpus import case as corpus_case
 from tests._support.sweep_goldens import write_golden_statements
@@ -33,7 +33,7 @@ def test_a_single_row_insert_of_a_null_value_object_binds_sql_null() -> None:
     assert golden == [300, "Ari", None]
     _grade(case, sql, golden, [300, "Ari", None])
     with pytest.raises(AssertionError, match=r"^bind 2: "):
-        _grade(case, sql, golden, [300, "Ari", JsonDocument(None)])
+        _grade(case, sql, golden, [300, "Ari", StructuredDocument(None)])
 
 
 def test_an_amend_to_a_null_value_object_binds_sql_null() -> None:
@@ -41,7 +41,7 @@ def test_an_amend_to_a_null_value_object_binds_sql_null() -> None:
     assert golden == [None, 304]
     _grade(case, sql, golden, [None, 304])
     with pytest.raises(AssertionError, match=r"^bind 0: "):
-        _grade(case, sql, golden, [JsonDocument(None), 304])
+        _grade(case, sql, golden, [StructuredDocument(None), 304])
 
 
 def test_a_column_array_holds_sql_null_for_each_null_value_object() -> None:

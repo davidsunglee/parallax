@@ -29,7 +29,7 @@ import parallax.snapshot
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, ValueObject, attr
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity import (
     EntityDefinitionError,
@@ -442,7 +442,7 @@ def test_a_value_object_of_a_materialized_graph_round_trips() -> None:
     # Value Object — including one a read published, which is ordinary domain
     # data the moment it is held on its own.
     port = ScriptedAdapter(
-        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"street": "Main"})}])
+        Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"street": "Main"})}])
     )
     customer = (
         own_root(connect(port, vo.CUSTOMER_MODEL))
@@ -854,7 +854,7 @@ _WRITE_EVIDENCE_KINDS: Final = (
 def _census_row() -> tuple[dict[str, object], object]:
     """One Bitemporal Relational Document Layout row, and the raw Structured
     Column the read takes ownership of."""
-    payload = PresentDocument(
+    payload = StructuredDocument(
         {
             "title": "Northbound",
             "charterCode": "NB-118",
@@ -1039,8 +1039,8 @@ def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     # nodes carry their Entity and pin for inspection, yet are no stored value
     # of this source in either representation.
     port = ScriptedAdapter(
-        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}]),
-        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}]),
+        Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"city": "Berlin"})}]),
+        Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"city": "Berlin"})}]),
     )
     db = own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login()
     query = vo.Customer.where(vo.Customer.id == 1)
@@ -1209,7 +1209,7 @@ def test_a_hydratable_invalid_root_carries_no_write_authority() -> None:
     # Origin and cannot become a keyed write source merely because publication
     # can expose the collapsed data beside its issues.
     port = ScriptedAdapter(
-        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}])
+        Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"city": "Berlin"})}])
     )
     record = (
         own_root(connect(port, vo.CUSTOMER_MODEL))
@@ -1235,7 +1235,7 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
                         "id": 100,
                         "customer_id": 1,
                         "label": "Invalid",
-                        "address": PresentDocument({"city": "Oslo"}),
+                        "address": StructuredDocument({"city": "Oslo"}),
                     },
                     {"id": 101, "customer_id": 1, "label": "Valid", "address": None},
                 ]

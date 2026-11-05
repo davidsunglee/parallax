@@ -63,7 +63,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 |---|---|---|
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
-| **document-read parsing** | SQL-false presence → `SqlNull`; SQL-true presence + parsed `jsonb` datum → `PresentDocument`, including JSON null | SQL-false presence → `SqlNull`; SQL-true presence + parsed `json` datum → `PresentDocument`, including JSON null |
+| **document-read parsing** | SQL-false presence → `SqlNull`; SQL-true presence + parsed `jsonb` datum → `StructuredDocument`, including JSON null | SQL-false presence → `SqlNull`; SQL-true presence + parsed `json` datum → `StructuredDocument`, including JSON null |
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
@@ -258,9 +258,11 @@ type:
 | `uuid` | `cast(null as uuid)` | `cast(null as char(36))` |
 | `json` (a Structured Column) | `cast(null as jsonb)` | `cast(null as char)` |
 
-MariaDB's `CAST` target grammar does **not** accept `varchar`, so a bounded-string
-placeholder casts to `char(n)` even though the *column* type is `varchar(n)` on both
-dialects (the general rule: **string types map to `char` under a MariaDB `CAST`**).
+MariaDB's `CAST` target grammar accepts `varchar(n)` but rejects bare `varchar`, while
+`char` is legal both bare and with a length. `char` is therefore the one spelling that
+serves every string placeholder, so a bounded-string placeholder casts to `char(n)` even
+though the *column* type is `varchar(n)` on both dialects (the general rule: **string
+types map to `char` under a MariaDB `CAST`**).
 That grammar admits no unbounded character target but `char`, and no document target
 at all — MariaDB's `JSON` is an alias for `LONGTEXT`, and neither spelling is a legal
 `CAST` target — so an unbounded string and a Structured Column both place bare `char`
@@ -272,11 +274,22 @@ its `tinyint(1)` column, and its values remain `0` and `1`. A future dialect sup
 placeholder-cast spelling behind this same decision point; nothing above the seam
 names the concrete cast type.
 
+### Array carrier
+
+One array bind is one **array carrier**: the Neutral Type its elements share, and
+its managed elements in order, with no per-element wrapper. A null element is SQL
+NULL under every element type, and a `timestamp` element may be the open upper
+bound (`m-core`). Under `json` every other element is one portable codec document,
+and a JSON array is one element, never a further array dimension. The literal JSON
+`null` document is a distinct element marker the carrier owns; the null element
+never spells it. The carrier is the only owner of the element type. `m-sql` builds
+carriers and `m-db-port` states what an adapter does with one.
+
 ### Array parameter cast form (`m-sql` membership, deferred key set, collapsed key target, multi-row insert, and grouped effect)
 
 Postgres binds an authored membership's list, and a child level's gathered key
-set, as one array parameter (`m-sql`), crossing the port as one `m-db-port`
-array carrier. The carrier's element type is the subject's declared type, or
+set, as one array parameter (`m-sql`), crossing the port as one array carrier
+(*Array carrier*). The carrier's element type is the subject's declared type, or
 `string` for comparison texts, which need not be the type the subject compares
 in, and a driver without native arrays binds an untyped literal; against a
 wider subject the comparison would then be cross-type, which forgoes hashed
@@ -626,7 +639,7 @@ cells. The concrete adapter supplies both raw cells to the dialect's paired
 document-read parser and returns its provider-neutral `m-core` `DocumentRead`.
 The parser returns `SqlNull` when the SQL discriminator is false and MUST NOT
 attempt document parsing. When it is true, the parser returns
-`PresentDocument` containing the parsed `DocumentValue`, without requiring an
+`StructuredDocument` containing the parsed `DocumentValue`, without requiring an
 object or array kind. In particular, a driver null sentinel in the true arm is
 JSON null, even when the same sentinel in the false arm denotes SQL `NULL`.
 Materialization passes the tag to `m-document-codec`'s located-member classifier.
@@ -867,7 +880,7 @@ placement-free spelling `m-read-planning-012` already witnesses).
 - **Document-read parsing.** The adapter supplies one SQL boolean presence cell
   and its adjacent raw structured-document cell together. The dialect parses
   them as exactly one `m-core` `DocumentRead`: false produces `SqlNull`; true
-  produces `PresentDocument` with a portable `DocumentValue`, including JSON
+  produces `StructuredDocument` with a portable `DocumentValue`, including JSON
   null. The parser MUST use the discriminator before interpreting a driver null
   sentinel and MUST NOT return a driver document object above the adapter seam.
 - **SELECT shape.** The canonical SELECT projects explicit, table-aliased columns

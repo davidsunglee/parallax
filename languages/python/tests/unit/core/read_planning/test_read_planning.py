@@ -30,7 +30,21 @@ from parallax.conformance.read_models import (
     Pet,
     WildBoar,
 )
-from parallax.core import DomainModel, inheritance, read_planning, relationship
+from parallax.core import (
+    ONE_TO_MANY,
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    Rel,
+    TablePerHierarchy,
+    attr,
+    inheritance,
+    read_planning,
+    rel,
+    relationship,
+)
 from parallax.core.base import INFINITY, INT64, ManagedValue
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
@@ -88,6 +102,7 @@ from parallax.core.temporal_read import view as temporal_view
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
+from tests.unit._gc_reachability import reachable_objects
 
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
@@ -409,6 +424,116 @@ def test_two_different_narrow_sets_are_distinct_levels() -> None:
 def test_narrowed_view_key_is_alphabetical_no_spaces() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog", "Cat"))),))
     assert _attach_key(plan, plan.fetch_steps[0]) == "pets[Cat,Dog]"
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        ("Pet",),
+        ("Cat", "Dog"),
+        ("Dog", "Cat"),
+        ("Dog",),
+        ("parallax.compatibility.Pet",),
+        ("parallax.compatibility.Dog", "parallax.compatibility.Cat"),
+        ("parallax.compatibility.Cat", "Dog"),
+    ],
+    ids=lambda selection: ",".join(selection),
+)
+def test_a_selection_answers_the_key_the_planner_attaches(selection: tuple[str, ...]) -> None:
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", selection)),))
+    keys = read_planning.narrowed_view_keys(ANIMAL)
+    assert keys.for_selection("pets", selection) == _attach_key(plan, plan.fetch_steps[0])
+
+
+def test_a_narrow_of_a_standalone_target_answers_the_key_the_planner_attaches() -> None:
+    selection = ("OrderItem",)
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items", selection)),))
+    keys = read_planning.narrowed_view_keys(ORDERS)
+    assert keys.for_selection("items", selection) == _attach_key(plan, plan.fetch_steps[0])
+    assert keys.for_selection("items", selection) == "items[OrderItem]"
+
+
+_SPLIT_NS = "parallax.tests.split"
+
+
+class Mooring(Entity, table="split_mooring", namespace=_SPLIT_NS):
+    id: Attr[int] = attr(primary_key=True)
+    vessels: Rel[tuple[Vessel, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "mooring_id"))
+
+
+class Vessel(
+    Entity,
+    table="split_vessel",
+    namespace=_SPLIT_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    mooring_id: Attr[int | None]
+
+
+class Yacht(Vessel, namespace=_SPLIT_NS, inheritance=ConcreteSubtype("yacht")):
+    pass
+
+
+class HarborTug(
+    Vessel, name="Tug", namespace="parallax.tests.harbor", inheritance=ConcreteSubtype("harbor")
+):
+    pass
+
+
+class OceanTug(
+    Vessel, name="Tug", namespace="parallax.tests.ocean", inheritance=ConcreteSubtype("ocean")
+):
+    pass
+
+
+_SPLIT = model_of(DomainModel(Mooring, Vessel, Yacht, HarborTug, OceanTug))
+_HARBOR_TUG = "parallax.tests.harbor.Tug"
+_OCEAN_TUG = "parallax.tests.ocean.Tug"
+_YACHT = f"{_SPLIT_NS}.Yacht"
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        (f"{_SPLIT_NS}.Vessel",),
+        (_YACHT, _HARBOR_TUG, _OCEAN_TUG),
+        (_OCEAN_TUG, _YACHT, _HARBOR_TUG),
+        (_HARBOR_TUG, _OCEAN_TUG),
+        (_OCEAN_TUG, _HARBOR_TUG),
+        (_OCEAN_TUG,),
+        ("Yacht", _OCEAN_TUG),
+    ],
+    ids=lambda selection: ",".join(selection),
+)
+def test_qualified_variants_keep_the_planners_order_however_a_selection_lists_them(
+    selection: tuple[str, ...],
+) -> None:
+    segment = _seg(f"{_SPLIT_NS}.Mooring.vessels", selection)
+    plan = _plan(_SPLIT, "Mooring", (_path(segment),))
+    keys = read_planning.narrowed_view_keys(_SPLIT)
+    assert keys.for_selection("vessels", selection) == _attach_key(plan, plan.fetch_steps[0])
+
+
+def test_variants_take_the_models_order_rather_than_their_rendered_spellings_order() -> None:
+    keys = read_planning.narrowed_view_keys(_SPLIT)
+    key = keys.for_selection("vessels", (f"{_SPLIT_NS}.Vessel",))
+    assert key == f"vessels[{_HARBOR_TUG},{_OCEAN_TUG},Yacht]"
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [("Tug",), ("Stray",), ("parallax.compatibility.Dog",), (_YACHT, "Stray")],
+    ids=["ambiguous-local-name", "undeclared", "another-models-entity", "one-alternative-unknown"],
+)
+def test_a_selection_outside_the_model_has_no_key(selection: tuple[str, ...]) -> None:
+    assert read_planning.narrowed_view_keys(_SPLIT).for_selection("vessels", selection) is None
+
+
+def test_narrowed_view_keys_hold_nothing_but_their_strings() -> None:
+    keys = read_planning.narrowed_view_keys(ANIMAL)
+    held = {type(value) for value in reachable_objects(keys) if value is not keys}
+    assert held <= {dict, str, tuple, type}
 
 
 def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:

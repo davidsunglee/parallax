@@ -26,7 +26,7 @@ flat chronology of :data:`PortCall` values, where the
 to nest to express.
 
 A row handed to :class:`Read` is ALREADY MANAGED — a document cell arrives as a
-``PresentDocument`` or ``SQL_NULL``, never as the raw mapping a driver would
+``StructuredDocument`` or ``SQL_NULL``, never as the raw mapping a driver would
 return — because folding a projection is the concrete adapter's own boundary
 contract and belongs to the tests that grade it. And no exception instance may
 appear twice in one script: ``m-db-port`` requires a failure a port reports to
@@ -50,7 +50,7 @@ from parallax.conformance._mechanism.sole_connection import (
     SoleConnectionScope,
     body_outcome,
 )
-from parallax.core.base import Json
+from parallax.core.base import DocumentValue, Json
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     JSON_NULL,
@@ -68,7 +68,6 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
-    JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
@@ -84,6 +83,7 @@ from parallax.core.db_port import (
     RouteSelection,
     Row,
     StatementFailed,
+    StructuredDocument,
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
@@ -147,7 +147,7 @@ def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
     A single-row insert binds its row's cells; a multi-row insert binds one
     typed column array per cell slot (`m-sql` *Batched insert / update*), read
     back here row by row, with each document element as the bind it is alone:
-    SQL NULL as ``None``, the literal JSON null as ``JsonDocument(None)``, and
+    SQL NULL as ``None``, the literal JSON null as ``StructuredDocument(None)``, and
     any other document in its carrier. The arrays must agree in length.
     """
     assert call.sql.startswith("insert"), call.sql
@@ -174,7 +174,7 @@ def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
 def _document_bind(element: object) -> Bind:
     if element is None:
         return None
-    return JsonDocument(None if element is JSON_NULL else element)
+    return StructuredDocument(None if element is JSON_NULL else cast("DocumentValue", element))
 
 
 @dataclass(frozen=True, slots=True)

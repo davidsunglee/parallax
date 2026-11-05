@@ -69,7 +69,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
+from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, StructuredDocument
 from parallax.core.db_port import DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES, Dialect, scalar_result
 from parallax.core.document_codec import (
@@ -442,7 +442,7 @@ def _driver_row(
         name = occurrence.identity.path[-1]
         raw = spec.values.get(name)
         row[occurrence.storage.name] = (
-            PresentDocument(
+            StructuredDocument(
                 _occurrence_value(occurrence_shape(occurrence), occurrence.multiplicity, raw)
             )
             if name in spec.values and raw is not None
@@ -453,7 +453,7 @@ def _driver_row(
         row[discriminator[0]] = discriminator[1]
     shared = compiled.result_contract.shared_document
     if shared is not None:
-        row[shared.column] = PresentDocument(document)
+        row[shared.column] = StructuredDocument(document)
     (folded,) = fold_mapping_rows([row], compiled.document_reads, compiled.statement.sql)
     return folded
 

@@ -8,8 +8,10 @@ from parallax.core import concurrency, temporal_read
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, InvalidData
+from parallax.core.read_planning import NarrowedViewKeys
 from parallax.core.temporal_read import Bitemporal, NonTemporal, Pin, TransactionTimeOnly
 from parallax.snapshot._inspection import (
+    NarrowedViews,
     NodeProvenance,
     PageProvenance,
     RootConformance,
@@ -48,15 +50,18 @@ class TypedRootPublisher:
         "_shared_states",
         "_temporal",
         "_versioning",
+        "_view_keys",
     )
 
     def __init__(
         self,
         model: Metamodel,
         construction: EntityGraphConstruction,
+        view_keys: NarrowedViewKeys,
     ) -> None:
         self._model = model
         self._construction = construction
+        self._view_keys = view_keys
         self._temporal = temporal_read.view(model)
         self._versioning = concurrency.view(model)
         self._root: RootView | None = None
@@ -107,6 +112,7 @@ class TypedRootPublisher:
         view_layout_of = root.view_layout
         view_of = root.view
         read_evidence_of = root.read_evidence
+        view_keys = self._view_keys
         states: list[SnapshotNodeState] = []
         last: EntityIdentity | None = None
         provenance: NodeProvenance | None = None
@@ -129,15 +135,13 @@ class TypedRootPublisher:
                             provenance, SnapshotNodeState(provenance, _NO_VIEWS)
                         )
             narrowed = view_layout_of(node).narrowed_views
-            views = (
-                {
-                    name: _resolved(instances, value)
-                    for slot, name in narrowed
-                    if (value := view_of(node, slot)) is not ABSENT
-                }
-                if narrowed
-                else None
-            )
+            views: NarrowedViews | None = None
+            if narrowed:
+                views = NarrowedViews(view_keys)
+                for slot, name in narrowed:
+                    value = view_of(node, slot)
+                    if value is not ABSENT:
+                        views[name] = _resolved(instances, value)
             read_evidence = read_evidence_of(node)
             if read_evidence is not None:
                 states.append(

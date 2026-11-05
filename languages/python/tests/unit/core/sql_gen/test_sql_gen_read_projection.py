@@ -27,7 +27,7 @@ import pytest
 
 from parallax.core import predicate as oa
 from parallax.core import storage_layout
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -471,7 +471,7 @@ def test_an_abstract_target_narrowed_to_one_concrete_still_projects_its_discrimi
 # is a present object, `None` for SQL NULL in its own Column or a key missing
 # from the Structured Column, or `_JSON_NULL` for a present JSON null. The
 # `Root` row carries a tag no composed concrete claims.
-_JSON_NULL = PresentDocument(None)
+_JSON_NULL = StructuredDocument(None)
 _STORED: dict[str, dict[str, object]] = {
     "Left": {
         "id": 1,

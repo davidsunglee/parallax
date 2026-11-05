@@ -10,8 +10,8 @@ from parallax.core.base import (
     FrozenMap,
     ManagedValue,
     NeutralType,
-    PresentDocument,
     SqlNull,
+    StructuredDocument,
     adopt_frozen_map,
     frozen_map_json_backing,
     retain_document_value,
@@ -148,7 +148,7 @@ _PRESENT_JSON_NULL: Final = _PresentJsonNull()
 type RawLocatedMemberInput = SqlNull | Missing | _PresentJsonNull | DocumentValue
 """An allocation-free direct-member witness that distinguishes present JSON null."""
 
-type StoredMember = RawLocatedMemberInput | PresentDocument
+type StoredMember = RawLocatedMemberInput | StructuredDocument
 """What a :class:`MemberDecodePlan` classifies: a direct member located in its
 Entity's document, or the Document Read of a Structured Column of its own."""
 
@@ -211,7 +211,7 @@ def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocated
     return _PRESENT_JSON_NULL if value is None else cast("DocumentValue", value)
 
 
-def located_occurrence(located: object) -> SqlNull | PresentDocument:
+def located_occurrence(located: object) -> SqlNull | StructuredDocument:
     """The Document Read an occurrence :func:`locate_raw_entity_member`
     ``located`` is classified from as though stored in a Column of its own: SQL
     null where the member or its whole document is missing, the present
@@ -219,7 +219,7 @@ def located_occurrence(located: object) -> SqlNull | PresentDocument:
     examined here."""
     if isinstance(located, (SqlNull, Missing)):
         return SQL_NULL
-    return PresentDocument(
+    return StructuredDocument(
         None if located is _PRESENT_JSON_NULL else cast("DocumentValue", located)
     )
 
@@ -460,7 +460,7 @@ class _ShapeDecodePlan:
 def _raw_member(stored: object) -> object:
     """The stored value a member's classification reads: :data:`MISSING` for
     SQL null and an absent member alike, ``None`` for a present JSON null."""
-    if isinstance(stored, PresentDocument):
+    if isinstance(stored, StructuredDocument):
         return stored.document
     if stored is SQL_NULL or stored is MISSING:
         return MISSING

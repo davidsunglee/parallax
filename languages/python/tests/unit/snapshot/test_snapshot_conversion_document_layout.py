@@ -34,7 +34,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
@@ -114,7 +114,7 @@ _ADA_DOCUMENT: DocumentValue = {
 }
 _ADA: Mapping[str, object] = {
     "id": 1,
-    "payload": PresentDocument(_ADA_DOCUMENT),
+    "payload": StructuredDocument(_ADA_DOCUMENT),
 }
 
 
@@ -146,7 +146,7 @@ def test_an_absent_and_a_json_null_document_leaf_convert_alike(
     node = _converted(
         _CORPUS,
         "Traveler",
-        {"id": 2, "payload": PresentDocument(dict(payload))},
+        {"id": 2, "payload": StructuredDocument(dict(payload))},
     )
     members = _members(node)
     assert members["note"] is None
@@ -158,7 +158,7 @@ def test_unavailable_entity_document_members_are_not_hydrated_while_retaining_fi
     node = _converted(
         _CORPUS,
         "Traveler",
-        {"id": 2, "payload": PresentDocument({"displayName": 7})},
+        {"id": 2, "payload": StructuredDocument({"displayName": 7})},
     )
     assert [issue.code for issue in node.issues] == ["stored-data-leaf-undecodable"]
     assert "displayName" not in _members(node)
@@ -178,15 +178,15 @@ def test_the_layout_is_unobservable_across_a_member_for_member_twin() -> None:
     }
     stored_document: Mapping[str, object] = {
         "id": 1,
-        "payload": PresentDocument(stored_document_value),
+        "payload": StructuredDocument(stored_document_value),
     }
     stored_columns: Mapping[str, object] = {
         "id": 1,
         "display_name": "Ada",
         "score": 7,
         "joined_on": dt.date(2026, 1, 15),
-        "address": PresentDocument({"city": "Oslo", "geo": {"country": "NO"}}),
-        "tags": PresentDocument([{"label": "founder"}]),
+        "address": StructuredDocument({"city": "Oslo", "geo": {"country": "NO"}}),
+        "tags": StructuredDocument([{"label": "founder"}]),
     }
     assert _converted(_TWIN_DOCUMENT, "Person", stored_document) == _converted(
         _TWIN_COLUMNS, "Person", stored_columns
@@ -199,7 +199,7 @@ def test_wrong_kind_occurrences_classify_identically_without_retaining_valid_sib
         "Person",
         {
             "id": 1,
-            "payload": PresentDocument({"tags": [{"label": "valid"}, "wrong"]}),
+            "payload": StructuredDocument({"tags": [{"label": "valid"}, "wrong"]}),
         },
     )
     columns = _converted(
@@ -211,7 +211,7 @@ def test_wrong_kind_occurrences_classify_identically_without_retaining_valid_sib
             "score": None,
             "joined_on": None,
             "address": None,
-            "tags": PresentDocument([{"label": "valid"}, "wrong"]),
+            "tags": StructuredDocument([{"label": "valid"}, "wrong"]),
         },
     )
     assert document == columns
@@ -226,7 +226,7 @@ def test_an_entity_with_no_document_resident_member_converts_off_its_columns_alo
     # nothing for the document.
     identity = entity(_TWIN_DOCUMENT, "Marker").identity
     assert documents_of(_TWIN_DOCUMENT, identity) == ()
-    node = _converted(_TWIN_DOCUMENT, "Marker", {"id": 5, "payload": PresentDocument({})})
+    node = _converted(_TWIN_DOCUMENT, "Marker", {"id": 5, "payload": StructuredDocument({})})
     assert _members(node) == {"id": 5}
 
 
@@ -235,8 +235,8 @@ _COLUMNS_ROW: Mapping[str, object] = {
     "display_name": "Ada",
     "score": 7,
     "joined_on": dt.date(2026, 1, 15),
-    "address": PresentDocument({"city": "Oslo", "geo": {"country": "NO"}}),
-    "tags": PresentDocument([{"label": "founder"}]),
+    "address": StructuredDocument({"city": "Oslo", "geo": {"country": "NO"}}),
+    "tags": StructuredDocument([{"label": "founder"}]),
 }
 
 
@@ -245,14 +245,14 @@ def _findings(node: _Converted) -> list[tuple[str, tuple[object, ...]]]:
 
 
 def test_a_many_occurrence_column_stored_as_an_object_converts_empty_and_classified() -> None:
-    node = _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "tags": PresentDocument({})})
+    node = _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "tags": StructuredDocument({})})
     assert _members(node)["tags"] == ()
     assert _findings(node) == [("stored-data-many-wrong-kind", ("tags",))]
 
 
 def test_an_occurrence_column_classifies_a_nested_undecodable_leaf() -> None:
     node = _converted(
-        _TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": PresentDocument({"city": []})}
+        _TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": StructuredDocument({"city": []})}
     )
     assert _findings(node) == [("stored-data-leaf-undecodable", ("address", "city"))]
 
@@ -279,7 +279,7 @@ def test_an_occurrence_column_classifies_an_absent_required_member() -> None:
         ),
     )
     model = formed(MetamodelRecord(entities=(required,)))
-    node = _converted(model, "Required", {"id": 1, "address": PresentDocument({})})
+    node = _converted(model, "Required", {"id": 1, "address": StructuredDocument({})})
     assert _findings(node) == [("stored-data-required-member-absent", ("address", "city"))]
 
 
@@ -317,7 +317,7 @@ _BO_ONLY: Mapping[str, object] = {
     ("payload", "members", "codes"),
     [
         pytest.param(
-            PresentDocument(_ADA_DOCUMENT),
+            StructuredDocument(_ADA_DOCUMENT),
             {
                 "id": 2,
                 "displayName": "Ada",
@@ -330,12 +330,12 @@ _BO_ONLY: Mapping[str, object] = {
             [],
             id="carried",
         ),
-        pytest.param(PresentDocument({"displayName": "Bo"}), _BO_ONLY, [], id="members-absent"),
+        pytest.param(StructuredDocument({"displayName": "Bo"}), _BO_ONLY, [], id="members-absent"),
         pytest.param(
-            PresentDocument({"displayName": "Bo", "note": None}), _BO_ONLY, [], id="json-null"
+            StructuredDocument({"displayName": "Bo", "note": None}), _BO_ONLY, [], id="json-null"
         ),
         pytest.param(
-            PresentDocument({"displayName": 7}),
+            StructuredDocument({"displayName": 7}),
             {"id": 2, "score": None, "joinedOn": None, "note": None, "address": None, "tags": ()},
             ["stored-data-leaf-undecodable"],
             id="undecodable",

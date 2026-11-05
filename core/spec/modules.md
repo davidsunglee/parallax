@@ -255,7 +255,6 @@ m-batch-write --> m-concurrency
 m-cascade-delete --> m-op-list
 m-cascade-delete --> m-unit-work
 m-navigate --> m-predicate
-m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
 m-navigate --> m-relationship
@@ -264,7 +263,6 @@ m-read-planning --> m-relationship
 m-read-planning --> m-object-query
 m-read-planning --> m-inheritance
 m-read-planning --> m-predicate
-m-read-planning --> m-unit-work
 m-read-planning --> m-wire
 m-op-list --> m-read-planning
 m-snapshot-read --> m-read-planning
@@ -442,11 +440,12 @@ construction it may reference any behavioral module it harnesses.
 - **`m-read-planning --> m-relationship`.** Deep fetch resolves and lowers the
   relationship facet it fetches through (join shape, symmetric reverse) directly,
   rather than leaving that reach to the transitive closure through `m-navigate`.
-- **`m-read-planning --> m-predicate`, `--> m-unit-work`, `--> m-wire`.** Deep-fetch
-  levels are resolved flat reads within the owning transaction. Their authored
-  selections arrive elaborated, while generated child-key membership consumes
-  managed values directly rather than creating public literals for another Wire
-  pass.
+- **`m-read-planning --> m-predicate`, `--> m-wire`.** Deep-fetch levels are
+  resolved flat reads. Their authored selections arrive elaborated, while generated
+  child-key membership consumes managed values directly rather than creating
+  public literals for another Wire pass. Planning is pure and names no transaction,
+  so neither it nor `m-navigate` depends on `m-unit-work`; the lifecycle surfaces
+  running their plans do.
 - **`m-navigate --> m-temporal-read`.** Navigation is temporal-aware: a pinned
   as-of value propagates per hop to every temporal entity in the path. As-of
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the

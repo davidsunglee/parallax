@@ -32,7 +32,7 @@ from parallax.core._execution._write_lowering import (
     stream_physical,
 )
 from parallax.core.base import INFINITY as OPEN
-from parallax.core.db_port import ArrayBind, JsonDocument
+from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -240,7 +240,7 @@ def _joined(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[str, tuple[ob
     table = head.removeprefix("insert into ").split("(")[0]
     arrays = ", ".join(f"cast(? as {element}[])" for element in _ARRAY_ELEMENTS[table])
     return f"{head} select * from unnest({arrays})", tuple(
-        [bind.value if isinstance(bind, JsonDocument) else bind for bind in column]
+        [bind.document if isinstance(bind, StructuredDocument) else bind for bind in column]
         for column in zip(*(statement.binds for statement in statements), strict=True)
     )
 

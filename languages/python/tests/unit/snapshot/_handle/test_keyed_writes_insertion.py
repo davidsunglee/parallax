@@ -30,7 +30,7 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core.base import DocumentValue, PresentDocument
+from parallax.core.base import DocumentValue, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
@@ -949,7 +949,7 @@ def test_an_inserted_value_keeps_the_node_state_a_classified_read_gave_it() -> N
     }
     port = ScriptedAdapter(
         Transact(
-            Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(stored)}]),
+            Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument(stored)}]),
             Write(),
         )
     )

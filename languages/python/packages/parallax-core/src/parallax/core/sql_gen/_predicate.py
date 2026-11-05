@@ -6,8 +6,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, assert_never, cast
 
 from parallax.core.base import STRING, ManagedValue, NeutralType
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import Dialect, ScalarResult
+from parallax.core.dialect import ArrayBind, Dialect, ScalarResult
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (

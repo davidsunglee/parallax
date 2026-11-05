@@ -19,7 +19,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import PreparedEffectiveChange
 from parallax.core.entity._construction_input import ABSENT
@@ -207,9 +207,9 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
         if isinstance(step, PlannedInsert) and isinstance(step.entries[0].origin, ChangedFrom)
     )
     documents = [
-        cast("Mapping[str, Any]", bind.value)
+        cast("Mapping[str, Any]", bind.document)
         for bind in lowered(changed, LayoutPayloadPreparer(model), model, POSTGRES).binds
-        if isinstance(bind, JsonDocument)
+        if isinstance(bind, StructuredDocument)
     ]
     assert documents == [
         {

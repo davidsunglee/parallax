@@ -26,7 +26,7 @@ from parallax.core import (
     attr,
     object_query,
 )
-from parallax.core.base import DocumentValue, PresentDocument
+from parallax.core.base import DocumentValue, StructuredDocument
 from parallax.snapshot import connect
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter
 from tests._support.root_ownership import own_root
@@ -56,10 +56,10 @@ _MARKS: list[DocumentValue] = [{"scores": [3, 3]}, {"scores": []}]
 _ROWS: dict[str, dict[str, object]] = {
     "columns": {
         "id": 1,
-        "amounts": PresentDocument(_AMOUNTS),
-        "marks": PresentDocument(_MARKS),
+        "amounts": StructuredDocument(_AMOUNTS),
+        "marks": StructuredDocument(_MARKS),
     },
-    "document": {"id": 1, "payload": PresentDocument({"amounts": _AMOUNTS, "marks": _MARKS})},
+    "document": {"id": 1, "payload": StructuredDocument({"amounts": _AMOUNTS, "marks": _MARKS})},
 }
 
 

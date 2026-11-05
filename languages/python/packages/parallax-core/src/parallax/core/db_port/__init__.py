@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import enum
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
-from parallax.core.base import DocumentReadOrdinals, NeutralType
+from parallax.core.base import DocumentReadOrdinals, StructuredDocument
 from parallax.core.db_port._credentials import (
     DRIVER_MANAGED,
     Credential,
@@ -47,7 +46,7 @@ from parallax.core.db_port._resources import (
     Returned,
     StartupPhase,
 )
-from parallax.core.dialect import Dialect
+from parallax.core.dialect import JSON_NULL, ArrayBind, Dialect, JsonNull
 
 __all__ = [
     "DRIVER_MANAGED",
@@ -85,7 +84,6 @@ __all__ = [
     "InvalidAuthorizationError",
     "Invalidated",
     "IsolationLevel",
-    "JsonDocument",
     "JsonNull",
     "MappingRow",
     "OrderedWriteResult",
@@ -115,6 +113,7 @@ __all__ = [
     "StartupPhase",
     "StatementFailed",
     "StatementNotExecuted",
+    "StructuredDocument",
     "TransactionOutcome",
     "WriteResultIntegrityError",
     "isolation_level",
@@ -299,54 +298,6 @@ class RouteCapabilities:
     def every_level(cls) -> RouteCapabilities:
         """A route that begins a read-only transaction at every portable level."""
         return cls(frozenset(cast("tuple[IsolationLevel, ...]", get_args(IsolationLevel))))
-
-
-@dataclass(frozen=True, slots=True)
-class JsonDocument:
-    """A neutral managed carrier for a ``json`` (value-object document) bind.
-
-    Above-seam code (fixture provisioning, the write path) wraps a
-    structured-document value in this carrier rather than a driver-specific bind
-    type; the concrete adapter recognizes it at its boundary and hands the driver
-    its native structured-document bind (psycopg ``Jsonb``, …). Keeping the carrier
-    neutral is what lets a concrete adapter own its driver's bind mechanics without
-    leaking them into the developer surface (m-db-port: managed carriers only).
-    Recursively immutable encoded containers remain the same value inside this
-    wrapper; an adapter serializes them directly rather than thawing another tree.
-    ``JsonDocument(None)`` is the literal JSON null document; SQL NULL binds as a
-    bare ``None``.
-    """
-
-    value: object
-
-
-class JsonNull(enum.Enum):
-    """The literal JSON ``null`` document as one element of a ``json``
-    :class:`ArrayBind`, distinct from ``None``, which is SQL NULL there."""
-
-    JSON_NULL = "null"
-
-
-JSON_NULL: Final = JsonNull.JSON_NULL
-
-
-@dataclass(frozen=True, slots=True)
-class ArrayBind:
-    """A neutral carrier for one array bind whose elements share ``element_type``.
-
-    ``values`` holds the managed elements in order, with no per-element
-    wrapper. A ``None`` element is SQL NULL under every element type, and a
-    ``timestamp`` element may be the open upper bound ``INFINITY``. Under
-    ``json`` every other element is one encoded document: ``JSON_NULL`` is the
-    literal JSON null document, and a list is one document rather than a
-    dimension. The carrier is the only owner of its element type, so a concrete
-    adapter binds the array from that type alone rather than by inspecting its
-    elements. ``values`` is the caller's own list, handed over unchanged: it
-    must not be mutated after binding.
-    """
-
-    element_type: NeutralType
-    values: list[object]
 
 
 @dataclass(frozen=True, slots=True)

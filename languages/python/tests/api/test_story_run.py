@@ -30,7 +30,7 @@ from parallax.conformance.graph_stories import (
     a_finite_transaction_time_pinned_view_is_read_only,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
-from parallax.conformance.read_models import Animal, Bike, Car, Cat, Dog
+from parallax.conformance.read_models import Animal, Bike, Car, Cat, Dog, Pet
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
@@ -1056,10 +1056,7 @@ def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(profile_run: A
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")
-    # `view` derives its key from the AUTHORED spelling, so the story's
-    # `narrow(Pet)` view is reached by the equivalent concrete spelling — the same
-    # accessor route `test_equivalent_narrow_spellings_dedupe_to_one_view` takes.
-    redundant = view(alice, AnimalOwnerPerson.pets.narrow(Cat, Dog))
+    redundant = view(alice, AnimalOwnerPerson.pets.narrow(Pet))
     # The redundant narrow reaches exactly what the broad hop reaches, yet lands
     # under its own derived view key rather than merging into `pets`.
     assert sorted(pet.name for pet in alice.pets) == ["Rex", "Whiskers"]

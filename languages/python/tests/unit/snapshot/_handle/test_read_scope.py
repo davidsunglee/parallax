@@ -97,6 +97,7 @@ from tests._support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdap
 from tests._support.model_capabilities import (
     cataloged_for,
     graph_construction_for,
+    prepared_view_keys_for,
     wire_facts_for,
 )
 from tests.unit._transact_support import ACCOUNT, BALANCE, NEW_ROW, balance_row
@@ -118,6 +119,7 @@ def _selection(model: Any = ACCOUNT, *, materializing: bool = True) -> SelectedR
         construction=graph_construction_for(model) if materializing else None,
         classes=class_index(model),
         wire=wire_facts_for(cataloged),
+        narrowed_view_keys=prepared_view_keys_for(model),
     )
 
 

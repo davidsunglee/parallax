@@ -32,7 +32,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.document_codec import _document as document_module
@@ -133,7 +133,7 @@ def _ledger(*, balance: DocumentValue = "1.00") -> MappingRow:
     return {
         "id": 1,
         "version": 3,
-        "payload": PresentDocument({"label": "A", "balance": balance, "details": {"code": "x"}}),
+        "payload": StructuredDocument({"label": "A", "balance": balance, "details": {"code": "x"}}),
     }
 
 
@@ -520,13 +520,13 @@ def _hull_row(entity: type[Any], occurrences: Mapping[str, object]) -> MappingRo
         for name, value in occurrences.items():
             if value is not _SQL_NULL_OCCURRENCE:
                 document[name] = cast("DocumentValue", value)
-        return {"id": 1, **axes, "payload": PresentDocument(document)}
+        return {"id": 1, **axes, "payload": StructuredDocument(document)}
     row: dict[str, object] = {"id": 1, "amount": 100, **axes}
     for name, value in occurrences.items():
         row[name] = (
             SQL_NULL
             if value is _SQL_NULL_OCCURRENCE
-            else PresentDocument(cast("DocumentValue", value))
+            else StructuredDocument(cast("DocumentValue", value))
         )
     return row
 
@@ -610,7 +610,10 @@ def test_a_completed_retained_row_is_judged_as_a_coverage_read_judges_it(
 def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -> None:
     # Every member located in a non-object document is missing: the required
     # Attribute refuses the row at the read, as it refuses an ordinary read.
-    row = {**_hull_row(DocumentHull, _VALID), "payload": PresentDocument(["not", "an", "object"])}
+    row = {
+        **_hull_row(DocumentHull, _VALID),
+        "payload": StructuredDocument(["not", "an", "object"]),
+    }
     port = ScriptedAdapter(Transact(Read(rows=[row]), Read(rows=[row])))
     metadata, key = _hull_keys(DocumentHull)
     key_attribute = AttributeIdentity(metadata.identity, "id")
@@ -884,9 +887,9 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
         row = _hull_row(entity, {**_VALID, "tags": ["t", 2], "spec": {"title": 7, "marks": []}})
     elif entity is DocumentHull:
         payload = row["payload"]
-        assert isinstance(payload, PresentDocument)
+        assert isinstance(payload, StructuredDocument)
         document = cast("dict[str, DocumentValue]", payload.document)
-        row = {**row, "payload": PresentDocument({**document, "amount": None})}
+        row = {**row, "payload": StructuredDocument({**document, "amount": None})}
     else:
         # A native Column is trusted as the provider returned it; a temporal
         # end is host-checked.
@@ -993,7 +996,7 @@ def _flush_calls(port: ScriptedAdapter) -> list[type[object]]:
 def test_an_invalid_later_row_of_a_shared_read_fails_before_an_earlier_write_binds() -> None:
     first = shared.physical_row(shared.ShareDoc, shared.frag_rows(shared.ShareDoc, 1, 1)[1])
     second = shared.physical_row(shared.ShareDoc, shared.frag_rows(shared.ShareDoc, 2, 1)[1])
-    second["payload"] = PresentDocument({"amount": "x", "label": "k2"})
+    second["payload"] = StructuredDocument({"amount": "x", "label": "k2"})
     # The scripted write would make the first write's close a conflict.
     port = ScriptedAdapter(Transact(Read(rows=[first, second]), Write(affected=0)))
     with raises_contextualized(StoredDataDecodingError):

@@ -12,9 +12,9 @@ planning constructs the reads that obtain that evidence; it does not decide
 write authority, evidence sufficiency, or temporal state transformations.
 
 The module depends on `m-object-query` (the validated query and Includes clause),
-`m-predicate` (elaborated selection products), `m-unit-work` (the owning transaction
-and read/write participation), `m-wire` (managed keys already produced at ingress),
-`m-relationship` (compiled relationship directions), `m-navigate` (temporal
+`m-predicate` (elaborated selection products), `m-wire` (managed keys already
+produced at ingress), `m-relationship` (compiled relationship directions),
+`m-navigate` (temporal
 visibility and per-hop propagation), and `m-inheritance` (effective positions).
 SQL emission belongs to `m-sql`; execution, read-plan caching, paging execution,
 and Page assembly belong to `m-read-delivery`. Planning performs no database work
@@ -295,12 +295,8 @@ is the prior art). The semantic is **one**, and it is this module's; only the
   the trigger, the semantics are identical;
 - eager `includes` at query time remain the third form of the same load.
 
-The normative rules, whatever the trigger:
+The normative planning rules, whatever the trigger:
 
-- A deferred load resolves **only through the live unit of work** that owns the
-  objects — the `m-unit-work` rules apply, including the flush of dependent
-  buffered writes before the read. Once that owning scope has ended, the load
-  has no resolution context and never opens a transaction implicitly.
 - It propagates **each source object's pinned as-of coordinates** (`m-navigate`,
   applied at the object level), batching sources **per coordinate group**: one
   child statement per relationship level per distinct coordinate group. The
@@ -309,6 +305,9 @@ The normative rules, whatever the trigger:
 - Database Calls stay query-determined: a deferred load is an explicit
   resolution point whose statement count follows the same
   one-statement-per-non-empty-level contract, so scenario cases can declare it.
+
+When a deferred load may resolve at all is a lifetime rule of the managed surface,
+not of planning (`m-op-list` *Deferred relationship load lifetime*).
 
 A plain-value graph (`m-snapshot-read`) has **no trigger at all**: a snapshot
 graph is closed-world and never issues SQL after materialization.

@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Final, cast
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
 from parallax.core import storage_layout
-from parallax.core.base import JSON, TIMESTAMP, NeutralType, retain_document_value
-from parallax.core.db_port import DatabaseRuntime, JsonDocument, Password
+from parallax.core.base import JSON, TIMESTAMP, DocumentValue, NeutralType, retain_document_value
+from parallax.core.db_port import DatabaseRuntime, Password, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
     MemberShape,
@@ -258,7 +258,11 @@ def _fixture_insert(
             if shape is None:  # pragma: no cover - a shared document slot owns residency
                 raise ValueError(f"{view.entity.canonical}: no document resident selection")
             columns.append(dialect.quote(slot.column.name))
-            binds.append(JsonDocument(fixture_document(shape, row, preserve_unknown=False)))
+            binds.append(
+                StructuredDocument(
+                    cast("DocumentValue", fixture_document(shape, row, preserve_unknown=False))
+                )
+            )
             continue
         member = _fixture_member(model, slot)
         if member is None:
@@ -277,13 +281,20 @@ def _fixture_insert(
             isinstance(projection, AttributeMetadata)
             and projection.multiplicity is Multiplicity.MANY
         ):
-            binds.append(JsonDocument(fixture_collection(projection.type, value)))
+            binds.append(
+                StructuredDocument(
+                    cast("DocumentValue", fixture_collection(projection.type, value))
+                )
+            )
         elif isinstance(projection, MemberShape):
             binds.append(
-                JsonDocument(
-                    fixture_document(projection, cast("Mapping[str, object]", value))
-                    if isinstance(value, Mapping)
-                    else value
+                StructuredDocument(
+                    cast(
+                        "DocumentValue",
+                        fixture_document(projection, cast("Mapping[str, object]", value))
+                        if isinstance(value, Mapping)
+                        else value,
+                    )
                 )
             )
         else:
@@ -416,8 +427,8 @@ def reset_database(
     """Reset the schema, apply the model-derived DDL, load the fixtures, and grant
     the conformance roles what a case's sessions do with them.
 
-    Fixture binds carry the neutral :class:`JsonDocument` carrier for value
-    objects; the adapter recognizes it at its boundary and binds the driver's
+    Fixture binds carry a :class:`StructuredDocument` for each value object; the
+    adapter recognizes it at its boundary and binds the driver's
     native structured-document type, so no psycopg bind mechanics leak here.
     """
     dialect = session.dialect

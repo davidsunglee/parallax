@@ -128,13 +128,13 @@ def compare_binds(
     (``5.00``, a plain YAML float) and a real ``decimal``-typed bind
     (``Decimal("5.00")``, e.g. an idiomatic entity instance's own field value)
     reconcile in Decimal space; a value-object document write's own bind (a
-    ``JsonDocument`` carrier, `m-db-port`) unwraps to its underlying JSON
+    ``StructuredDocument``, `m-core`) unwraps to its underlying JSON
     document before comparing, so it reconciles against the golden's plain
     dict/list literal exactly like `parallax.conformance.engine._json_bind`'s
     own emission-wire rendering; an array bind (an ``ArrayBind`` carrier)
     reconciles element by element, each element as a bind of its own, against
     the golden's list of equal length, a literal JSON-null element as null like
-    ``JsonDocument(None)``; everything else is exact wire equality.
+    ``StructuredDocument(None)``; everything else is exact wire equality.
 
     At each of ``positions`` the bind additionally carries the golden's float
     zero sign (`tests._support.bind_positions`).
@@ -173,10 +173,10 @@ def _wire_value(value: object) -> object:
     import uuid
 
     from parallax.core.base import TemporalBound
-    from parallax.core.db_port import JsonDocument
+    from parallax.core.db_port import StructuredDocument
 
-    if isinstance(value, JsonDocument):
-        return wire_value_deep(value.value)
+    if isinstance(value, StructuredDocument):
+        return wire_value_deep(value.document)
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, Mapping):

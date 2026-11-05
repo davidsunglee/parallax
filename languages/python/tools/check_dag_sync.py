@@ -296,16 +296,20 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     ),
     # The Snapshot slice's own node-inspection surface is scoped apart from the
     # rest of the lifecycle extension: it reads a node's loaded views, pin, and
-    # milestone edge through the advanced Entity seam, and carries the opaque
+    # milestone edge through the advanced Entity seam, carries the opaque
     # evidence a node retains through the unit of work's evidence child, and
-    # nothing else, so its row proves it reaches no driver, no read planner, no
-    # SQL, no dialect, and no Database Port.
+    # reads the narrowed view keys that node's edition prepared through read
+    # planning, and nothing else. Read planning's closure carries `m-navigate`,
+    # so its row permits both, and proves it reaches no driver, no SQL
+    # generation, no dialect, no Database Port, no read delivery, and no
+    # execution lifecycle.
     "parallax.snapshot._inspection": frozenset(
         {
             "parallax.core.entity",
             "parallax.core.metamodel",
             "parallax.core.inheritance",
             "parallax.core.relationship",
+            "parallax.core.read_planning",
             "parallax.core.temporal_read",
             "parallax.core._execution._unit_work.evidence",
         }
@@ -341,10 +345,12 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     ),
     # The Page, its view schema, the stored-data vocabulary, and Page-owned
     # judgement, scoped apart from the rest of delivery so a lifecycle's
-    # publication can read judged Entity States without reaching read planning,
-    # SQL generation, or the execution lifecycle. Its grants are what a
-    # positional member row and its findings are stated in, and nothing else.
-    # Sealed, because the delivery package around it reaches every one of those.
+    # publication can read judged Entity States without reaching SQL generation,
+    # the Database Port, or the execution lifecycle. Its grants are what a
+    # positional member row and its findings are stated in, and nothing else:
+    # read planning states the view keys, and the Concurrency Facet decides how
+    # a row's version is judged. Sealed, because the delivery package around it
+    # reaches every one of those exclusions.
     "parallax.core.read_delivery._page": frozenset(
         {
             "parallax.core.entity._construction_input",
@@ -352,6 +358,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.base",
             "parallax.core.metamodel",
             "parallax.core.read_planning",
+            "parallax.core.concurrency",
             "parallax.core.document_codec",
             "parallax.core.temporal_read",
             "parallax.core.write_plan",
@@ -422,9 +429,8 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # preparation alone wires in.
     #
     # `m-db-port`, `m-read-planning` and `m-navigate` are deliberately NOT among
-    # those exclusions, and the row does not claim them: `modules.md` routes the
-    # port through `m-execution-lifecycle` and the two traversal modules through
-    # `parallax.core.entity`, and a forbidden row is the complement of a
+    # those exclusions, and the row does not claim them: `modules.md` routes all three
+    # through `m-execution-lifecycle`, and a forbidden row is the complement of a
     # closure, so each rides in whatever this composition itself imports. What
     # the row says about them is that this scope inherits them, not that they are
     # forbidden.
@@ -445,14 +451,18 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # A prepared Model Selection is process-local and holds no transaction,
     # connection, Clock, or Execution Lifecycle Provider. Granting the scope the
     # Entity frontend — for the Domain Model, the cataloged model, the row
-    # codec, and the graph construction a selection retains — and the unit of
-    # work — for the Write Planner — and nothing else is what makes the first
-    # three of those absences structural rather than asserted: no attempt, no
-    # port, and no activity is nameable here. Sealed, because the execution
-    # package beside it holds every one of them.
+    # codec, and the graph construction a selection retains — the unit of work
+    # — for the Write Planner — and read planning — for the narrowed view keys
+    # each edition prepares — and nothing else is what makes the absence of an
+    # attempt and an activity structural rather than asserted: neither is
+    # nameable here. Sealed, because the execution package beside it holds both.
+    # The Database Port and the planner are nameable, through the unit of work
+    # and read planning, so holding no connection and planning no read are what
+    # a selection does rather than what this row refuses.
     "parallax.core._execution._publication": frozenset(
         {
             "parallax.core.entity",
+            "parallax.core.read_planning",
             "parallax.core._execution._unit_work",
         }
     ),
@@ -518,10 +528,11 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # `m-execution-lifecycle`, plus the layout a projection is laid out against,
     # the sentinel scope its absent positions are spelled with, and the Page
     # child of read delivery its Entity States are judged in, none of which has a
-    # language-neutral module tag. Taking the Page child rather than delivery
-    # whole keeps read planning, `m-sql`, `m-db-error`, `m-auto-retry`, and
-    # `m-dialect` outside this representation scope. Sealed, because the
-    # facades beside it reach every one of them.
+    # language-neutral module tag, and the Concurrency Facet a node's observed
+    # version is read through. Taking the Page child rather than delivery whole
+    # keeps `m-sql`, `m-db-port`, `m-db-error`, `m-auto-retry`, and `m-dialect`
+    # outside this representation scope. Sealed, because the facades beside it
+    # reach every one of them.
     "parallax.snapshot._publication": frozenset(
         {
             "parallax.core.entity",
@@ -529,6 +540,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.entity._layout",
             "parallax.core.read_delivery._page",
             "parallax.core.read_planning",
+            "parallax.core.concurrency",
             "parallax.core.document_codec",
             "parallax.core.metamodel",
             "parallax.core.inheritance",
@@ -710,8 +722,8 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # the seal is what states that refusal.
     "parallax.snapshot._inspection": ChildScope(parent="parallax.snapshot", policy="sealed"),
     # Value publication is sealed for the same reason: every other module of the
-    # lifecycle extension reaches read planning, SQL generation, or the execution
-    # lifecycle, and Root View and value construction must reach none of them.
+    # lifecycle extension reaches SQL generation or the execution lifecycle, and
+    # Root View and value construction must reach neither.
     "parallax.snapshot._publication": ChildScope(parent="parallax.snapshot", policy="sealed"),
 }
 

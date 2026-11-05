@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from parallax.core import DomainModel, Entity
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.snapshot import TxnContext
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for
@@ -26,10 +26,10 @@ def inserted_document(model: DomainModel, entity: Entity) -> Mapping[str, object
 
     db_for(model, port).transact(insert)
     (document,) = (
-        bind.value
+        bind.document
         for call in port.calls
         if isinstance(call, WriteCall)
         for bind in call.binds
-        if isinstance(bind, JsonDocument)
+        if isinstance(bind, StructuredDocument)
     )
     return cast("Mapping[str, object]", document)

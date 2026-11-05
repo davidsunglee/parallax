@@ -1580,22 +1580,15 @@ def test_model_formation_and_its_consumers_reach_the_policy_but_no_unit_of_work(
 @pytest.mark.parametrize(
     "scope",
     [
-        "parallax.core.read_delivery._page",
+        "parallax.snapshot._inspection",
         "parallax.snapshot._publication",
+        "parallax.core.read_delivery._page",
+        "parallax.core.sql_gen",
+        "parallax.core.read_planning",
     ],
 )
-def test_existing_policy_consumers_reach_the_facet_through_the_unit_of_work_alone(
-    scope: str,
-) -> None:
+def test_a_scope_doing_no_database_work_reaches_no_database_port(scope: str) -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    assert _CONCURRENCY in dag.transitive_closure(adjacency, scope)
-    assert _CONCURRENCY not in dag.PYTHON_FIRST_PARTY_GRANTS.get(scope, frozenset())
-    assert _CONCURRENCY not in dag.compute_forbidden(adjacency)[scope]
-
-
-def test_node_inspection_reaches_no_database_port_once_formation_stops_reaching_one() -> None:
-    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    scope = "parallax.snapshot._inspection"
     assert "parallax.core.db_port" not in dag.transitive_closure(adjacency, scope)
     assert "parallax.core.db_port" in dag.compute_forbidden(adjacency)[scope]
 

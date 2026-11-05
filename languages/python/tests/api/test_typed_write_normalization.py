@@ -15,7 +15,7 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, Float32, ValueObject, attr
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests._support.root_ownership import own_root
@@ -61,8 +61,8 @@ def _zero_signs(calls: list[WriteCall]) -> list[float]:
     found: list[float] = []
 
     def visit(value: object) -> None:
-        if isinstance(value, JsonDocument):
-            visit(value.value)
+        if isinstance(value, StructuredDocument):
+            visit(value.document)
         elif isinstance(value, float) and value == 0.0:
             found.append(math.copysign(1.0, value))
         elif isinstance(value, Mapping):

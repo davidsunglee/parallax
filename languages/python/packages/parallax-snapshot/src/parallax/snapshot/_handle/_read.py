@@ -558,7 +558,9 @@ def typed_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication
             "this read is served under a model that composed no Entity Class, so it "
             "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
         )
-    return typed_publication(selected.model, construction, selected.wire, selected.edition)
+    return typed_publication(
+        selected.model, construction, selected.wire, selected.narrowed_view_keys, selected.edition
+    )
 
 
 def wire_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
@@ -574,10 +576,12 @@ def typed_publication(
     model: CatalogedModel,
     construction: EntityGraphConstruction,
     wire: WireModelFacts,
+    view_keys: read_planning.NarrowedViewKeys,
     edition: str,
 ) -> SnapshotPublication:
     """Publish through the typed materializer: frozen Entity instances, each
-    result retaining ``wire`` for its later Wire projection."""
+    result retaining ``wire`` for its later Wire projection and each node with
+    a narrowed view retaining ``view_keys`` to find it by."""
 
     def roots_of(
         page: Page,
@@ -590,7 +594,7 @@ def typed_publication(
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         del includes
-        publisher = TypedRootPublisher(model.meta, construction)
+        publisher = TypedRootPublisher(model.meta, construction, view_keys)
 
         def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
             # Stored state contradicting the model is no failure here: it was

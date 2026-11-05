@@ -38,7 +38,7 @@ from parallax.core.base import (
     Decimal,
     FrozenMap,
     NeutralType,
-    PresentDocument,
+    StructuredDocument,
 )
 from parallax.core.dialect import (
     POSTGRES,
@@ -177,7 +177,7 @@ def test_an_output_alias_renames_the_cell_and_keeps_its_scalar_result(dialect: D
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_document_read_parsing_uses_the_boolean_discriminator_first(dialect: Dialect) -> None:
     assert dialect.parse_owned_document_read(False, object()) is SQL_NULL
-    assert dialect.parse_owned_document_read(True, None) == PresentDocument(None)
+    assert dialect.parse_owned_document_read(True, None) == StructuredDocument(None)
     with pytest.raises(ValueError, match="must be a SQL boolean"):
         dialect.parse_owned_document_read(1, None)
     with pytest.raises(ValueError, match="portable JSON value"):

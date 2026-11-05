@@ -124,7 +124,7 @@ Entity and each top-level Value Object occurrence supply the same roots under
 both layouts. Member Placement locates each requested Entity member, but the
 Entity-root classifier accepts either the direct column's already-tagged `m-core`
 `DocumentRead` or `locateEntityMember`'s result over the raw Entity document. A
-direct `SqlNull` remains distinct from `PresentDocument(document: JSON null)`;
+direct `SqlNull` remains distinct from `StructuredDocument(document: JSON null)`;
 delivery does not inspect a driver or host null sentinel. Both
 occurrence placement arms pass that `LocatedMemberInput` to
 `decodeLocatedMemberClassified` and emit one logical verdict before entering the

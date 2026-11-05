@@ -50,3 +50,11 @@ materialization.)
 The compatibility suite expresses the list-core contract through the deep-fetch
 cases: the assembled object graph **is** the populated list result, and the
 Database Call count assertion proves the lazy resolution did not fan out.
+
+## Deferred relationship load lifetime
+
+A deferred relationship load (`m-read-planning`) over managed objects, whatever
+its trigger, resolves **only through the live unit of work** that owns the
+objects. Once that owning scope has ended, the load has no resolution context and
+never opens a transaction implicitly. The load is a read, so `m-unit-work`'s
+read-your-own-writes rule governs any buffered write it depends on.

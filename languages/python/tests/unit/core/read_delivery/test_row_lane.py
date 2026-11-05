@@ -9,7 +9,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -26,7 +26,7 @@ from tests.unit._prepared_read_support import compiled_read, result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 
 _ENCODED: Final = model_of(ENCODED_ORDERS)
-_ADDRESS: Final = PresentDocument({"street": "Main", "city": None, "geo": None, "phones": []})
+_ADDRESS: Final = StructuredDocument({"street": "Main", "city": None, "geo": None, "phones": []})
 
 
 def _order(order_id: int, badge: str) -> dict[str, object]:

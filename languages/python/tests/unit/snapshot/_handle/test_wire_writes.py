@@ -34,9 +34,9 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import InstantError, PresentDocument
+from parallax.core.base import InstantError, StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
@@ -128,7 +128,9 @@ _PERSON_TARGET: dict[str, object] = {
 # assignment replaces whole.
 _TRAVELER_ROW: MappingRow = {
     "id": 1,
-    "payload": PresentDocument({"address": {"city": "Oslo", "geo": {"country": "NO"}}, "tags": []}),
+    "payload": StructuredDocument(
+        {"address": {"city": "Oslo", "geo": {"country": "NO"}}, "tags": []}
+    ),
 }
 _TRAVELER_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Traveler",
@@ -233,7 +235,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
     stored: MappingRow = {
         "id": 1,
         "name": "Ada",
-        "address": PresentDocument(
+        "address": StructuredDocument(
             {
                 "street": "S",
                 "city": "C",
@@ -299,8 +301,8 @@ def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None
         assert _address(opened)["phones"] == []
 
     db_for(CONTACT, port).transact(body)
-    stored = cast("JsonDocument", _writes(port)[0].binds[2])
-    assert cast("Mapping[str, Any]", stored.value)["phones"] == ()
+    stored = cast("StructuredDocument", _writes(port)[0].binds[2])
+    assert cast("Mapping[str, Any]", stored.document)["phones"] == ()
 
 
 def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> None:
@@ -332,7 +334,10 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
 
 def _bound_documents(port: ScriptedAdapter) -> list[object]:
     return [
-        bind.value for op in _writes(port) for bind in op.binds if isinstance(bind, JsonDocument)
+        bind.document
+        for op in _writes(port)
+        for bind in op.binds
+        if isinstance(bind, StructuredDocument)
     ]
 
 
@@ -577,7 +582,7 @@ def test_a_hydratable_classified_row_cannot_author_its_own_correction() -> None:
     stored: MappingRow = {
         "id": 1,
         "name": "Ada",
-        "address": PresentDocument(
+        "address": StructuredDocument(
             {"city": "C", "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}}, "phones": []}
         ),
     }
@@ -1616,8 +1621,8 @@ def _bound_address(port: ScriptedAdapter) -> dict[str, Any]:
     bind is unwrapped once here rather than at each assertion.
     """
     bound = _writes(port)[0].binds[2]
-    assert isinstance(bound, JsonDocument)
-    return cast("dict[str, Any]", bound.value)
+    assert isinstance(bound, StructuredDocument)
+    return cast("dict[str, Any]", bound.document)
 
 
 _ADDRESS: dict[str, Any] = {

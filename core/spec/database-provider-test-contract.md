@@ -31,7 +31,7 @@ Each row proves the database's answers for the `m-dialect` decision catalog:
 - typed bind normalization for managed values
 - parser behavior for precision-sensitive managed values
 - paired document-read parsing, including distinct `SqlNull` and
-  `PresentDocument(document: JSON null)` results when the raw driver values use
+  `StructuredDocument(document: JSON null)` results when the raw driver values use
   the same host-language null sentinel
 - native error-code classification and call-site predicates
 

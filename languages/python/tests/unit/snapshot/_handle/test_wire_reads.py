@@ -32,7 +32,7 @@ from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, PresentDocument
+from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, StructuredDocument
 from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -1281,8 +1281,8 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
     stored = {
         "id": 1,
         "kind": "archive-shared",
-        "familyVariant": PresentDocument({"label": "mail"}),
-        "archive_profile": PresentDocument({"label": "archive"}),
+        "familyVariant": StructuredDocument({"label": "mail"}),
+        "archive_profile": StructuredDocument({"label": "archive"}),
     }
     builder = PageBuilder(ViewSchema.of())
     prepared, row = bound_cells(CatalogedModel(_VARIANT_MODEL), compiled, stored)

@@ -81,10 +81,10 @@ __all__ = [
     "ManagedValue",
     "NeutralType",
     "NeutralTypeMismatch",
-    "PresentDocument",
     "ScalarConverter",
     "SqlNull",
     "String",
+    "StructuredDocument",
     "TemporalBound",
     "Time",
     "Timestamp",
@@ -282,13 +282,20 @@ SQL_NULL: Final[SqlNull] = SqlNull()
 
 
 @dataclass(frozen=True, slots=True)
-class PresentDocument:
-    """A non-SQL-null structured-document result, including JSON null."""
+class StructuredDocument:
+    """A non-SQL-null structured document, including JSON null, crossing the
+    database seam: a read's document cell, or a document bind, which an adapter
+    hands its driver's structured-document binding.
+
+    Recursively immutable containers remain the same value inside it, and an
+    adapter serializes them directly rather than thawing another tree. SQL NULL
+    binds as a bare ``None``, never as this value.
+    """
 
     document: DocumentValue
 
 
-type DocumentRead = SqlNull | PresentDocument
+type DocumentRead = SqlNull | StructuredDocument
 """The provider-neutral structured-document read transport."""
 
 type DocumentReadOrdinals = tuple[int, int]

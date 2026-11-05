@@ -22,7 +22,7 @@ from parallax.conformance import case_format
 from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core.base import INFINITY, PresentDocument
+from parallax.core.base import INFINITY, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
@@ -344,10 +344,10 @@ def test_run_graph_case_reports_the_records_a_classified_root_published() -> Non
             # before it writes over it (m-case-format), ahead of the read.
             [{"profile": {"street": "4 Main", "city": "Boston"}}],
             [
-                {"id": 1, "profile": PresentDocument({"street": "1 Main", "city": None})},
-                {"id": 2, "profile": PresentDocument({"city": "Oslo"})},
+                {"id": 1, "profile": StructuredDocument({"street": "1 Main", "city": None})},
+                {"id": 2, "profile": StructuredDocument({"city": "Oslo"})},
             ],
-            [{"id": 12, "item_id": 2, "profile": PresentDocument({"street": "12 Main"})}],
+            [{"id": 12, "item_id": 2, "profile": StructuredDocument({"street": "12 Main"})}],
         ]
     )
     _emissions, graph, _database_calls, stored_data_issues = reads.run_graph_case(
@@ -386,7 +386,7 @@ def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None
             # The case's own `given.corrupt` reads the addressed document back
             # before it writes over it (m-case-format), ahead of the read.
             [{"profile": {"street": "4 Main", "city": "Boston"}}],
-            [{"id": 1, "profile": PresentDocument({"street": "1 Main", "city": 7})}],
+            [{"id": 1, "profile": StructuredDocument({"street": "1 Main", "city": 7})}],
             [],
         ]
     )

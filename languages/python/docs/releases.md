@@ -21,6 +21,16 @@ A continuation naming no relationship of the class it reaches now raises
 `QueryDefinitionError(query-path-invalid)` before I/O, in place of the `ValueError`
 that composed spelling reached at the read gate. Stream reads report it on entry.
 
+`view` and `is_view_loaded` now find a narrowed view by the key the read planned, so
+a path narrowed to an abstract Entity, or to a concrete sharing its local name with
+another in its family, reads the view its include loaded instead of reporting it
+unloaded. A retained node answers under the Model Edition that published it.
+
+`parallax.core.db_port.JsonDocument` is removed. A database adapter now receives a
+structured-document bind as `StructuredDocument`, exported from the same module,
+and reads its value from `document` rather than `value`. SQL NULL still binds as a
+bare `None`.
+
 ## 0.1.0
 
 First coordinated release for early adopters.

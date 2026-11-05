@@ -15,7 +15,7 @@ import pytest
 
 from parallax.core import continuation, read_planning
 from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import MISSING
 from parallax.core.entity._layout import CatalogedModel
@@ -98,7 +98,7 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
         ),
         (
             "Publication",
-            {"id": 1, "payload": PresentDocument({}), "family_variant": "Film"},
+            {"id": 1, "payload": StructuredDocument({}), "family_variant": "Film"},
             ("Film", "Film", None, dict[str, object]()),
         ),
     ],
@@ -116,7 +116,7 @@ def test_a_row_reads_its_carriers_at_their_result_cells(
 
 @pytest.mark.parametrize(
     ("payload", "member"),
-    [(SQL_NULL, SQL_NULL), (PresentDocument({}), MISSING)],
+    [(SQL_NULL, SQL_NULL), (StructuredDocument({}), MISSING)],
     ids=["sql-null-document", "present-empty-document"],
 )
 def test_a_shared_document_member_keeps_its_carriers_raw_state(

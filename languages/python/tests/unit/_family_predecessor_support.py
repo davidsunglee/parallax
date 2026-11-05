@@ -40,7 +40,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import INFINITY, DocumentValue, PresentDocument
+from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata, TablePerConcreteSubtype, entity_by_name
@@ -177,8 +177,8 @@ def stored_row(
     if strategy == "tph":
         row["kind"] = member.lower()
     if layout == "document":
-        row["payload"] = PresentDocument({**values, UNKNOWN_KEY: "kept"})
+        row["payload"] = StructuredDocument({**values, UNKNOWN_KEY: "kept"})
         return row
     for name, value in values.items():
-        row[name] = value if name == "name" else PresentDocument(value)
+        row[name] = value if name == "name" else StructuredDocument(value)
     return row

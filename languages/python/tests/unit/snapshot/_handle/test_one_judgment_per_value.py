@@ -36,7 +36,7 @@ from parallax.core.base import (
     typed_converter,
 )
 from parallax.core.base._neutral import _general_typed_converter  # pyright: ignore[reportPrivateUsage]
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.core.entity import Document
 from parallax.core.unit_work import UnitOfWork
 from parallax.core.wire import decode_wire, encode_wire
@@ -224,7 +224,7 @@ def _opening(entity: type[Entity], lane: str) -> Callable[[TxnContext], object]:
 
 def _stored(call: WriteCall) -> list[object]:
     """The binds of the one row ``call`` inserts, documents by their content."""
-    return [bind.value if isinstance(bind, JsonDocument) else bind for bind in call.binds]
+    return [bind.document if isinstance(bind, StructuredDocument) else bind for bind in call.binds]
 
 
 _SPOT: Final = {"code": "A", "rank": 3}

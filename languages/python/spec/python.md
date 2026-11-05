@@ -169,10 +169,8 @@ addresses a row its caller already holds, so it resolves nothing from the store,
 and the read half of the parent's reach falls outside this closure — read
 delivery and the continuation are each forbidden here and each reached by the
 parent. So is batch writing, which model preparation alone wires in. `m-db-port`, `m-read-planning`, and `m-navigate` are deliberately NOT among
-those exclusions, and the row does not claim them: `modules.md` routes the port
-through `m-execution-lifecycle`, which the re-entry gate requires, and the two
-traversal modules through `parallax.core.entity`, whose values every Typed write
-is stated over. A forbidden row is the complement of a closure, so each rides in
+those exclusions, and the row does not claim them: `modules.md` routes all three
+through `m-execution-lifecycle`, which the re-entry gate requires. A forbidden row is the complement of a closure, so each rides in
 whatever the ingress itself imports, and what the row says about them is that
 this scope inherits them rather than that they are forbidden. `m-document-codec`
 IS named for the opposite reason, and not because the closure would otherwise
@@ -244,9 +242,15 @@ Selection must not hold ([Models, roots, and scopes](execution.md#models-roots-a
 other execution module outside the unit of work carries a connection, an
 attempt, or an activity, and a selection that could name one would no longer be
 process-local state a Serving Model can hand to any execution. Its row — the
-Entity frontend and `m-unit-work` — is the whole of what the selection, its
-projections, and the Serving Model reach, and the seal is where that absence is
-graded over the package they live in rather than merely stated.
+Entity frontend, `m-unit-work`, and `m-read-planning` — is the whole of what the
+selection, its projections, and the Serving Model reach, and the seal is where
+that absence is graded over the package they live in rather than merely stated.
+`m-read-planning` is granted for the narrowed view keys each edition prepares,
+which a selection stores as prepared facts. A forbidden row is the complement of
+a closure, so the row permits read planning and `m-navigate` whether or not a
+selection plans anything, as `m-unit-work` already permits the Database Port. It
+still forbids read delivery, SQL generation, execution authority, and the
+execution lifecycle.
 
 `parallax.core.execution` and `parallax.core.unit_work` are the public facades
 over that private package. Each is a module scope granted exactly the
@@ -272,11 +276,19 @@ of work.
 stored-data vocabulary, and Page-owned judgement, and `parallax.snapshot._publication`
 holds Root View, classification, and Typed and Wire value publication. Both are
 sealed for one boundary: a lifecycle's publication reads judged Entity States
-without reaching read planning, SQL generation, or the execution lifecycle.
-The publication child is granted the Page child rather than read delivery whole,
-and every other module of either package reaches all three, so the seals are
-where that absence is graded. `parallax.snapshot._inspection` is sealed for the
-same reason against the facades beside it.
+without reaching SQL generation, the Database Port, or the execution lifecycle.
+Each row grants `m-read-planning`, in whose vocabulary a Page's view keys and a
+publication's include tree are stated, so read planning is permitted to both
+rather than excluded, and `m-concurrency`, whose facet both consult for a row's
+version. The publication child is granted the Page child rather than read
+delivery whole, and every other module of either package reaches SQL generation
+or the execution lifecycle, so the seals are where that absence is graded.
+`parallax.snapshot._inspection` is sealed against the facades beside it, which
+reach execution and read delivery. Its row grants `m-read-planning` for the
+narrowed view keys a published node retains, which inspection reads without
+planning anything. That grant's closure carries `m-navigate`, so the row permits
+both. It still forbids the driver, SQL generation, the dialect, the Database
+Port, read delivery, execution authority, and the execution lifecycle.
 
 Sealing generates nothing, so a scope losing that policy silently keeps every
 contract it had; isolation shapes the target set of nearly every generated
@@ -391,7 +403,7 @@ come from `core/spec/modules.md`.
 | `parallax.core._execution` | `parallax.core.entity` |
 | `parallax.core._execution._family`, `parallax.core._execution._keyed_sql`, `parallax.core._execution._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan` |
 | `parallax.core._execution._keyed_writes` | `parallax.core.entity`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-execution-lifecycle` |
-| `parallax.core._execution._publication` | `parallax.core.entity`, `m-unit-work` |
+| `parallax.core._execution._publication` | `parallax.core.entity`, `m-read-planning`, `m-unit-work` |
 | `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-read-delivery`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-execution-authority`, `m-execution-lifecycle` |
 | `parallax.core._execution._read_query` | `m-metamodel`, `m-predicate`, `m-object-query` |
 | `parallax.core._execution._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan` |
@@ -410,13 +422,13 @@ come from `core/spec/modules.md`.
 | `parallax.core.execution_lifecycle` | `parallax.core.diagnostics` |
 | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` |
 | `parallax.core.read_delivery` | `parallax.core.continuation`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout` |
-| `parallax.core.read_delivery._page` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-read-planning`, `m-document-codec`, `m-temporal-read`, `m-write-plan` |
+| `parallax.core.read_delivery._page` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-read-planning`, `m-concurrency`, `m-document-codec`, `m-temporal-read`, `m-write-plan` |
 | `parallax.core.unit_work` | `m-unit-work` |
 | `parallax.descriptor._hub` | `parallax.core.entity` |
 | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` |
 | `parallax.snapshot` | `parallax.core.entity` |
-| `parallax.snapshot._inspection` | `parallax.core.entity`, `parallax.core._execution._unit_work.evidence`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` |
-| `parallax.snapshot._publication` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.core.read_delivery._page`, `parallax.snapshot._inspection`, `parallax.core._execution._unit_work.evidence`, `m-read-planning`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
+| `parallax.snapshot._inspection` | `parallax.core.entity`, `parallax.core._execution._unit_work.evidence`, `m-metamodel`, `m-inheritance`, `m-read-planning`, `m-relationship`, `m-temporal-read` |
+| `parallax.snapshot._publication` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.core.read_delivery._page`, `parallax.snapshot._inspection`, `parallax.core._execution._unit_work.evidence`, `m-read-planning`, `m-concurrency`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
 
 Third-party packages are outside every scope, and a first-party grant says
 nothing about them. A **restricted external package** is one the framework

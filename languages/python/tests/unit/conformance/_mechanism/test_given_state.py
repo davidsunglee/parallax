@@ -39,13 +39,13 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
     consume_target,
 )
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, DocumentValue
 from parallax.core.db_port import (
     DatabaseConnection,
-    JsonDocument,
     OrderedWriteTransport,
     PipelineStatement,
     Row,
+    StructuredDocument,
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
@@ -126,7 +126,7 @@ def test_given_corrupt_writes_the_authored_value_into_the_stored_document() -> N
     )
     assert [binds for _sql, binds in port.reads] == [[101], [102]]
     assert all("from stream_coordinate where id = %s" in sql for sql, _ in port.reads)
-    written = [cast("JsonDocument", binds[0]).value for _sql, binds in port.writes]
+    written = [cast("StructuredDocument", binds[0]).document for _sql, binds in port.writes]
     assert written == [
         {"day": "2026-01-15", "clock": "09:30:00", "token": "NOT-A-UUID"},
         {"day": "2026-01-15", "clock": None, "token": "old"},
@@ -142,7 +142,7 @@ def test_given_corrupt_reads_a_document_its_provider_returned_as_text() -> None:
         "m-snapshot-read-049",
         '{"day": "2026-01-15", "clock": "09:30:00", "token": "old"}',
     )
-    written = cast("dict[str, object]", cast("JsonDocument", port.writes[0][1][0]).value)
+    written = cast("dict[str, object]", cast("StructuredDocument", port.writes[0][1][0]).document)
     assert written["token"] == "NOT-A-UUID"
 
 
@@ -157,7 +157,10 @@ def test_given_corrupt_descends_into_a_value_object_document() -> None:
             "value": 7,
         },
     )
-    assert cast("JsonDocument", port.writes[0][1][0]).value == {"street": 7, "city": "Boston"}
+    assert cast("StructuredDocument", port.writes[0][1][0]).document == {
+        "street": 7,
+        "city": "Boston",
+    }
 
 
 def test_given_corrupt_replaces_a_whole_occurrence_under_columns() -> None:
@@ -174,7 +177,7 @@ def test_given_corrupt_replaces_a_whole_occurrence_under_columns() -> None:
             "value": "not-an-object",
         },
     )
-    assert cast("JsonDocument", port.writes[0][1][0]).value == "not-an-object"
+    assert cast("StructuredDocument", port.writes[0][1][0]).document == "not-an-object"
 
 
 def test_given_corrupt_indexes_an_array_backed_structured_column() -> None:
@@ -191,7 +194,7 @@ def test_given_corrupt_indexes_an_array_backed_structured_column() -> None:
             "value": 7,
         },
     )
-    assert cast("JsonDocument", port.writes[0][1][0]).value == [{"code": 7}, {"code": "B"}]
+    assert cast("StructuredDocument", port.writes[0][1][0]).document == [{"code": 7}, {"code": "B"}]
 
 
 def test_given_corrupt_addresses_an_inherited_member_by_its_declaration() -> None:
@@ -209,7 +212,7 @@ def test_given_corrupt_addresses_an_inherited_member_by_its_declaration() -> Non
         },
     )
     assert "from publication_book where id = %s" in port.reads[0][0]
-    assert cast("JsonDocument", port.writes[0][1][0]).value == {
+    assert cast("StructuredDocument", port.writes[0][1][0]).document == {
         "title": 7,
         "detail": "hardback",
         "pages": 412,
@@ -323,7 +326,7 @@ def test_given_corrupt_descends_a_nested_occurrence_path() -> None:
             "value": 7,
         },
     )
-    written = cast("dict[str, Any]", cast("JsonDocument", port.writes[0][1][0]).value)
+    written = cast("dict[str, Any]", cast("StructuredDocument", port.writes[0][1][0]).document)
     assert written["address"] == {"city": "Oslo", "geo": {"country": 7}}
 
 
@@ -343,7 +346,9 @@ def test_given_corrupt_addresses_a_row_only_the_provisioning_model_declares() ->
 
     apply_given_corrupt(case, load_case_setup_metamodel(case), port)
 
-    assert [cast("JsonDocument", binds[0]).value for _sql, binds in port.writes] == [{"name": 7}]
+    assert [cast("StructuredDocument", binds[0]).document for _sql, binds in port.writes] == [
+        {"name": 7}
+    ]
     assert port.writes[0][0] == "update den_document set payload = %s where id = %s"
     with pytest.raises(KeyError, match="Den"):
         apply_given_corrupt(case, load_case_metamodel(case), _CorruptionPort({}))
@@ -377,7 +382,7 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
 
 
 def test_apply_given_apply_binds_a_mapping_as_the_document_it_stores() -> None:
-    document = {"displayName": "Dee", "badge": "gold"}
+    document: DocumentValue = {"displayName": "Dee", "badge": "gold"}
     case = case_format.Case(
         path=Path("m-batch-write-999-synthetic.yaml"),
         case_id="m-batch-write-999",
@@ -399,7 +404,7 @@ def test_apply_given_apply_binds_a_mapping_as_the_document_it_stores() -> None:
     port = FakeWritePort()
     apply_given_apply(case, port)
     assert port.writes == [
-        ("insert into traveler(id, payload) values (%s, %s)", [4, JsonDocument(document)])
+        ("insert into traveler(id, payload) values (%s, %s)", [4, StructuredDocument(document)])
     ]
 
 

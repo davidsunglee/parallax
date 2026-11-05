@@ -54,7 +54,6 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
-    JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
@@ -66,6 +65,7 @@ from parallax.core.db_port import (
     Row,
     StatementFailed,
     StatementNotExecuted,
+    StructuredDocument,
     TransactionOutcome,
     WriteResultIntegrityError,
 )
@@ -357,15 +357,15 @@ class _ArrayBindDumper(RecursiveDumper):
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
-    A :class:`~parallax.core.db_port.JsonDocument` (the neutral ``json`` /
-    value-object carrier) becomes a psycopg ``Jsonb``. An
+    A :class:`~parallax.core.db_port.StructuredDocument` becomes a psycopg
+    ``Jsonb``. An
     :class:`~parallax.core.db_port.ArrayBind` passes through unchanged to the
     dumper :func:`initialize_connection` registers for it, as does every other
     bind. This keeps the psycopg bind mechanics internal to the adapter — no
     driver type is exported to the developer surface (m-db-port).
     """
     return [
-        Jsonb(bind.value, dumps=dump_document) if isinstance(bind, JsonDocument) else bind
+        Jsonb(bind.document, dumps=dump_document) if isinstance(bind, StructuredDocument) else bind
         for bind in binds
     ]
 

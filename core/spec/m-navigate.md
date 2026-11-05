@@ -5,8 +5,8 @@ owns **cross-entity as-of propagation**. It consumes the symmetric Relationship
 Facet from `m-relationship`; it never reparses descriptor declarations or pairs
 reverse directions. Per the dependency graph, `m-navigate` also depends on
 `m-predicate` (the quantifiers, presence tests, dotted to-one paths, and
-target-local narrowings it gives behavior **are** algebra vocabulary), `m-unit-work` (navigation resolves through the unit of
-work), and `m-temporal-read` (a pinned as-of value propagates per hop). The
+target-local narrowings it gives behavior **are** algebra vocabulary) and
+`m-temporal-read` (a pinned as-of value propagates per hop). The
 **SQL emission** for these nodes is `m-sql`; this module ties the algebra to
 observable behavior. Deep fetch — eagerly populating an object graph while
 eliminating N+1 — builds on navigation and is `m-read-planning`.

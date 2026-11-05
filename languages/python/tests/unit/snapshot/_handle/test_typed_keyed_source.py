@@ -33,7 +33,7 @@ from parallax.conformance.vo_models import (
 from parallax.core import Attr, attr
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import write_projection
-from parallax.core.base import INFINITY, DocumentValue, PresentDocument
+from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import _entity as entity_module
@@ -108,7 +108,7 @@ def _published_contact() -> Contact:
     """One `Contact` whose stored address states no `city`, as the read that
     classifies it still hands the hydrated root back."""
     port = ScriptedAdapter(
-        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(_STORED_ADDRESS))}])
+        Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument(dict(_STORED_ADDRESS))}])
     )
     published = db_for(CONTACT_MODEL, port).find(Contact.where(Contact.id == 1)).checked().result()
     assert isinstance(published, InvalidData)

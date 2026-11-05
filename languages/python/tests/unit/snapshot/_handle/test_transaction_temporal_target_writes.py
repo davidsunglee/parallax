@@ -28,7 +28,7 @@ from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core.base import DocumentValue
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.db_port import MappingRow, StructuredDocument
 from parallax.core.execution import RetryPolicy
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -1035,8 +1035,8 @@ type _Acquisition = Literal["optimistic", "locking-covered", "locking-uncovered"
 
 
 def _plain(value: object) -> object:
-    if isinstance(value, JsonDocument):
-        return _plain(value.value)
+    if isinstance(value, StructuredDocument):
+        return _plain(value.document)
     if isinstance(value, Mapping):
         return {key: _plain(item) for key, item in cast("Mapping[str, object]", value).items()}
     if isinstance(value, tuple | list):

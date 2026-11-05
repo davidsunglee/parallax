@@ -18,7 +18,7 @@ from typing import cast
 import pytest
 
 from parallax.conformance import provision
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.wire import WireDecodingError
@@ -172,7 +172,7 @@ def test_fixture_statements_wrap_value_objects() -> None:
     fixtures = provision.load_fixtures("models/customer.yaml")
     statements = provision.fixture_statements(_MODELS["customer"], fixtures)
     _sql, binds = statements[0]
-    assert any(isinstance(bind, JsonDocument) for bind in binds)
+    assert any(isinstance(bind, StructuredDocument) for bind in binds)
 
 
 def test_fixture_statements_preserve_unknown_value_object_members() -> None:
@@ -185,8 +185,8 @@ def test_fixture_statements_preserve_unknown_value_object_members() -> None:
     )
 
     address = location[-1]
-    assert isinstance(address, JsonDocument)
-    document = cast("dict[str, object]", address.value)
+    assert isinstance(address, StructuredDocument)
+    document = cast("dict[str, object]", address.document)
     geo = cast("dict[str, object]", document["geo"])
     assert geo["zip"] == "0150"
 
@@ -258,7 +258,7 @@ def test_fixture_statements_tph_resolves_an_inherited_value_object_by_name() -> 
     fixtures = {"Leaf": [{"id": 1, "x": 2, "meta": {"a": 1}}]}
     (sql, binds) = provision.fixture_statements(meta, fixtures)[0]
     assert "meta" in sql
-    assert any(isinstance(bind, JsonDocument) for bind in binds)
+    assert any(isinstance(bind, StructuredDocument) for bind in binds)
 
 
 # --------------------------------------------------------------------------- #
@@ -310,11 +310,11 @@ def test_fixture_statements_omit_an_absent_cell_and_keep_the_document_last() -> 
     assert complete[0] == (
         "insert into layout_profile (id, label, note, contact) values (?, ?, ?, ?)"
     )
-    assert isinstance(complete[1][3], JsonDocument)
+    assert isinstance(complete[1][3], StructuredDocument)
     # Python omits the absent optional cell entirely rather than binding NULL; the
     # document keeps the final position among the columns that remain.
     assert omitted[0] == "insert into layout_profile (id, label, contact) values (?, ?, ?)"
-    assert isinstance(omitted[1][2], JsonDocument)
+    assert isinstance(omitted[1][2], StructuredDocument)
 
 
 # --------------------------------------------------------------------------- #
@@ -349,7 +349,7 @@ def test_fixture_statements_compose_one_document_from_the_rows_own_members() -> 
     # logical row under either layout.
     assert binds == [
         1,
-        JsonDocument(
+        StructuredDocument(
             {
                 "displayName": "Ada",
                 "score": 7,
@@ -369,7 +369,7 @@ def test_fixture_statements_keep_the_three_presence_states_apart() -> None:
     _, binds = statement
     # An omitted member contributes no key, an authored null contributes JSON
     # null, and a `many` occurrence always contributes its array.
-    assert binds[1] == JsonDocument({"displayName": None, "tags": []})
+    assert binds[1] == StructuredDocument({"displayName": None, "tags": []})
 
 
 def test_fixture_statements_refuse_a_non_mapping_many_occurrence_element() -> None:
@@ -386,7 +386,7 @@ def test_fixture_statements_bind_the_empty_document_for_a_row_with_no_document_m
     (statement,) = provision.fixture_statements(_DOCUMENT, {"parallax.test.Marker": [{"id": 3}]})
     sql, binds = statement
     assert sql == "insert into marker (id, payload) values (?, ?)"
-    assert binds == [3, JsonDocument({})]
+    assert binds == [3, StructuredDocument({})]
 
 
 def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> None:
@@ -423,9 +423,9 @@ def test_fixture_statements_spell_every_collection_element_and_keep_a_malformed_
         _MODELS["scalar-collection-layout-twin-document"], fixtures
     )
 
-    amounts, tags = (cast("JsonDocument", bind).value for bind in columns_binds[1:3])
+    amounts, tags = (cast("StructuredDocument", bind).document for bind in columns_binds[1:3])
     assert (amounts, tags) == (("1.50", "7.00"), "not-an-array")
-    document = cast("dict[str, object]", cast("JsonDocument", document_binds[1]).value)
+    document = cast("dict[str, object]", cast("StructuredDocument", document_binds[1]).document)
     assert (document["amounts"], document["tags"], document["flags"]) == (
         ("1.50", "7.00"),
         "not-an-array",

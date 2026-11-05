@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from parallax.conformance import models
 from parallax.core import predicate as oa
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import UNAVAILABLE, DocumentFinding
 from parallax.core.entity._layout import CatalogedModel
@@ -62,8 +62,8 @@ def test_a_collection_column_classifies_through_the_codec_with_its_logical_path(
     classify = classifiers[layout.index_of[tags.identity]]
     assert classify is not None
 
-    assert classify(PresentDocument(["b", "a", "b"])) == (("b", "a", "b"), ())
-    assert classify(PresentDocument(["b", 5])) == (
+    assert classify(StructuredDocument(["b", "a", "b"])) == (("b", "a", "b"), ())
+    assert classify(StructuredDocument(["b", 5])) == (
         UNAVAILABLE,
         (DocumentFinding("leaf-undecodable", ("tags", 1), 5),),
     )

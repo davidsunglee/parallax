@@ -45,8 +45,9 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY as OPEN_BOUND
+from parallax.core.base import DocumentValue
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
@@ -1273,7 +1274,7 @@ def test_audit_only_update_carries_the_value_object_document_on_the_chain() -> N
     statements = _lower_full(update, SUPPLIER, "2024-06-01T00:00:00+00:00", observation=observation)
     close, chain = statements
     assert close.sql == "update supplier set out_z = ? where sup_id = ? and out_z = ?"
-    assert chain.binds[-1] == JsonDocument(d2)
+    assert chain.binds[-1] == StructuredDocument(cast("DocumentValue", d2))
 
 
 def test_bitemporal_update_until_carries_the_value_object_document_on_every_chain() -> None:
@@ -1308,9 +1309,9 @@ def test_bitemporal_update_until_carries_the_value_object_document_on_every_chai
     )
     close, head, middle, tail = statements
     assert close.sql == ("update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?")
-    assert head.binds[-1] == JsonDocument(d1)
-    assert middle.binds[-1] == JsonDocument(d2)
-    assert tail.binds[-1] == JsonDocument(d1)
+    assert head.binds[-1] == StructuredDocument(cast("DocumentValue", d1))
+    assert middle.binds[-1] == StructuredDocument(cast("DocumentValue", d2))
+    assert tail.binds[-1] == StructuredDocument(cast("DocumentValue", d1))
 
 
 # --------------------------------------------------------------------------- #

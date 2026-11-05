@@ -30,7 +30,7 @@ from parallax.conformance import concurrency_runner, engine, models, provision
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.models import default_models_dir
-from parallax.core.base import SQL_NULL, PresentDocument, retain_document_value
+from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument, retain_document_value
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -39,7 +39,6 @@ from parallax.core.db_port import (
     CallbackRaised,
     CommitFailed,
     Committed,
-    JsonDocument,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
@@ -140,7 +139,7 @@ def test_live_structured_document_reads_preserve_sql_null_and_json_null(
     sql = "select false as present, null::jsonb as document union all select true, 'null'::jsonb"
     assert profile_run.port.execute(sql, [], document_reads=((0, 1),)) == [
         (SQL_NULL,),
-        (PresentDocument(None),),
+        (StructuredDocument(None),),
     ]
     assert profile_run.port.execute(
         "select null::jsonb as sql_null, 'null'::jsonb as json_null", []
@@ -152,7 +151,7 @@ def test_live_paired_rows_match_between_execute_and_pipeline(profile_run: Any) -
         "select 7 as id, true as left_present, '{\"a\": 1}'::jsonb as left_document, "
         "'kept' as label, false as right_present, null::jsonb as right_document"
     )
-    expected = [(7, PresentDocument({"a": 1}), "kept", SQL_NULL)]
+    expected = [(7, StructuredDocument({"a": 1}), "kept", SQL_NULL)]
     for document_reads in (((1, 2), (4, 5)), ((4, 5), (1, 2))):
         assert profile_run.port.execute(sql, [], document_reads) == expected
         assert profile_run.port.execute_pipeline(
@@ -206,7 +205,7 @@ def test_designated_reads_answer_exactly_what_undesignated_ones_do(profile_run: 
         PipelineStatement(sql, ([1, 2],), ((1, 2),)),
         PipelineStatement("select %s::text", ("second",)),
     )
-    expected_rows = [(1, PresentDocument({"a": 1})), (2, PresentDocument({"a": 1}))]
+    expected_rows = [(1, StructuredDocument({"a": 1})), (2, StructuredDocument({"a": 1}))]
 
     assert profile_run.port.execute(sql, [[1, 2]], ((1, 2),), read_only=True) == expected_rows
     assert profile_run.port.execute(sql, [[1, 2]], ((1, 2),)) == expected_rows
@@ -226,7 +225,9 @@ def test_a_document_bind_stores_every_number_with_its_exact_meaning(profile_run:
             ' "count": 1, "whole": 1.0, "flag": true, "items": [0.10000000000000001, 2]}'
         )
     )
-    ((text,),) = profile_run.port.execute("select (%s::jsonb)::text", [JsonDocument(stored)])
+    ((text,),) = profile_run.port.execute(
+        "select (%s::jsonb)::text", [StructuredDocument(cast("DocumentValue", stored))]
+    )
     meaning = json.loads(cast("str", text), parse_float=decimal.Decimal, parse_int=decimal.Decimal)
 
     assert meaning == {

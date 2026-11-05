@@ -27,7 +27,7 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedWriteSource,
 )
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core.base import PresentDocument
+from parallax.core.base import StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.read_delivery import InvalidData
@@ -70,7 +70,7 @@ _POSITION_ROW: Final[MappingRow] = {
 _INCOMPLETE_CONTACT_ROW: Final[MappingRow] = {
     "id": 1,
     "name": "Ada",
-    "address": PresentDocument(
+    "address": StructuredDocument(
         {"street": "Main", "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}}}
     ),
 }

@@ -17,6 +17,7 @@ from parallax.core.entity._expressions import (
     authored_include_path,
 )
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.read_planning import NarrowedViewKeys
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
@@ -29,6 +30,7 @@ from parallax.core.temporal_read import (
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",
+    "NarrowedViews",
     "NodeProvenance",
     "PageProvenance",
     "RootConformance",
@@ -154,14 +156,26 @@ class PageProvenance:
         return held
 
 
+class NarrowedViews(dict[str, object]):
+    """One node's loaded narrowed views, keyed by the derived view key, beside
+    the keys of the Model Edition that published them, which inspection reads
+    whatever model serves by then."""
+
+    __slots__ = ("view_keys",)
+
+    def __init__(self, view_keys: NarrowedViewKeys) -> None:
+        super().__init__()
+        self.view_keys = view_keys
+
+
 @dataclass(frozen=True, slots=True)
 class SnapshotNodeState:
     """One materialized Typed node's whole Snapshot-lifecycle state.
 
-    ``views`` holds the narrowed views the read requested, keyed by the derived
-    view key (relationship name plus effective concrete-subtype set); a broad
-    view's loaded state lives in the relationship slot itself, since installing
-    the unloaded sentinel there is what makes ordinary attribute access raise.
+    ``views`` holds the narrowed views the read requested, as
+    :class:`NarrowedViews` on a node that has any; a broad view's loaded state
+    lives in the relationship slot itself, since installing the unloaded sentinel
+    there is what makes ordinary attribute access raise.
 
     ``edge_cache`` is present exactly for a node whose family declares as-of
     axes. It holds the family's Temporal Shape until :func:`edge_of` first
@@ -408,20 +422,33 @@ def _segment_value(
     if relationship is None:
         raise _owner_mismatch(source, segment, operation)
     if segment.narrow_to:
-        key = _view_key(relationship.name, segment)
-        state = snapshot_state_of(source)
-        views: Mapping[str, object] = {} if state is None else state.views
-        if key not in views:
-            if raising:
-                raise UnloadedRelationshipError(key)
-            return _UNLOADED_MARKER
-        return views[key]
+        return _narrowed_value(source, relationship.name, segment, raising=raising)
     value = _relationship_value_of(source, relationship)
-    if value is UNLOADED:
-        if raising:
-            raise UnloadedRelationshipError(relationship.name)
-        return _UNLOADED_MARKER
-    return value
+    return _unloaded(relationship.name, raising=raising) if value is UNLOADED else value
+
+
+def _narrowed_value(
+    source: object, relationship: str, segment: AuthoredIncludeSegment, *, raising: bool
+) -> object:
+    """The narrowed view of ``source`` its own edition's keys name.
+
+    A node holding no narrowed view has no keys to ask, and a selection outside
+    its edition's model has no key, so each is unloaded under its authored
+    spelling.
+    """
+    state = snapshot_state_of(source)
+    views = None if state is None else state.views
+    if isinstance(views, NarrowedViews):
+        key = views.view_keys.for_selection(relationship, segment.narrow_to)
+        if key is not None:
+            return views[key] if key in views else _unloaded(key, raising=raising)
+    return _unloaded(_authored_spelling(relationship, segment), raising=raising)
+
+
+def _unloaded(path: str, *, raising: bool) -> _UnloadedMarker:
+    if raising:
+        raise UnloadedRelationshipError(path)
+    return _UNLOADED_MARKER
 
 
 def _required_state(node: object, operation: str) -> SnapshotNodeState:
@@ -481,17 +508,5 @@ def _entity_of(node: object) -> EntityIdentity | None:
     return declaration_of(cls).identity if is_entity_class(cls) else None
 
 
-def _view_key(relationship: str, segment: AuthoredIncludeSegment) -> str:
-    """The private narrowed view key: the relationship's own name, plus the variant
-    spellings of the concrete subtypes a narrowed segment names.
-
-    A view key is RESULT vocabulary while a segment's ``narrowTo`` is an addressing
-    reference, so the selection sheds its namespace here — the same local spelling
-    deep-fetch planning derived through ``inheritance.family_variant_name`` when it
-    keyed the view it populated.
-    """
-    return f"{relationship}[{','.join(sorted(_local(name) for name in segment.narrow_to))}]"
-
-
-def _local(spelling: str) -> str:
-    return spelling.rpartition(".")[2]
+def _authored_spelling(relationship: str, segment: AuthoredIncludeSegment) -> str:
+    return f"{relationship}[{','.join(name.rpartition('.')[2] for name in segment.narrow_to)}]"

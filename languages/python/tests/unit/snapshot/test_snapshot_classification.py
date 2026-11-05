@@ -30,7 +30,7 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
-from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument
 from parallax.core.concurrency import ConcurrencyFacet
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import MappingRow
@@ -265,7 +265,7 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
 # Publication: what a classified root delivers.                                #
 # --------------------------------------------------------------------------- #
 def _customer(row: dict[str, object]) -> InvalidData[object]:
-    document = PresentDocument(cast("Any", row["address"]))
+    document = StructuredDocument(cast("Any", row["address"]))
     port = ScriptedAdapter(Read(rows=[{**row, "address": document}]))
     database = own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login()
     return invalid_record(database.find(vo.Customer.where(vo.Customer.id == 1)).checked().result())
@@ -525,12 +525,12 @@ def _twin_records(
             COLUMNS_TWIN,
             ColumnsItem.where(ColumnsItem.id == 1).include(ColumnsItem.children),
             (
-                [{"id": 1, "profile": PresentDocument(cast("Any", profile))}],
+                [{"id": 1, "profile": StructuredDocument(cast("Any", profile))}],
                 [
                     {
                         "id": 11,
                         "item_id": 1,
-                        "profile": PresentDocument(cast("Any", child_profile)),
+                        "profile": StructuredDocument(cast("Any", child_profile)),
                     }
                 ],
             ),
@@ -539,12 +539,12 @@ def _twin_records(
             DOCUMENT_TWIN,
             DocumentItem.where(DocumentItem.id == 1).include(DocumentItem.children),
             (
-                [{"id": 1, "payload": PresentDocument({"profile": cast("Any", profile)})}],
+                [{"id": 1, "payload": StructuredDocument({"profile": cast("Any", profile)})}],
                 [
                     {
                         "id": 11,
                         "item_id": 1,
-                        "payload": PresentDocument({"profile": cast("Any", child_profile)}),
+                        "payload": StructuredDocument({"profile": cast("Any", child_profile)}),
                     }
                 ],
             ),

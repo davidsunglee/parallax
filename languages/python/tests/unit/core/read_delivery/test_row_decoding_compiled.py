@@ -14,7 +14,7 @@ from dataclasses import replace
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import DocumentValue, PresentDocument
+from parallax.core.base import DocumentValue, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
@@ -46,15 +46,15 @@ _DOCUMENT_VALUE: DocumentValue = {
 }
 _DOCUMENT_CELLS = {
     "id": 1,
-    "payload": PresentDocument(_DOCUMENT_VALUE),
+    "payload": StructuredDocument(_DOCUMENT_VALUE),
 }
 _COLUMNS_CELLS = {
     "id": 1,
     "display_name": "Ada",
     "score": 7,
     "joined_on": dt.date(2026, 1, 15),
-    "address": PresentDocument({"city": "Oslo", "geo": {"country": "NO"}}),
-    "tags": PresentDocument([{"label": "founder"}]),
+    "address": StructuredDocument({"city": "Oslo", "geo": {"country": "NO"}}),
+    "tags": StructuredDocument([{"label": "founder"}]),
 }
 
 

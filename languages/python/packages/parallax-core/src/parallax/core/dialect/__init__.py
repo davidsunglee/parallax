@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -21,8 +22,8 @@ from parallax.core.base import (
     Int64,
     Json,
     NeutralType,
-    PresentDocument,
     String,
+    StructuredDocument,
     Time,
     Timestamp,
     Uuid,
@@ -30,7 +31,9 @@ from parallax.core.base import (
 )
 
 __all__ = [
+    "JSON_NULL",
     "POSTGRES",
+    "ArrayBind",
     "ColumnDdl",
     "Dialect",
     "DocumentAssignment",
@@ -40,6 +43,7 @@ __all__ = [
     "ExclusionDdl",
     "IndexColumnDdl",
     "IntervalCheckDdl",
+    "JsonNull",
     "PhysicalIndexName",
     "RenderedScalarCell",
     "ScalarResult",
@@ -49,6 +53,35 @@ __all__ = [
 
 EncodedJsonKind = Literal["boolean", "number", "string"]
 """The JSON primitive kind a scalar's canonical document encoding takes."""
+
+
+class JsonNull(enum.Enum):
+    """The literal JSON ``null`` document as one element of a ``json``
+    :class:`ArrayBind`, distinct from ``None``, which is SQL NULL there."""
+
+    JSON_NULL = "null"
+
+
+JSON_NULL: Final = JsonNull.JSON_NULL
+
+
+@dataclass(frozen=True, slots=True)
+class ArrayBind:
+    """A neutral carrier for one array bind whose elements share ``element_type``.
+
+    ``values`` holds the managed elements in order, with no per-element
+    wrapper. A ``None`` element is SQL NULL under every element type, and a
+    ``timestamp`` element may be the open upper bound ``INFINITY``. Under
+    ``json`` every other element is one encoded document: ``JSON_NULL`` is the
+    literal JSON null document, and a list is one document rather than a
+    dimension. The carrier is the only owner of its element type, so a concrete
+    adapter binds the array from that type alone rather than by inspecting its
+    elements. ``values`` is the caller's own list, handed over unchanged: it
+    must not be mutated after binding.
+    """
+
+    element_type: NeutralType
+    values: list[object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,7 +376,7 @@ class Dialect:
                 "a present structured-document result must be a portable JSON value, "
                 f"got {type(document).__name__}"
             )
-        return PresentDocument(document)
+        return StructuredDocument(document)
 
     # -- result shaping ---------------------------------------------------- #
     def limit_clause(self) -> str:

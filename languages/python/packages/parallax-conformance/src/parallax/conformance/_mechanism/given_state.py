@@ -13,7 +13,8 @@ from parallax.conformance._mechanism.model_facts import (
 )
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import inheritance, storage_layout
-from parallax.core.db_port import DatabaseConnection, JsonDocument
+from parallax.core.base import DocumentValue
+from parallax.core.db_port import DatabaseConnection, StructuredDocument
 from parallax.core.metamodel import EntityMetadata, PrimaryKey
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
@@ -105,7 +106,7 @@ def _corrupt_stored_state(
     document = _replaced_at(_stored_value(rows[0][0]), path, entry["value"])
     port.execute_write(
         dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
-        [JsonDocument(document), key],
+        [StructuredDocument(cast("DocumentValue", document)), key],
     )
 
 
@@ -280,7 +281,7 @@ def apply_given_apply(case: case_format.Case, port: DatabaseConnection) -> None:
         sql = cast("str", entry["sql"])
         # A mapping bind is a whole document a Structured Column stores.
         binds = [
-            JsonDocument(cast("Mapping[str, object]", bind)) if isinstance(bind, Mapping) else bind
+            StructuredDocument(cast("DocumentValue", bind)) if isinstance(bind, Mapping) else bind
             for bind in cast("list[object]", entry.get("binds", []))
         ]
         port.execute_write(port.dialect.to_driver_sql(sql), driver_binds(binds))

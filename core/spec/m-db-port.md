@@ -39,28 +39,23 @@ and driver row mappings do not cross the port. The compiled statement owns the
 corresponding result keys; a name-keyed consumer MAY expose a Mapping view over
 those keys and the positional row, but MUST NOT construct a dictionary per row.
 
-A structured-document bind crosses the port as an already portable codec
-document, including the recognized recursively immutable object and array
-carriers `m-core` admits. A concrete adapter serializes that carrier directly
-through its driver's structured-document binding mechanism. It MUST NOT first
-thaw or recursively copy an immutable document into mutable containers, and it
-MUST NOT interpret model shape or leaf meaning. Its JSON text is `m-wire`'s
-`dumpDocument` of the carrier, so every number is stored with the exact meaning
+A structured-document bind crosses the port as `m-core`'s `StructuredDocument`,
+holding an already portable codec document, including the recognized recursively
+immutable object and array carriers `m-core` admits. A concrete adapter serializes
+that document directly through its driver's structured-document binding mechanism.
+It MUST NOT first thaw or recursively copy an immutable document into mutable
+containers, and it MUST NOT interpret model shape or leaf meaning. Its JSON text is
+`m-wire`'s `dumpDocument` of the document, so every number is stored with the exact meaning
 it carries, a number retained from an earlier read included; the adapter
 interprets no numeric provenance itself. The final serialized bytes and driver
 buffers remain necessary adapter output.
 
-An array bind crosses the port as one **array carrier**: the Neutral Type its
-elements share, and its managed elements in order, with no per-element wrapper.
-A null element is SQL NULL under every element type, and a `timestamp`
-element may be the open upper bound (`m-core`). Under `json` every other
-element is one portable codec document, serialized as the structured-document
-bind above serializes it, and a JSON array is one element, never a further
-array dimension. The literal JSON `null` document is a distinct element marker
-the carrier owns, which the adapter serializes as JSON `null`; the null element
-never spells it. The carrier is the only owner of the element type: a concrete
-adapter binds the array as that type's array, and MUST NOT infer a type from
-the elements or copy them into another sequence first. The statement casts the parameter to its array type (`m-dialect`
+An array bind crosses the port as one array carrier (`m-dialect` *Array carrier*).
+A concrete adapter serializes each `json` element document as the
+structured-document bind above serializes its document, and the carrier's literal
+JSON `null` marker as JSON `null`. It binds the array as the array of the carrier's
+element type, and MUST NOT infer a type from the elements or copy them into another
+sequence first. The statement casts the parameter to its array type (`m-dialect`
 **array parameter cast form**), so an adapter whose driver has no native array
 binding MAY instead bind one correctly escaped array literal of the elements'
 text spellings for the cast to type on the server. Ownership of the element
@@ -651,8 +646,8 @@ pairs are an implementation-contract violation, not stored-data classification.
 The adapter passes the pair to its dialect's document-read parser, omits the
 presence cell from the managed row, and places the resulting provider-neutral
 `m-core` `DocumentRead` at the document cell's position in the folded result. Thus one
-managed row value is either `SqlNull` or `PresentDocument(document)`, and SQL
-`NULL` remains distinct from `PresentDocument(document: JSON null)` even when the
+managed row value is either `SqlNull` or `StructuredDocument(document)`, and SQL
+`NULL` remains distinct from `StructuredDocument(document: JSON null)` even when the
 driver used one host sentinel for both raw values. No consumer may reconstruct
 the tag from the raw document cell after the adapter boundary. A freshly parsed
 document transfers to the read consumer as owned input; the adapter does not
