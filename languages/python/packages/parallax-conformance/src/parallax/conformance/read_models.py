@@ -24,6 +24,7 @@ from parallax.core import (
     TxTemporal,
     ValueObject,
     attr,
+    desc,
     index,
     rel,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "PERSON_MODEL",
     "PREDICATE_TRAVERSAL_MODEL",
     "RATE_MODEL",
+    "RATE_SHEET_MODEL",
     "READ_ONLY_INHERITANCE_MODEL",
     "SCALARS_MODEL",
     "Annotation",
@@ -66,8 +68,11 @@ __all__ = [
     "Pet",
     "Publication",
     "Rate",
+    "RateSheet",
     "Receipt",
     "ScalarThing",
+    "SheetDeposit",
+    "SheetLoan",
     "Ticket",
     "TraversalCat",
     "TraversalDog",
@@ -208,6 +213,39 @@ class LoanRate(Rate, table="loan_rate", namespace=_NS, inheritance=ConcreteSubty
 
 
 RATE_MODEL = DomainModel(Rate, DepositRate, LoanRate)
+
+
+class SheetRate(
+    Bitemporal,
+    namespace=_NS,
+    inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
+):
+    id: Attr[int] = attr(primary_key=True)
+    sheet_id: Attr[int]
+    priority: Attr[int | None] = attr(type=Int32)
+    tier: Attr[int | None] = attr(type=Int32)
+
+
+class SheetDeposit(SheetRate, table="sheet_deposit", namespace=_NS, inheritance=ConcreteSubtype):
+    grade: Attr[str | None] = attr(max_length=8)
+
+
+class SheetLoan(SheetRate, table="sheet_loan", namespace=_NS, inheritance=ConcreteSubtype):
+    spread: Attr[int | None] = attr(type=Int32)
+
+
+class RateSheet(Bitemporal, table="rate_sheet", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=16)
+    rates: Rel[tuple[SheetRate, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "sheet_id"))
+    ranked_rates: Rel[tuple[SheetRate, ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "sheet_id"),
+        order_by=(desc("priority"), "tier", "id"),
+    )
+
+
+RATE_SHEET_MODEL = DomainModel(RateSheet, SheetRate, SheetDeposit, SheetLoan)
 
 
 class Person(

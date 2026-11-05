@@ -31,7 +31,7 @@ that statement must say is a property of the layout rather than of any row.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
 from ..case import Case, Entity, Model
@@ -842,6 +842,22 @@ def _rows_at_their_union_branch(
         _tpcs_row_at_its_branch(case, position, row, subject=f"polymorphic hop {view_key}")
         for row in rows
     ]
+
+
+def level_order_binds(
+    case: Case, concretes: list[str], order_by: Sequence[dict[str, Any]], dialect: str
+) -> tuple[str, ...]:
+    """What a level over *concretes* ordered by *order_by* binds after every branch."""
+    family = Family(case.model.entity_defs)
+    position = _tpcs_position(case, family, concretes, instance_form=True)
+    return tpcs.level_order_binds(
+        case,
+        position.view,
+        position.branch_variants,
+        order_by,
+        dialect,
+        document_resident=position.document_resident,
+    )
 
 
 def _materialize_navigated_family_variant(

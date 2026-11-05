@@ -38,6 +38,7 @@ from parallax.conformance.read_models import (
     Payment,
     Person,
     Pet,
+    RateSheet,
     Ticket,
     WildBoar,
 )
@@ -109,6 +110,25 @@ def empty_intermediate_level_short_circuits(db: ScopedDatabase) -> Snapshot[Any]
 
 def a_three_hop_include_loads_every_level(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Ticket.where(Ticket.all).include(Ticket.parking.vehicle.dealer))
+
+
+def a_temporal_union_level_reads_every_branch_at_the_root_pin(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(
+        RateSheet.where(RateSheet.all)
+        .as_of(
+            valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC),
+        )
+        .include(RateSheet.rates)
+    )
+
+
+def an_ordered_union_level_sorts_across_its_branches(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(
+        RateSheet.where(RateSheet.all)
+        .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), tx_time=LATEST)
+        .include(RateSheet.ranked_rates)
+    )
 
 
 def pinned_graph_at_a_past_valid_time_instant(db: ScopedDatabase) -> Snapshot[Any]:
@@ -659,6 +679,18 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A three-hop include loads every level, one statement per hop",
         "predicate-traversal",
         a_three_hop_include_loads_every_level,
+    ),
+    GraphStory(
+        "m-read-planning-028",
+        "A temporal union level reads every branch at the root's pin",
+        "rate-sheet",
+        a_temporal_union_level_reads_every_branch_at_the_root_pin,
+    ),
+    GraphStory(
+        "m-read-planning-029",
+        "An ordered union level sorts its children across the branches",
+        "rate-sheet",
+        an_ordered_union_level_sorts_across_its_branches,
     ),
     GraphStory(
         "m-navigate-013",

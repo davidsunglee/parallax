@@ -20,6 +20,7 @@ does not derive and states them as arguments.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, NamedTuple
 
@@ -32,7 +33,12 @@ from ..case_assertions import CaseFailure
 from ..ddl_builder import declared_contributors, placeholder_cast_type
 from ..inheritance import Family
 from ..sql_canonical import NonCanonicalError, sqlglot_dialect
-from ..sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
+from ..sql_wrapped_union import (
+    WrapFacts,
+    WrapOrderKey,
+    order_key_binds,
+    wrapped_union_source,
+)
 from ..storage_layout import (
     AttributeContributor,
     ColumnSlot,
@@ -277,8 +283,9 @@ def _order_keys(
     branch_variants: list[tuple[PositionBranch, str]],
     ordinals: tuple[int, ...],
     aliases: list[str],
+    sort_keys: Sequence[dict[str, Any]],
 ) -> tuple[WrapOrderKey, ...]:
-    """The read's authored Sort Keys as the wrap's `order by` must render them.
+    """*sort_keys* as the wrap's `order by` must render them.
 
     An ordered abstract read applies its tail against the union alias, so each key
     names the result alias its member reaches rather than any branch's own spelling
@@ -290,7 +297,7 @@ def _order_keys(
     DECLARED one, which is why the key never meets a branch's typed `NULL` placeholder.
     """
     keys: list[WrapOrderKey] = []
-    for sort_key in case.object_query.get("orderBy") or []:
+    for sort_key in sort_keys:
         attr = sort_key.get("attr")
         member = str(attr).rpartition(".")[2]
         indices = [index for index, address in enumerate(view.members) if address.path == (member,)]
@@ -346,6 +353,28 @@ def _order_keys(
     return tuple(keys)
 
 
+def _wrap_facts(
+    case: Case,
+    view: PositionLayoutView,
+    branch_variants: list[tuple[PositionBranch, str]],
+    ordinals: tuple[int, ...],
+    sort_keys: Sequence[dict[str, Any]],
+    limit: int | None = None,
+) -> WrapFacts:
+    """What a statement over *ordinals* cannot say about its own wrap."""
+    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
+    aliases = result_aliases(superset)
+    return WrapFacts(
+        document_aliases=frozenset(
+            alias
+            for alias, ordinal in zip(aliases, ordinals, strict=True)
+            if view.columns[ordinal].tier is ColumnTier.DOCUMENT
+        ),
+        order_keys=_order_keys(case, view, branch_variants, ordinals, aliases, sort_keys),
+        limit=limit,
+    )
+
+
 def assert_union_shape(
     case: Case,
     view: PositionLayoutView,
@@ -382,16 +411,13 @@ def assert_union_shape(
     ordinals = projected_position_ordinals(
         view, instance_form=is_instance_form(case), document_resident=document_resident
     )
-    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
-    aliases = result_aliases(superset)
-    facts = WrapFacts(
-        document_aliases=frozenset(
-            alias
-            for alias, ordinal in zip(aliases, ordinals, strict=True)
-            if view.columns[ordinal].tier is ColumnTier.DOCUMENT
-        ),
-        order_keys=_order_keys(case, view, branch_variants, ordinals, aliases),
-        limit=case.object_query.get("limit"),
+    facts = _wrap_facts(
+        case,
+        view,
+        branch_variants,
+        ordinals,
+        case.object_query.get("orderBy") or [],
+        case.object_query.get("limit"),
     )
     for dialect in sorted(case.golden_dialects):
         statements = case.golden_statements(dialect)
@@ -489,7 +515,9 @@ class LevelUnion(NamedTuple):
     were gathered. ``key_array`` is the cast array those keys travel in, absent on a
     dialect expanding them to one placeholder each. ``branch_binds`` is how many binds
     each branch must consume, derived from the gathered keys and the propagated as-of
-    coordinates rather than read off the statement.
+    coordinates rather than read off the statement. ``order_by`` is the relationship's
+    declared ordering, empty when it declares none. ``binds`` is the statement's whole
+    bind list, the outer order's Document paths following every branch's.
     """
 
     concretes: list[str]
@@ -499,6 +527,64 @@ class LevelUnion(NamedTuple):
     key_count: int
     key_array: str | None
     branch_binds: int
+    order_by: Sequence[dict[str, Any]]
+    binds: tuple[Any, ...]
+
+
+def _level_wrap_facts(
+    case: Case,
+    view: PositionLayoutView,
+    branch_variants: list[tuple[PositionBranch, str]],
+    order_by: Sequence[dict[str, Any]],
+    *,
+    document_resident: bool,
+) -> WrapFacts:
+    """The wrap facts of a level ordered by its relationship's *order_by*."""
+    return _wrap_facts(
+        case,
+        view,
+        branch_variants,
+        projected_position_ordinals(view, instance_form=True, document_resident=document_resident),
+        [{**key, "attr": key["attribute"]} for key in order_by],
+    )
+
+
+def level_order_binds(
+    case: Case,
+    view: PositionLayoutView,
+    branch_variants: list[tuple[PositionBranch, str]],
+    order_by: Sequence[dict[str, Any]],
+    dialect: str,
+    *,
+    document_resident: bool,
+) -> tuple[str, ...]:
+    """What an ordered level binds after every branch (m-sql)."""
+    facts = _level_wrap_facts(
+        case, view, branch_variants, order_by, document_resident=document_resident
+    )
+    return order_key_binds(facts.order_keys, dialect)
+
+
+def _level_union_body(case: Case, tree: Any, level: LevelUnion, facts: WrapFacts) -> Any:
+    """The `union all` of a level's parsed statement, once its outer form is graded.
+
+    Only a declared `orderBy` wraps a level, so an unordered level is one bare union
+    and an ordered one is the wrap its keys render to (m-sql).
+    """
+    if not level.order_by:
+        if not isinstance(tree, exp.Union):
+            raise CaseFailure(
+                f"{case.path.name}: a deep-fetch level over {level.concretes} reads one bare "
+                f"`union all`, one branch per concrete (m-sql / m-read-planning)."
+            )
+        return tree
+    body = _union_all_body(case, tree, level.dialect, facts)
+    if body is tree:
+        raise CaseFailure(
+            f"{case.path.name}: a deep-fetch level over {level.concretes} declares `orderBy`, "
+            f"so it wraps its `union all` as the derived table `u` (m-sql / m-read-planning)."
+        )
+    return body
 
 
 def assert_level_union_shape(
@@ -513,7 +599,9 @@ def assert_level_union_shape(
 
     A level over two or more concretes is the abstract-read lowering keyed by the
     gathered parent keys, so its branches are graded exactly as a whole read's are,
-    and it is instance-form by classification. What a read does not have is the shared
+    and it is instance-form by classification. A relationship's declared `orderBy`
+    wraps the union as an ordered read's Sort Keys do, graded by the same verifier
+    against the relationship's keys. What a read does not have is the shared
     key set: every branch must compare the SAME keys, so each is graded for its own
     membership term and its own bind count. The count is what the level's flat bind
     list cannot show, since an uneven split of those binds across the branches would
@@ -522,12 +610,11 @@ def assert_level_union_shape(
     engine = sqlglot_dialect(level.dialect)
     tree = sqlglot.parse_one(level.statement, read=engine)
     assert_union_all_only(case, tree)
-    if not isinstance(tree, exp.Union):
-        raise CaseFailure(
-            f"{case.path.name}: a deep-fetch level over {level.concretes} reads one bare "
-            f"`union all`, one branch per concrete (m-sql / m-read-planning)."
-        )
-    branches = union_branch_selects(tree)
+    facts = _level_wrap_facts(
+        case, view, branch_variants, level.order_by, document_resident=document_resident
+    )
+    body = _level_union_body(case, tree, level, replace(facts, binds=level.binds))
+    branches = union_branch_selects(body)
     _assert_union_branches(
         case,
         branches,

@@ -2771,6 +2771,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-navigate / m-read-planning: Relational Document Layout traversals ----- #
     "m-navigate-025": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
     "m-read-planning-024": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
+    "m-read-planning-030": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
     "m-snapshot-read-002": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     # -- m-snapshot-read: orders-family graph siblings ----------------------- #
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,

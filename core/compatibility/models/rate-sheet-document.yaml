@@ -1,0 +1,45 @@
+entities:
+  - name: RateSheet
+    namespace: parallax.compatibility
+    table: rate_sheet
+    temporality: bitemporal
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: name, type: string, maxLength: 16}
+    relationships:
+      - name: rates
+        cardinality: one-to-many
+        join:
+          source: id
+          target: {entity: parallax.compatibility.SheetRate, attribute: sheetId}
+      - name: rankedRates
+        cardinality: one-to-many
+        join:
+          source: id
+          target: {entity: parallax.compatibility.SheetRate, attribute: sheetId}
+        orderBy:
+          - {attribute: priority, direction: desc}
+          - {attribute: tier}
+          - {attribute: id}
+  - name: SheetRate
+    namespace: parallax.compatibility
+    layout: {document: {column: payload}}
+    inheritance: {role: root, strategy: table-per-concrete-subtype}
+    temporality: bitemporal
+    attributes:
+      - {name: id, type: int64, primaryKey: true}
+      - {name: sheetId, type: int64}
+      - {name: priority, type: int32, nullable: true}
+      - {name: tier, type: int32, nullable: true}
+  - name: SheetDeposit
+    namespace: parallax.compatibility
+    table: sheet_deposit
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.SheetRate}
+    attributes:
+      - {name: grade, type: string, maxLength: 8, nullable: true}
+  - name: SheetLoan
+    namespace: parallax.compatibility
+    table: sheet_loan
+    inheritance: {role: concrete-subtype, parent: parallax.compatibility.SheetRate}
+    attributes:
+      - {name: spread, type: int32, nullable: true}
