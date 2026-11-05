@@ -6,7 +6,7 @@
 # which forces a transaction whose peer committed underneath it to be refused
 # rather than to write over a generation it never observed.
 model: models/error-cases.yaml
-tags: [m-db-error, isolation, deadlock, lost-update, slice-snapshot-1, slice-managed-1]
+tags: [m-db-error, isolation, deadlock, lost-update, slice-snapshot-1]
 shape: error
 compileEligibility:
   mode: run-only

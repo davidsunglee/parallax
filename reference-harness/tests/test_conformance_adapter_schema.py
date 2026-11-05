@@ -50,49 +50,6 @@ def _valid_describe() -> dict:
     }
 
 
-def _valid_benchmark() -> dict:
-    return {
-        "schemaVersion": "1",
-        "command": "benchmark",
-        "status": "ok",
-        "adapter": {
-            "language": "reference",
-            "name": "parallax-core",
-            "version": "0.1.0",
-        },
-        "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
-        "profile": "pg-full",
-        "report": {
-            "generatedAt": "2026-06-27T00:00:00+00:00",
-            "dialect": "postgres",
-            "benchmarks": [
-                {
-                    "fixture": "read-mix.yaml",
-                    "model": "models/account.yaml",
-                    "datasetRows": 1000,
-                    "workloads": [
-                        {
-                            "name": "point-read",
-                            "iterations": 200,
-                            "wallTimeMs": {
-                                "p50": 2.8,
-                                "p95": 4.7,
-                            },
-                            "databaseCalls": 1,
-                            "expectDatabaseCalls": 1,
-                            "databaseCallsOk": True,
-                        }
-                    ],
-                }
-            ],
-            "memory": {
-                "peakBytes": 12582912,
-                "steadyBytes": 10485760,
-            },
-        },
-    }
-
-
 def _valid_run(observations: dict) -> dict:
     return {
         "schemaVersion": "1",
@@ -178,7 +135,7 @@ def test_run_still_valid_without_lifecycle_observations() -> None:
 )
 def test_run_accepts_every_application_lifecycle_error_class(error_class: str) -> None:
     # The `errors` observation's vocabulary is the case format's whole closed
-    # `expectError` set: m-identity-map's finite-pin refusal plus m-unit-work's
+    # `expectError` set: m-temporal-write's finite-pin refusal plus m-unit-work's
     # three write-value provenance refusals.
     observations = {
         "databaseCalls": 1,
@@ -305,47 +262,19 @@ def test_describe_still_allows_omitting_case_tags_for_all_or_nothing_claims() ->
     assert errors == []
 
 
-def test_describe_accepts_coherence_module_claim() -> None:
+def test_describe_accepts_snapshot_module_claim() -> None:
     describe = copy.deepcopy(_valid_describe())
-    describe["capabilities"]["modules"] = ["m-core", "m-unit-work", "m-coherence"]
+    describe["capabilities"]["modules"] = ["m-core", "m-unit-work", "m-snapshot-read"]
 
     errors = list(_validator().iter_errors(describe))
     assert errors == []
 
 
-def test_describe_rejects_bare_coherence_module_claim() -> None:
-    # Cross-process coherence is module `m-coherence`; a bare, un-prefixed
-    # "coherence" claim does not match the `m-<slug>` module grammar, so an
-    # adapter MUST claim `m-coherence` instead.
+def test_describe_rejects_bare_snapshot_module_claim() -> None:
+    # Cross-process coherence is module `m-snapshot-read`; a bare, un-prefixed
+    # "snapshot-read" claim does not match the `m-<slug>` module grammar, so an
+    # adapter MUST claim `m-snapshot-read` instead.
     describe = copy.deepcopy(_valid_describe())
-    describe["capabilities"]["modules"] = ["m-core", "coherence"]
+    describe["capabilities"]["modules"] = ["m-core", "snapshot-read"]
 
     assert list(_validator().iter_errors(describe))
-
-
-def test_benchmark_accepts_m13_report_shape() -> None:
-    errors = list(_validator().iter_errors(_valid_benchmark()))
-    assert errors == []
-
-
-def test_benchmark_rejects_legacy_metrics_shape() -> None:
-    benchmark = {
-        "schemaVersion": "1",
-        "command": "benchmark",
-        "status": "ok",
-        "adapter": {
-            "language": "reference",
-            "name": "parallax-core",
-            "version": "0.1.0",
-        },
-        "benchmark": "core/compatibility/benchmarks/read-mix.yaml",
-        "dialect": "postgres",
-        "metrics": {
-            "iterations": 100,
-            "p50Ms": 2.8,
-            "p95Ms": 4.7,
-            "databaseCalls": 1,
-        },
-    }
-
-    assert list(_validator().iter_errors(benchmark))

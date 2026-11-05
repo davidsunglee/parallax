@@ -2,7 +2,7 @@
 # column because storage provenance is separate from the synthetic graph key: both the
 # `profile` document and exact concrete variant must survive one abstract-family read.
 model: models/materialization-key-compatibility.yaml
-tags: [m-inheritance, m-value-object, m-sql, m-api-conformance, table-per-hierarchy, familyVariant, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-value-object, m-sql, m-api-conformance, table-per-hierarchy, familyVariant, graph, instance-form, materialization-key, positive, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

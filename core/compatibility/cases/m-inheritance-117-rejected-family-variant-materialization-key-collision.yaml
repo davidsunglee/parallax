@@ -2,7 +2,7 @@
 # the framework-owned synthetic familyVariant key. Model Formation must reject the
 # provenance collision before an abstract read can materialize the subtype identity.
 model: models/member-column-defaults.yaml
-tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, familyVariant, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, familyVariant, table-per-concrete-subtype, slice-snapshot-1]
 shape: rejected
 when:
   model:

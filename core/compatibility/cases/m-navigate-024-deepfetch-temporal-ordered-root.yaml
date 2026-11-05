@@ -6,7 +6,7 @@
 # predicate and collects the same as-of pins to PROPAGATE into the child level
 # whatever other clauses the query carries.
 model: models/policy.yaml
-tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, orderBy, limit, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, orderBy, limit, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

@@ -1,7 +1,7 @@
 # Read-your-own-writes for UPDATE (m-unit-work): a dependent find observes a
 # committed in-transaction UPDATE.
 model: models/account.yaml
-tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

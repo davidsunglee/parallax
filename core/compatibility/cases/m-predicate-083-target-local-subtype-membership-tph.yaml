@@ -2,7 +2,7 @@
 # not of the queried collar: collars on dogs. An absent pet is false. The bare test
 # needs no operand envelope, so MariaDB spells it too.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

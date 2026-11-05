@@ -1,7 +1,7 @@
 # Disjoint TPH siblings may reuse one Document Path with incompatible declared
 # types, and their predicates execute in tag-partitioned union branches.
 model: models/document-layout.yaml
-tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

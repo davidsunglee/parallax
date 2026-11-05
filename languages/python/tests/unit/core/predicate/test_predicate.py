@@ -2,7 +2,7 @@
 
 The serde round-trip contract (`serialize(deserialize(x)) == x`) is proven over
 every predicate the corpus authors — the `predicate` clause of every read query
-and of every scenario/coherence read step — so every node kind in the selection
+and of every scenario read step — so every node kind in the selection
 grammar (constants, scalar operations over a field or a bound scalar element,
 boolean + group, quantifiers, presence, and narrowing) round-trips through the
 canonical single-key encoding. Structural rejection branches are pinned too.
@@ -33,21 +33,20 @@ def _predicates() -> list[tuple[str, dict[str, Any]]]:
         query: Any = when.get("objectQuery")
         if isinstance(query, dict):
             found.append((case.case_id, cast("dict[str, Any]", query)["predicate"]))
-        for key in ("scenario", "coherence"):
-            steps: Any = when.get(key)
-            if not isinstance(steps, list):
+        steps: Any = when.get("scenario")
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(cast("list[Any]", steps)):
+            if not isinstance(step, dict):
                 continue
-            for index, step in enumerate(cast("list[Any]", steps)):
-                if not isinstance(step, dict):
-                    continue
-                inner: Any = cast("dict[str, Any]", step).get("objectQuery")
-                if isinstance(inner, dict):
-                    found.append(
-                        (
-                            f"{case.case_id}/{key}/{index}",
-                            cast("dict[str, Any]", inner)["predicate"],
-                        )
+            inner: Any = cast("dict[str, Any]", step).get("objectQuery")
+            if isinstance(inner, dict):
+                found.append(
+                    (
+                        f"{case.case_id}/scenario/{index}",
+                        cast("dict[str, Any]", inner)["predicate"],
                     )
+                )
     return found
 
 

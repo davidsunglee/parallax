@@ -2,7 +2,7 @@
 # is prepared: each selected object's current milestone must be observed before it
 # is closed, and one readless statement observes nothing.
 model: models/balance.yaml
-tags: [m-batch-write, m-temporal-write, rejected, predicate-write, temporal, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-temporal-write, rejected, predicate-write, temporal, slice-snapshot-1]
 shape: rejected
 when:
   write:

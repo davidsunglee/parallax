@@ -107,13 +107,13 @@ it is stable under concurrent writing.
 The invariant reaches every surface that authors these writes, which is what
 makes a view pinned at a finite Transaction-Time instant **read-only** rather
 than merely inadvisable: mutating one raises the neutral
-`transaction-time-pin-read-only` error and emits no DML (`m-identity-map`).
+`transaction-time-pin-read-only` error and emits no DML.
 
 The append is what the suite grades, so the cases grading it discharge the
 invariant. `m-temporal-write-002` and `-005` assert the resulting milestone rows —
 `-005` chains onto persisted history and carries the superseded prior through
 `then.tableState` unchanged; `m-temporal-write-003` asserts that a `terminate`
-leaves no current row while deleting nothing; `m-identity-map-010` and
+leaves no current row while deleting nothing; `m-temporal-write-092` and
 `m-temporal-write-032` assert the refusal at the mutation surface.
 
 A current row the **same attempt** opened is not yet part of that past: no
@@ -888,7 +888,7 @@ it: closed history is never mutated, and the stale gate reports the conflict
 instead (*The close addresses a Milestone Target*, above). An observation of a rectangle the Transaction-Time
 past holds never reaches planning at all, under either strategy: it could only come from
 a view pinned at a finite Transaction-Time instant, which is read-only
-(`m-identity-map`).
+under this module's finite Transaction-Time pin rule.
 
 ## Affected-row conflict contract for closes
 

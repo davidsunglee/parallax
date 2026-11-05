@@ -54,40 +54,6 @@ _EXPECTED_MODULE_UNIONS = {
         "m-write-payload",
         "m-write-plan",
     ],
-    "slice-managed-1": [
-        "m-api-conformance",
-        "m-auto-retry",
-        "m-batch-write",
-        "m-case-format",
-        "m-concurrency",
-        "m-conformance-adapter",
-        "m-core",
-        "m-db-error",
-        "m-descriptor",
-        "m-dialect",
-        "m-document-codec",
-        "m-edit",
-        "m-identity-map",
-        "m-inheritance",
-        "m-metamodel",
-        "m-model-formation",
-        "m-navigate",
-        "m-object-query",
-        "m-op-list",
-        "m-pk-gen",
-        "m-predicate",
-        "m-read-planning",
-        "m-relationship",
-        "m-sql",
-        "m-storage-layout",
-        "m-temporal-read",
-        "m-temporal-write",
-        "m-unit-work",
-        "m-value-object",
-        "m-wire",
-        "m-write-payload",
-        "m-write-plan",
-    ],
 }
 
 _STORAGE_LAYOUT_CONTRACT_CASES = {
@@ -171,16 +137,9 @@ _BASE_CASE_SHAPES = [
         (
             "slice-snapshot-1",
             "m-snapshot-read",
-            "m-identity-map",
+            "m-unclaimed-example",
             ["m-db-port"],
             [*_BASE_CASE_SHAPES, "evolution"],
-        ),
-        (
-            "slice-managed-1",
-            "m-identity-map",
-            "m-snapshot-read",
-            ["m-db-port"],
-            _BASE_CASE_SHAPES,
         ),
     ],
 )
@@ -259,7 +218,6 @@ def test_unknown_slice_is_an_actionable_usage_error(capsys: pytest.CaptureFixtur
     assert rc == 2
     error = capsys.readouterr().err
     assert "unknown slice 'slice-unknown-1'" in error
-    assert "slice-managed-1" in error
     assert "slice-snapshot-1" in error
 
 
@@ -282,4 +240,4 @@ def test_all_slice_check_exercises_every_canonical_claim(
     rc = main(["--check-all", str(_SPEC_DIR), str(_COMPATIBILITY_ROOT)])
 
     assert rc == 0
-    assert capsys.readouterr().out == "slice inspection OK: 2 canonical claim(s)\n"
+    assert capsys.readouterr().out == "slice inspection OK: 1 canonical claim(s)\n"

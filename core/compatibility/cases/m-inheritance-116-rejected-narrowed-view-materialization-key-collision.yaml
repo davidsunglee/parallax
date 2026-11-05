@@ -2,7 +2,7 @@
 # namespace. Model Formation must reject the key even though it differs from the
 # broad Relationship key and remains a legal explicit physical-column spelling.
 model: models/member-column-defaults.yaml
-tags: [m-inheritance, m-model-formation, m-relationship, m-read-planning, m-descriptor, rejected, negative, materialization-key, narrowed-view, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-model-formation, m-relationship, m-read-planning, m-descriptor, rejected, negative, materialization-key, narrowed-view, slice-snapshot-1]
 shape: rejected
 when:
   model:

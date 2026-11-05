@@ -1,6 +1,6 @@
 # A range is one element test: one element of `scores` must lie in [10, 20].
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, between, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, between, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

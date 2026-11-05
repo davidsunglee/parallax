@@ -1,7 +1,7 @@
 # A dotted field of a polymorphic to-one target joins the one hierarchy table its
 # declared candidates share.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-hierarchy, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-hierarchy, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

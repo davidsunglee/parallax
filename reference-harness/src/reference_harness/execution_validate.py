@@ -1120,7 +1120,7 @@ def _authored_golden_kinds(case: dict[str, Any]) -> tuple[str | None, ...]:
 
     A call's ``statement`` indexes that order, so both bounding an index and
     judging which call may own it read it here. Goldens are authored case-level
-    (``then.statements``), per scenario or coherence step, per conflict attempt,
+    (``then.statements``), per scenario step, per conflict attempt,
     or per concurrency-round node — every shape that reaches the database and
     may therefore carry the oracle. A lane authoring none — the
     ``api-conformance`` lane, where a call carries no index at all — yields an
@@ -1130,7 +1130,7 @@ def _authored_golden_kinds(case: dict[str, Any]) -> tuple[str | None, ...]:
     when = case.get("when")
     if not isinstance(when, dict):
         return kinds
-    for key in ("scenario", "coherence", "attempts"):
+    for key in ("scenario", "attempts"):
         group = when.get(key)
         if isinstance(group, list):
             for entry in group:

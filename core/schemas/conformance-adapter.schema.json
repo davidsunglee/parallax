@@ -8,7 +8,6 @@
     { "$ref": "#/$defs/compileOk" },
     { "$ref": "#/$defs/compileRunOnly" },
     { "$ref": "#/$defs/runOk" },
-    { "$ref": "#/$defs/benchmarkOk" },
     { "$ref": "#/$defs/nonOk" }
   ],
   "$defs": {
@@ -65,7 +64,7 @@
     },
     "command": {
       "type": "string",
-      "enum": ["describe", "compile", "run", "benchmark"]
+      "enum": ["describe", "compile", "run"]
     },
     "adapter": {
       "type": "object",
@@ -99,13 +98,9 @@
       "type": "string",
       "pattern": "^(core/compatibility/cases/|cases/).+\\.ya?ml$"
     },
-    "benchmarkPath": {
-      "type": "string",
-      "pattern": "^(core/compatibility/benchmarks/|benchmarks/).+\\.ya?ml$"
-    },
     "caseShape": {
       "type": "string",
-      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence", "error", "concurrencySuccess", "boundary", "edit", "rejected", "evolution"]
+      "enum": ["read", "writeSequence", "scenario", "conflict", "error", "concurrencySuccess", "boundary", "edit", "rejected", "evolution"]
     },
     "moduleTag": {
       "type": "string",
@@ -228,7 +223,7 @@
       }
     },
     "errorObservation": {
-      "description": "A raised-application-error observation (m-conformance-adapter): the verb at case position `at` — a scenario step, or one submission of a buffered write step (`/scenario/<n>/write/<k>`) — raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-identity-map / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
+      "description": "A raised-application-error observation (m-conformance-adapter): the verb at case position `at` — a scenario step, or one submission of a buffered write step (`/scenario/<n>/write/<k>`) — raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-temporal-write / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "errorClass"],
@@ -1324,7 +1319,7 @@
           "items": { "$ref": "#/$defs/stepGraphObservation" }
         },
         "errors": {
-          "description": "Neutral application-lifecycle errors (m-identity-map / m-unit-work) an adapter reports for scenario steps and buffered submissions declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
+          "description": "Neutral application-lifecycle errors (m-temporal-write / m-unit-work) an adapter reports for scenario steps and buffered submissions declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/errorObservation" }
         },
@@ -1362,106 +1357,6 @@
       "dependentRequired": {
         "errorClass": ["nativeCode"],
         "nativeCode": ["errorClass"]
-      }
-    },
-    "wallTimeMs": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["p50", "p95"],
-      "properties": {
-        "p50": {
-          "type": "number",
-          "minimum": 0
-        },
-        "p95": {
-          "type": "number",
-          "minimum": 0
-        }
-      }
-    },
-    "benchmarkWorkload": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["name", "iterations", "wallTimeMs", "databaseCalls"],
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "iterations": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "wallTimeMs": {
-          "$ref": "#/$defs/wallTimeMs"
-        },
-        "databaseCalls": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "expectDatabaseCalls": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "databaseCallsOk": {
-          "type": "boolean"
-        }
-      }
-    },
-    "benchmarkEntry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["fixture", "model", "datasetRows", "workloads"],
-      "properties": {
-        "fixture": {
-          "type": "string",
-          "minLength": 1
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "datasetRows": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "workloads": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/benchmarkWorkload" }
-        }
-      }
-    },
-    "benchmarkMemory": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["peakBytes", "steadyBytes"],
-      "properties": {
-        "peakBytes": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "steadyBytes": {
-          "type": "integer",
-          "minimum": 0
-        }
-      }
-    },
-    "benchmarkReport": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["generatedAt", "dialect", "benchmarks", "memory"],
-      "properties": {
-        "generatedAt": {
-          "type": "string",
-          "minLength": 1
-        },
-        "dialect": { "$ref": "#/$defs/dialect" },
-        "benchmarks": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/benchmarkEntry" }
-        },
-        "memory": { "$ref": "#/$defs/benchmarkMemory" }
       }
     },
     "commonOk": {
@@ -1613,28 +1508,6 @@
         "caseShape": { "$ref": "#/$defs/caseShape" },
         "emissions": { "$ref": "#/$defs/emissions" },
         "observations": { "$ref": "#/$defs/observations" }
-      }
-    },
-    "benchmarkOk": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schemaVersion",
-        "command",
-        "status",
-        "adapter",
-        "benchmark",
-        "profile",
-        "report"
-      ],
-      "properties": {
-        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
-        "command": { "const": "benchmark" },
-        "status": { "const": "ok" },
-        "adapter": { "$ref": "#/$defs/adapter" },
-        "benchmark": { "$ref": "#/$defs/benchmarkPath" },
-        "profile": { "$ref": "#/$defs/profileName" },
-        "report": { "$ref": "#/$defs/benchmarkReport" }
       }
     },
     "nonOk": {

@@ -4,7 +4,7 @@
 # Transaction Time sees both, because the end-keyed unique index
 # (code, thru_z, out_z) refuses equal ends, not overlapping ranges.
 model: models/temporal-authored-index.yaml
-tags: [m-temporal-read, m-object-query, m-sql, m-storage-layout, bitemporal, temporal, as-of, unique-index, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, m-storage-layout, bitemporal, temporal, as-of, unique-index, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

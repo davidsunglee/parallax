@@ -2,7 +2,7 @@
 # Valid-Time instant B ONWARD, leaving the value intact before B (rectangle split
 # with a HEAD only, no tail).
 model: models/position.yaml
-tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, plain-terminate, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, plain-terminate, slice-snapshot-1]
 shape: writeSequence
 when:
   uow:

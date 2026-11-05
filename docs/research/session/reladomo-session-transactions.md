@@ -120,8 +120,8 @@ Existing Parallax research and spec sources:
 - [P-modules] [core/spec/modules.md](../../../core/spec/modules.md)
 - [P-slices] [core/spec/slices.md](../../../core/spec/slices.md)
 - [P-unit-work] [core/spec/m-unit-work.md](../../../core/spec/m-unit-work.md)
-- [P-process-cache] [core/spec/m-process-cache.md](../../../core/spec/m-process-cache.md)
-- [P-coherence] [core/spec/m-coherence.md](../../../core/spec/m-coherence.md)
+- [P-process-cache] [core/spec/m-process-cache.md](https://github.com/davidsunglee/parallax/blob/d6916cc5a/core/spec/m-process-cache.md)
+- [P-coherence] [core/spec/m-coherence.md](https://github.com/davidsunglee/parallax/blob/d6916cc5a/core/spec/m-coherence.md)
 - [P-opt-lock] [core/spec/m-opt-lock.md](../../../core/spec/m-opt-lock.md)
 
 Reladomo source checkout: local `../reladomo`, commit `9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4`. GitHub permalinks below point to that commit.

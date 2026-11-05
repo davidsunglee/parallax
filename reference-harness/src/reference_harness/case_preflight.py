@@ -95,8 +95,8 @@ def preflight_case_literals(case: Case) -> None:
 
 
 def _steps(case: Case) -> Iterator[tuple[str, Mapping[str, object]]]:
-    """Each scenario, then each coherence, step with its document path."""
-    for sequence_name in ("scenario", "coherence"):
+    """Each scenario step with its document path."""
+    for sequence_name in ("scenario",):
         steps = case.when.get(sequence_name)
         if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
             continue

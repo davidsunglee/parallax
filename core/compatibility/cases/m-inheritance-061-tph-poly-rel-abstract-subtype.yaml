@@ -1,6 +1,6 @@
 # Polymorphic relationship targeting the abstract SUBTYPE (m-navigate, m-inheritance).
 model: models/animal.yaml
-tags: [m-navigate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, exists, tag, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, exists, tag, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

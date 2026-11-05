@@ -4,7 +4,7 @@
 # The ordinary sweep therefore exercises production descriptor formation, fixture
 # provisioning, row transformation, and result grading without an adapter override.
 model: models/storage-layout-transparency-layout-twin-document.yaml
-tags: [m-storage-layout, m-sql, m-document-codec, read, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-document-codec, read, layout-twin, document-layout, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

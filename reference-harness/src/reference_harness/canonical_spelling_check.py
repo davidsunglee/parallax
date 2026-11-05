@@ -241,11 +241,6 @@ def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> N
         if not isinstance(step, Mapping):
             continue
         _walk_read_and_write(step, f"when.scenario[{index}]", report, declarations)
-    for index, step in enumerate(_items(when.get("coherence"))):
-        if not isinstance(step, Mapping):
-            continue
-        at = f"when.coherence[{index}]"
-        _walk_query(step.get("objectQuery"), f"{at}.objectQuery", report, declarations)
 
 
 def _walk_read_and_write(

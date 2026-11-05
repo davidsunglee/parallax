@@ -1,7 +1,7 @@
 # Foreign-key DELETE ordering (m-unit-work): a child row is deleted BEFORE the
 # parent it references — the NON-CASCADE complement of m-unit-work-003.
 model: models/orders.yaml
-tags: [m-unit-work, m-sql, write-sequence, delete, fk-ordering, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-sql, write-sequence, delete, fk-ordering, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

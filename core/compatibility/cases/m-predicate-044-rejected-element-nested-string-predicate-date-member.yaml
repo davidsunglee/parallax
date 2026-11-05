@@ -1,7 +1,7 @@
 # Negative (m-predicate non-string-member MUST, element scope): the same rule fires
 # inside a value-object quantifier's `where`, on an element-relative path.
 model: models/contact.yaml
-tags: [m-predicate, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

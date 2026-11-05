@@ -1,7 +1,7 @@
 # Negative (m-storage-layout): the shared Structured Column collides with a
 # direct Attribute Column and reports the existing physical collision code.
 model: models/member-column-defaults.yaml
-tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, physical-column, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, physical-column, slice-snapshot-1]
 shape: rejected
 when:
   model:

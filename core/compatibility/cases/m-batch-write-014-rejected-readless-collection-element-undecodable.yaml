@@ -3,7 +3,7 @@
 # refused at its position, so no statement replaces the stored array with one
 # holding it.
 model: models/scalar-collection-layout-twin-columns.yaml
-tags: [m-batch-write, m-unit-work, m-document-codec, rejected, predicate-write, readless, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, m-document-codec, rejected, predicate-write, readless, slice-snapshot-1]
 shape: rejected
 when:
   write:

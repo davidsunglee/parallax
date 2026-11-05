@@ -282,7 +282,7 @@ rather than left true by omission:
    materializes **with its owning entity in the same read**: the owner's single
    statement projects the whole structured-document column, and every nested
    to-one and to-many value is decoded from that one column. Invoking a getter
-   MUST NOT take a lock, populate an identity cache, or emit **any** statement —
+   MUST NOT take a lock or emit **any** statement —
    there is no per-value-object fetch, and `m-read-planning` never applies. This
    whole-document projection is the owner's applicable Storage Layout
    `Document` slot (`m-sql`, *Read projection*): it is selected on every

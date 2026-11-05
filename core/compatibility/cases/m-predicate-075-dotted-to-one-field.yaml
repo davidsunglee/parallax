@@ -1,7 +1,7 @@
 # A dotted path follows the to-one `owner` and compares its field: the owner's
 # unique key makes it one joined row, so no root row is multiplied.
 model: models/predicate-collections.yaml
-tags: [m-predicate, relationship, to-one, traversal, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

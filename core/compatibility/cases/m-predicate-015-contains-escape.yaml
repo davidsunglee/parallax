@@ -3,7 +3,7 @@
 # becomes `like '%50\%%' escape '\'`: the inner `\%` is a literal percent, wrapped
 # in `%...%` for the contains semantics. Only `C_50%` contains the literal `50%`.
 model: models/orders.yaml
-tags: [m-predicate, contains, string, escape, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, contains, string, escape, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

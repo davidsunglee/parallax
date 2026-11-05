@@ -5,7 +5,7 @@
 # in_z gate, affecting exactly R2 — now licensed by the participating read's lock rather
 # than by a coordinate the case authors.
 model: models/position.yaml
-tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, locking, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, locking, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

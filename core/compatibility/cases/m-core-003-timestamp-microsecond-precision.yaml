@@ -1,6 +1,6 @@
 # Timestamp microsecond precision (m-core timezone/precision rule).
 model: models/event.yaml
-tags: [m-core, m-sql, m-dialect, timestamp, precision, microsecond, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, m-dialect, timestamp, precision, microsecond, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

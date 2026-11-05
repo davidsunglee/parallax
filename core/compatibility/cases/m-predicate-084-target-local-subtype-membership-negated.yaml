@@ -1,6 +1,6 @@
 # Negating a bare path-targeted narrowing includes the absent pet and the cat.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, negation, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, table-per-hierarchy, negation, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -121,17 +121,13 @@ def _replaced(old: str, new: str) -> Callable[[str], str]:
     [
         ("fixture", _commented),
         ("fixture", _replaced("tags: [m-perf-bench, stream]", "tags: [m-perf-bench]")),
-        ("fixture", _replaced("    note: 20 roots at page size 5", "    note: retitled")),
-        ("fixture", _replaced("    iterations: 20\n", "    iterations: 21\n")),
-        ("fixture", _replaced("expectDatabaseCalls: 8", "expectRoundTrips: 8")),
+        ("fixture", lambda text: f"{text}\nunmeasured: fixture metadata\n"),
         ("fixture", _replaced('predicate: { "true": {} }', 'predicate: {"true": {}}')),
         ("model", _commented),
     ],
     ids=[
         "comment",
         "tags",
-        "note",
-        "harness-workloads",
         "unmeasured-key",
         "format",
         "model-comment",
@@ -188,10 +184,10 @@ def test_a_workload_holds_only_its_fixtures_measured_sections() -> None:
     for workload in catalog().values():
         authored = case_format.safe_load_yaml(workload.fixture_path.read_text(encoding="utf-8"))
         assert isinstance(authored, Mapping)
-        assert "workloads" in authored
+        assert "tags" in authored
         assert set(workload.document) == {"model", "objectQuery", "dataset", "delivery"}
-    with pytest.raises(ValueError, match="tags, workloads are not measured sections"):
-        _workload({"workloads": [], "tags": []})
+    with pytest.raises(ValueError, match="tags are not measured sections"):
+        _workload({"tags": []})
 
 
 def test_workload_digest_changes_with_the_generated_key_offset(
@@ -328,13 +324,6 @@ def _workload(document: Mapping[str, object]) -> Workload:
         case_format.find_repo_root() / "core" / "compatibility" / "benchmarks" / "synthetic.yaml"
     )
     return Workload("synthetic", fixture, document)
-
-
-@pytest.mark.parametrize("recipe", ["accounts-sequential", "document-milestones"])
-def test_legacy_recipe_names_remain_available_to_fixture_consumers(recipe: str) -> None:
-    workload = _workload({"dataset": {"generate": {"rows": 2, "recipe": recipe}}})
-    rows = workload.rows(2)
-    assert len(rows.entity(rows.root_entity)) == 2
 
 
 class _Provisioner:

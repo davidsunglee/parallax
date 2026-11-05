@@ -15,7 +15,7 @@ _EXIT: Final[dict[str, int]] = {"ok": 0, "unsupported": 10, "run-only": 11, "err
 
 def _build_parser() -> argparse.ArgumentParser:
     """``compile`` names a dialect because it executes nothing and so has no adapter
-    to read one off; ``run`` and ``benchmark`` name a declared profile, which carries
+    to read one off; ``run`` names a declared profile, which carries
     the adapter — and with it the dialect — the case is executed in
     (m-conformance-adapter)."""
     parser = argparse.ArgumentParser(prog="parallax-conformance")
@@ -30,10 +30,6 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser = sub.add_parser("run", help="run one compatibility case")
     run_parser.add_argument("--case", required=True, help="path to the case YAML file")
     run_parser.add_argument("--profile", required=True, help="declared matrix profile to run")
-
-    benchmark = sub.add_parser("benchmark", help="run one benchmark fixture (unclaimed)")
-    benchmark.add_argument("--benchmark", required=True, help="path to the benchmark YAML file")
-    benchmark.add_argument("--profile", required=True, help="declared matrix profile to run")
 
     return parser
 
@@ -87,8 +83,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "describe":
         return _emit(adapter.describe())
-    if command == "benchmark":
-        return _emit(adapter.unsupported_command("benchmark"))
 
     try:
         if command == "compile":

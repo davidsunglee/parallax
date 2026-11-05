@@ -2,7 +2,7 @@
 # state, so a row omitting a required member is refused when it is prepared,
 # exactly as any replacement omitting it is (m-batch-write, m-unit-work).
 model: models/wallet.yaml
-tags: [m-batch-write, m-unit-work, rejected, predicate-write, replace, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-unit-work, rejected, predicate-write, replace, slice-snapshot-1]
 shape: rejected
 when:
   write:

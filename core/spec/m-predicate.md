@@ -80,8 +80,7 @@ grammar is checked after member resolution.
 `m-predicate` is the canonical Predicate algebra. Its schema covers Boolean
 constants and composition, scalar operations over a field or a bound scalar
 element, explicit quantifiers over every collection kind, single-object presence
-and relationship matching, and Predicate-scoped subtype narrowing. Aggregation is a separate query form owned
-by `m-agg`; its interchange schema does not extend this Predicate union. Each node
+and relationship matching, and Predicate-scoped subtype narrowing. Each node
 below carries a single canonical serialization; a conforming Predicate serde
 implementation **MUST** validate and round-trip every node in
 `predicate.schema.json` unchanged. Executing a node may depend on other core

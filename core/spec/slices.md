@@ -21,8 +21,7 @@ A slice's machine-readable form is a `describeOk` envelope validated against
 `conformance-adapter.schema.json`. Membership is **include-driven**: a case is in
 the slice precisely when it carries the slice tag *and* passes the claim's broad
 module / dialect / shape filters. Nothing is selected by the *absence* of a tag,
-so a slice is immune to the corpus's tag hazards. A case MAY carry several slice
-tags — the two slices below share their non-lifecycle base.
+so a slice is immune to the corpus's tag hazards.
 
 Each fenced `json` claim below is the **single source of truth** for its slice.
 A claim's `capabilities.modules` is the derived union of the module tags carried
@@ -31,40 +30,18 @@ block in this file and asserts each tagged set can never silently drift from its
 claim. A claim carries no `profile` wire key — the slice name lives only in tags
 and documentation, because `describeOk` is `additionalProperties: false`.
 
-## The two object-lifecycle slices
+## Snapshot behavior
 
-Parallax's first-implementation surface is **two slices over one shared base**,
-split by object-lifecycle model (ADR 0019). Both are Postgres-only and both
-include PK generation, inheritance, canonical storage layouts, value objects and
-the portable document encoding they store, and the full temporal write family up
-to the bitemporal rectangle split.
+`slice-snapshot-1` is the Postgres plain-value surface: reads materialize snapshot
+graphs (`m-snapshot-read`) and writes are explicit. It includes primary-key
+generation, inheritance, canonical storage layouts, value objects and their
+portable document encoding, and temporal writes through the bitemporal rectangle
+split. Execution observability, model evolution, and schema delta are part of its
+claim.
 
-- **`slice-snapshot-1`** — the **plain-value** surface: reads materialize
-  snapshot graphs (`m-snapshot-read`); writes are explicit only. No managed
-  lifecycle: the slice claims neither `m-identity-map` nor `m-op-list` (a
-  snapshot read is not a query-backed lazy list; its
-  Database Call observability is pinned by `m-snapshot-read`). It is also the
-  only slice claiming `m-execution-lifecycle`: transient execution observability
-  is lifecycle-neutral, but its dedicated case spine is authored over the
-  plain-value surface, so the managed slice claims it once cases carry that tag.
-  The execution runtime (`m-execution`) and read delivery (`m-read-delivery`)
-  are lifecycle-neutral too, and are claimed here alone for the same reason:
-  their owner cases observe the lifecycle events this slice claims.
-  It is likewise the only slice claiming `m-model-evolution` and
-  `m-schema-delta`: describing the difference between two accepted models and
-  lowering it to dialect statements are both lifecycle-neutral, and the
-  `evolution` case shape they bring with them is claimed here for the same
-  reason.
-- **`slice-managed-1`** — the **managed-object** surface: reads materialize
-  managed objects interned in the transaction-scoped identity map
-  (`m-identity-map`), mutation buffers through the unit of work, and
-  relationship access resolves through query-backed lists (`m-op-list`).
-
-Neither slice claims the deferred process caches (`m-process-cache`,
-`m-coherence`), aggregation (`m-agg`, `m-sql-agg`), the deferred Valid-Time-Only
-formation (`m-validtime-only`), cascade delete (`m-cascade-delete`), MariaDB, or
-benchmarks (`m-perf-bench`). The `snapshot-history-includes` feature
-(`m-snapshot-read`) is feature-tagged and claimed by neither.
+The claim excludes MariaDB and performance workloads (`m-perf-bench`). The
+`snapshot-history-includes` feature (`m-snapshot-read`) remains feature-tagged
+and unclaimed.
 
 ## Snapshot Conformance Slice
 
@@ -79,25 +56,6 @@ The canonical `describe` claim for `slice-snapshot-1`:
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "edit", "error", "concurrencySuccess", "rejected", "evolution"],
     "caseTags": { "include": ["slice-snapshot-1"] },
-    "commands": ["describe", "compile", "run"],
-    "provisioning": "self-managed"
-  }
-}
-```
-
-## Managed-Object Conformance Slice
-
-The canonical `describe` claim for `slice-managed-1`:
-
-```json
-{
-  "schemaVersion": "1", "command": "describe", "status": "ok",
-  "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
-  "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-case-format", "m-concurrency", "m-conformance-adapter", "m-core", "m-db-error", "m-read-planning", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-op-list", "m-pk-gen", "m-predicate", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-temporal-write", "m-unit-work", "m-value-object", "m-wire", "m-write-payload", "m-write-plan"],
-    "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "edit", "error", "concurrencySuccess", "rejected"],
-    "caseTags": { "include": ["slice-managed-1"] },
     "commands": ["describe", "compile", "run"],
     "provisioning": "self-managed"
   }

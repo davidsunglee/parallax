@@ -89,13 +89,6 @@ def test_compile_unsupported_dialect_exit_10(capsys: pytest.CaptureFixture[str])
     assert envelope["status"] == "unsupported"
 
 
-def test_benchmark_unsupported_command_exit_10(capsys: pytest.CaptureFixture[str]) -> None:
-    code, envelope = _run(capsys, ["benchmark", "--benchmark", "b.yaml", "--profile", "pg-full"])
-    assert code == 10
-    assert envelope["command"] == "benchmark"
-    assert envelope["diagnostics"][0]["code"] == "unsupported-command"
-
-
 def test_unreadable_case_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     code, envelope = _run(
         capsys, ["run", "--case", "/nonexistent/missing.yaml", "--profile", "pg-full"]

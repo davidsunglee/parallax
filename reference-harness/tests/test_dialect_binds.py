@@ -189,28 +189,6 @@ class _RecordingExecutor:
         yield self
 
 
-def test_case_execution_converts_autocommit_and_held_session_binds() -> None:
-    case = next(
-        case
-        for case in discover_cases(_COMPATIBILITY_ROOT)
-        if case.path.name == "m-coherence-001-refetch.yaml"
-    )
-    entry = case.coherence[1]["statements"][0]
-    statement = entry["sql"]["postgres"]
-
-    provider = _RecordingExecutor()
-    execution = CaseExecution(case, provider)
-
-    execution.execute(statement, entry["binds"])
-    with execution.open_session() as session:
-        session.execute(statement, entry["binds"])
-
-    assert provider.executed == [
-        (statement, (Decimal("999.00"), 2, 2)),
-        (statement, (Decimal("999.00"), 2, 2)),
-    ]
-
-
 def test_case_execution_converts_each_element_of_an_authored_array_bind() -> None:
     case = next(
         case

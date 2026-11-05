@@ -2,8 +2,8 @@
 
 `m-relationship` owns relationship-specific model-formation rules and the
 immutable symmetric Relationship Facet. It depends on `m-metamodel` and
-`m-model-formation`. It does not own runtime navigation, deep fetch, SQL
-lowering, or cascade execution.
+`m-model-formation`. It does not own runtime navigation, deep fetch,
+or SQL lowering.
 
 Accepted local Entity Metadata preserves the defining-versus-reverse
 Relationship Declaration union. The fixed resolver resolves references only;

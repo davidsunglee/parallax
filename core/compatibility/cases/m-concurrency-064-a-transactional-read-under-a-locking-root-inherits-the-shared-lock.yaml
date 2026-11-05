@@ -9,7 +9,7 @@
 # runner restating it. Contrast `m-concurrency-063`, the same root with no block,
 # whose standalone read takes no lock.
 model: models/account.yaml
-tags: [m-concurrency, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-dialect, database-options, slice-snapshot-1]
 shape: read
 given:
   databaseOptions:

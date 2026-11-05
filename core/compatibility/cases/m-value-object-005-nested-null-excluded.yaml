@@ -1,7 +1,7 @@
 # valueObject nested predicate over a NULL value object — 3VL exclusion
 # (m-predicate), on Postgres AND MariaDB.
 model: models/customer.yaml
-tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

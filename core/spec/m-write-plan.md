@@ -339,15 +339,12 @@ a state its own value never came from. The version or milestone coordinate
 **MUST** be derived from the observation's own evidence, so a recorder cannot
 address an observation by a state other than the one it is recording.
 
-The milestone coordinate is deliberately the **converse** of the identity key
-(`m-identity-map`), and a reader who knows that key will assume it is the same
-one unless told otherwise. The identity triple carries the *query's* lowered
-as-of coordinate and makes **distinct** coordinates denote **distinct pinned
-views**, even when both currently resolve to one milestone row, because each
-view drives its own relationship dereferencing. An Object State Key carries
-the *observed milestone's own* coordinate, so two **distinct** pins that resolve
-to **one** milestone deliberately name **one** observed state: an observation
-records what was read, not the reading, and a milestone read twice is one piece
+A snapshot graph's resolution key (`m-snapshot-read`) carries the *query's*
+lowered as-of coordinate, because a node's pin drives its relationship
+dereferencing. An Object State Key carries the *observed milestone's own*
+coordinate, so two **distinct** pins that resolve to **one** milestone name
+**one** observed state: an observation records what was read, not the reading,
+and a milestone read twice is one piece
 of evidence.
 
 ### Predecessor Row

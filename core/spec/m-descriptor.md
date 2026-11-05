@@ -289,7 +289,7 @@ The defining form is:
 | `name` | local relationship name (REQUIRED) |
 | `cardinality` | `one-to-one` \| `many-to-one` \| `one-to-many` (REQUIRED) |
 | `join` | `{ source: <local attribute>, target: { entity: <entity reference>, attribute: <target-local attribute> } }` (REQUIRED) |
-| `dependent` | bool, default `false` — target is owned and participates in cascade (`m-cascade-delete`) |
+| `dependent` | bool, default `false` — target is owned by the source; retained as relationship metadata and compared by model evolution |
 | `orderBy` | optional target-attribute ordering for a to-many direction; each item is `{ attribute, direction?, nulls? }` |
 
 The reverse form is:

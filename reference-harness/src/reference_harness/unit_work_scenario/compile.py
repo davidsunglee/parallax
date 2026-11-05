@@ -1,37 +1,4 @@
-"""Reading a Scenario's authored steps, once.
-
-What each step is, before a database exists: which kind it is, which earlier steps
-it names, which Unit Work group it belongs to, and which golden statements it
-lists. What comes out is a closed set of variants carrying only the fields their
-kind has, so no later phase of this package asks a raw step dictionary what it
-means. The rules refused here are the ones those readings settle — which kind a
-step is, and that the references this package's own later phases resolve, a
-step's ``on`` sources and a read's ``sameObjectAs`` anchor, name earlier steps —
-and nothing downstream decides either a second time. What only a run can answer,
-that the step a reference names actually published an observation, is the read
-oracle's and is refused during execution. What the document says about itself —
-which find a settling write may name, which earlier step EITHER identity anchor
-names, whether a step's dialect maps cover each other — is asked of every case,
-in every lane, by :mod:`~reference_harness.schema_validate`, so it is not
-restated here. ``differentObjectFrom`` is bounded there and only there: no lane
-this package executes grades it, so a bound restated here would hold nowhere it
-is read.
-
-Dialect-free by construction. A step's golden SQL is dialect-keyed, so a compiled
-step holds the entries it authored rather than one dialect's resolution of them,
-and :class:`_Golden` is where that resolution happens for whichever dialect is
-executing.
-
-Each buffered entry is a **submission**, addressed by its own pointer
-``/scenario/<n>/write/<k>``, and each `uow` group has a **fate** read from
-``then.units``. The rules those readings settle are refused here too: a
-submission's ``on`` names an earlier find of its own group or an earlier,
-unrefused insert of it; every label ``then.units`` names is a group; a flush
-failure is reported where the group last flushes, a find or a predicate
-submission that writes something flushing what the group has pending; a group's
-submissions share one Transaction Instant; and the submission forms and
-refusals only a state-graded case may carry appear nowhere else.
-"""
+"""Compile and observe explicit scenario steps over snapshot values."""
 
 from __future__ import annotations
 
@@ -44,7 +11,7 @@ from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_st
 from ..case_assertions import CaseFailure
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
-_ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"load", "access"})
+_ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"access"})
 
 
 @dataclass(frozen=True)
@@ -207,15 +174,7 @@ class _RowPublishingStep(_Step):
     """
 
 
-@dataclass(frozen=True)
-class _UnresolvedList(_Step):
-    """The construction of a query-backed list that has not resolved: zero
-    Database Calls, zero rows, and no observation until a later step accesses it."""
-
-
-type _CompiledStep = (
-    _GroupedWrite | _UngroupedWrite | _BoundaryAction | _RowPublishingStep | _UnresolvedList
-)
+type _CompiledStep = _GroupedWrite | _UngroupedWrite | _BoundaryAction | _RowPublishingStep
 
 type Shortfall = Literal["missingTarget", "staleWrite", "optimisticConflict", "failedPrecondition"]
 type FlushError = Literal["temporalConflict"]
@@ -310,22 +269,7 @@ def compile_scenario(case: Case) -> CompiledScenario:
 
 
 def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep:
-    """Which kind of step this is, decided once and nowhere else.
-
-    "Does this publish rows?" is written as its complement: the closed set of
-    kinds this package executes itself is a write, an action other than ``load``,
-    ``access``, or a ``mutate`` declaring ``expectRows``, and the
-    zero-Database-Call construction of a query-backed list that has not resolved —
-    which a state-graded Scenario's find, listing no golden of its own, is not.
-    Every other step publishes rows, and the observation oracle grades whichever
-    step it is handed rather than asking that question again.
-
-    Which kind a step is decides which rules it owes, so the classification comes
-    before them: a boundary verb may declare no observable at all, and answering
-    one of its identity claims with a bound would grade a key it was never
-    entitled to carry. Only ``on``'s bound precedes the classification, because
-    reading the find a settling write names reaches into the step it names.
-    """
+    """Classify a step and validate the sources it references."""
     label = step.get("uow")
     group = label if isinstance(label, str) else None
     common = (index, group, step.get("databaseCalls"), _Golden(tuple(step.get("statements") or ())))
@@ -336,8 +280,8 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     if boundary_verb is not None:
         _assert_no_action_observables(case, index, step)
         return _BoundaryAction(*common, boundary_verb)
-    _assert_identity_anchor(case, index, step)
 
+    _assert_identity_anchor(case, index, step)
     if "write" in step:
         entries = _write_entries(step)
         affected_rows = step.get("expectAffectedRows")
@@ -347,15 +291,6 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
             )
         return _UngroupedWrite(*common, entries, step.get("rollback") is True, affected_rows)
 
-    if (
-        not case.state_graded
-        and step.get("action") is None
-        and not step.get("statements")
-        and "stream" not in step
-        and step.get("sameObjectAs") is None
-        and step.get("on") is None
-    ):
-        return _UnresolvedList(*common)
     return _RowPublishingStep(*common)
 
 
@@ -380,7 +315,7 @@ def _assert_on_sources(case: Case, index: int, step: Mapping[str, Any]) -> None:
     """Refuse an ``on`` naming anything but an EARLIER step of this Scenario.
 
     ``on`` names a result some earlier step already produced: the source an action
-    targets, each coordinate group a batched load consumes, the find a settling
+    targets, or the find a settling
     write was handed a value by. So the bound is one rule over every kind of step,
     decided once here rather than by each owner mid-execution, and every reader
     downstream may address the step it names. ``on`` is OPTIONAL on the boundary
@@ -393,39 +328,13 @@ def _assert_on_sources(case: Case, index: int, step: Mapping[str, Any]) -> None:
     publishes nothing — so the observation oracle refuses that during execution.
     """
     on = step.get("on")
-    sources = list(on) if isinstance(on, list) else [] if on is None else [on]
-    if isinstance(on, list) and len(set(sources)) != len(sources):
+    if on is not None and (
+        not isinstance(on, int) or isinstance(on, bool) or not names_earlier_step(on, index)
+    ):
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}].on {on!r} names a DUPLICATE source; "
-            f"a coordinate-grouped action references each source at most once."
-        )
-    for source in sources:
-        if not names_earlier_step(source, index):
-            raise CaseFailure(
-                f"{case.path.name}: scenario[{index}].on references step {source!r}, "
-                f"which is not a real EARLIER step (0 <= source < {index}); a step's "
-                f"`on` names a result some earlier step already produced."
-            )
-
-
-def _assert_identity_anchor(case: Case, index: int, step: Mapping[str, Any]) -> None:
-    """Refuse a ``sameObjectAs`` naming anything but an EARLIER step of this Scenario.
-
-    The observation oracle resolves the anchor to what that step observed and compares
-    primary-key identities, so the index must address a step this Scenario
-    authored before the oracle reaches for it. Its counterpart
-    ``differentObjectFrom`` is graded by no lane this package executes, so the
-    corpus-wide bound :mod:`~reference_harness.schema_validate` asks of both is
-    the whole of that one's, and restating it here would be a rule with no reader.
-    """
-    identity = step.get("sameObjectAs")
-    if identity is None:
-        return
-    if not isinstance(identity, int) or not names_earlier_step(identity, index):
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}].sameObjectAs={identity!r} is not a real "
-            f"EARLIER step (0 <= source < {index}); an identity claim names the object an "
-            f"earlier step observed."
+            f"{case.path.name}: scenario[{index}].on references step {on!r}, "
+            f"which is not a real EARLIER step (0 <= source < {index}); a step's "
+            f"`on` names a result some earlier step already produced."
         )
 
 
@@ -727,8 +636,8 @@ def _assert_state_graded_document(
 def _write_entries(step: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
     """One write step's own buffered entries, or none.
 
-    A write step's ``write`` is a legacy string label, a single predicate-selected
-    instruction (a mapping), or the buffered sequence of submissions (a list).
+    A buffered submission list contributes entries; a predicate-selected mapping
+    is graded separately from that buffer.
     """
     write = step.get("write")
     if not isinstance(write, list):
@@ -756,4 +665,17 @@ def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any
             f"{sorted(_ALWAYS_ROW_PUBLISHING_ACTIONS)} "
             "and a `mutate` declaring `expectRows` observe rows, so what such a "
             "step publishes is nothing to compare."
+        )
+
+
+def _assert_identity_anchor(case: Case, index: int, step: Mapping[str, Any]) -> None:
+    """Refuse a snapshot identity observable naming anything but an earlier step."""
+    identity = step.get("sameObjectAs")
+    if identity is None:
+        return
+    if not isinstance(identity, int) or not names_earlier_step(identity, index):
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}].sameObjectAs={identity!r} is not a real "
+            f"EARLIER step (0 <= source < {index}); an identity claim names the object an "
+            f"earlier step observed."
         )

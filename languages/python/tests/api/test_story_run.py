@@ -804,14 +804,7 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
 
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(profile_run: Any) -> None:
-    # `m-identity-map-010` is graded here rather than through a `GraphStory`
-    # because it sits outside the claimed active slice. What the corpus lane's
-    # own mutate-step grading cannot reach:
-    # that refusal is derived from the step's Object Query, never from the
-    # value the derivation produced, so it holds whether or not an edited copy
-    # carries its source node's pin. This runs the ordinary developer sequence —
-    # pinned find, edit, keyed verb — and the pin is carried on the value.
-    meta = _reset_for("m-identity-map-010", profile_run)
+    meta = _reset_for("m-temporal-write-092", profile_run)
     db = _counting_connect(profile_run.port, meta)
     before = engine.read_table_state(profile_run.port, model_of(meta))
     with raises_contextualized(TransactionTimePinReadOnlyError) as refused:

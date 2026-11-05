@@ -2,7 +2,7 @@
 # successor rectangle from the closed rectangle's own state (m-temporal-write x
 # m-storage-layout), on Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-temporal-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, document-layout, slice-snapshot-1]
 shape: writeSequence
 when:
   uow:

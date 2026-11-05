@@ -2,7 +2,7 @@
 # Valid-Time window, leaving the value intact before and after it (rectangle split
 # with NO middle).
 model: models/position.yaml
-tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1]
 shape: writeSequence
 when:
   uow:

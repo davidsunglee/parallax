@@ -161,14 +161,13 @@ _MODULE_TAG = re.compile(r"^m-[a-z0-9]+(-[a-z0-9]+)*$")
 # The <module>-NNN identity prefix embedded in a case filename stem.
 _CASE_ID = re.compile(r"^(?P<id>m-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3})-")
 
-# The eleven case shapes (m-case-format / conformance-adapter caseShape enum).
+# The case shapes (m-case-format / conformance-adapter caseShape enum).
 CASE_SHAPES: Final[frozenset[str]] = frozenset(
     {
         "read",
         "writeSequence",
         "scenario",
         "conflict",
-        "coherence",
         "error",
         "concurrencySuccess",
         "boundary",

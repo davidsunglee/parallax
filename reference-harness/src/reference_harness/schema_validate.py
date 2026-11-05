@@ -11,7 +11,7 @@ It performs m-case-format layer 1 statically (no database needed):
 * **Descriptor validation** — every model under ``models/`` validates against the
   metamodel schema.
 * **Object Query validation** — every case's ``when.objectQuery`` (and each
-  scenario/coherence step's own) validates against the Object Query schema, which
+  scenario step's own) validates against the Object Query schema, which
   reaches the Predicate and Subtype Selection grammars through it.
 * **Case validation** — every case validates against the compatibility-case
   schema, and its referenced model + golden-SQL dialect keys are coherent. The
@@ -253,7 +253,7 @@ def _validate_predicate_write(
 ) -> Entity | None:
     """Validate the predicate and model-dependent parts of one write instruction."""
     if not isinstance(write, dict):
-        return None  # legacy string writes remain valid and need no predicate walk
+        return None  # buffered arrays and malformed values are handled by their owners
     target = write.get("target")
     if not isinstance(target, dict):
         return None  # the case schema owns missing/malformed target errors
@@ -583,40 +583,6 @@ def _validate_settled_write(steps: list[Any], index: int, label: str, errors: li
             )
 
 
-_IDENTITY_ANCHORS: tuple[str, ...] = ("sameObjectAs", "differentObjectFrom")
-"""The scenario observables whose value is an earlier step's index.
-
-`m-case-format` *Per-step lifecycle observables*: `sameObjectAs` claims a step's
-result denotes the SAME object as the step it names and `differentObjectFrom`
-that it denotes a DISTINCT one. A step declares at most one of them, and each
-names the anchor the claim is made against, so one bound covers both.
-"""
-
-
-def _validate_identity_anchor(
-    step: dict[str, Any], index: int, label: str, errors: list[str]
-) -> None:
-    """Refuse an identity observable naming anything but an EARLIER step.
-
-    The two are graded in different places — the wire harness grades
-    `sameObjectAs` as primary-key identity, while `differentObjectFrom` is
-    adapter-delegated to each language's API Conformance Suite — and an
-    `api-conformance` case reaches no executor here at all. The bound is a
-    property of the document rather than of a grader, so it is asked here, of
-    every case in the corpus, rather than wherever each observable happens to be
-    consumed.
-    """
-    for anchor in _IDENTITY_ANCHORS:
-        source = step.get(anchor)
-        if not isinstance(source, int) or isinstance(source, bool):
-            continue  # the case schema owns the observable's shape
-        if not names_earlier_step(source, index):
-            errors.append(
-                f"{label}: {anchor} names step {source}, which is not a real EARLIER step "
-                f"(0 <= source < {index})"
-            )
-
-
 _SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate"})
 """The action verbs whose result stands exactly where the step they name stands.
 
@@ -624,23 +590,8 @@ An edited copy is the object its source step held, so a chain of edits stands at
 the position the step the chain started from answered at.
 """
 
-_RELATIONSHIP_NAVIGATIONS: frozenset[str] = frozenset({"load", "access"})
-"""The action verbs whose result stands where their ``path`` leads.
-
-A `load` / `access` carrying a `path` holds the objects that path's LAST hop
-reaches — an `access` on `items` holds OrderItems, never the Order it navigated
-from — so the position it stands at is the relationship's target rather than its
-source's. The path-less `access` form navigates nothing (it resolves a
-query-backed list, `m-op-list`), so its members stand where its source does.
-
-Stated here rather than borrowed from the verb sets an executing lane keeps: this
-one partitions the lifecycle verbs by where a result STANDS, alongside
-:data:`_SAME_ENTITY_DERIVATIONS`, and answers that question of every authored
-case with no executor in sight. That the same two verbs are also the ones that
-observe rows is a fact about the verbs, not a shared rule — a walk that borrowed
-it would start refusing or resolving positions whenever the execution lane
-redrew its own boundary.
-"""
+_RELATIONSHIP_NAVIGATIONS: frozenset[str] = frozenset({"access"})
+"""The action verbs whose result stands where their loaded ``path`` leads."""
 
 
 type _Position = tuple[str, ...]
@@ -786,17 +737,9 @@ def _navigated_position(source: _Position, path: str, family: Family | None) -> 
     return position
 
 
-def _source_index(step: dict[str, Any], *, grouped: bool) -> int | None:
-    """The earlier step this action's ``on`` names, or ``None`` for no single one.
-
-    A `load` spanning sources at DIFFERENT lowered coordinates names them as an
-    ARRAY (`m-read-planning`); those sources are one position pinned several ways, so
-    the first of them stands for the position they all stand at. Every other verb
-    acts on a single object, where an array names no one node to resolve.
-    """
+def _source_index(step: dict[str, Any]) -> int | None:
+    """The earlier step this action's ``on`` names, or ``None``."""
     on = step.get("on")
-    if grouped and isinstance(on, list):
-        on = on[0] if on else None
     return on if isinstance(on, int) and not isinstance(on, bool) else None
 
 
@@ -829,7 +772,7 @@ def _step_position(
     navigates = action in _RELATIONSHIP_NAVIGATIONS
     if not navigates and action not in _SAME_ENTITY_DERIVATIONS:
         return None
-    source_index = _source_index(step, grouped=navigates)
+    source_index = _source_index(step)
     if source_index is None:
         return None
     source = _step_position(steps, source_index, family, visited | {index})
@@ -1220,7 +1163,7 @@ def _validate_case(
         errors.extend(f"{scope.label}: {problem}" for problem in validate_execution(case))
         errors.extend(f"{scope.label}: {problem}" for problem in retry_policy_problems(case))
     # The action under test lives under `when`; a read or rejected case's
-    # Object Query and each scenario/coherence step's own are canonical
+    # Object Query and each scenario step's own are canonical
     # m-object-query documents that must also validate against that schema.
     when = case.get("when") if isinstance(case, dict) else None
     when = when if isinstance(when, dict) else {}
@@ -1242,24 +1185,12 @@ def _validate_case(
         for index, step in enumerate(when["scenario"]):
             if isinstance(step, dict):  # the case schema owns a malformed step
                 _validate_scenario_step(when["scenario"], index, step, scope, errors)
-    if isinstance(when.get("coherence"), list):
-        _validate_coherence_queries(when["coherence"], scope, errors)
     if isinstance(case, dict):
         _validate_case_model_references(compatibility_root, case, scope, errors)
         errors.extend(
             f"{scope.label}: {problem}"
             for problem in _structurally_empty_read_problems(case, scope.family)
         )
-
-
-def _validate_coherence_queries(coherence: list[Any], scope: _CaseScope, errors: list[str]) -> None:
-    """A coherence case's read-step queries, each under
-    ``when.coherence[].objectQuery``."""
-    for index, step in enumerate(coherence):
-        if isinstance(step, dict) and "objectQuery" in step:
-            scope.check_object_query(
-                step["objectQuery"], f"{scope.label} coherence[{index}].objectQuery", errors
-            )
 
 
 def _validate_case_edit(edit: dict[str, Any], scope: _CaseScope, errors: list[str]) -> None:
@@ -1278,9 +1209,9 @@ def _validate_scenario_step(
     errors: list[str],
 ) -> None:
     step_label = f"{scope.label} scenario[{index}]"
+    _validate_identity_anchor(step, index, step_label, errors)
     _scenario_statement_binds_keys(step, step_label, errors)
     _validate_scenario_reference_sql(step, scope.case_schema, step_label, errors)
-    _validate_identity_anchor(step, index, step_label, errors)
     if "objectQuery" in step:
         scope.check_object_query(
             step["objectQuery"],
@@ -1351,6 +1282,24 @@ def main(argv: list[str]) -> int:
         return 1
     print("schema validation OK: all schemas and fixtures conform")
     return 0
+
+
+def _validate_identity_anchor(
+    step: dict[str, Any], index: int, label: str, errors: list[str]
+) -> None:
+    """Refuse a snapshot identity observable naming anything but an earlier step."""
+    for anchor in _IDENTITY_ANCHORS:
+        source = step.get(anchor)
+        if not isinstance(source, int) or isinstance(source, bool):
+            continue  # the case schema owns the observable's shape
+        if not names_earlier_step(source, index):
+            errors.append(
+                f"{label}: {anchor} names step {source}, which is not a real EARLIER step "
+                f"(0 <= source < {index})"
+            )
+
+
+_IDENTITY_ANCHORS: tuple[str, ...] = ("sameObjectAs",)
 
 
 if __name__ == "__main__":

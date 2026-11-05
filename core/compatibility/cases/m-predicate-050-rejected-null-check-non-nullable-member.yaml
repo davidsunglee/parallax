@@ -4,7 +4,7 @@
 # accepted model. This distinguishes illegal null checks on required members
 # from the nullable `Order.sku` checks in m-predicate-009 and m-predicate-010.
 model: models/orders.yaml
-tags: [m-predicate, rejected, negative, isNull, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, rejected, negative, isNull, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

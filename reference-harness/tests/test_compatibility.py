@@ -327,10 +327,8 @@ def test_every_connection_counts_matched_rows_unchanged_ones_included(provider) 
     with provider.open_session("read-committed") as session:
         observed.append(counts(session))
         session.commit()
-    with provider.open_peer() as peer:
-        observed.append(counts(peer))
-        assert peer.execute("delete from gauge where v < ?", [7]) == 1
-    assert observed == [[1, 1, 2, 0]] * 3
+    assert provider.execute("delete from gauge where v < ?", [7]) == 1
+    assert observed == [[1, 1, 2, 0]] * 2
 
 
 @pytest.mark.parametrize("case", CASES, ids=[_case_id(c) for c in CASES])

@@ -3,7 +3,6 @@
 # Valid-Time instant is the retroactive correction, so the mutation verb accepts
 # the finite Valid-Time pin and raises no application-lifecycle error. The
 # correction's flush lowering is the m-temporal-write RECTANGLE SPLIT, pinned by
-# m-temporal-write-022 and m-identity-map-011; this case pins the verb-time
 # ACCEPTANCE itself. (Contrast the finite Transaction-Time pin, which is
 # read-only — m-temporal-write-032.)
 model: models/position.yaml

@@ -54,9 +54,6 @@ from .temporality import TEMPORAL_DIMENSION_RANK
 # target it opens a rectangle rather than splitting one.
 OPENING_MUTATIONS = ("insert", "insertUntil")
 
-# The keyed write mutations a public verb states. `cascadeDelete` is deliberately
-# absent: it is not a Keyed Mutation, no verb states it, and an entry writing one
-# therefore resolves no source.
 _KEYED_MUTATIONS = (
     *OPENING_MUTATIONS,
     "amend",
@@ -1164,7 +1161,7 @@ class ObjectAddress:
     Table and key together ARE an Object Key — Entity Identity plus primary-key
     values (`m-unit-work`). Every structural Table has exactly one mapping owner
     (`m-storage-layout`) and object identity normalizes to the inheritance family
-    (`m-identity-map`), so a table names ONE Entity Identity: a table-per-hierarchy
+    (`m-metamodel`), so a table names ONE Entity Identity: a table-per-hierarchy
     family's shared table names that family, a table-per-concrete-subtype table its
     own subtype, and no two objects share a table and a primary key. Which concrete
     subtype of a shared table a golden claims is the one thing the address cannot

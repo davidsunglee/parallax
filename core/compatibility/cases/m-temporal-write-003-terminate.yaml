@@ -1,6 +1,6 @@
 # Write sequence: TERMINATE an audit-only balance (milestone chaining, m-temporal-write).
 model: models/balance.yaml
-tags: [m-temporal-write, m-sql, write-sequence, terminate, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, write-sequence, terminate, audit-only, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

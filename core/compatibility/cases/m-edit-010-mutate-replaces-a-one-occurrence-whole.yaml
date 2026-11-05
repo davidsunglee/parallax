@@ -5,7 +5,7 @@
 # derivation with zero Database Calls, its expectRows grades the value it publishes, and
 # a later change-free mutation of the original source proves that source stayed intact.
 model: models/note.yaml
-tags: [m-edit, m-value-object, mutation, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-edit, m-value-object, mutation, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

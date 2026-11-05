@@ -2,7 +2,7 @@
 # the ONE Structured Column, occurrences included (m-storage-layout x m-sql x
 # m-value-object), on Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-value-object, m-sql, m-document-codec, read, json, nested, document-layout, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-value-object, m-sql, m-document-codec, read, json, nested, document-layout, materialization, graph, to-one, to-many, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

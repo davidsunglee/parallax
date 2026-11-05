@@ -1,7 +1,7 @@
 # Presence and a dotted field over a ONE-TO-ONE relationship (m-descriptor cardinality,
 # m-predicate single-valued traversal).
 model: models/person.yaml
-tags: [m-navigate, navigate, relationship, one-to-one, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, navigate, relationship, one-to-one, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

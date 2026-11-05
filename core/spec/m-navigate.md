@@ -91,16 +91,12 @@ milestones. The propagated as-of term is appended **after** the navigation/IN-li
 predicate (the bind order is the correlation keys, then the per-dimension as-of
 binds, Valid Time first and Transaction Time second).
 
-The rule extends from the query algebra to **object graphs**: every relationship
-dereference from an already-materialized object — a deferred relationship load
-on a managed object (`m-read-planning`), a hard pointer inside a plain value graph
-(`m-snapshot-read`) — resolves the target timeline **at the source object's own
-pinned coordinates**, matched by axis. An object's coordinates are part of its
-identity (`m-identity-map`), so a dereference never has to guess which instant
-to propagate: the source *is* a pin. This is what makes both materializations
-temporally coherent — a graph's pointers cannot silently cross temporal
-contexts, and a view materialized from a `history` read (standing at its
-milestone pin, `m-temporal-read`) dereferences at its own edge.
+The rule extends from the query algebra to **object graphs**: every included
+relationship inside a snapshot graph (`m-snapshot-read`) resolves the target
+timeline **at the source object's own pinned coordinates**, matched by axis.
+A graph's pointers cannot silently cross temporal contexts, and a view
+materialized from a `history` read (standing at its milestone pin,
+`m-temporal-read`) dereferences at its own edge.
 
 Propagated coordinates are managed Timestamp values. Navigation **closes** a
 resolved predicate's temporal visibility in one pass: every resolved relationship
@@ -169,9 +165,8 @@ correlation predicate (and, for `table-per-concrete-subtype`, per `EXISTS` branc
   already swapped its join and inverted its cardinality; navigation and deep
   fetch therefore consume either direction identically.
 - A **dependent** relationship (`dependent: true`) marks the target as **owned**
-  by the source. Ownership matters for **cascade** write operations (insert /
-  delete / terminate following dependents), which are `m-cascade-delete`.
-  Dependency does not change read-side navigation or deep fetch.
+  by the source. Dependency is relationship metadata and does not change
+  read-side navigation or deep fetch.
 
 ## What the harness verifies
 

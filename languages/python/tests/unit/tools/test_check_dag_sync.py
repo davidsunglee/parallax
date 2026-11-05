@@ -214,9 +214,9 @@ def test_build_adjacency_fails_on_mapped_importer_with_unmapped_target() -> None
 
 
 def test_build_adjacency_skips_unmapped_importer() -> None:
-    # A deferred / out-of-slice importer the Python target does not enforce is
+    # An out-of-slice importer the Python target does not enforce is
     # skipped, not treated as a stale-map error.
-    adjacency = dag.build_adjacency([("m-agg", "m-predicate")])
+    adjacency = dag.build_adjacency([("m-unclaimed", "m-predicate")])
     assert adjacency["parallax.core.predicate"] == frozenset()
 
 
@@ -485,9 +485,9 @@ def test_a_behavioral_row_added_to_the_spec_alone_fails_generation(
         tmp_path,
         monkeypatch,
         "| `m-pk-gen` | `parallax.core.pk_gen` |\n",
-        "| `m-agg` | `parallax.core.agg` |\n| `m-pk-gen` | `parallax.core.pk_gen` |\n",
+        "| `m-unclaimed` | `parallax.core.unclaimed` |\n| `m-pk-gen` | `parallax.core.pk_gen` |\n",
     )
-    with pytest.raises(ValueError, match=r"declared only in the spec \['m-agg'\]"):
+    with pytest.raises(ValueError, match=r"declared only in the spec \['m-unclaimed'\]"):
         dag.generate()
 
 

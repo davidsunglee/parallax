@@ -1,4 +1,3 @@
-# Five-level Relational Document Layout materialization stress twin.
 tags: [m-perf-bench, m-snapshot-read, m-storage-layout, materialization-stress, document-layout]
 model: models/materialization-stress-document.yaml
 dataset:
@@ -20,12 +19,3 @@ objectQuery:
         - rel: snapshot.materialization.Node.owner
 delivery:
   pageSizes: [1, 32, 128]
-workloads:
-  - name: materialization-stress-document
-    iterations: 20
-    expectDatabaseCalls: 4
-    statements:
-      - sql: { postgres: "select t0.id, t0.payload from materialization_owner t0", mariadb: "select t0.id, t0.payload from materialization_owner t0" }
-      - sql: { postgres: "select t0.id, t0.payload from materialization_node t0", mariadb: "select t0.id, t0.payload from materialization_node t0" }
-      - sql: { postgres: "select t0.id, t0.payload from materialization_node t0", mariadb: "select t0.id, t0.payload from materialization_node t0" }
-      - sql: { postgres: "select t0.id, t0.payload from materialization_node t0", mariadb: "select t0.id, t0.payload from materialization_node t0" }

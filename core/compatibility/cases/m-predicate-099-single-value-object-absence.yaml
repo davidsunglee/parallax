@@ -1,7 +1,7 @@
 # Absence is the complement of presence and is never unknown: every row presence
 # excludes — including the SQL-NULL address — is absent.
 model: models/customer.yaml
-tags: [m-predicate, m-value-object, presence, json, absence-collapse, negation, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, presence, json, absence-collapse, negation, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

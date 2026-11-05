@@ -1,5 +1,5 @@
 model: models/versioned-payment-document.yaml
-tags: [m-concurrency, m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1]
 shape: read
 when:
   uow:

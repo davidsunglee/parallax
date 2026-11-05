@@ -683,7 +683,7 @@ def test_is_selected_rejects_unclaimed_shape() -> None:
 
 
 def test_is_selected_rejects_module_outside_claim() -> None:
-    assert not case_format.is_selected(_case(tags=("m-agg", "slice-snapshot-1")), _FILTER)
+    assert not case_format.is_selected(_case(tags=("m-unclaimed", "slice-snapshot-1")), _FILTER)
 
 
 def test_is_selected_rejects_case_without_include_tag() -> None:

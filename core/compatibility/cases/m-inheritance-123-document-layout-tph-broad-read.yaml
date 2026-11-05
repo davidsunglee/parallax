@@ -1,7 +1,7 @@
 # A broad table-per-hierarchy instance read resolves the raw tag before decoding
 # the shared heterogeneous document (m-inheritance, m-storage-layout, m-sql).
 model: models/document-layout.yaml
-tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, familyVariant, graph, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

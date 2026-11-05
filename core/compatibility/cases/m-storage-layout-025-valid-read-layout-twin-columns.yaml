@@ -4,7 +4,7 @@
 # The static twin gate proves the logical descriptors, fixtures, and observations
 # equal; the ordinary sweep proves this member's direct-column SQL and result.
 model: models/storage-layout-transparency-layout-twin-columns.yaml
-tags: [m-storage-layout, m-sql, m-document-codec, read, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-document-codec, read, layout-twin, columns, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

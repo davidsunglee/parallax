@@ -14,13 +14,8 @@ derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by `m-sql` and run by the execution runtime
 (`m-execution`) through the step-execution, flush, and row-acquisition
-ports this module declares, so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list`
-in turn depends on `m-unit-work`, because a list is a
-query-backed view resolved within a unit of work.)
-
-Layered on the unit of work are three modules: bounded automatic retry
-(`m-auto-retry`), the transaction-scoped identity map (`m-identity-map`), and the
-process-wide identity + query caches (`m-process-cache`, deferred).
+ports this module declares, so `m-unit-work` takes no direct edge to SQL generation.
+Bounded automatic retry (`m-auto-retry`) coordinates replay of attempts.
 
 `m-unit-work` also owns **write finalization**: the Write Planner and its stage
 order, which settle buffered writes into `m-write-plan`'s Planned Step algebra;
@@ -76,18 +71,11 @@ to undo and nothing to replay (`m-auto-retry`).
 > pinned down in the per-language spec, **never** in raw SQL terms in core. Core
 > mandates the *observable effects within and at* the boundary, not its syntax.
 
-### No identity promise
+### No cross-read identity promise
 
-`m-unit-work` is expressed purely in **operations** — it promises nothing about
-*object identity*. Without a claimed identity module, two reads of one row
-within a unit of work MAY yield distinct managed instances, and mutating both
-buffers conflicting updates whose interleaving is unspecified — a **named
-hazard**, not a contract. The guarantee that one database identity resolves to
-one managed object within the unit of work is `m-identity-map`; a plain-value
-read surface (`m-snapshot-read`) has no managed instances to promise identity
-for. This silence is deliberate in **both** directions: nothing here mandates
-that two reads yield the *same* instance, and nothing may mandate they yield
-*distinct* instances.
+The unit of work coordinates operations and their evidence. It makes no promise
+that separate reads of one row return the same instance or distinct instances;
+within each snapshot graph, identity resolution belongs to `m-snapshot-read`.
 
 ## Abort
 
@@ -98,7 +86,7 @@ observable contract:
 
 - A write performed inside a unit of work that aborts **MUST NOT** be observable
   after the abort — whether it was still **buffered**, had been **force-flushed**
-  to serve a dependent read (read-your-own-writes), or had populated a cache. A
+  to serve a dependent read (read-your-own-writes). A
   find issued after the abort **MUST** re-resolve and observe the
   **pre-transaction** state.
 - The transaction callback's return value is **withheld on abort**: if the unit
@@ -443,7 +431,7 @@ verb rejects, never a language's exception type. The one fact an implementation
 answers holds* — no valid managed read admitted it, this verb's own source did, or
 another managed source did — which any implementation that materializes values
 already knows at the moment it publishes them. How that fact is retained —
-carried on the value, held in an identity map, held in an implementation-owned
+carried on the value, held in an implementation-owned
 registry — is the implementation's own affair, and no conforming behavior depends
 on the choice.
 
@@ -594,7 +582,7 @@ locked that milestone (`m-write-plan` *State Observation*). There is no separate
 license to check. A write whose value names a milestone this attempt never
 observed is already refused under both strategies (*Current-attempt source
 admission*), and a write over a view pinned at a finite Transaction-Time instant
-is refused by the pin rule (`m-identity-map`) before any planning.
+is refused by the pin rule (`m-temporal-write`) before any planning.
 
 The invariant is therefore a property of how the close is constructed rather
 than a precondition validated on the input side. Nothing about the *read* that
@@ -642,7 +630,7 @@ on both:
   (*What licenses a Locking write*). A read at a **historical** Transaction-Time
   coordinate locks a historical row and observes the milestone it actually
   selected, which no current-milestone close addresses; a write over a view so
-  pinned is refused by the Transaction-Time pin rule (`m-identity-map`) rather
+  pinned is refused by the Transaction-Time pin rule (`m-temporal-write`) rather
   than by any lock-scope claim. A finite **Valid-Time** pin may still select a
   current Transaction-Time row and so remains writable.
 

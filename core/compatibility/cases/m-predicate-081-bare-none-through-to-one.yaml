@@ -1,7 +1,7 @@
 # A bare `none` through a to-one hop: an absent owner holds no tags, as does an owner
 # with an empty collection. MariaDB's guarded occupancy lane spells the same test.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

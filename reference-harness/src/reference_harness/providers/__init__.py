@@ -29,13 +29,6 @@ surface — ``dialect`` and ``query`` alone are
 ``open_session()`` both satisfy structurally, so the read oracle cannot tell one
 from the other.
 
-The **two-node** seam supports cross-process cache coherence:
-``open_peer()`` yields a second, INDEPENDENT connection to the SAME database,
-modeling a peer application server (node B) alongside the provider's own
-connection (node A). A write committed on one connection is visible to a read on
-the other — exactly what a coherence case asserts. ``open_peer`` is OPTIONAL on
-the seam; a provider that does not implement it cannot run coherence cases (the
-runner skips them for that provider).
 """
 
 from __future__ import annotations
@@ -132,27 +125,6 @@ def build_catalog(
     )
 
 
-@runtime_checkable
-class Node(Protocol):
-    """A single application-server node: one independent connection to the DB.
-
-    A coherence case runs over two nodes — the provider itself (node A,
-    the writer) and a peer (node B) opened via :meth:`DatabaseProvider.open_peer`.
-    Both expose the read/write surface against the same database; a write
-    committed on one is observable by a read on the other.
-    """
-
-    dialect: str
-
-    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
-        """Run a read query on this node; return rows as dicts."""
-        ...
-
-    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
-        """Run + COMMIT a write statement on this node; return the affected count."""
-        ...
-
-
 class Session(Protocol):
     """A manual-commit connection whose statements share one held transaction
     until :meth:`commit` or :meth:`rollback`."""
@@ -224,15 +196,6 @@ class DatabaseProvider(Protocol):
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
         """Run a write statement (DML); return the affected-row count."""
-        ...
-
-    def open_peer(self) -> AbstractContextManager[Node]:  # pragma: no cover - protocol stub
-        """Context-manage a second, independent connection to the SAME database.
-
-        OPTIONAL for cross-process coherence. The yielded :class:`Node` is
-        a peer application server (node B) to the provider's own connection
-        (node A); a write committed on either is visible to a read on the other.
-        """
         ...
 
     def classify_error(self, exc: Exception) -> str:

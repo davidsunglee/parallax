@@ -2,7 +2,7 @@
 # `updatedRows != 1` conflict mid-flush discards EVERY buffered write in the UoW,
 # not just the conflicting one — no partial flush survives.
 model: models/account.yaml
-tags: [m-concurrency, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

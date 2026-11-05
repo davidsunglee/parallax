@@ -2,7 +2,7 @@
 # `retry` at the call overrides the Database Root's `retry: {maxRetries: 0}`, so the
 # injected transient is retried away — `api-conformance` lane.
 model: models/account.yaml
-tags: [m-auto-retry, m-concurrency, m-api-conformance, transient, database-options, slice-snapshot-1, slice-managed-1]
+tags: [m-auto-retry, m-concurrency, m-api-conformance, transient, database-options, slice-snapshot-1]
 lane: api-conformance
 shape: boundary
 compileEligibility:

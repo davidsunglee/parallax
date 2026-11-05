@@ -2,7 +2,7 @@
 # INSERT, each `address` document binding atomically in its layout position
 # (m-value-object write + m-batch-write set-based flush).
 model: models/customer.yaml
-tags: [m-value-object, m-batch-write, m-sql, write-sequence, insert, json, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-batch-write, m-sql, write-sequence, insert, json, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

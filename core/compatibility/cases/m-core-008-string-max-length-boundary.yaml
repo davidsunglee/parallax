@@ -1,7 +1,7 @@
 # String max-length WRITE boundary (m-core): a value exactly `maxLength` characters
 # long round-trips intact.
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, scalar, string, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, scalar, string, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

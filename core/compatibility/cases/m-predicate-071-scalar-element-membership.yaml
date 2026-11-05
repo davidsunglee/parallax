@@ -1,6 +1,6 @@
 # Element membership: some tag is outside [gift, x].
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, in, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, in, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

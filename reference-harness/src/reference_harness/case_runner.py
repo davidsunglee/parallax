@@ -17,7 +17,7 @@ provisioned database selected via the provider seam:
 
 What this module owns beyond those shared layers is case-shape routing plus the
 lanes whose ordered steps have no owner of their own: rejected-case adjudication,
-write sequences, conflicts, error classification, concurrency, coherence, and an
+write sequences, conflicts, error classification, concurrency, and an
 evolution case's Schema Delta. That last one is the one lane that reaches a
 database for a shape whose own observable is pure: an authored ``delta`` cell is
 APPLIED to a database provisioned at the earlier endpoint and the catalog it
@@ -32,8 +32,7 @@ an executor, and nothing about delivery strategy, retained observations, or read
 intent. Every Unit Work Scenario is :mod:`unit_work_scenario`'s: this module
 routes the shape and states the case and the provider, and nothing about step
 order, reader selection, transaction lifecycle, writes, boundary actions,
-unresolved query-backed-list construction, settlement, or Scenario-wide
-accounting.
+settlement, or Scenario-wide accounting.
 
 What a golden WRITE statement must be for the neutral input it renders is
 :mod:`write_plan`'s, for every lane that authors one. This module composes a
@@ -73,7 +72,6 @@ from .case import (
 )
 from .case_assertions import (
     CaseFailure,
-    coerce_identity_key,
     write_value_equal,
 )
 from .case_preflight import preflight_case_literals
@@ -192,7 +190,7 @@ ALL_REJECTED_RULES = (
 
 # --- statement-entry readers ------------------------------------------------
 #
-# Every per-step SQL location (scenario / coherence / attempts / concurrency
+# Every per-step SQL location (scenario / attempts / concurrency
 # rounds) carries its golden SQL as an ordered list of `{sql, binds}` statement
 # entries, mirroring the top-level `then.statements`. Binds are attached to their
 # statement structurally — there is no positional pairing convention to interpret.
@@ -257,25 +255,6 @@ def _assert_conflict_shape(case: Case) -> None:
             f"{case.path.name}: {target.name} is temporal, and a conflict case's write targets "
             f"a non-temporal Entity — a temporal write's race is an interleaved scenario "
             f"(m-case-format 'Conflict cases')."
-        )
-
-
-def _assert_coherence_shape(case: Case) -> None:
-    if len(case.coherence) < 2:
-        raise CaseFailure(
-            f"{case.path.name}: coherence case needs at least a write and a re-fetch step"
-        )
-    for index, step in enumerate(case.coherence):
-        if step.get("kind") == "write" and "sameObjectAs" in step:
-            raise CaseFailure(
-                f"{case.path.name}: coherence[{index}] is a write step but "
-                f"declares sameObjectAs; identity is asserted on read steps "
-                f"(a write observes no object)."
-            )
-    if not any(step.get("observeRows") is not None for step in case.coherence):
-        raise CaseFailure(
-            f"{case.path.name}: coherence case asserts nothing — at least the "
-            f"final re-fetch MUST declare observeRows"
         )
 
 
@@ -356,7 +335,6 @@ _SHAPE_ASSERTIONS: dict[str, Callable[[Case], None]] = {
     "writeSequence": _assert_write_sequence_shape,
     "scenario": _assert_scenario_shape,
     "conflict": _assert_conflict_shape,
-    "coherence": _assert_coherence_shape,
     "error": _assert_error_shape,
     "concurrencySuccess": _assert_concurrency_success_shape,
     "boundary": _assert_boundary_shape,
@@ -428,7 +406,7 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 
 def _assert_serde(case: Case) -> None:
     # Layer 4a: Object Query serde. A read case has one top-level query; a
-    # scenario or coherence case has one per read step; a write-sequence case and a
+    # scenario case has one per read step; a write-sequence case and a
     # conflict case (m-concurrency) have none. Layer 4b: metamodel (descriptor)
     # serde — always.
     shape = case.shape
@@ -474,7 +452,6 @@ def _no_query(_case: Case) -> list[Any]:
 _SERDE_DOCUMENTS: dict[str, Callable[[Case], list[Any]]] = {
     "edit": _edit_source_query,
     "scenario": lambda case: _step_queries(case.scenario),
-    "coherence": lambda case: _step_queries(case.coherence),
     "rejected": _rejected_input,
     "writeSequence": _no_query,
     "conflict": _no_query,
@@ -510,13 +487,7 @@ def _assert_equivalent_encodings(case: Case) -> None:
                         f"  query (canonical):    {canonical_query!r}"
                     )
         return
-    if (
-        case.is_write_sequence
-        or case.is_conflict
-        or case.is_coherence
-        or case.is_error
-        or case.is_concurrency_success
-    ):
+    if case.is_write_sequence or case.is_conflict or case.is_error or case.is_concurrency_success:
         return
     canonical_query = serde.canonical(case.object_query)
     for index, encoding in enumerate(case.equivalent_encodings):
@@ -1343,7 +1314,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
         elif mutation == "insert":
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
-        elif mutation in ("delete", "cascadeDelete"):
+        elif mutation in ("delete",):
             _assert_delete_input(case, classified, step_statements, step_binds)
         elif version_column(entity) is not None:
             _assert_versioned_update_input(
@@ -1701,20 +1672,12 @@ def _assert_delete_input(
     step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
-    # A delete / cascadeDelete row carries only the pk (the `where` key — no written
+    # A delete row carries only the pk (the `where` key — no written
     # columns), so ① supplies no INSERT/SET column list to cross-check; assert the
     # pk value(s) appear in the DELETE binds.
     pk_values = [pk for _, pk, _, _ in classified]
-    # A COLLAPSED set-based DELETE (m-batch-write-003) is ONE statement whose key
-    # membership — one array of the keys compared through `any` on PostgreSQL, or
-    # `id in (…)` with one bind per key where a dialect binds no arrays — carries
-    # EVERY buffered pk. Cross-check that all of them appear
-    # — a meaningful check for the collapse (a dropped/typo'd key is caught). The
-    # per-statement path below (one statement per row: the FK-ordered m-unit-work-007
-    # deletes, the versioned per-key m-batch-write-004 deletes — read back one per
-    # source row where PostgreSQL groups them — the dependent-cascade
-    # m-cascade-delete-001 statements keyed on a same-valued FK) keeps the weaker
-    # "this statement's binds carry SOME pk" check, since those bind a single key.
+    # A collapsed delete addresses every buffered key in one membership predicate;
+    # a per-row statement needs only the key of the row it deletes.
     collapsed = len(step_binds) == 1 and len(pk_values) > 1
     if collapsed:
         binds = _array_elements(step_statements[0], step_binds[0])
@@ -3307,170 +3270,6 @@ def _concurrency_success_step(
     return f"node {node} observed rows != expectRows.\n  observed: {rows!r}\n  expected: {expect!r}"
 
 
-# --- coherence cases (cross-process cache coherence) -------------------------
-
-
-def _coherence_step_statements(step: dict[str, Any], dialect: str) -> list[str]:
-    """The ordered golden SQL statements a coherence step lists for *dialect*."""
-    return entry_statements(step.get("statements"), dialect)
-
-
-def _coherence_has_golden(case: Case, dialect: str) -> bool:
-    """True if any coherence step lists golden SQL for *dialect*."""
-    return any(_coherence_step_statements(step, dialect) for step in case.coherence)
-
-
-def _assert_coherence_normalization(case: Case, dialect: str) -> None:
-    for index, step in enumerate(case.coherence):
-        for sql in _coherence_step_statements(step, dialect):
-            canonical = normalize(sql, dialect)
-            if canonical != sql:
-                raise CaseFailure(
-                    f"{case.path.name}: when.coherence[{index}].statements ({dialect}) is "
-                    f"not canonical.\n"
-                    f"  stored:     {sql!r}\n"
-                    f"  normalized: {canonical!r}"
-                )
-
-
-def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
-    """Run the two-node coherence sequence and assert node B observes A's write.
-
-    The harness provisions ONE database (node A = the provider's own connection,
-    with the model's fixtures loaded so the seed read has a row) and opens a
-    second, independent connection (node B) via the provider's ``open_peer`` seam.
-    Each step runs on its declared node, executing that step's golden SQL: a
-    ``write`` step COMMITs DML on its node; a ``read`` step queries. A step that
-    declares ``observeRows`` asserts the rows its node observes — most importantly
-    the FINAL node-B re-fetch, which MUST return node A's committed post-write
-    state, never the stale pre-write rows. A read step MAY additionally declare
-    ``sameObjectAs`` — that its observed object is the SAME logical object (same
-    primary-key identity) as an earlier step, the cross-process lift of the m-process-cache
-    identity contract: the refresh updates the interned object in place rather than
-    forking a second object for the same primary key.
-
-    The harness contains no cache and no notification bus; it proves the suite's
-    post-write golden SQL is correct against real, committed, cross-connection
-    data — the observable contract any conforming invalidation mechanism satisfies.
-    """
-    dialect = db.dialect
-    tolerance = case.tolerance
-    default_identity = case.model.root_entity.identity_column
-    execution = CaseExecution(case, db)
-
-    provision(case, db)  # fixtures loaded so the seed read sees a row
-    with execution.open_peer() as peer:
-        nodes: dict[str, CaseExecution] = {"A": execution, "B": peer}
-        results: list[list[dict[str, Any]]] = []
-        for index, step in enumerate(case.coherence):
-            node = nodes[step["node"]]
-            pairs = entry_pairs(step.get("statements"), dialect)
-            if step["kind"] == "write":
-                for statement, binds in pairs:
-                    node.execute(statement, binds)
-                results.append([])  # keep indices aligned for sameObjectAs
-                continue
-
-            # A read step: execute its SELECT on its node and (when declared)
-            # assert the rows it observes.
-            if not pairs:
-                raise CaseFailure(
-                    f"{case.path.name}: coherence[{index}] is a read step but "
-                    f"lists no golden SQL for {dialect}."
-                )
-            rows: list[dict[str, Any]] = []
-            for statement, binds in pairs:
-                rows = node.query(statement, binds)
-            results.append(rows)
-
-            observe = step.get("observeRows")
-            target = step.get("objectQuery", {}).get("target")
-            entity = (
-                case.model.entity(target) if isinstance(target, str) else case.model.root_entity
-            )
-            if observe is not None and not object_query_row.rows_equal(
-                rows, observe, case.model, entity, tolerance
-            ):
-                raise CaseFailure(
-                    f"{case.path.name}: coherence[{index}] on node "
-                    f"{step['node']} observed rows != observeRows.\n"
-                    f"  observed: {rows!r}\n"
-                    f"  expected: {observe!r}\n"
-                    f"  (node B's re-fetch after node A's committed write MUST "
-                    f"return the new state, never the stale cached rows.)"
-                )
-
-            if "sameObjectAs" in step:
-                _assert_coherence_identity(case, index, step, results, default_identity)
-
-
-def _coherence_identity_keys(
-    case: Case, index: int, rows: list[dict[str, Any]], identity_col: str
-) -> list[Any]:
-    """The ordered set of primary-key identities carried by *rows*."""
-    if any(identity_col not in row for row in rows):
-        raise CaseFailure(
-            f"{case.path.name}: coherence[{index}] result rows do not carry the "
-            f"identity column {identity_col!r}; a coherence step's find MUST project "
-            f"the primary key so identity can be checked."
-        )
-    return sorted(coerce_identity_key(row[identity_col]) for row in rows)
-
-
-def _assert_coherence_identity(
-    case: Case,
-    index: int,
-    step: dict[str, Any],
-    results: list[list[dict[str, Any]]],
-    default_identity: str,
-) -> None:
-    """Assert this read step denotes the SAME logical object as an earlier step.
-
-    Identity preservation across the cross-process refresh: node B's re-fetch
-    resolves the same primary-key identity it interned on the seed read (the
-    interned object is updated in place, not forked). The witness must be
-    discriminating, so the reference MUST be an EARLIER read step on the SAME node
-    (identity is a per-process notion) and BOTH steps MUST observe at least one row
-    (an empty re-fetch — e.g. after a delete — cannot witness preservation).
-    """
-    source = step["sameObjectAs"]
-    # source < 0 defends programmatic (non-YAML) callers; the schema enforces minimum 0.
-    if source < 0 or source >= index:
-        raise CaseFailure(
-            f"{case.path.name}: coherence[{index}].sameObjectAs={source} "
-            f"must reference an EARLIER step."
-        )
-    referenced = case.coherence[source]
-    if referenced["kind"] != "read":
-        raise CaseFailure(
-            f"{case.path.name}: coherence[{index}].sameObjectAs={source} must "
-            f"reference a read step; a write step observes no object."
-        )
-    if referenced["node"] != step["node"]:
-        raise CaseFailure(
-            f"{case.path.name}: coherence[{index}].sameObjectAs={source} crosses "
-            f"nodes ({referenced['node']} -> {step['node']}); identity preservation "
-            f"is per-process, so both steps MUST run on the same node."
-        )
-    identity_col = step.get("identityAttr", default_identity)
-    this_ids = _coherence_identity_keys(case, index, results[index], identity_col)
-    that_ids = _coherence_identity_keys(case, source, results[source], identity_col)
-    if not this_ids or not that_ids:
-        raise CaseFailure(
-            f"{case.path.name}: coherence[{index}].sameObjectAs={source} has an "
-            f"empty identity witness; both steps MUST observe at least one row for "
-            f"identity preservation to mean anything."
-        )
-    if this_ids != that_ids:
-        raise CaseFailure(
-            f"{case.path.name}: coherence[{index}] is declared to denote the same "
-            f"object(s) as step {source}, but their primary-key identities differ "
-            f"(cross-process refresh forked a new object).\n"
-            f"  step {index}: {this_ids!r}\n"
-            f"  step {source}: {that_ids!r}"
-        )
-
-
 # --- entry point ------------------------------------------------------------
 
 
@@ -3583,8 +3382,6 @@ def _run_executed(case: Case, db: DatabaseProvider | None) -> None:
 
     if case.is_scenario:
         _run_scenario(case, db)
-    elif case.is_coherence:
-        _run_coherence(case, db, dialect)
     elif case.is_conflict and case.attempts:
         _run_conflict_retry(case, db, dialect)
     elif case.is_error:
@@ -3663,23 +3460,9 @@ def _run_scenario(case: Case, db: DatabaseProvider) -> None:
     assert_unit_work_scenario(case, db, literals_preflighted=True)
 
 
-def _run_coherence(case: Case, db: DatabaseProvider, dialect: str) -> None:
-    if not _coherence_has_golden(case, dialect) or not hasattr(db, "open_peer"):
-        # No golden SQL for this dialect, or this provider has no two-node
-        # seam: run the dialect-agnostic checks so coverage is not skipped.
-        _assert_dialect_agnostic_layers(case)
-        return
-    _assert_schema(case)
-    _assert_coherence_normalization(case, dialect)  # layer 3
-    _assert_serde(case)  # layer 4
-    _assert_equivalent_encodings(case)  # layer 4c
-    _assert_coherence(case, db)  # layer 2 (two-node observation)
-
-
 def _run_conflict_retry(case: Case, db: DatabaseProvider, dialect: str) -> None:
     # Retry conflict (m-concurrency): golden SQL lives PER ATTEMPT, so there is no
-    # top-level then.statements to key on, mirroring the scenario / coherence
-    # per-step shapes.
+    # top-level then.statements to key on, mirroring the scenario per-step shape.
     if not _conflict_retry_has_golden(case, dialect):
         _assert_dialect_agnostic_layers(case)
         return

@@ -1,7 +1,7 @@
 # Negative (m-predicate positional rule): the rule is measured against the entity a
 # reference NAMES, never against the ancestor that declares the member.
 model: models/animal.yaml
-tags: [m-predicate, m-inheritance, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-inheritance, rejected, negative, narrow, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

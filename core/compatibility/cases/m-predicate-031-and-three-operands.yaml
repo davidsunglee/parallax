@@ -1,6 +1,6 @@
 # and — n-ary conjunction of THREE operands (m-predicate §Boolean combinators).
 model: models/orders.yaml
-tags: [m-predicate, and, boolean, n-ary, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, and, boolean, n-ary, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

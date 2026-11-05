@@ -3,7 +3,7 @@
 # address, and JSON null only at the members row 302 states as null inside its
 # present document.
 model: models/customer.yaml
-tags: [m-value-object, m-batch-write, m-sql, scenario, insert, json, "null", slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-batch-write, m-sql, scenario, insert, json, "null", slice-snapshot-1]
 shape: scenario
 when:
   scenario:

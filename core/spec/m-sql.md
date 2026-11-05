@@ -172,7 +172,7 @@ makes the comparison deterministic and language-neutral. The rules:
    of values. The placeholder ordering follows left-to-right appearance in the
    normalized statement.
 5. **Deterministic clause order.** Clauses appear in the fixed order
-   `select … from … [where …] [group by …] [having …] [order by …] [limit …]
+   `select … from … [where …] [order by …] [limit …]
    [offset …]`. The optimizer-fence form is the only read that emits `offset`:
    its dialect-owned fenced branch ends in the literal clause `offset 0`.
 
@@ -354,33 +354,25 @@ materialization when the slot is a logical occurrence carrier.
 A read is consumed in one of two lanes, and the projection differs only in
 whether `Document` slots are selected:
 
-- **Instance-form** (the **object lane**) — the result materializes into instances: a
-  snapshot-graph read, an eager fetch (its root and every child level), a deferred
-  relationship **`load`** or a query-backed list's **first `access`** (`m-op-list`), or any
-  other find whose rows become objects. It projects Document slots, so a value-object-bearing
-  entity's whole document rides the owner's single statement (the one-Database-Call
-  materialization contract, `m-value-object`). Deep-fetch and snapshot **child levels
-  are instance-form** — each level projects the child entity's own instance-form list
-  (its scalars, plus any value-object document columns it declares) — as does a deferred
-  `load` / first `access`, which is a child level resolved on demand.
-- **Row-form** (the **values lane**) — the result is consumed as flat values, with no
-  instance constructed. It omits Document slots by default. The internal
-  row-acquisition reads a write makes (`m-unit-work` *Row acquisition*) are the
-  values lane; aggregation results (`m-agg`) use this lane too. A row-acquisition
-  read is the one row-form read
-  whose consumer can widen the default: a temporal target's projects every declared
-  Document slot, because the observation it records is a complete Predecessor Row
-  (`m-write-plan`) — the **predecessor projection**. Widening the projection does
-  not make it instance-form — it still constructs no instance.
+- **Instance-form** (the **object lane**) — the result materializes into instances:
+  a snapshot-graph read or an eager fetch, including its root and every child
+  level. It projects Document slots, so a value-object-bearing entity's whole
+  document rides the owner's single statement (`m-value-object`). Each child
+  level projects its entity's own instance-form list: its scalars plus its
+  declared value-object document columns.
+- **Row-form** (the **values lane**) — internal row-acquisition reads a write
+  makes (`m-unit-work` *Row acquisition*), consumed as flat values without
+  constructing an instance. Document slots are omitted by default. A temporal
+  target's acquisition projects every declared Document slot because its
+  observation is a complete Predecessor Row (`m-write-plan`) — the
+  **predecessor projection**. Widening this projection still constructs no instance.
 
-Row-form is **not a developer surface**: the idiomatic find API always materializes,
-so the developer path is instance-form; row-form is the internal acquisition
-lane. `m-case-format` fixes what a case observes: every read a case asserts is
-**instance-form**, whichever member asserts it. `then.rows` is a flat assertion over
-that read rather than a choice of lane, and a scenario / coherence / concurrency
-**step** read (asserted with `expectRows` / `observeRows`) — a managed-object find or
-refresh, a relationship `load`, a query-backed list's first `access`, and a
-full-scalar shared concurrency read — is instance-form likewise.
+Row-form is **not a developer surface**: the idiomatic find API always
+materializes. Every read a case asserts is **instance-form**, whichever member
+asserts it. `then.rows` is a flat assertion over that read rather than a choice
+of lane, and a scenario or concurrency read asserted with `expectRows` or
+`observeRows` is instance-form likewise. Accessing an already-materialized
+snapshot relationship issues no read.
 
 Everything already specified composes with this rule unchanged: a version
 Attribute is an applicable Attribute slot; a TPH abstract read selects its
@@ -1257,9 +1249,6 @@ Valid Time first, then Transaction Time — so binds follow the same order:
 | Valid-Time Latest, Transaction-Time Latest | `t0.thru_z = ? and t0.out_z = ?` | `[infinity, infinity]` |
 | Valid-Time finite `v`, Transaction-Time Latest | `t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?` | `[v, v, infinity]` |
 | Valid-Time finite `v`, Transaction-Time finite `t` | `t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?` | `[v, v, t, t]` |
-
-Valid-Time-Only belongs to the separate `m-validtime-only` contract and adds no
-SQL shape to `m-temporal-read`.
 
 ### Bitemporal write sequences — the rectangle split
 

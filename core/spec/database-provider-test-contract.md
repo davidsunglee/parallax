@@ -290,8 +290,8 @@ A provider contract suite must exercise these operations:
 - `query`: execute row-returning canonical SQL and return wire-normalized rows
 - `exec`: execute DML and return affected rows
 - `execRolledBack`: execute DML in a transaction that is rolled back
-- `peer`: expose an independent connection for concurrent-writer and coherence
-  style checks when the language's composition root needs one. Where the target
+- `peer`: expose an independent connection for concurrent-writer
+  checks when the language's composition root needs one. Where the target
   owns connection lifetimes, this is a **separately owned** session the caller
   closes — never a connection borrowed from what serves application work, and
   never a raw accessor on a Database Root

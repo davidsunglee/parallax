@@ -2,7 +2,7 @@
 # other key of the document standing (m-storage-layout x m-dialect *Document
 # mutation-expression form*), on Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-dialect, m-document-codec, m-sql, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-dialect, m-document-codec, m-sql, write-sequence, update, json, document-layout, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

@@ -336,8 +336,7 @@ class Entity:
 
         The declared primary key, falling back to the first Attribute for a
         descriptor that marks none. Every place identity is compared asks here —
-        a read step's ``sameObjectAs`` claim, a coherence step's cross-node
-        identity, and the key a settled write's golden must address — so a
+        a read step's preserved identity and the key a settled write's golden addresses — so a
         family's key has one spelling across the harness rather than one per
         lane.
         """
@@ -644,7 +643,7 @@ def _lowered_entries(entries: Any, dialect: str) -> list[tuple[Mapping[str, Any]
 def entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     """The ``(sql, binds)`` pairs a ``statements`` entry list declares for *dialect*.
 
-    Every per-step SQL location — a Scenario step, a coherence step, a conflict
+    Every per-step SQL location — a Scenario step, a conflict
     attempt, a concurrency round — carries its golden SQL as an ordered list of
     ``{sql, binds}`` entries, mirroring the top-level ``then.statements``. Binds
     ride inline on their own entry, so the two are read together rather than
@@ -673,9 +672,9 @@ def names_earlier_step(source: int, step_index: int) -> bool:
     """Whether a Scenario step's ``on`` index names a real EARLIER step.
 
     A step's ``on`` reaches a result some earlier step already produced — the
-    source an action targets, the coordinate group a batched load consumes, the
-    find a settling write was handed a value by — so the index it names is bounded
-    below by the first step and above by the naming step's own position. Every lane
+    source an action targets or the find a settling write was handed a value by —
+    so the index it names is bounded below by the first step and above by the naming
+    step's own position. Every lane
     that REFUSES an out-of-range reference tests it here and reports the violation
     in its own vocabulary; a lane that only follows the reference to resolve what it
     names leaves the refusal to them rather than restating the bound.
@@ -757,7 +756,7 @@ class Case:
         """The action group: the action under test and how the client performs it.
 
         Holds exactly one action member per shape (``objectQuery`` | ``writeSequence``
-        | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``edit`` |
+        | ``scenario`` | ``concurrency`` | ``boundary`` | ``edit`` |
         ``attempts`` | ``write``) plus the context members ``uow`` / ``stream`` /
         ``mutation`` / ``equivalentEncodings``.
         """
@@ -1142,21 +1141,6 @@ class Case:
     def outcome(self) -> str | None:
         """The portable outcome a boundary case asserts (``committed`` / error kind)."""
         return self.then.get("outcome")
-
-    @property
-    def is_coherence(self) -> bool:
-        """True for a cross-process cache-coherence case.
-
-        A coherence case carries ``when.coherence`` — a two-node step sequence
-        (run over two connections to one database) instead of a single query;
-        golden SQL lives per step, and the final node-B re-fetch asserts
-        ``observeRows`` (node A's committed write).
-        """
-        return self.shape == "coherence"
-
-    @property
-    def coherence(self) -> list[dict[str, Any]]:
-        return self.when.get("coherence", [])
 
     @property
     def is_error(self) -> bool:

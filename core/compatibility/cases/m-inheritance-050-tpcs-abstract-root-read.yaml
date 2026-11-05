@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype ABSTRACT-ROOT read: the whole Document family via
 # `union all` (m-inheritance, m-sql).
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

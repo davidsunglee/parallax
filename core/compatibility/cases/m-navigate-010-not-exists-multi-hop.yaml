@@ -1,6 +1,6 @@
 # none across TWO hops (m-navigate nested quantifiers, multi-hop).
 model: models/orders.yaml
-tags: [m-navigate, notExists, relationship, multi-hop, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, notExists, relationship, multi-hop, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

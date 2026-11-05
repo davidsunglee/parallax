@@ -1,7 +1,7 @@
 # Negative (m-inheritance, resolved Q3/Q4): a concrete subtype names a parent that
 # the descriptor does not declare.
 model: models/payment.yaml
-tags: [m-inheritance, m-descriptor, m-metamodel, m-model-formation, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-descriptor, m-metamodel, m-model-formation, rejected, negative, slice-snapshot-1]
 shape: rejected
 when:
   model:

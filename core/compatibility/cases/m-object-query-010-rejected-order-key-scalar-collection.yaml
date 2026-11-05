@@ -2,7 +2,7 @@
 # and a scalar collection holds a sequence of them, so ordering by
 # `CollectionTwinItem.counts` is refused before SQL.
 model: models/scalar-collection-layout-twin-columns.yaml
-tags: [m-object-query, rejected, negative, order-by, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, rejected, negative, order-by, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

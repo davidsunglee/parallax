@@ -5,7 +5,6 @@
 # Transaction-Time past records what the system knew and is never rewritten. The
 # error is distinct from the m-db-error database taxonomy. (Contrast the finite
 # Valid-Time pin, which is writable — m-temporal-write-031; the audit-only sibling
-# of this witness is m-identity-map-010.)
 model: models/position.yaml
 lane: api-conformance
 tags: [m-temporal-write, m-edit, m-temporal-read, bitemporal, temporal, as-of, read-only, scenario, slice-snapshot-1]

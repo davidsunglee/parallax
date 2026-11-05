@@ -3,7 +3,7 @@
 # derived endpoint the descriptor refuses as authored; the name is still reserved
 # for a framework endpoint.
 model: models/person.yaml
-tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, slice-snapshot-1, slice-managed-1]
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, slice-snapshot-1]
 shape: rejected
 when:
   model:

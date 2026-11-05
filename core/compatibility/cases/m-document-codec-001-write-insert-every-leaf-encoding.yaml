@@ -3,7 +3,7 @@
 # Postgres AND MariaDB. `m-wire` owns the spellings and `m-document-codec` stores
 # them, so this case is the storage half of the one table both consumers share.
 model: models/document-codec.yaml
-tags: [m-document-codec, m-wire, m-value-object, m-sql, write-sequence, insert, json, nested, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-document-codec, m-wire, m-value-object, m-sql, write-sequence, insert, json, nested, to-many, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

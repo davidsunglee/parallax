@@ -1,6 +1,6 @@
 # `exists` tests a single related object's presence.
 model: models/predicate-collections.yaml
-tags: [m-predicate, relationship, to-one, exists, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, exists, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -154,7 +154,7 @@ def test_case_recognizes_single_connection_error_shape() -> None:
         }
     )
     assert case.is_error
-    assert not case.is_conflict and not case.is_coherence and not case.is_scenario
+    assert not case.is_conflict and not case.is_scenario
     assert case.error_class == "uniqueViolation"
     assert case.expected_native_code == {"postgres": "23505", "mariadb": 1062}
     assert case.concurrency is None

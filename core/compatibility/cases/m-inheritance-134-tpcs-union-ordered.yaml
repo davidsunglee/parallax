@@ -2,7 +2,7 @@
 # table and the result-shape tail applies against its alias (m-inheritance, m-sql,
 # m-object-query, m-dialect).
 model: models/document.yaml
-tags: [m-inheritance, m-object-query, m-sql, m-dialect, table-per-concrete-subtype, union-all, root, orderBy, ordering, nulls, nullable, directive, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-sql, m-dialect, table-per-concrete-subtype, union-all, root, orderBy, ordering, nulls, nullable, directive, familyVariant, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

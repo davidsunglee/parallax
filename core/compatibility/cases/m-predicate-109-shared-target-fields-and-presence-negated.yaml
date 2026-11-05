@@ -1,7 +1,7 @@
 # Negating presence and two fields of one owner admits an absent owner but keeps
 # an unknown conjunction unknown.
 model: models/predicate-collections.yaml
-tags: [m-predicate, relationship, to-one, traversal, exists, negation, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, exists, negation, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

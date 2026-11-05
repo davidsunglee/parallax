@@ -943,50 +943,6 @@ def test_tpcs_routing_is_read_under_each_dialects_own_quoting() -> None:
         _assert_write_input_columns(sibling, "postgres")
 
 
-# --- cascade delete ordering (m-cascade-delete) ------------------------------
-
-
-def test_one_to_one_cascade_deletes_dependent_before_root() -> None:
-    # m-cascade-delete-003: the dependent passport is deleted BEFORE the root person.
-    case = _write_case_by_id("m-cascade-delete-003")
-    sqls = [s["sql"]["postgres"] for s in case.then["statements"]]
-    assert sqls == [
-        "delete from passport where person_id = ?",
-        "delete from person where id = ?",
-    ]
-    _assert_write_input_columns(case, "postgres")
-
-
-def test_multi_root_cascade_deletes_each_roots_children_first() -> None:
-    # m-cascade-delete-004: two roots cascaded in one sequence, each deleting its own
-    # dependents (children) before its own root row.
-    case = _write_case_by_id("m-cascade-delete-004")
-    assert [step["mutation"] for step in case.write_sequence] == [
-        "cascadeDelete",
-        "cascadeDelete",
-    ]
-    sqls = [s["sql"]["postgres"] for s in case.then["statements"]]
-    assert sqls[:3] == [
-        "delete from order_status where order_id = ?",
-        "delete from order_item where order_id = ?",
-        "delete from orders where id = ?",
-    ]
-    # Each level's binds stay within one root (2, then 42) — not collapsed across roots.
-    assert [case.statement_binds(i)[0] for i in range(6)] == [2, 2, 2, 42, 42, 42]
-    _assert_write_input_columns(case, "postgres")
-
-
-def test_non_dependent_relationship_is_not_cascaded() -> None:
-    # m-cascade-delete-002: the cascade emits deletes only over dependent edges
-    # (statuses, items) — never the non-dependent order_tag table.
-    case = _write_case_by_id("m-cascade-delete-002")
-    tables = [s["sql"]["postgres"].split()[2] for s in case.then["statements"]]
-    assert tables == ["order_status", "order_item", "orders"]
-    assert "order_tag" not in tables
-    # The surviving order_tag rows (order 1's tags) are asserted unchanged.
-    assert "order_tag" in case.expected_table_state
-
-
 # --- role-aware DB-computed marker interpretation -----------------------------
 #
 # A DB-computed marker (`{computed}` / `{increment}`) is a SCALAR-ATTRIBUTE-only

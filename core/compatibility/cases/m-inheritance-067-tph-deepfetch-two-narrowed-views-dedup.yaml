@@ -1,7 +1,7 @@
 # Deep fetch of TWO narrowed views sharing a relationship prefix — prefix dedup
 # includes narrowed-view identity (m-read-planning, m-inheritance).
 model: models/animal.yaml
-tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

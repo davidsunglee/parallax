@@ -447,12 +447,10 @@ def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None
 # / `m-temporal-read` is caught and re-raised as one `EngineError`, never a     #
 # leaked lower-layer exception type.                                           #
 # --------------------------------------------------------------------------- #
-def test_check_action_step_rejects_a_managed_lifecycle_verb() -> None:
-    # `load` is a managed-object surfacing this lane holds no state for; the
-    # two verbs it does grade over a snapshot graph (`mutate`, `access`) pass.
-    with pytest.raises(EngineError, match="graded by the API"):
+def test_check_action_step_rejects_an_unknown_verb() -> None:
+    with pytest.raises(EngineError, match="not supported by compile/run"):
         snapshot._check_action_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-            _case("m-snapshot-read-010"), {"action": "load"}
+            _case("m-snapshot-read-010"), {"action": "unknown"}
         )
     snapshot._check_action_step(_case("m-snapshot-read-010"), {"action": "mutate"})  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
     snapshot._check_action_step(_case("m-snapshot-read-010"), {"action": "access"})  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly

@@ -5,7 +5,7 @@
 # different Valid-Time instants, so all three rows differ on it and the
 # successor insert succeeds.
 model: models/temporal-authored-index.yaml
-tags: [m-temporal-write, m-sql, m-storage-layout, bitemporal, temporal, write-sequence, plain-update-split, unique-index, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, m-storage-layout, bitemporal, temporal, write-sequence, plain-update-split, unique-index, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

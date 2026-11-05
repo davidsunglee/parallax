@@ -1,7 +1,7 @@
 # Negative (m-wire typed-literal conversion): a depth-0 attribute literal that cannot
 # denote the declared type is refused PRE-SQL.
 model: models/contact.yaml
-tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1]
 shape: rejected
 when:
   write:

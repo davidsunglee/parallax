@@ -5,7 +5,7 @@
 # the find observed, and affects one row — now produced by a public `terminate` whose
 # head and tail successors are empty, rather than by a close the case authors.
 model: models/position.yaml
-tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

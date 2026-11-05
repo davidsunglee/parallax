@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype TEMPORAL abstract-root read: `union all` with PER-BRANCH
 # temporal-selection binds (m-inheritance x m-temporal-read x m-sql).
 model: models/rate.yaml
-tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-concrete-subtype, union-all, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-concrete-subtype, union-all, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1]
 shape: read
 given:
   fixtures: true

@@ -1,7 +1,7 @@
 # Read-your-own-writes scenario (m-unit-work): a dependent find observes a not-yet-read
 # buffered write after the unit of work flushes.
 model: models/account.yaml
-tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

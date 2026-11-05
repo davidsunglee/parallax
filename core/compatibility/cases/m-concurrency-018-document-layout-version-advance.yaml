@@ -2,7 +2,7 @@
 # patching the document in the same statement (m-concurrency x m-storage-layout x
 # m-dialect), on Postgres AND MariaDB.
 model: models/document-layout.yaml
-tags: [m-concurrency, m-storage-layout, m-dialect, m-document-codec, m-sql, m-unit-work, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-storage-layout, m-dialect, m-document-codec, m-sql, m-unit-work, write-sequence, update, json, document-layout, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

@@ -1,6 +1,6 @@
 # Walking-skeleton case: all() — no WHERE clause.
 model: models/orders.yaml
-tags: [m-predicate, m-conformance-adapter, m-case-format, all, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-conformance-adapter, m-case-format, all, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

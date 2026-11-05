@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`, and the Database Root's configured `databaseOptions`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `databaseCalls`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eleven shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-concurrency — a single-attempt observation-requiring keyed write against a non-temporal target asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (a `when.concurrency` choreography with NO `then.errorClass` — the m-concurrency behavioral read lock and the two-session isolation witnesses); a `boundary` case (m-auto-retry bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`, and the Database Root's configured `databaseOptions`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `databaseCalls`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of ten shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-concurrency — a single-attempt observation-requiring keyed write against a non-temporal target asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (a `when.concurrency` choreography with NO `then.errorClass` — the m-concurrency behavioral read lock and the two-session isolation witnesses); a `boundary` case (m-auto-retry bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["tags", "shape"],
@@ -95,17 +95,6 @@
           "properties": { "when": { "required": ["attempts"] } }
         }
       ]
-    },
-    {
-      "description": "A coherence case (cross-process cache coherence): a two-node operation sequence under `when.coherence`, run against ONE database over TWO connections (node A, node B). Each step declares its node and golden SQL; the case asserts what node B observes after node A's committed write.",
-      "required": ["shape", "when"],
-      "properties": {
-        "shape": { "const": "coherence" },
-        "when": {
-          "required": ["coherence"],
-          "propertyNames": { "enum": ["coherence"] }
-        }
-      }
     },
     {
       "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds). A choreography MAY declare `when.uow.isolation`, the portable level both held sessions open at. A step here takes one of exactly two forms: a statement step declaring NO `kind` at all, or a `kind: commit` step ending that node's held transaction where the choreography needs it to end. The nested `rounds.items.properties.{A,B}` is what refuses everything else: `kind: {const: commit}` refuses the third form, since `read` / `write` are the concurrency-success shape's grading vocabulary and a step declaring one here would name a distinction nothing on this shape grades while dispatching differently per runner; `not: {required: [expectRows]}` refuses the rows themselves on EVERY step, `kind`-less ones included, because this shape's only assertion is the classified error and both runners would silently ignore an authored `expectRows`.",
@@ -376,7 +365,7 @@
       }
     },
     {
-      "description": "Every case but an `evolution` case names one model at the top level. An evolution case names TWO endpoints instead, under `when.evolve`, and its own branch refuses a top-level `model` beside them — so the requirement is stated here rather than in the envelope's own `required`, where it could only be stated for all eleven shapes or for none.",
+      "description": "Every case but an `evolution` case names one model at the top level. An evolution case names TWO endpoints instead, under `when.evolve`, and its own branch refuses a top-level `model` beside them — so the requirement is stated here rather than in the envelope's own `required`, where it could only be stated for all ten shapes or for none.",
       "if": {"required": ["shape"], "properties": {"shape": {"not": {"const": "evolution"}}}},
       "then": {"required": ["model"]}
     },
@@ -677,7 +666,6 @@
         "writeSequence",
         "scenario",
         "conflict",
-        "coherence",
         "error",
         "concurrencySuccess",
         "boundary",
@@ -798,7 +786,7 @@
       }
     },
     "when": {
-      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `stream`, `mutation`, `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, the written verb, and alternate surface encodings.",
+      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `concurrency` | `boundary` | `edit` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `stream`, `mutation`, `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, the written verb, and alternate surface encodings.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -861,7 +849,7 @@
           "items": { "type": "object" }
         },
         "writeSequence": {
-          "description": "A writeSequence case: an ordered list of write steps the golden DML (`then.statements`) realizes. Each step names a mutation kind on an entity; the golden SQL is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `then.tableState`. Used by milestone-chaining temporal writes (m-temporal-write), batched non-temporal writes (m-batch-write), and the minimal dependent cascade-delete witness (m-cascade-delete/m-unit-work).",
+          "description": "A writeSequence case: an ordered list of write steps the golden DML (`then.statements`) realizes. Each step names a mutation kind on an entity; the golden SQL is the matching ordered list of DML statements (one or more per step), applied in order, after which the harness asserts `then.tableState`. Used by milestone-chaining temporal writes (m-temporal-write), batched non-temporal writes (m-batch-write).",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -928,7 +916,6 @@
                   "amend",
                   "terminate",
                   "delete",
-                  "cascadeDelete",
                   "insertUntil",
                   "amendUntil",
                   "terminateUntil",
@@ -991,7 +978,7 @@
           }
         },
         "scenario": {
-          "description": "A scenario (m-unit-work) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues an `objectQuery`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (as `statements`), not at `then.statements`: each read costs a declared number of Database Calls, and an interleaved committed write lets a later step prove read-your-own-writes or query-cache invalidation. The harness asserts the Database Call counts are internally consistent with the golden SQL each step lists.",
+          "description": "A scenario (m-unit-work) case: ordered read, write, and action steps over one provisioned database. A read issues an `objectQuery`; a write carries its structured requested operation and independent golden DML. SQL lives per step, not at `then.statements`. A later read observes prior committed writes or the mid-transaction state of its unit-of-work group. The harness checks declared Database Call counts against each step's authored statements.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -999,7 +986,7 @@
             "additionalProperties": false,
             "oneOf": [
               {
-                "description": "A read step: issues one Object Query. A cache miss costs >= 1 Database Call and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity inside its own `objectQuery.target`, exactly as a read case does.",
+                "description": "A read step issues one instance-form Object Query and declares its golden statements and Database Call count. It names its queried entity inside `objectQuery.target`, exactly as a read case does.",
                 "required": ["objectQuery"]
               },
               {
@@ -1007,7 +994,7 @@
                 "required": ["write"]
               },
               {
-                "description": "An ACTION step (m-case-format lifecycle vocabulary): performs a managed-object lifecycle verb named by `action` against the result of an earlier step (`on`). It carries per-step golden SQL (`statements`) when the verb hits the database (a `load` / `access` relationship query, or `flush` / `commit` DML) exactly as a read / write step does, and per-step observables: `expectRows` (rows a `load` returns or re-read observes, or the derived Wire value a `mutate` publishes), `expectError` (a neutral application-lifecycle error the verb raises), and `sameObjectAs` / `differentObjectFrom` reference-identity assertions. A `load` / first `access` resolving read is INSTANCE-FORM (m-case-format *Read result form*, m-sql *Read projection*): it materializes the loaded / accessed related objects, so a value-object-bearing target projects its applicable Storage Layout `Document` slot, exactly as a deep-fetch child level does. A cache-hit re-access lists no golden SQL and declares `databaseCalls: 0`, exactly like a cache-hit read step. A `mutate` declaring `expectRows` publishes its in-memory derived mapping without a re-read or SQL. Golden SQL still lives PER STEP, so a scenario case with action steps carries no top-level `then.statements`.",
+                "description": "An ACTION step names a verb over an earlier published value (`on`) or the unit-of-work boundary. `mutate` derives an edited value; `access` navigates an already-materialized snapshot relationship. Both issue no SQL. `flush` and `commit` carry the buffered DML they execute. Per-step observables report the derived `expectRows`, retained relationship `expectGraph`, raised `expectError`, and `sameObjectAs` view preservation. A scenario with actions carries no top-level `then.statements`.",
                 "required": ["action"]
               }
             ],
@@ -1021,18 +1008,19 @@
                 }
               },
               {
-                "description": "A single step declares AT MOST ONE of `sameObjectAs` / `differentObjectFrom`: a step's identity relationship to one anchor is either sameness OR difference, never both (in particular, they can never point at the SAME step). Distinct identity anchors are expressed by separate steps or by the adapter's per-position identity checks (m-conformance-adapter).",
-                "not": { "required": ["sameObjectAs", "differentObjectFrom"] }
-              },
-              {
-                "description": "An OBJECT-TARGETING action verb (`mutate` / `load` / `access`) acts on a PRIOR step's result, so it MUST name that source with `on`. The BOUNDARY / unit-of-work verbs (`flush` / `commit` / `abort`) operate on the unit of work as a whole rather than a specific prior object, so `on` is OPTIONAL for them (a `flush` MAY still carry `on` to document the buffered write it materializes). This is a per-verb conditional, NOT a blanket `on` requirement — a blanket rule would wrongly reject a legitimate boundary step.",
+                "description": "An OBJECT-TARGETING action verb (`mutate` / `access`) acts on a PRIOR step's result, so it MUST name that source with `on`. The BOUNDARY / unit-of-work verbs (`flush` / `commit` / `abort`) operate on the unit of work as a whole rather than a specific prior object, so `on` is OPTIONAL for them (a `flush` MAY still carry `on` to document the buffered write it materializes). This is a per-verb conditional, NOT a blanket `on` requirement — a blanket rule would wrongly reject a legitimate boundary step.",
                 "if": {
                   "required": ["action"],
                   "properties": {
-                    "action": { "enum": ["mutate", "load", "access"] }
+                    "action": { "enum": ["mutate", "access"]}
                   }
                 },
                 "then": { "required": ["on"] }
+              },
+              {
+                "description": "Access navigates a relationship already materialized by its source read, so it requires that relationship's path.",
+                "if": { "required": ["action"], "properties": { "action": { "const": "access" } } },
+                "then": { "required": ["path"] }
               },
               {
                 "description": "A keyed write ACTION verb (`insert` / `amend`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `databaseCalls: 0` (m-case-format *Keyed write action steps*): a refusal stops the verb before it buffers anything, and the one acceptance this shape admits — the `amend` of a value no author changed, per the sibling `insert` rule — buffers nothing either, so its whole observable is the per-step `expectError`.",
@@ -1091,14 +1079,14 @@
                 }
               },
               {
-                "description": "`expectGraph` has exactly TWO placements (m-case-format *Relationship contents at a step*), and they state different things about different graphs. On an `action: access` step it states what an ALREADY-MATERIALIZED view still holds, so it proves the VIEW survived what the steps in between did; on a READ step carrying `objectQuery.includes` it states what THAT read materialized, so it proves what the read's own connection observed — the DATABASE for an ungrouped read, and the group's mid-transaction state for one inside a `uow` group (read-your-own-writes). No other step admits it: a write step and every other action verb materialize no graph and navigate no relationship, so there is nothing for contents to belong to. The ACCESS placement names BOTH ends of the navigation it states: ONE materializing read (`on`) and the relationship it walked from that read's objects (`path`). The `on` ARRAY form spans sources at DIFFERENT lowered coordinates, and contents assembled across several such views would be a graph no single materialized view holds — so an access stating contents names the single read whose Include Paths materialized them. `path` is required for the same reason the contents are keyed by that path's TARGET entity: the path-less `access` form resolves a query-backed list's own source entity and navigates NO relationship, so it has no relationship contents to state and no accessed path an `objectQuery.includes` could cover. The READ placement requires `objectQuery.includes` for the matching reason: a read declaring none materializes root rows and no relationship at all, which `expectRows` already states, and the observable is relationship contents in both placements.",
+                "description": "`expectGraph` has two placements (m-case-format *Relationship contents at a step*). On an `action: access` step it states what the already-materialized relationship view still holds, proving that view survived intervening actions. On a read carrying `objectQuery.includes` it states the graph that read itself materialized, including the group's mid-transaction state where applicable. Access names its materializing read (`on`) and navigated relationship (`path`); the source read's Include Paths must cover that path. No write or other action admits this graph observation.",
                 "if": { "required": ["expectGraph"] },
                 "then": {
                   "oneOf": [
                     {
                       "description": "The ACCESS placement — a navigated relationship's contents, keyed by the `path`'s target Entity.",
                       "required": ["action", "path"],
-                      "properties": { "action": { "const": "access" }, "on": { "type": "integer" } }
+                      "properties": { "action": { "const": "access" } }
                     },
                     {
                       "description": "The READ placement — the graph this read materialized, keyed by its own `objectQuery.target` Entity, each root carrying the relationships its Include Paths populated.",
@@ -1174,9 +1162,8 @@
                 "$ref": "#/$defs/streamContext"
               },
               "write": {
-                "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011` and `m-process-cache-003`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / amend / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Under `grading: state` a buffer MAY also carry target submissions and predicate writes (`$defs/submission`). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
+                "description": "A WRITE step has two structured forms, disjoint by JSON type: a single predicate-selected `$defs/predicateWrite` instruction, or an ordered `$defs/bufferedWriteSequence` of keyed instructions accumulated and flushed together. The buffer can mix objects and mutation kinds; same-object folding is the runtime coalescing rule, not a shape constraint. Under `grading: state`, a buffer may also carry target and predicate submissions (`$defs/submission`). The requested operation feeds compilation and API no-drift checks independently of the golden `statements`, which remain the expected lowering rather than an input used to infer the write.",
                 "oneOf": [
-                  { "type": "string", "minLength": 1 },
                   { "$ref": "#/$defs/predicateWrite" },
                   { "$ref": "#/$defs/bufferedWriteSequence" }
                 ]
@@ -1191,7 +1178,7 @@
                 "minLength": 1
               },
               "databaseCalls": {
-                "description": "How many Database Calls this step costs. A READ cache HIT costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's Database Calls equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
+                "description": "The Database Calls this step costs, equal to the number of golden SQL statements it lists for each dialect. A snapshot `mutate` or `access` issues none. A write counts every statement it executes, including statements later rolled back.",
                 "type": "integer",
                 "minimum": 0
               },
@@ -1201,11 +1188,11 @@
                 "minimum": 0
               },
               "statements": {
-                "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). Present only for steps that hit the database (databaseCalls >= 1); absent for a cache hit (databaseCalls 0).",
+                "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` entries with dialect-keyed SQL. A step that emits no statements omits this list and declares `databaseCalls: 0`.",
                 "$ref": "#/$defs/goldenStatements"
               },
               "expectRows": {
-                "description": "The rows this step publishes. For a find, these are the values returned against the fixture data; a cache-hit step that reuses an earlier result MAY restate them. For a `mutate`, these are the in-memory Wire values derived by replacing the authored bindings whole, never a re-read. On read steps, `expectRows` is the observation channel for BOTH read lanes (m-case-format *Read result form*, m-sql *Read projection*): the form is fixed by the step's read semantics, not by this member — a managed-object find / refresh step, a relationship `load`, and a query-backed list's first `access` are INSTANCE-FORM (the object lane, projecting every applicable Storage Layout `Document` slot).",
+                "description": "The rows this step publishes. A read observes scalar values from its instance-form result (m-case-format *Read result form*, m-sql *Read projection*): value-object-bearing targets still project every applicable Storage Layout `Document` slot. A `mutate` publishes the in-memory Wire values derived by replacing the authored bindings whole, without another read.",
                 "type": "array",
                 "items": { "type": "object" }
               },
@@ -1223,30 +1210,18 @@
                 "$ref": "#/$defs/referenceSql"
               },
               "sameObjectAs": {
-                "description": "Zero-based index of an earlier scenario step whose result denotes the SAME logical object(s) as this step (the identity-cache contract: same primary key => same object). Legal on a read step or an action step (a `load` / `access` re-read denoting the same managed object as an earlier step).",
-                "type": "integer",
-                "minimum": 0
-              },
-              "differentObjectFrom": {
-                "description": "Zero-based index of an earlier scenario step whose result denotes a DISTINCT object from this step — the reference-INEQUALITY counterpart of `sameObjectAs` (m-identity-map: two finite coordinates in one milestone are distinct pinned views even when their row values are identical, so value equality cannot distinguish them). Graded as REFERENCE identity by each language's API Conformance Suite; the wire harness proves the accompanying SQL / rows and skips this observable.",
+                "description": "Zero-based index of an earlier scenario step whose relationship view is preserved by this step. Snapshot access and edited copies retain the loaded view their source published.",
                 "type": "integer",
                 "minimum": 0
               },
               "action": {
-                "description": "Marks an ACTION step and names the managed-object lifecycle verb it performs (m-case-format lifecycle vocabulary). `mutate` — assign the attributes in `set` in memory (no SQL for a snapshot object). `load` — explicitly trigger a deferred relationship load (m-read-planning), the portable, mandatory load trigger; its resolving read is INSTANCE-FORM (m-sql *Read projection*), materializing the loaded objects and selecting applicable Storage Layout `Document` slots. `access` — read a relationship / query-backed list (m-op-list): the FIRST access resolves and materializes the list in one INSTANCE-FORM read, while a later access hits already-populated state with no SQL. `flush` — emit the unit of work's buffered DML. `commit` / `abort` — end the unit of work, committing or discarding it (m-unit-work). `insert` / `amend` — hand the keyed write verb of that name a VALUE whose provenance the sibling `value` states (m-unit-work *Write value provenance*): the step observes which verbs accept that value, so it names no prior step and carries no golden SQL.",
-                "enum": ["mutate", "load", "access", "flush", "commit", "abort", "insert", "amend"]
+                "description": "The action verb (m-case-format): `mutate` derives a copy with the assignments in `set`; `access` navigates an already-materialized snapshot relationship, without SQL. `flush` emits buffered DML, and `commit` or `abort` ends the unit of work. `insert` or `amend` hands the named keyed verb a value of the sibling `value` provenance; this arrangement names no prior result and carries no golden SQL.",
+                "enum": ["mutate", "access", "flush", "commit", "abort", "insert", "amend"]
               },
               "on": {
-                "description": "The earlier scenario step(s) whose result this step operates on. A single zero-based index, or an array of indices when an ACTION spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-read-planning / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. On an ACTION step it names the source object(s) the verb acts on: REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`). A write step carries none: each of its buffered submissions names its own source (`$defs/submissionSource`).",
-                "oneOf": [
-                  { "type": "integer", "minimum": 0 },
-                  {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": { "type": "integer", "minimum": 0 }
-                  }
-                ]
+                "description": "The zero-based index of the earlier scenario step whose result this action uses. The harness requires `0 <= on < the current step index`. Object-targeting `mutate` and `access` require it; boundary verbs may omit it. A write step has no step-level source: each buffered submission names its own (`$defs/submissionSource`).",
+                "type": "integer",
+                "minimum": 0
               },
               "value": {
                 "description": "insert / amend action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through admitted the value as valid stored Entity State; `anotherSource` — a read through some OTHER framework-managed source admitted it, the same store or not; `invalidRoot` — this source published the value only as diagnostic data inside a hydratable invalid root and therefore did not admit it as a keyed source. The case states the provenance and never how to obtain it: the adapter arranges the corresponding value through its own managed reads, or no read at all for `unmanaged`.",
@@ -1262,7 +1237,7 @@
                 "minProperties": 1
               },
               "path": {
-                "description": "load / access action only. The relationship (or dotted multi-hop relationship path) the verb navigates from the target object — e.g. `items` or `items.statuses`.",
+                "description": "Access action only. The relationship or dotted multi-hop relationship path navigated within the already-materialized snapshot graph, such as `items` or `items.statuses`.",
                 "type": "string",
                 "minLength": 1
               },
@@ -1288,65 +1263,8 @@
             }
           }
         },
-        "coherence": {
-          "description": "A coherence (cross-process cache coherence) case: an ordered list of steps run against ONE database over TWO connections modeling two application servers (node A, node B). Each step names the node it runs on, the query or DML it issues, and its golden SQL (`statements`); a write step (kind `write`) COMMITS on its node, a read step (kind `read`) is a query. The final step is node B's re-fetch after node A's committed write — it carries `observeRows`, the post-write rows node B MUST observe.",
-          "type": "array",
-          "minItems": 2,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["node", "kind", "statements"],
-            "allOf": [
-              {
-                "description": "A read step (`kind: read`) issues one `objectQuery`, which names its own queried entity in `target`, exactly as a read case does.",
-                "if": {
-                  "required": ["kind"],
-                  "properties": { "kind": { "const": "read" } }
-                },
-                "then": { "required": ["objectQuery"] }
-              }
-            ],
-            "properties": {
-              "node": {
-                "description": "Which application-server node (which connection) this step runs on. `A` is the writer; `B` is the peer whose cache must converge on A's committed state.",
-                "enum": ["A", "B"]
-              },
-              "kind": {
-                "description": "`read` issues a query (a seed read or a re-fetch); `write` issues DML that COMMITS on its node (the change a peer must observe).",
-                "enum": ["read", "write"]
-              },
-              "objectQuery": {
-                "description": "The Object Query a `read` step issues, naming its own queried `target`. Present on read steps; absent on write steps.",
-                "$ref": "object-query.schema.json#"
-              },
-              "statements": {
-                "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). A read step's is a SELECT; a write step's is the committing DML.",
-                "$ref": "#/$defs/goldenStatements"
-              },
-              "observeRows": {
-                "description": "The rows this step MUST observe. On the final node-B re-fetch this is the POST-WRITE state (proving the cache converged on node A's committed write); on a seed read it is the pre-write state. A coherence re-fetch materializes / refreshes a managed object, so `observeRows` carries an INSTANCE-FORM read (the object lane; m-case-format *Read result form*, m-sql *Read projection*) — a value-object-bearing target would project its applicable Storage Layout `Document` slots here, though every coherence-read entity is value-object-free today.",
-                "type": "array",
-                "items": { "type": "object" }
-              },
-              "sameObjectAs": {
-                "description": "Zero-based index of an earlier coherence step (on the SAME node) whose observed rows denote the SAME logical object(s) as this step — the identity-preservation contract: the cross-process refresh updates the interned object in place (same primary key => same object).",
-                "type": "integer",
-                "minimum": 0
-              },
-              "identityAttr": {
-                "description": "The result-column name carrying the primary-key identity, used to check `sameObjectAs`. Defaults to the model root entity's primary-key column.",
-                "type": "string",
-                "minLength": 1
-              },
-              "note": {
-                "description": "Optional human-readable description of the step's role in the coherence scenario.",
-                "type": "string"
-              }
-            }
-          }
-        },
         "concurrency": {
-          "description": "The two-connection choreography for the two-session error cases and the concurrency-success cases. Ordered, barrier-separated rounds; each round names the statements nodes A and B run that round (a node absent from a round is idle). Each node step carries `statements` (dialect-keyed golden SQL entries), mirroring a coherence step — except a `kind: commit` step, which carries none because what it performs is that node's own commit rather than authored SQL. The runner runs each node on its own non-autocommit session, synchronizes rounds with a barrier, and (for an error case) classifies the error raised in the contention round. A step declaring `blocks` ends its round once its statement waits on the peer's lock, and finishes when a later peer step releases it.",
+          "description": "The two-connection choreography for the two-session error cases and the concurrency-success cases. Ordered, barrier-separated rounds; each round names the statements nodes A and B run that round (a node absent from a round is idle). Each node step carries `statements` (dialect-keyed golden SQL entries) — except a `kind: commit` step, which carries none because what it performs is that node's own commit rather than authored SQL. The runner runs each node on its own non-autocommit session, synchronizes rounds with a barrier, and (for an error case) classifies the error raised in the contention round. A step declaring `blocks` ends its round once its statement waits on the peer's lock, and finishes when a later peer step releases it.",
           "type": "object",
           "required": ["rounds"],
           "additionalProperties": false,
@@ -1799,7 +1717,7 @@
           "$ref": "#/$defs/schemaDeltaMatrix"
         },
         "tolerance": {
-          "description": "Absolute tolerance for numeric row comparison. Omit for exact comparison (the default; money/counts/exact aggregates compare exactly in Decimal space). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) that cannot be authored exactly and differ in scale across dialects; comparison then becomes abs(actual - expected) <= tolerance.",
+          "description": "Absolute tolerance for numeric row comparison. Omit for exact comparison. Declare only where an inexact numeric representation requires it; comparison then uses abs(actual - expected) <= tolerance.",
           "type": "number",
           "exclusiveMinimum": 0
         }

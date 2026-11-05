@@ -1,7 +1,7 @@
 # Negative (m-inheritance, binding decision): a table-per-concrete-subtype family
 # whose CONCRETE subtype declares the family's Temporality Profile.
 model: models/payment.yaml
-tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-concrete-subtype, slice-snapshot-1]
 shape: rejected
 when:
   model:

@@ -42,7 +42,6 @@ from .compile import (
     _GroupedWrite,
     _RowPublishingStep,
     _UngroupedWrite,
-    _UnresolvedList,
 )
 from .observations import ScenarioRowObservations
 from .report import reported_against
@@ -84,8 +83,6 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
                         row_observations.assert_step(
                             step.index, session if session is not None else execution
                         )
-                    case _UnresolvedList():
-                        pass
                 finish_group(case, step.index, step.group, states, dialect)
     assert_table_state(case, db, after="the scenario")
 

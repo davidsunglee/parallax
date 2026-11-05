@@ -1,6 +1,6 @@
 # notEq over a column containing NULLs — three-valued-logic exclusion (m-predicate §Null).
 model: models/orders.yaml
-tags: [m-predicate, notEq, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, notEq, "null", three-valued-logic, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -2,7 +2,7 @@
 # UNGATED (m-concurrency "Effective Concurrency Strategy determines the gate uniformly" + m-unit-work
 # "What licenses a Locking write", composed inside one `uow` group).
 model: models/balance.yaml
-tags: [m-concurrency, m-unit-work, m-temporal-write, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-unit-work, m-temporal-write, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

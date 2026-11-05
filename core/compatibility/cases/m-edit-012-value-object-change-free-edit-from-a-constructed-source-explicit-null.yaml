@@ -4,7 +4,7 @@
 # invokes no assignment hook, drops a warm declared cache, and leaves source and
 # occurrence unchanged.
 model: models/note.yaml
-tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+tags: [m-edit, m-value-object, slice-snapshot-1]
 shape: edit
 lane: api-conformance
 when:

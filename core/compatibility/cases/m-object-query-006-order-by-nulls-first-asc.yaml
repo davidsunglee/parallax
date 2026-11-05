@@ -2,7 +2,7 @@
 # no default anywhere, proven on BOTH dialects (m-object-query orderBy + m-dialect
 # NULL ordering).
 model: models/orders.yaml
-tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -2,7 +2,7 @@
 # a buffered INSERT followed by an UPDATE of the SAME new object collapses to a
 # SINGLE INSERT carrying the FINAL values (Reladomo testInsertAndUpdateInTransaction).
 model: models/account.yaml
-tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-snapshot-1]
 shape: scenario
 when:
   uow:

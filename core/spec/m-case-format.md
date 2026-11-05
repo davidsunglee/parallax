@@ -139,7 +139,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   configures no root omits `given` entirely.
 - **`when`** — the action under test and how the client performs it. Exactly one
   **action** member per shape (`objectQuery` | `writeSequence` | `scenario` |
-  `coherence` | `concurrency` | `boundary` | `edit` | `attempts`, plus the
+  `concurrency` | `boundary` | `edit` | `attempts`, plus the
   single-attempt conflict's `write`); the **context** members (`uow`, `stream`, `mutation`,
   `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, the
   written verb, and alternate surface encodings.
@@ -156,15 +156,14 @@ read by the coverage gate and the language gate; grouping them buys no readabili
 
 #### Case shapes
 
-A case is one of **eleven shapes**, named by the required top-level `shape`:
+A case is one of **ten shapes**, named by the required top-level `shape`:
 
 - **`read`** — a queryable `when.objectQuery` naming its own `target`,
   asserting `then.rows` or a deep-fetch `then.graph`; a `when.stream` context
   member makes the same read a **streamed** one (see *Streamed reads*, below).
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
-  resulting `then.tableState` (the temporal writes `m-temporal-write`, the set-based
-  `m-batch-write`,
-  and `m-cascade-delete`).
+  resulting `then.tableState` (`m-temporal-write` temporal writes and
+  `m-batch-write` set-based writes).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
   object-lifecycle modules — see *Lifecycle action steps*), or, under
@@ -174,7 +173,6 @@ A case is one of **eleven shapes**, named by the required top-level `shape`:
   target (`when.mutation`: `amend`, the default, or `delete`) asserted by
   `then.affectedRows` for a single attempt, or an ordered `when.attempts` retry
   sequence (`m-concurrency`).
-- **`coherence`** — a `when.coherence` two-node sequence (`m-coherence`).
 - **`error`** — asserts `then.errorClass` + `then.nativeCode` (`m-db-error`),
   triggered by top-level `then.statements` (single-connection `uniqueViolation`) or
   a `when.concurrency` deadlock / lock-wait choreography.
@@ -216,7 +214,7 @@ list, and `given.apply`), so there is **no positional pairing convention** to le
 — each statement's binds are attached to it structurally.
 
 At **golden locations** (`then.statements`, the per-step `statements` lists in
-scenario / coherence / attempts / concurrency) `sql` is a **dialect-keyed map**
+scenario / attempts / concurrency) `sql` is a **dialect-keyed map**
 (`postgres` / `mariadb`), the dialect texts side by side, and `binds` is authored
 once wherever the dialects' bind holes agree, defaulting to `[]`:
 
@@ -393,9 +391,8 @@ in decimal space under any authored `tolerance`.
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same three fields as `when.uow` (`retry`, `concurrency`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (the built-in Retry Policy / `optimistic` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
-| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `amend` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `amendUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
-| `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
+| `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `amend` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, plus `insertUntil` / `amendUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit. A statement step MAY declare `blocks`, and a `write` step MAY state `affectedRows` (see *Error cases*, below) |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `amend` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `accessMode` its entrypoint selects and any of the three transaction options — `retry`, `concurrency`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
@@ -429,7 +426,7 @@ in decimal space under any authored `tolerance`.
 | `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
 | `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level and at a level whose target position has no concrete subtype); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
-| `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
+| `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare only where an inexact numeric representation requires it |
 
 #### How a case spells an Entity
 
@@ -456,7 +453,7 @@ disambiguates inside a graph whose family shares a local name across namespaces.
 #### Read targeting (`objectQuery.target`)
 
 Every read names the entity it targets, **inside its own query**. A read case
-carries one `when.objectQuery`, and every **read step** of a scenario or coherence
+carries one `when.objectQuery`, and every **read step** of a scenario
 case carries one `objectQuery` of its own; each names its `target`. No envelope
 repeats it as a sibling field, so a read is ONE document and the pairing cannot be
 half-authored.
@@ -615,34 +612,17 @@ that read**, never the read itself, keyed on **where** the read is asserted:
   - **`then.graph`** / **`then.graphs`** — the read's instances (a snapshot graph,
     per-milestone graphs, or a deep-fetch tree), each declared value object decoded
     (`m-value-object`).
-- **A scenario / coherence / concurrency step** asserts its read with a step-level
-  **`expectRows`** / **`observeRows`**, a uniform observation channel. **Every**
-  SQL-producing read step is instance-form:
-  - A **managed-object find or refresh step** — a developer-facing find whose rows become
-    managed instances: an identity-map coordinate / refresh read, a coherence re-fetch, a
-    scenario observation find, or a **concurrency full-scalar shared read** that observes
-    the object (`m-concurrency`).
-  - A relationship **`action: load` step** and the **first `action: access` step** of a
-    relationship or query-backed list (`m-op-list`) — the SQL-producing read that
-    first **materializes** the loaded / accessed related objects (a deferred deep fetch,
-    or a query-backed list's first resolution):
-    it projects the read entity's own instance-form list (its scalars plus any
-    value-object document column it declares), exactly as a deep-fetch / snapshot **child
-    level** does (`m-sql`, *Read result form*). A **subsequent** `action: access` of an
-    already-materialized relationship or list issues **no read** (a cache hit,
-    `databaseCalls: 0`) — there is no projection to classify.
-  - A value-object-bearing target therefore projects its whole `Document` slot at
-    **every** instance-form step above, even though the channel is `expectRows` /
-    `observeRows`.
+- **A scenario or concurrency read step** asserts its read with step-level
+  **`expectRows`** / **`observeRows`**, a flat observation channel over its
+  instance-form result. A value-object-bearing target projects its whole
+  `Document` slot even though the channel states scalar rows. An `access` step
+  navigates an already-materialized snapshot relationship and issues no read.
 
-`then.rows` and `then.graph` therefore differ only in what they state of one read:
-the `then.rows` reads over `customer` state its scalars while their statements carry
-`address`, and the abstract-target per-variant narrowing established above (*Read
-targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
-row) is a graph-assembly-time shape difference over the same Position Layout, not a
-projection difference. The lifecycle-action `load` / first-`access` witnesses carry
-value-object-bearing step reads (each projecting its read entity's own `address`
-Document slot).
+`then.rows` and `then.graph` differ only in what they state of one read: the
+`then.rows` reads over `customer` state its scalars while their statements carry
+`address`. Abstract-target per-variant narrowing (`then.graph`'s per-variant
+node shape versus `then.rows`'s concrete-superset row) is a graph-assembly shape
+difference over the same Position Layout, not a projection difference.
 
 #### Milestone-set graphs (`then.graphs`)
 
@@ -1009,7 +989,7 @@ confidence the golden SQL is correct. (This is Reladomo's own
 `validateMithraResult(op, rawSql)` discipline, made portable.)
 
 **Policy.** `then.referenceSql` is **REQUIRED for non-trivial cases** (joins, deep
-fetch, aggregation, temporal predicates) and **OPTIONAL for trivial single-table
+fetch, temporal predicates) and **OPTIONAL for trivial single-table
 predicate cases** where `then.rows` is obviously verifiable by eye.
 
 ## The layered assertion model
@@ -1027,7 +1007,7 @@ the harness asserts:
    order-insensitive, and **numerics compare exactly in decimal space** (never
    through binary `float`), so a `decimal(p,s)` money column matches to the cent
    and a value's type never depends on whether it is whole. A case whose result
-   is inherently inexact (stddev/variance, a repeating-decimal avg) — and so
+   uses an inexact numeric representation — and so
    cannot be authored exactly and differs in scale across dialects — MAY declare
    a `tolerance`, making the numeric comparison `abs(actual - expected) <=
    tolerance`. Booleans compare only to booleans (`true` is never `1`).
@@ -1116,8 +1096,7 @@ introspection. The harness provisions a table, **applies the ordered DML golden
 SQL in order** (each `then.statements` entry with its own `binds`), then asserts
 the resulting rows equal `then.tableState`. This covers milestone-chaining
 temporal writes (`insert` / `amend` / `terminate` and the bitemporal `*Until`
-trio), batched non-temporal writes, ordinary `delete`, and the minimal
-`cascadeDelete` witness over dependent relationships. The DML statement count MUST
+trio), batched non-temporal writes, and ordinary `delete`. The DML statement count MUST
 equal the sum of the `when.writeSequence` steps' declared statement counts, and
 `then.databaseCalls` MUST equal that total plus the resolving reads the sequence owes
 (*Resolving reads a write owes*, below). A grouped effect is one statement and
@@ -1164,9 +1143,9 @@ case's own history leaves as the starting milestone's `in_z`.
 
 A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
-can mutate a *pre-existing* persisted row. This is used by the minimal dependent
-cascade-delete witness: the original rows exist, the ordered DML mutates them,
-and the asserted table state shows which rows changed or were removed.
+can mutate a *pre-existing* persisted row. The original rows exist, the ordered
+DML mutates them, and the asserted table state shows which rows changed or
+were removed.
 
 #### Resolving reads a write owes
 
@@ -1204,9 +1183,6 @@ state:
   statement the framework issues rather than a write a caller authors. That
   provenance also makes it a unit of its own, never one entry of a mixed buffer
   (*Buffered keyed write instructions*);
-- an entry whose mutation is **not a Keyed Mutation** owes none. `cascadeDelete`
-  is the only such mutation the corpus authors: no keyed verb states it, so it
-  resolves no source.
 - a **target** entry resolves no source: its caller states the object
   and the revision. Under the Locking strategy its target Entity's Effective
   Concurrency Strategy takes, it owes instead **one acquisition per object** —
@@ -1323,28 +1299,21 @@ the case.
 
 ### Scenario cases (`m-unit-work`)
 
-A **scenario** case proves the unit-of-work / identity / query-cache contract as
-an ordered list of steps over one provisioned database. A **read step** issues an
-`objectQuery` (naming its own `target`, as a read case does) with a declared Database Call
-count (a cache hit declares `0` and lists no golden SQL); a **write step**
-(`write`) **commits** golden DML between finds. The
-write step is what makes **read-your-own-writes** and **query-cache
-invalidation** expressible: a dependent find after a committed write must observe
-it (and cannot be modeled as a cache hit, since reusing the stale pre-write rows
-would fail the post-write `expectRows`). A write step defaults to **committing**
-its DML; with **`rollback: true`** an ungrouped step's DML is applied then **rolled
-back** (through the provider's manual-commit session seam) — the observable form
-of the `m-unit-work` **abort contract**: a later find MUST re-resolve and observe
-the ORIGINAL rows, never the aborted write. A grouped step states no fate of its
-own: its group's is stated once, in `then.units` (*Unit fates*, below). A write step with **`databaseCalls: 0`** and
-no golden SQL is a **no-op** write — a versioned `UPDATE` whose `set` changes no
-attribute issues no DML (`m-unit-work` *Empty updates issue no DML*) — and executes nothing, exactly like a
-cache-hit read step. The rolled-back DML still executes, so it counts its
-statements as Database Calls exactly as a committed write does. The harness
-asserts per-step Database Call / golden-SQL count consistency, executes each step,
-and checks `sameObjectAs` identity assertions; it never compiles a query to SQL. A
-scenario authoring `then.tableState` states the tables its writes leave once every
-step has run, and that state is graded too.
+A **scenario** case proves the unit-of-work contract as an ordered list of
+steps over one provisioned database. A **read step** issues an `objectQuery`
+(naming its own `target`, as a read case does) with its declared Database Call
+count. A **write step** (`write`) commits golden DML between finds, so later
+reads observe its effects. With **`rollback: true`** an ungrouped step applies
+then rolls back its DML through the provider's manual-commit session seam; a
+later find observes the original rows. A grouped step states no fate of its
+own: its group's is stated once, in `then.units` (*Unit fates*, below).
+
+A write step with **`databaseCalls: 0`** and no golden SQL is a **no-op** write —
+a versioned `UPDATE` whose `set` changes no attribute issues no DML
+(`m-unit-work` *Empty updates issue no DML*). Rolled-back DML still executes and
+counts its statements as Database Calls. The harness checks per-step call /
+golden-SQL count consistency and executes each step; it never compiles a query
+to SQL. A scenario authoring `then.tableState` also grades the final table state.
 
 A scenario case MAY carry an out-of-band **`given.apply`**, applied after the
 model's fixtures load and **before the first step** — the same position the
@@ -1823,38 +1792,24 @@ always has.
 
 #### Lifecycle action steps
 
-Beyond read and write steps, a scenario carries a third step kind — the **action
-step** — that names a managed-object lifecycle verb the client performs against
-an earlier step's result. This is the vocabulary the object-lifecycle modules
-(`m-identity-map`, `m-read-planning`, `m-op-list`) need but the
-SQL-oriented read/write steps cannot express. An action step carries an
-**`action`** verb, an **`on`** source (the earlier step's index, or an array of
-indices when the verb spans sources at different lowered coordinates), its own
-per-step golden `statements` and `databaseCalls`, and the same per-step observables
-as a read step. The **Targets** column below states whether the verb acts on a
-prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
-`on` is inapplicable and MAY be omitted):
+Beyond read and write steps, a scenario carries **action steps** over an
+already-published value or the unit-of-work boundary. An action carries an
+**`action`** verb, an **`on`** source where applicable, per-step golden
+`statements` and `databaseCalls`, and the same per-step observables as a read.
 
 | Verb | Meaning | Targets | Module |
 |---|---|---|---|
-| `mutate` | derive an edited copy by assigning the members in `set` (no SQL for a snapshot object) | prior object (`on` required) | `m-edit` |
-| `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-read-planning` |
-| `access` | read an already-loaded relationship / query-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
+| `mutate` | derive an edited copy by assigning the members in `set`, without SQL | prior object (`on` required) | `m-edit` |
+| `access` | navigate an already-loaded relationship, without SQL | prior object (`on` required) | `m-snapshot-read` |
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
 | `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` |
-| `insert` / `amend` | hand the keyed write verb of that name a value of stated provenance (`value`) | a value, not a prior object (`on` inapplicable) | `m-unit-work` |
+| `insert` / `amend` | hand the keyed write verb a value of stated provenance (`value`) | a value (`on` inapplicable) | `m-unit-work` |
 
-**`on` is REQUIRED for the object-targeting verbs** (`mutate`, `load`,
-`access`) — each acts on the object(s) a prior step
-resolved, so it MUST name that source, and the store enforces this per-verb in
-the schema (an object-targeting action missing `on` is rejected). The
-**boundary / unit-of-work verbs** (`flush`, `commit`, `abort`) operate on the
-whole unit of work rather than one specific prior object, so `on` is
-**inapplicable and MAY be omitted** (a `flush` MAY still carry `on` to document
-the buffered write it materializes). Every `on` index — single or in the array
-form — MUST name an **earlier** step, and the array form's indices MUST be
-**unique** (a source is referenced at most once); a forward / self / out-of-range
-or duplicated index is a loud harness failure.
+**`on` is REQUIRED for `mutate` and `access`** and names the earlier step whose
+result the action uses. The boundary verbs (`flush`, `commit`, `abort`) act on
+the whole unit of work, so `on` is inapplicable and MAY be omitted; a flush MAY
+carry it to document the buffered write it materializes. Every `on` index MUST
+name an earlier step; a forward, self, or out-of-range index is a harness failure.
 
 ##### Keyed write action steps (the value's provenance)
 
@@ -1981,7 +1936,7 @@ time, and MAY refuse there, but no case may depend on it — an executor that
 models `mutate` as its authored golden DML alone reaches no verdict at all, and
 two executors must agree on every case the corpus admits. The node an edit is
 about is the one its `on` chain reaches: a `mutate` result stands where the step
-it names stands, while a `load` / `access` stands at
+it names stands, while an `access` stands at
 the **terminal** position of the `path` it navigated — so a `set` on an edit
 reached through an access on `items` states a member of an ITEM, and none of the
 object that access started from. Where that position is **polymorphic** — an
@@ -2000,37 +1955,25 @@ both `Cat` and `Dog` inherit) — and a set drawing one key from one branch and
 another from a sibling names no node at all, exactly as a concrete-subtype write
 payload may carry no sibling field (`m-inheritance`).
 
-`path` (the navigated relationship, e.g.
-`items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
-still lives per step, a scenario with action steps carries no top-level
-`then.statements`, and the harness executes a load / access as a relationship
-query, a flush / commit as committed DML, and counts each step's Database
-Calls against its listed statements exactly as for read / write steps. A deferred
-`load` over several source objects emits **one child statement per non-empty level**
-(never one per object), and one statement **per lowered coordinate group** when the
-sources are pinned at different as-of coordinates — the deep-fetch batching contract,
-proven by the load step's golden SQL and binds.
+`path` (the navigated relationship, e.g. `items` or `items.statuses`) is legal
+only on `access`. An access walks the retained snapshot graph and issues no SQL.
+Golden SQL lives per step, so a scenario with action steps carries no top-level
+`then.statements`; flush and commit statements are counted exactly as read and
+write statements are.
 
 #### Per-step lifecycle observables
 
-Read and action steps carry lifecycle observables that grade what the wire golden
-SQL cannot see. Three — `sameObjectAs`, `expectRows` and `expectGraph` — are
-graded by the harness. The rest are **adapter-delegated**: the harness validates
-they are well-formed and skips grading them, exactly as it skips a whole
-`api-conformance`-lane case; each language's API Conformance Suite returns and
-verifies them (`m-conformance-adapter`, `m-api-conformance`):
+Read and action steps carry observables beyond their golden SQL. The harness
+grades `sameObjectAs`, `expectRows`, and `expectGraph`; application-lifecycle
+`expectError` observations are adapter-delegated and verified by each language's API
+Conformance Suite (`m-conformance-adapter`, `m-api-conformance`).
 
-- **`sameObjectAs`** / **`differentObjectFrom`** — a zero-based earlier-step index
-  this step's result denotes the **same** object as, or a **distinct** object from.
-  On the wire lane `sameObjectAs` is graded as **primary-key identity** — the
-  one-object-per-PK rule over the rows the two steps observed — because a harness
-  holding raw rows and no developer-surface object has no other identity available;
-  a language's API Conformance Suite is where the same declaration is graded as
-  reference sameness. `differentObjectFrom` is the reference-inequality counterpart:
-  it proves two results are different objects even when their **row values are
-  identical** (two finite coordinates in one milestone, `m-identity-map`), which
-  value equality alone cannot distinguish, so it is graded as reference identity
-  only. A single step declares at most one of the two.
+- **`sameObjectAs`** — a zero-based earlier-step index. On an access step it
+  asserts that the already-materialized relationship view still refers to the
+  objects that the named read populated, without a new read. The wire harness
+  checks their primary-key identity; the API Conformance Suite checks reference
+  identity (`m-snapshot-read` *Closed world*). This is a preservation check over
+  one retained graph, not an identity guarantee across independent reads.
 - **`expectRows`** — the flat values a read publishes, or the derived Wire value
   a `mutate` declaring this oracle publishes without a re-read.
 - **`expectGraph`** — the relationship contents a step observes, in `then.graph`'s
@@ -2043,7 +1986,7 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   *State-graded scenarios*:
   - `transaction-time-pin-read-only` — a mutation through a finite
     Transaction-Time pinned view, which records what the system knew and is never rewritten
-    (`m-identity-map`).
+    (`m-temporal-write`).
   - `write-value-not-stored` — an `amend` verb handed a value no managed read
     produced, which therefore addresses no stored row (`m-unit-work`).
   - `write-value-already-stored` — an `insert` verb handed a value produced by a
@@ -2082,10 +2025,7 @@ that materialized the view (`on`), and that read MUST carry
 no read included has no materialized contents to state, and asserting some would
 be asserting a fresh read. It also names the navigated relationship itself
 (`path`), which is the path whose **target** entity keys the contents and whose
-coverage the source read's includes are judged against. The **path-less** access
-form resolves a query-backed list's own source entity and navigates no
-relationship at all, so it reaches no contents to state and admits no
-`expectGraph`.
+coverage the source read's includes are judged against. The access requires a `path` naming the relationship it navigates.
 
 **On a read step carrying `objectQuery.includes`** the contents are the ones
 **that read materialized**: the whole graph it produced, keyed by its own
@@ -2119,12 +2059,8 @@ reaches none. This is the walk every executor performs and every conforming
 adapter reports (`m-conformance-adapter`), so one authored `expectGraph` grades
 the same contents in every lane.
 
-An access's `on` is a **single index**, never the array form. The array spans
-sources at different lowered coordinates, and contents gathered across several
-such views would be a graph no one materialized view holds — while what this
-observable asks is what **one** view answers after the steps in between. An
-access stating contents therefore names one read, and a case observing several
-views states each on its own access step.
+An access's `on` is a **single index** naming the read whose materialized
+view it observes. A case observing several views states each on its own access.
 
 A step declares `expectRows` or `expectGraph`, never both — one content oracle
 per step, in each placement for its own reason. On an access step they would
@@ -2136,31 +2072,6 @@ vocabularies — `expectRows` in the projection's physical column spelling,
 every value the rows do, so stating both restates one observation twice and lets
 the two drift. An author wanting the navigated entity's rows states them as
 `expectGraph` nodes.
-
-### Coherence cases (`m-coherence`)
-
-A **coherence** case proves the cross-process cache-coherence contract (one node
-observes another's committed write) by running a two-node operation sequence over
-**two connections to one database**. The harness provisions one database (node A
-= the provider's own connection, with the model's fixtures loaded so the seed read
-sees a row), opens a second independent connection via the provider's **two-node
-seam** (`open_peer`, below), and runs each `coherence` step on its declared node:
-a `write` step **commits** DML on its node; a `read` step issues an `objectQuery`
-(naming its own `target`, as a read case does). The final
-node-B re-fetch carries **`observeRows`** — node A's committed **post-write**
-state, which node B **MUST** observe (never the stale pre-write rows). Each step's
-golden SQL is normalized (layer 3), and the read steps' queries and the
-descriptor survive serde (layer 4). The harness contains no cache and no
-notification bus; it proves the suite's post-write golden SQL is correct against
-real, committed, cross-connection data — the observable contract any conforming
-invalidation mechanism (full-cache re-fetch or partial-cache mark-dirty) must
-satisfy. See [`m-coherence.md`](m-coherence.md).
-
-A read step MAY additionally declare `sameObjectAs` (with an optional
-`identityAttr`): the harness asserts its observed rows carry the same primary-key
-identity as an earlier same-node read, exercising `m-coherence`'s
-identity-preservation contract (the refresh updates the interned object in place
-rather than forking a new one for the same primary key).
 
 ### Error cases (`m-db-error`)
 
@@ -3028,10 +2939,7 @@ seam so provisioning can be swapped without touching the assertion layer:
   `dialect` identifier. **Testcontainers** is the default mechanism, pinned at
   the latest stable Postgres major and at the current MariaDB long-term-support
   series; a language **MAY** substitute an embedded binary that satisfies the
-  same reset/isolation contract. An **optional** `open_peer` capability yields a
-  second, independent connection to the **same** database — modeling a peer
-  application server (node B) for coherence cases; a provider that omits it
-  simply cannot run coherence cases.
+  same reset/isolation contract.
 - **Runner + assertions.** The case runner applies the four (later five) layers
   above against whatever provider it is handed.
 
@@ -3055,7 +2963,7 @@ implementation proves conformance through the adjacent adapter contract in
 
 That adapter is the external seam between a corpus runner and a language
 implementation. It exposes a small command surface (`describe`, `compile`,
-`run`, and `benchmark`) and emits JSON documents validated by
+and `run`) and emits JSON documents validated by
 [`../schemas/conformance-adapter.schema.json`](../schemas/conformance-adapter.schema.json).
 It MUST accept compatibility corpus files as input and MUST report SQL
 emissions or runtime observations without exposing implementation internals.

@@ -442,6 +442,11 @@ claim to enumerate consequences outside this vocabulary.
 | `QueryResultOrderingChanged` | one surviving Relationship | the normalized effective ordering terms, each with its target Attribute, Sort Direction, and Null Placement |
 | `WriteCapabilityChanged` | one surviving Entity or Attribute | for an Entity, `Disabled` or `Enabled` carrying the effective `NonTemporal`, `TransactionTimeOnly`, or `Bitemporal` write shape — `Enabled` only where the family admits writes and the Entity is itself a write handle, which an abstract root and an abstract subtype are not (`m-inheritance`); for an Attribute, `FrameworkOwned`, `CallerInsertOnly`, or `CallerInsertAndUpdate` |
 
+`DeletePropagationChanged` describes the accepted relationship's ownership
+metadata: `dependent: true` yields `Propagates`, and `false` yields
+`DoesNotPropagate`. These retained impact spellings classify the model change;
+they do not assert that a runtime cascade operation is available.
+
 Impacts are ordered first by the closed variant order above, then by the
 structured identity of their scope. That order never implies severity or
 coordination status.

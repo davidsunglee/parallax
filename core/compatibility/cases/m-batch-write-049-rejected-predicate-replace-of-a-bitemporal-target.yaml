@@ -2,7 +2,7 @@
 # prepared, before its row is judged: each selected object's current rectangle
 # must be observed before it is split, and one readless statement observes nothing.
 model: models/position.yaml
-tags: [m-batch-write, m-temporal-write, rejected, predicate-write, replace, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-temporal-write, rejected, predicate-write, replace, temporal, bitemporal, slice-snapshot-1]
 shape: rejected
 when:
   write:

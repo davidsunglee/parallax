@@ -1,7 +1,7 @@
 # Negative (m-wire typed-literal conversion): an integral JSON number outside the
 # resolved Int64 value space is refused before SQL.
 model: models/contact.yaml
-tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1]
 shape: rejected
 when:
   write:

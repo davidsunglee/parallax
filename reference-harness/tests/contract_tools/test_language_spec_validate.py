@@ -21,7 +21,6 @@ _FIXTURES = _TESTS_ROOT / "fixtures" / "language-specs"
     ("fixture", "slice_tag", "lifecycle"),
     [
         ("valid-snapshot.md", "slice-snapshot-1", "snapshot"),
-        ("valid-managed.md", "slice-managed-1", "managed-object"),
     ],
 )
 def test_valid_completed_specs_pass(
@@ -96,7 +95,7 @@ def test_missing_input_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> N
     [
         ("", "binding-manifest"),
         ('{"slice":', "binding-manifest"),
-        ('{"slice":"slice-snapshot-1","slice":"slice-managed-1"}', "binding-manifest"),
+        ('{"slice":"slice-snapshot-1","slice":"slice-other-1"}', "binding-manifest"),
         ('{"slice":"slice-snapshot-1","unknown":true}', "binding-manifest"),
         ("[]", "binding-manifest"),
         ("{}", "binding-manifest"),
@@ -131,17 +130,14 @@ def test_duplicate_or_unclosed_binding_fences(
     [
         ("schema", "invalid-describe-envelope"),
         ("neither-lifecycle", "lifecycle-incomplete-slice"),
-        ("both-lifecycles", "lifecycle-incomplete-slice"),
     ],
 )
 def test_canonical_claim_schema_and_lifecycle_are_still_enforced(mutation: str, code: str) -> None:
     envelope = parse_profile_envelopes((_SPEC_DIR / "slices.md").read_text())["slice-snapshot-1"]
     if mutation == "schema":
         envelope["capabilities"]["unknownCapability"] = None
-    elif mutation == "neither-lifecycle":
-        envelope["capabilities"]["modules"].remove("m-snapshot-read")
     else:
-        envelope["capabilities"]["modules"].append("m-identity-map")
+        envelope["capabilities"]["modules"].remove("m-snapshot-read")
     issues, _, _ = validate_language_spec(
         (_FIXTURES / "valid-snapshot.md").read_text(),
         "```json\n" + json.dumps(envelope) + "\n```\n",

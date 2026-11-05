@@ -2,7 +2,7 @@
 # successor in which the ASSIGNED occurrence is replaced whole, at depth. Its twin
 # authors the same write and the same Database Calls under Relational Document Layout.
 model: models/write-transparency-layout-twin-columns.yaml
-tags: [m-temporal-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, columns, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

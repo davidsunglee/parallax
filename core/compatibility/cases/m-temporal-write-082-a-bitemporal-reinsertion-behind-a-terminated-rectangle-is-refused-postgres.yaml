@@ -2,7 +2,7 @@
 # before its termination. A reinsertion stamped at May would open a rectangle that
 # overlaps the terminated one on both axes. The generated exclusion refuses it.
 model: models/position.yaml
-tags: [m-temporal-write, m-db-error, temporal, bitemporal, insert, constraintViolation, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-db-error, temporal, bitemporal, insert, constraintViolation, slice-snapshot-1]
 shape: error
 then:
   statements:

@@ -997,7 +997,7 @@ def _compile_find(
 
 
 def step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQueryNode:
-    """A scenario or coherence read step's own canonical Object Query.
+    """A scenario read step's own canonical Object Query.
 
     The query travels as authored. Root as-of injection and per-hop temporal
     propagation are `read_planning.plan`'s own first step on every production

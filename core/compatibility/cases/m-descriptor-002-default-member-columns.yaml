@@ -5,7 +5,7 @@
 # occurrence to one cross-language physical spelling; nested Value Object fields
 # remain inside that one document column and acquire no relational storage.
 model: models/member-column-defaults.yaml
-tags: [m-descriptor, m-metamodel, m-value-object, m-sql, default-column, snake-case, slice-snapshot-1, slice-managed-1]
+tags: [m-descriptor, m-metamodel, m-value-object, m-sql, default-column, snake-case, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

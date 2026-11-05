@@ -1,7 +1,7 @@
 # Decimal elements compare by value at their declared scale and Boolean elements by
 # truth: some price is at least 2.00 and some flag is false.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, decimal, boolean, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, decimal, boolean, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

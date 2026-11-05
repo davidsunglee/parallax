@@ -3,7 +3,7 @@
 # the dual of `true`; here it gets its dedicated fixture alongside the boolean
 # combinators.
 model: models/orders.yaml
-tags: [m-predicate, none, boolean, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, none, boolean, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -3,7 +3,7 @@
 # instant B ONWARD, with no upper Valid-Time bound: the new value holds for
 # [B, infinity) while the audit trail is preserved on the Transaction-Time dimension.
 model: models/position.yaml
-tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, plain-update-split, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-sql, bitemporal, temporal, write-sequence, plain-update-split, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

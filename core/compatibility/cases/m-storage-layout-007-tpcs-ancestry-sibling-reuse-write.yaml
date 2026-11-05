@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype ancestry composition and legal sibling Column reuse
 # (m-storage-layout).
 model: models/storage-layout.yaml
-tags: [m-storage-layout, m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

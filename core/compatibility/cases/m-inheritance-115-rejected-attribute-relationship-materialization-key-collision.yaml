@@ -3,7 +3,7 @@
 # collision even though the Relationship contributes no physical column and the
 # descriptor is otherwise valid.
 model: models/member-column-defaults.yaml
-tags: [m-inheritance, m-model-formation, m-relationship, m-descriptor, rejected, negative, materialization-key, standalone, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-model-formation, m-relationship, m-descriptor, rejected, negative, materialization-key, standalone, slice-snapshot-1]
 shape: rejected
 when:
   model:

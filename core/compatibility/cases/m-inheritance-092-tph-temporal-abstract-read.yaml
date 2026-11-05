@@ -1,7 +1,7 @@
 # Table-per-hierarchy TEMPORAL abstract-root read: the as-of predicate composes with the
 # shared-table abstract-read lowering (m-inheritance x m-temporal-read x m-sql).
 model: models/instrument.yaml
-tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-hierarchy, tag, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-hierarchy, tag, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1]
 shape: read
 given:
   fixtures: true

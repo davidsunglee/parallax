@@ -2,7 +2,7 @@
 # elsewhere, so the end-keyed primary key admits it, but it overlaps current coverage
 # over [June, September) on both axes. The generated exclusion refuses it.
 model: models/position.yaml
-tags: [m-temporal-write, m-db-error, temporal, bitemporal, insert-until, constraintViolation, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-db-error, temporal, bitemporal, insert-until, constraintViolation, slice-snapshot-1]
 shape: error
 then:
   statements:

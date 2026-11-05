@@ -1,7 +1,7 @@
 # A universal over a to-many relationship whose predicate is itself a quantifier:
 # every basket an owner holds has a score above 10.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, all, relationship, to-many, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, all, relationship, to-many, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -3,7 +3,7 @@
 # The Storage Layout Rule Set must evaluate the concrete table's ancestry-derived
 # contributor chain and reject the collision before SQL.
 model: models/member-column-defaults.yaml
-tags: [m-storage-layout, m-inheritance, m-model-formation, m-value-object, m-descriptor, rejected, negative, physical-column, table-per-concrete-subtype, inherited, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-model-formation, m-value-object, m-descriptor, rejected, negative, physical-column, table-per-concrete-subtype, inherited, slice-snapshot-1]
 shape: rejected
 when:
   model:

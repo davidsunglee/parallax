@@ -66,15 +66,6 @@ def test_the_container_classes_are_seams() -> None:
     ]
 
 
-def test_the_cli_entry_points_that_boot_providers_are_seams() -> None:
-    assert _seams("from reference_harness import benchmark\nbenchmark.main([])\n") == [
-        "reference_harness.benchmark.main"
-    ]
-    assert _seams("from reference_harness.matrix import main\nmain([])\n") == [
-        "reference_harness.matrix.main"
-    ]
-
-
 def test_a_seam_bound_to_a_local_name_and_called_through_it_is_found() -> None:
     # Binding first and calling second is the same acquisition, spelled so that the
     # dotted resolution sees only a plain name at the call. The three ways a name is

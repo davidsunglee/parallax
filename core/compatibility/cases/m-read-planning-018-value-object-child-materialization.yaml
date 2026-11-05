@@ -1,6 +1,6 @@
 # Deep fetch x value object: the composition witness.
 model: models/customer.yaml
-tags: [m-read-planning, m-object-query, m-value-object, relationship, to-many, graph, materialization, json, slice-snapshot-1, slice-managed-1]
+tags: [m-read-planning, m-object-query, m-value-object, relationship, to-many, graph, materialization, json, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

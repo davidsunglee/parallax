@@ -2,7 +2,7 @@
 # occurrence `txEnd`. Members nested inside a Value Object may bear the reserved
 # names; a top-level occurrence may not.
 model: models/person.yaml
-tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, nested, slice-snapshot-1, slice-managed-1]
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, temporal, nested, slice-snapshot-1]
 shape: rejected
 when:
   model:

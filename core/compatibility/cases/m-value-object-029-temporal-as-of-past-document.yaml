@@ -2,7 +2,7 @@
 # as-of a PAST instant — the discriminating half of the milestone proof
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 model: models/supplier.yaml
-tags: [m-value-object, m-object-query, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, past, materialization, graph, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-object-query, m-temporal-read, m-sql, nested, json, temporal, as-of, audit-only, past, materialization, graph, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

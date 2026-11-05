@@ -1,7 +1,7 @@
 # A collection reached through a single value object: an absent `meta` holds no
 # labels. MariaDB's guarded occupancy lane spells the same test.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, m-value-object, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, m-value-object, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

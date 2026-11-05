@@ -1,7 +1,7 @@
 # A filtered `none` holds where no element makes its predicate true, the empty
 # collection included.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

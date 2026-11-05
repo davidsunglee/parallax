@@ -1,10 +1,6 @@
-# A finite Transaction-Time-axis pinned view is READ-ONLY (m-identity-map): mutating a
-# view pinned at a finite Transaction-Time-axis instant raises the neutral
-# `transaction-time-pin-read-only` error and emits NO DML — the Transaction-Time past
-# records what the system knew and is never rewritten.
 model: models/balance.yaml
 lane: api-conformance
-tags: [m-identity-map, m-edit, m-temporal-read, identity, as-of, temporal, audit-only, read-only, scenario, slice-managed-1]
+tags: [m-temporal-write, m-edit, m-temporal-read, as-of, temporal, audit-only, read-only, scenario, slice-snapshot-1]
 shape: scenario
 when:
   uow:

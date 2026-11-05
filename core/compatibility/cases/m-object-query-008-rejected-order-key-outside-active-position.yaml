@@ -1,7 +1,7 @@
 # Negative (m-object-query Sort Key positional rule): an ORDER KEY reference names an
 # entity the read is not positioned at.
 model: models/animal.yaml
-tags: [m-object-query, m-predicate, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-inheritance, rejected, negative, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

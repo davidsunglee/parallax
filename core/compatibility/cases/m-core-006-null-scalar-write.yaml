@@ -1,7 +1,7 @@
 # Null-scalar WRITE: every nullable scalar column bound explicitly NULL round-trips
 # as null on Postgres AND MariaDB (m-core / m-dialect).
 model: models/writable-scalars.yaml
-tags: [m-core, m-sql, m-dialect, scalar, "null", write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-core, m-sql, m-dialect, scalar, "null", write-sequence, slice-snapshot-1]
 shape: writeSequence
 when:
   writeSequence:

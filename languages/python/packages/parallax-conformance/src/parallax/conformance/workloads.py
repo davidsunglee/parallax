@@ -524,21 +524,6 @@ def _generated(recipe: str, roots: int, fanout: int) -> ScriptedRows:
         return _bitemporal_current(roots)
     if recipe == "materialization-stress":
         return _materialization_stress(roots, fanout)
-    if recipe == "document-milestones":
-        return _document_milestones(roots)
-    if recipe == "accounts-sequential":
-        accounts = tuple(
-            {
-                "id": index + _GENERATED_KEY_OFFSET,
-                "owner": f"owner-{index}",
-                "balance": f"{index * 100}.00",
-                "version": 1,
-            }
-            for index in range(1, roots + 1)
-        )
-        return ScriptedRows(
-            {"parallax.compatibility.Account": accounts}, "parallax.compatibility.Account", roots, 1
-        )
     raise ValueError(f"unknown benchmark dataset recipe {recipe!r}")
 
 
@@ -651,30 +636,6 @@ def _bitemporal_current(roots: int) -> ScriptedRows:
     )
     entity = "parallax.compatibility.Charter"
     return ScriptedRows({entity: rows}, entity, roots, 1)
-
-
-def _document_milestones(roots: int) -> ScriptedRows:
-    voyages = tuple(
-        {
-            "id": index + _GENERATED_KEY_OFFSET,
-            "title": f"voyage-{index}",
-            "crew": 4,
-            "manifest": {"cargo": "timber"},
-            "txStart": "2026-01-01T00:00:00.000000Z",
-            "txEnd": "infinity",
-        }
-        for index in range(1, roots + 1)
-    )
-    chartered = _bitemporal_current(roots).entities["parallax.compatibility.Charter"]
-    return ScriptedRows(
-        {
-            "parallax.compatibility.Voyage": voyages,
-            "parallax.compatibility.Charter": chartered,
-        },
-        "parallax.compatibility.Voyage",
-        roots,
-        1,
-    )
 
 
 def _materialization_stress(roots: int, fanout: int) -> ScriptedRows:

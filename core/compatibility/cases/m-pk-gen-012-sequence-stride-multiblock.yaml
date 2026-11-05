@@ -1,6 +1,6 @@
 # PK generation `sequence` (m-pk-gen) — stride across two blocks.
 model: models/pk-sequence.yaml
-tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
+tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only

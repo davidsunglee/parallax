@@ -1,7 +1,7 @@
 # A dotted field of a table-per-concrete-subtype target reads every concrete table's
 # candidate in one scalar subquery.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, traversal, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -1,5 +1,5 @@
 model: models/account.yaml
-tags: [m-concurrency, m-unit-work, write, rejected, slice-snapshot-1, slice-managed-1]
+tags: [m-concurrency, m-unit-work, write, rejected, slice-snapshot-1]
 shape: rejected
 when:
   write:

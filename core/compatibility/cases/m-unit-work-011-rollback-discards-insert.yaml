@@ -1,7 +1,7 @@
 # Rollback / abort scenario for INSERT (m-unit-work): an INSERT performed inside a
 # unit of work that ABORTS is discarded — a post-abort find observes NO row.
 model: models/account.yaml
-tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

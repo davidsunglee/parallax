@@ -2,7 +2,7 @@
 # Selection rather than replacing it, so the statement still carries the current-row
 # terms.
 model: models/policy.yaml
-tags: [m-predicate, constant, m-temporal-read, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, constant, m-temporal-read, temporal, bitemporal, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

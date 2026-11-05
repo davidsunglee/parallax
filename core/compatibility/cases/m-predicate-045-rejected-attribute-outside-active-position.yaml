@@ -1,7 +1,7 @@
 # Negative (m-predicate positional rule): a predicate reference names an entity the
 # read is not positioned at, and no narrow can bring it into scope.
 model: models/animal.yaml
-tags: [m-predicate, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-inheritance, rejected, negative, slice-snapshot-1]
 shape: rejected
 when:
   objectQuery:

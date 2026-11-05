@@ -18,9 +18,9 @@ The suite is **additive proof that sits beside the adapter grade — never a
 substitute for it, and it never touches the grader**. The official conformance
 grade stays contract-driven over the conformance adapter, comparing wire values to
 the corpus oracles. The suite exists because a wire grade deliberately ignores
-developer-facing guarantees — that a returned row is a managed object, that the
-idiomatic query canonicalizes to the corpus Object Query — and those guarantees need
-their own proof.
+developer-facing guarantees — that a returned graph has the declared value shape,
+and that the idiomatic query canonicalizes to the corpus Object Query — which
+need their own proof.
 
 ## Two proof paths
 
@@ -78,16 +78,14 @@ satisfies each is language-local.
 4. **Expected results match the corpus oracles.** For every exercised case the
    suite MUST assert the developer surface produces the corpus's expected results
    (`then.rows`, `then.graph`, `then.graphs`, `then.tableState`, `then.affectedRows`,
-   Database Call counts, and identity/cache expectations as applicable), using the
-   same comparison rules the conformance grade uses. For a case carrying the
-   per-step **lifecycle observables** (`sameObjectAs` / `differentObjectFrom`,
-   `expectError`), the suite MUST return and verify the
-   corresponding adapter observations (`identityChecks` — as **reference** identity
-   for managed objects — and `errors`; see
-   [`m-conformance-adapter`](m-conformance-adapter.md)), so an assertion that two
-   objects are identical / distinct, or that a verb raised a defined
-   error, is **graded, not narrated** — including on `harness`-lane cases whose
-   reference-identity half the wire grade only skips.
+   Database Call counts, and snapshot view-preservation expectations), using the
+   same comparison rules the conformance grade uses. For per-step `sameObjectAs`
+   or `expectError`, the suite MUST return and verify the corresponding adapter
+   `identityChecks` or `errors` observations
+   ([`m-conformance-adapter`](m-conformance-adapter.md)). A snapshot view
+   preservation check uses reference identity on the developer surface; a
+   declared refusal is verified through the error the verb actually raised.
+
 5. **No-drift guard.** For cases whose behavior is a query, the suite MUST assert
    that the query the idiomatic API builds canonically equals the corpus
    Object Query for that case. This ties the developer-facing snippet to the graded
@@ -102,9 +100,9 @@ satisfies each is language-local.
 - The suite SHOULD assert language-specific **value shapes** the wire grade
   deliberately ignores — for example that a returned scalar is its managed carrier
   type (a big integer, a decimal, a temporal instant) rather than a bare wire
-  value, and that no physical column name leaks through the managed object. What
-  counts as a managed shape is language-local, so this is a SHOULD/MAY rather than
-  a portable MUST.
+  value, and that no physical column name leaks through the published object. What
+  counts as a language-specific shape is language-local, so this is a SHOULD/MAY
+  rather than a portable MUST.
 
 ## Usage Guide
 

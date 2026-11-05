@@ -1,7 +1,7 @@
 # A scalar quantifier over a collection reached through a to-one hop: the owner holds
 # a `vip` tag. An absent owner's collection holds nothing.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, relationship, to-one, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -1,5 +1,5 @@
 model: models/predicate-traversal.yaml
-tags: [m-predicate, relationship, to-one, exists, matching, narrow, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, relationship, to-one, exists, matching, narrow, m-inheritance, table-per-concrete-subtype, m-dialect, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

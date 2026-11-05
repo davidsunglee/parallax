@@ -68,7 +68,7 @@ class Observation:
             raise TypeError(
                 "a retained observation holds the rows its step published; these did not "
                 "come through the publication seam (materialize_read / "
-                "materialize_navigated / edited), so they may still carry storage the "
+                "materialize_hop_level / edited), so they may still carry storage the "
                 "step never asked for."
             )
 

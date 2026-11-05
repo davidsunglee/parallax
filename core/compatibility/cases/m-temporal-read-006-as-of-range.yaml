@@ -6,7 +6,7 @@
 # and the milestone's END to the window START. The two binds are the window bounds
 # in [to, from] order (in_z < ?  then  out_z > ?).
 model: models/balance.yaml
-tags: [m-temporal-read, m-object-query, m-sql, as-of-range, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, as-of-range, audit-only, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

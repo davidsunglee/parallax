@@ -6,7 +6,7 @@ Run as a module against the compatibility tree::
 
 For every case this checks, without touching a database, over every ``{sql, binds}``
 statement entry (``then.statements``, each per-step ``statements`` list under
-``when`` — scenario / coherence / attempts / concurrency rounds — and each
+``when`` — scenario / attempts / concurrency rounds — and each
 ``given.apply`` naive entry):
 
 * each golden entry's per-dialect ``sql`` parses under that dialect (sqlglot);
@@ -43,38 +43,11 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(handle)
 
 
-def _lint_benchmarks(compatibility_root: Path, errors: list[str]) -> None:
-    """Lint every benchmark workload's golden statement entries (m-perf-bench).
-
-    Benchmark fixtures live under ``benchmarks/`` (not ``cases/``) and carry their
-    golden SQL per workload as ``{sql, binds}`` statement entries (dialect-keyed map
-    form), like a case's ``then.statements``. Each statement must parse and be a fixed
-    point of m-sql normalization — so a non-canonical benchmark query fails statically
-    rather than only at run time. A cache-hit workload lists no ``statements``.
-    """
-    benchmarks_dir = compatibility_root / "benchmarks"
-    if not benchmarks_dir.is_dir():
-        return
-    for fixture_path in sorted(benchmarks_dir.glob("*.y*ml")):
-        fixture = _load_yaml(fixture_path)
-        if not isinstance(fixture, dict):
-            continue
-        for index, workload in enumerate(fixture.get("workloads", [])):
-            if isinstance(workload, dict):
-                _lint_golden(
-                    workload.get("statements"),
-                    f"workloads[{index}].statements",
-                    fixture_path.name,
-                    errors,
-                )
-
-
 def lint_tree(compatibility_root: Path) -> list[str]:
     compatibility_root = compatibility_root.resolve()
     errors: list[str] = []
     locks = LockConsistency(compatibility_root)
     cases_dir = compatibility_root / "cases"
-    _lint_benchmarks(compatibility_root, errors)
 
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
@@ -119,9 +92,9 @@ def _lint_step_sequences(
     locks: LockConsistency,
     case: dict[str, Any],
 ) -> None:
-    """The per-step golden SQL of a scenario / coherence / conflict-retry case,
+    """The per-step golden SQL of a scenario / conflict-retry case,
     and each scenario read's own naive oracle."""
-    for step_key in ("scenario", "coherence", "attempts"):
+    for step_key in ("scenario", "attempts"):
         steps = when.get(step_key)
         if not isinstance(steps, list):
             continue

@@ -1,7 +1,7 @@
 # Polymorphic relationship over a TABLE-PER-CONCRETE-SUBTYPE family, targeting the
 # abstract ROOT (m-navigate, m-inheritance, m-sql, resolved Q7).
 model: models/document.yaml
-tags: [m-navigate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, exists, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, exists, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

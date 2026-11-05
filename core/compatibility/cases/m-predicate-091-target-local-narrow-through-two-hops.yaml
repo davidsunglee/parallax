@@ -2,7 +2,7 @@
 # collar's pet is a loud dog. A missing collar or pet is false at either hop, and
 # Fido's unknown bark stays unknown.
 model: models/predicate-traversal.yaml
-tags: [m-predicate, narrow, relationship, to-one, m-inheritance, traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, narrow, relationship, to-one, m-inheritance, traversal, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

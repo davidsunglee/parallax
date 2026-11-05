@@ -68,14 +68,7 @@ __all__ = ["compile_scenario", "run_scenario"]
 
 
 _GRADED_ACTION_VERBS: Final[frozenset[str]] = frozenset({"mutate", "access"})
-"""The lifecycle action verbs this lane grades over a snapshot graph.
-
-`mutate` is the authored edit and `access` a relationship read over a view a
-find step already materialized — both are things this lane holds the state for.
-Every other verb (`load`, `flush`, `commit`, `abort`) is a managed-object
-lifecycle surfacing only the API Conformance Suite
-can verify, and a case built on one is dispatched to the api-conformance lane
-before reaching here at all."""
+"""The edit and relationship-access observations graded over materialized graphs."""
 
 
 def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> None:
@@ -83,8 +76,7 @@ def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> No
     action = step.get("action")
     if action not in _GRADED_ACTION_VERBS:
         raise EngineError(
-            f"{case.path.name}: scenario action {action!r} is graded by the API "
-            "Conformance Suite (api-conformance lane), not compile/run"
+            f"{case.path.name}: scenario action {action!r} is not supported by compile/run"
         )
 
 

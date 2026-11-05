@@ -2,7 +2,7 @@
 # May — a clock behind the termination — would open [May, infinity), overlapping the
 # terminated milestone in Transaction Time. The generated exclusion refuses it.
 model: models/balance.yaml
-tags: [m-temporal-write, m-db-error, temporal, audit-only, insert, constraintViolation, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-write, m-db-error, temporal, audit-only, insert, constraintViolation, slice-snapshot-1]
 shape: error
 then:
   statements:

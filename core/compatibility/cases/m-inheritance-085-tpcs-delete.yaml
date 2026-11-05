@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype DELETE: a concrete-subtype delete targets its OWN table by
 # primary key, with no tag (m-inheritance, m-sql).
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, delete, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, delete, slice-snapshot-1]
 shape: writeSequence
 given:
   fixtures: true

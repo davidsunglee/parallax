@@ -2,7 +2,7 @@
 # above 10 and a different element below 20, so it matches beside [15]. Compare the
 # same-element conjunction in m-predicate-063.
 model: models/predicate-collections.yaml
-tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, quantifier, scalar-collection, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
