@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import platform
 import re
 import subprocess
 import sys
@@ -175,16 +174,6 @@ def _native(
     observations: dict[str, Any] = {}
     if sys.platform == "win32":
         binary, observations = _windows(version, commands)
-    elif sys.platform == "darwin" and platform.machine() == "x86_64":
-        prefix = commands.output / "install"
-        commands.run(
-            ["sh", str(Path(__file__).with_name("build_wheel_libpq.sh")), version, str(prefix)]
-        )
-        binary = prefix / "bin"
-        observations.update(
-            provisioning="source",
-            source_url=f"https://ftp.postgresql.org/pub/source/v{version}/postgresql-{version}.tar.bz2",
-        )
     elif sys.platform == "darwin":
         commands.run(["brew", "update"])
         formula = "postgresql@18"

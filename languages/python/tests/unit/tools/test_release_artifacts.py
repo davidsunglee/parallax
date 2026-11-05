@@ -16,16 +16,25 @@ from typing import Any
 import pytest
 
 import release_artifacts as release
-from wheel_build import matrix
+from wheel_build import matrix, release_matrix
 
 type Document = dict[str, Any]
 
+_VERSION = "0.2.0"
+_PROJECTS: list[str] = json.loads(release.CONFIG.read_text())["projects"]
+_FILES = len(matrix()) + 2 * len(_PROJECTS) - 1
+
 
 def _archive(
-    path: Path, project: str, *, dependency: str | None = None, license_text: bytes | None = None
+    path: Path,
+    project: str,
+    *,
+    version: str = _VERSION,
+    dependency: str | None = None,
+    license_text: bytes | None = None,
 ) -> None:
     metadata = (
-        f"Metadata-Version: 2.4\nName: {project}\nVersion: 0.1.0\n"
+        f"Metadata-Version: 2.4\nName: {project}\nVersion: {version}\n"
         "License-Expression: Apache-2.0\nLicense-File: LICENSE\nLicense-File: NOTICE\n"
     )
     if dependency:
@@ -37,13 +46,13 @@ def _archive(
         "NOTICE": b"Parallax\nCopyright 2026 David Lee\n",
     }
     if path.suffix == ".whl":
-        prefix = f"{project.replace('-', '_')}-0.1.0.dist-info/"
+        prefix = f"{project.replace('-', '_')}-{version}.dist-info/"
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr(prefix + "METADATA", metadata)
             for name, body in contents.items():
                 archive.writestr(prefix + "licenses/" + name, body)
     else:
-        prefix = f"{project.replace('-', '_')}-0.1.0/"
+        prefix = f"{project.replace('-', '_')}-{version}/"
         with tarfile.open(path, "w:gz") as archive:
             for name, body in {"PKG-INFO": metadata.encode(), **contents}.items():
                 info = tarfile.TarInfo(prefix + name)
@@ -51,23 +60,22 @@ def _archive(
                 archive.addfile(info, io.BytesIO(body))
 
 
-@pytest.fixture
-def handoff(tmp_path: Path) -> Path:
-    root = tmp_path / "handoff"
+def _write_handoff(root: Path, version: str, cells: list[dict[str, str]] | None = None) -> Path:
+    selected = release_matrix(version) if cells is None else cells
     root.mkdir()
     for name in ("companions", "sdists"):
         (root / name).mkdir()
-    projects = json.loads(release.CONFIG.read_text())["projects"]
-    for project in projects:
-        _archive(root / "sdists" / f"{project.replace('-', '_')}-0.1.0.tar.gz", project)
+    for project in _PROJECTS:
+        name = project.replace("-", "_")
+        _archive(root / "sdists" / f"{name}-{version}.tar.gz", project, version=version)
+    core = f"parallax-core=={version}"
     companions: list[dict[str, str]] = []
-    for project in [name for name in projects if name != "parallax-postgres"] + [
+    for project in [name for name in _PROJECTS if name != "parallax-postgres"] + [
         "parallax-conformance"
     ]:
-        path = root / "companions" / f"{project.replace('-', '_')}-0.1.0-py3-none-any.whl"
-        _archive(
-            path, project, dependency="parallax-core==0.1.0" if project != "parallax-core" else None
-        )
+        path = root / "companions" / f"{project.replace('-', '_')}-{version}-py3-none-any.whl"
+        dependency = core if project != "parallax-core" else None
+        _archive(path, project, version=version, dependency=dependency)
         companions.append(release.identity(path))
     sdists = [release.identity(path) for path in sorted((root / "sdists").iterdir())]
     drivers = {
@@ -81,14 +89,15 @@ def handoff(tmp_path: Path) -> Path:
         "run_attempt": 2,
         "status": "passed",
         "findings": [],
-        "expected_targets": len(matrix()),
-        "validated_targets": len(matrix()),
+        "expected_targets": len(selected),
+        "validated_targets": len(selected),
         "targets": [],
     }
-    for number, target in enumerate(matrix()):
+    for number, target in enumerate(selected):
         tag = "cp" + target["python"].replace(".", "")
-        path = root / f"parallax_postgres-0.1.0-{tag}-{tag}-{target['id'].replace('-', '_')}.whl"
-        _archive(path, "parallax-postgres", dependency="parallax-core==0.1.0")
+        platform_tag = target["id"].replace("-", "_")
+        path = root / f"parallax_postgres-{version}-{tag}-{tag}-{platform_tag}.whl"
+        _archive(path, "parallax-postgres", version=version, dependency=core)
         evidence["targets"].append(
             {
                 "source_sha": evidence["source_sha"],
@@ -120,6 +129,11 @@ def handoff(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def handoff(tmp_path: Path) -> Path:
+    return _write_handoff(tmp_path / "handoff", _VERSION)
+
+
+@pytest.fixture
 def bundle(handoff: Path, tmp_path: Path) -> Path:
     path = tmp_path / "bundle"
     release.freeze(handoff, path)
@@ -134,7 +148,7 @@ def _change(path: Path, mutation: Callable[[Document], None]) -> None:
 
 def _replace_license(handoff: Path, suffix: str, license_text: bytes) -> Path:
     directory = "companions" if suffix.endswith(".whl") else "sdists"
-    path = handoff / directory / f"parallax_core-0.1.0{suffix}"
+    path = handoff / directory / f"parallax_core-{_VERSION}{suffix}"
     _archive(path, "parallax-core", license_text=license_text)
     evidence = json.loads((handoff / "manifest.json").read_text())
     for cell in evidence["targets"]:
@@ -187,8 +201,8 @@ def test_freeze_preserves_exact_complete_set_without_publishing_conformance(
     handoff: Path, bundle: Path
 ) -> None:
     manifest = release.verify(bundle)
-    assert len(manifest["artifacts"]) == 25
-    assert len(list((bundle / "dist").iterdir())) == 25
+    assert len(manifest["artifacts"]) == _FILES
+    assert len(list((bundle / "dist").iterdir())) == _FILES
     assert not any("conformance" in artifact["filename"] for artifact in manifest["artifacts"])
     assert (bundle / "wheel-manifest.json").read_bytes() == (handoff / "manifest.json").read_bytes()
     assert manifest["source_sha"] == "a" * 40
@@ -236,6 +250,57 @@ def test_verify_rejects_changed_bytes_even_when_release_hash_is_updated(bundle: 
         release.verify(bundle)
 
 
+def test_an_older_release_verifies_against_the_coverage_it_shipped_with(tmp_path: Path) -> None:
+    older = _write_handoff(tmp_path / "older", "0.1.0")
+    frozen = release.freeze(older, tmp_path / "bundle")
+
+    assert release.verify(tmp_path / "bundle") == frozen
+    wheels = [item for item in frozen["artifacts"] if item["project"] == "parallax-postgres"]
+    assert len([item for item in wheels if item["kind"] == "wheel"]) == len(release_matrix("0.1.0"))
+    assert len(release_matrix("0.1.0")) > len(matrix())
+
+
+def test_truncated_older_evidence_fails_even_when_every_count_is_rewritten(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    release.freeze(_write_handoff(tmp_path / "older", "0.1.0"), bundle)
+    current = {(cell["id"], cell["python"]) for cell in matrix()}
+    evidence = json.loads((bundle / "wheel-manifest.json").read_text())
+    removed = [
+        cell for cell in evidence["targets"] if (cell["target"], cell["python"]) not in current
+    ]
+    assert removed
+    evidence["targets"] = [cell for cell in evidence["targets"] if cell not in removed]
+    evidence["expected_targets"] = evidence["validated_targets"] = len(evidence["targets"])
+    (bundle / "wheel-manifest.json").write_text(json.dumps(evidence))
+    filenames = {cell["wheel"]["filename"] for cell in removed}
+    for filename in filenames:
+        (bundle / "dist" / filename).unlink()
+    _change(
+        bundle / "release-manifest.json",
+        lambda document: document.update(
+            artifacts=[
+                artifact
+                for artifact in document["artifacts"]
+                if artifact["filename"] not in filenames
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="complete successful native wheel validation"):
+        release.verify(bundle)
+
+
+@pytest.mark.parametrize("version", ["0.1.0", "0.1.1"])
+def test_the_current_matrix_cannot_freeze_a_release_of_an_older_minor(
+    tmp_path: Path, version: str
+) -> None:
+    handoff = _write_handoff(tmp_path / "older", version, matrix())
+
+    with pytest.raises(ValueError, match="complete successful native wheel validation"):
+        release.freeze(handoff, tmp_path / "bundle")
+    assert not (tmp_path / "bundle").exists()
+
+
 _INVALID_EVIDENCE: list[Callable[[Document], Any]] = [
     lambda document: document["targets"].pop(),
     lambda document: document["targets"][0].update(source_sha="b" * 40),
@@ -266,15 +331,15 @@ def test_freeze_refuses_incomplete_or_unrelated_validation(
     "dependency",
     [
         "parallax-core",
-        "parallax_core>=0.1.0",
-        "Parallax.Core==0.2.0; extra == 'x'",
-        "parallax-conformance==0.1.0",
+        f"parallax_core>={_VERSION}",
+        "Parallax.Core==0.1.0; extra == 'x'",
+        f"parallax-conformance=={_VERSION}",
     ],
 )
 def test_artifact_rejects_unpinned_mixed_or_conformance_dependency(
     handoff: Path, tmp_path: Path, dependency: str
 ) -> None:
-    path = handoff / "companions/parallax_snapshot-0.1.0-py3-none-any.whl"
+    path = handoff / f"companions/parallax_snapshot-{_VERSION}-py3-none-any.whl"
     _archive(path, "parallax-snapshot", dependency=dependency)
     evidence = json.loads((handoff / "manifest.json").read_text())
     for cell in evidence["targets"]:
@@ -318,7 +383,7 @@ def test_reconcile_downloads_present_bytes_and_uploads_only_missing(
     result = release.reconcile(bundle, "testpypi", output)
     assert result["status"] == "incomplete"
     assert len(result["downloads"]) == 2
-    assert len(result["missing"]) == 23
+    assert len(result["missing"]) == _FILES - 2
     assert {path.name for path in (output / "missing").iterdir()} == set(result["missing"])
     for path in (output / "missing").iterdir():
         assert path.read_bytes() == (bundle / "dist" / path.name).read_bytes()
@@ -327,15 +392,15 @@ def test_reconcile_downloads_present_bytes_and_uploads_only_missing(
 def test_reconcile_requires_all_files_before_reporting_success(
     bundle: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _index(monkeypatch, bundle, 24)
+    _index(monkeypatch, bundle, _FILES - 1)
     with pytest.raises(ValueError, match="missing 1 artifacts"):
         release.reconcile(bundle, "pypi", tmp_path / "incomplete", require_complete=True)
     assert json.loads((tmp_path / "incomplete/index.json").read_text())["status"] == "incomplete"
-    _index(monkeypatch, bundle, 25)
+    _index(monkeypatch, bundle, _FILES)
     result = release.reconcile(bundle, "pypi", tmp_path / "complete", require_complete=True)
     assert result["status"] == "passed"
     assert result["missing"] == []
-    assert len(result["downloads"]) == 25
+    assert len(result["downloads"]) == _FILES
 
 
 @pytest.mark.parametrize(

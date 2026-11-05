@@ -16,7 +16,7 @@ _SOURCE = "a" * 40
 _OBSERVED = "2026-11-04T12:10:00+00:00"
 _TARGETS = [
     {"id": f"target-{i}", "runner": "native", "arch": "x86_64", "platform": "linux"}
-    for i in range(7)
+    for i in range(4)
 ]
 type Document = dict[str, Any]
 
@@ -160,14 +160,14 @@ def _summarize(matrix: tuple[Path, list[Document], Document]) -> Document:
     return evidence.summarize(root, _TARGETS, jobs, run, _SOURCE, 2, observed_at=_OBSERVED)
 
 
-def test_complete_matrix_binds_fourteen_exact_retained_wheels_and_twenty_eight_driver_runs(
+def test_complete_matrix_binds_eight_exact_retained_wheels_and_sixteen_driver_runs(
     matrix: tuple[Path, list[Document], Document],
 ) -> None:
     summary = _summarize(matrix)
     assert summary["status"] == "passed"
     assert summary["findings"] == []
-    assert summary["expected_targets"] == summary["validated_targets"] == 14
-    assert sum(len(target["drivers"]) for target in summary["targets"]) == 28
+    assert summary["expected_targets"] == summary["validated_targets"] == 8
+    assert sum(len(target["drivers"]) for target in summary["targets"]) == 16
     assert {target["python"] for target in summary["targets"]} == {"3.14", "3.15"}
     root, _, _ = matrix
     for target in summary["targets"]:
@@ -185,7 +185,7 @@ def test_job_queue_workflow_wall_time_and_parallel_runner_time_are_distinct(
     assert execution["workflow_queue_seconds"] == 3
     assert execution["workflow_elapsed_seconds"] == 180
     assert execution["workflow_execution_observed_seconds"] == 177
-    assert execution["aggregate_runner_seconds"] == 14 * 120
+    assert execution["aggregate_runner_seconds"] == 8 * 120
     assert {target["ci_job"]["queue_seconds"] for target in summary["targets"]} == {5}
 
 
@@ -209,7 +209,7 @@ def test_skipped_job_has_no_runner_time_despite_synthetic_reversed_timestamps(
     summary = _summarize(matrix)
     assert summary["status"] == "passed"
     execution = summary["execution"]
-    assert execution["aggregate_runner_seconds"] == 14 * 120
+    assert execution["aggregate_runner_seconds"] == 8 * 120
     timing = execution["jobs"][-1]
     assert timing["started_at"] == skipped["started_at"]
     assert timing["completed_at"] == skipped["completed_at"]
@@ -258,7 +258,7 @@ def test_mismatched_or_failed_target_never_counts_as_validated(
     _write(path, record)
     summary = _summarize(matrix)
     assert summary["status"] == "failed"
-    assert summary["validated_targets"] == 13
+    assert summary["validated_targets"] == 7
     assert summary["findings"]
     assert summary["failed_target_evidence"][0]["reported_target"][field] == value
 
@@ -347,11 +347,11 @@ def test_successful_validation_cannot_replace_missing_or_failed_ci_job_evidence(
     assert _summarize(matrix)["status"] == "failed"
 
 
-def test_cli_writes_failure_evidence_before_returning_failure(tmp_path: Path) -> None:
+def _cli(tmp_path: Path, declaration: list[Document]) -> tuple[int, Document, Path]:
     root = tmp_path / "targets"
     root.mkdir()
     targets, jobs, run = (tmp_path / f"{name}.json" for name in ("matrix", "jobs", "run"))
-    _write(targets, _TARGETS)
+    _write(targets, declaration)
     _write(jobs, {"jobs": []})
     _write(run, _run())
     output = tmp_path / "summary"
@@ -377,10 +377,26 @@ def test_cli_writes_failure_evidence_before_returning_failure(tmp_path: Path) ->
             str(run),
         ]
     )
+    return status, json.loads((output / "manifest.json").read_text()), output
+
+
+def test_cli_writes_failure_evidence_before_returning_failure(tmp_path: Path) -> None:
+    status, summary, output = _cli(tmp_path, _TARGETS)
     assert status == 1
-    summary = json.loads((output / "manifest.json").read_text())
-    assert len(summary["findings"]) == 14
+    assert len(summary["findings"]) == 8
     assert "failed" in (output / "summary.md").read_text()
+
+
+def test_cli_expects_no_evidence_from_a_retired_target(tmp_path: Path) -> None:
+    _, summary, _ = _cli(tmp_path, [*_TARGETS, {"id": "retired", "retired": "0.2"}])
+    assert summary["expected_targets"] == 8
+    assert not any("retired" in finding for finding in summary["findings"])
+
+
+def test_cli_refuses_a_declaration_with_no_current_target(tmp_path: Path) -> None:
+    status, summary, _ = _cli(tmp_path, [{"id": "retired", "retired": "0.2"}])
+    assert status == 1
+    assert summary["findings"] == ["target declaration names no current target"]
 
 
 def test_changed_companion_bytes_cannot_be_replaced_after_validation(

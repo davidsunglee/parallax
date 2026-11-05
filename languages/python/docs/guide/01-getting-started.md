@@ -25,6 +25,11 @@ and the [binding contract](../../spec/execution.md#supported-postgresql) owns
 PostgreSQL support. Use wheels for normal installation. Third-party dependencies
 come from PyPI alongside the selected Parallax packages.
 
+Starting with `0.2.0`, Parallax no longer supports Intel macOS or musl Linux, including
+Alpine, and publishes no wheels for them. Published `0.1.0` wheels remain available.
+Move Intel macOS deployments to a supported host and Alpine deployments to a glibc-based
+Linux environment. Building from source on a removed platform does not make it supported.
+
 `parallax-postgres` installs psycopg's binary build, including libpq. For a build
 against your own libpq, follow the lifecycle guide's
 [C-driver installation](../postgresql-lifecycle.md#driver-build). Add
