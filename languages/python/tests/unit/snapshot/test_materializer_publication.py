@@ -57,7 +57,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery import InvalidData, StoredDataDecodingError
+from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
@@ -68,16 +68,13 @@ from parallax.core.read_delivery._page import (
     PageSchedule,
     StoredDataIssueInput,
     ViewSchema,
+    entity_state,
     exact_stored_equal,
     page_rows,
     release_finished_rows,
     stored_order_key,
 )
-from parallax.core.read_delivery._page_reader import FlatPageResult
 from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.read_delivery._row_lane import (
-    _published_rows,  # pyright: ignore[reportPrivateUsage]
-)
 from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.write_plan import ObjectKey
@@ -352,45 +349,28 @@ def test_an_issue_bearing_root_view_is_refused_with_its_first_issue() -> None:
     ) == [None]
 
 
-def test_flat_publication_preserves_a_classified_result_position() -> None:
-    # Row publication has no record carrier of its own, so it publishes the same
-    # InvalidData position the shared Page judgment produced rather than flattening
-    # diagnostic state into an ordinary mapping.
-    stage = FlatPageResult((None,), (None,), encoded_identity_page((None, None, SQL_NULL)))
-    meta = ENCODED_IDENTITY
-    prepared = encoded_identity_read()
-
-    (published,) = _published_rows(stage, meta, prepared.row_publisher())
-
-    assert invalid_record(published).data is None
-
-
-def test_one_converter_publishes_each_page_it_converts_as_a_fresh_converter_would() -> None:
+def test_one_converter_records_each_page_it_converts_as_a_fresh_converter_would() -> None:
     converter = encoded_identity_read()
     for rows in (
         ((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)),
         ((None, None, SQL_NULL), (OTHER_KEY_TEXT, None, StructuredDocument({"street": "Main"}))),
     ):
-        published = _published_page(converter, rows)
+        recorded = _recorded_page(converter, rows)
 
-        assert published == _published_page(encoded_identity_read(), rows)
-        assert [kind for kind, _ in published] == [
-            "invalid" if row[0] is None else "row" for row in rows
-        ]
+        assert recorded == _recorded_page(encoded_identity_read(), rows)
+        assert [bool(codes) for _key, codes in recorded] == [row[0] is None for row in rows]
 
 
-def _published_page(converter: ReadRowConverter, rows: tuple[Row, ...]) -> list[tuple[str, object]]:
+def _recorded_page(
+    converter: ReadRowConverter, rows: tuple[Row, ...]
+) -> list[tuple[object, tuple[str, ...]]]:
     builder = PageBuilder(ViewSchema.of())
     roots = tuple(converter.record_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
-    stage = FlatPageResult((None,) * len(rows), (None,) * len(rows), builder.finish(roots, Pin()))
-    published: list[tuple[str, object]] = []
-    for row in _published_rows(stage, ENCODED_IDENTITY, converter.row_publisher()):
-        if isinstance(row, InvalidData):
-            record = invalid_record(row)
-            published.append(("invalid", (record.issues, record.ordinal, record.data)))
-        else:
-            published.append(("row", list(row.items())))
-    return published
+    page = page_rows(builder.finish(roots, Pin()))
+    return [
+        (page.keys[root], tuple(issue.code for issue in entity_state(page, root).findings))
+        for root in page.roots
+    ]
 
 
 def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
@@ -834,12 +814,10 @@ def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> Non
 def test_an_invalid_encoded_key_publishes_no_logical_identity() -> None:
     page = encoded_identity_page((None, None, SQL_NULL))
     assert page_rows(page).keys[0] is None
-    stage = FlatPageResult((None,), (None,), page)
-    (record,) = _published_rows(stage, ENCODED_IDENTITY, encoded_identity_read().row_publisher())
-    published = invalid_record(record)
-    assert published.data is None
-    assert [issue.code for issue in published.issues] == ["stored-data-primary-key-null"]
-    assert [issue.object_key for issue in published.issues] == [None]
+    (root,) = observed_roots(page, ENCODED_IDENTITY)
+    assert len(root.layouts) == 0
+    invalid = cast("InvalidRootInput", root.invalid_root)
+    assert [issue.code for issue in invalid.issues] == ["stored-data-primary-key-null"]
 
 
 # --------------------------------------------------------------------------- #

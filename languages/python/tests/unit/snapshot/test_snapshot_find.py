@@ -12,7 +12,7 @@ edge-grouping/ordering.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Final, cast
@@ -61,7 +61,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     DeferredFeatureError,
@@ -84,10 +84,8 @@ from parallax.core.predicate._resolved import ResolvedMembership
 from parallax.core.read_delivery import (
     InvalidData,
     InvalidDataError,
-    PublishedRow,
     StoredDataIssue,
     _read_plan,
-    _row_converter,
 )
 from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
@@ -105,18 +103,13 @@ from parallax.core.read_delivery._page_reader import (
     EagerPageResult,
     HistoryPageResult,
 )
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
-from parallax.core.read_delivery._row_lane import find_rows
 from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Pin, valid_time_coverage
 from parallax.core.unit_work import ReadEvidence
 from parallax.core.write_plan import ObjectKey
-from parallax.descriptor._records import Attribute as DescriptorAttribute
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
-from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import (
     Database,
     NoResultFound,
@@ -270,7 +263,7 @@ def _find(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> EagerPageResult[ReadEvidence]:
     return find(
-        resolve_read_query(query, model=model, form="graph"),
+        resolve_read_query(query, model=model),
         _cataloged(model),
         port,
         origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
@@ -280,9 +273,7 @@ def _find(
 def _find_history(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> HistoryPageResult:
-    return find_history(
-        resolve_read_query(query, model=model, form="graph"), _cataloged(model), port
-    )
+    return find_history(resolve_read_query(query, model=model), _cataloged(model), port)
 
 
 class QueuePort(ConnectsAsItself):
@@ -349,7 +340,6 @@ def test_a_proved_level_classifies_every_document_as_it_is_recorded() -> None:
         resolve_read_query(
             deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
             model=meta,
-            form="graph",
         ),
         _cataloged(meta),
         QueuePort(
@@ -564,7 +554,6 @@ def test_a_read_folding_documents_carries_read_intent_beside_its_ordinals() -> N
         resolve_read_query(
             deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
             model=meta,
-            form="graph",
         ),
         _cataloged(meta),
         port,
@@ -586,19 +575,6 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 1
     assert _rows(result.page).roots == ()
-    assert len(port.executed) == 1
-
-
-def test_row_form_does_not_judge_an_unrequested_required_occurrence() -> None:
-    port = QueuePort([[{"id": 1}]])
-    result = (
-        own_root(Database.connect(port, _PROFILE_OWNER_MODEL))
-        .using_database_login()
-        .read_rows(
-            object_query_node(ProfileOwner.where(ProfileOwner.id == 1), _PROFILE_OWNER_MODEL)
-        )
-    )
-    assert result.rows == ({"id": 1},)
     assert len(port.executed) == 1
 
 
@@ -1364,260 +1340,6 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
     }
 
 
-def test_the_values_lane_preserves_a_provider_normalized_native_key() -> None:
-    port = QueuePort([[{"id": None, "name": "Ada"}]])
-    db = own_root(Database.connect(port, vo.CUSTOMER_MODEL)).using_database_login()
-    (row,) = db.read_rows(deserialize_query({"target": "Customer", "predicate": {"true": {}}})).rows
-    assert row == {"id": None, "name": "Ada"}
-
-
-def test_the_values_lane_trusts_each_native_scalar_row() -> None:
-    port = QueuePort([[{"id": 1, "name": "Ada"}, {"id": 2, "name": None}]])
-    db = own_root(Database.connect(port, vo.CUSTOMER_MODEL)).using_database_login()
-    first, second = db.read_rows(
-        deserialize_query({"target": "Customer", "predicate": {"true": {}}})
-    ).rows
-    assert first == {"id": 1, "name": "Ada"}
-    assert second == {"id": 2, "name": None}
-
-
-def _encoded_payload_family() -> Metamodel:
-    root = DescriptorEntity(
-        name="Root",
-        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
-        attributes=(
-            DescriptorAttribute(name="id", type="int64", column="id", primary_key=True),
-            DescriptorAttribute(name="payload", type="bytes", column="payload", nullable=True),
-        ),
-    )
-    first = DescriptorEntity(
-        name="First",
-        table="first_tbl",
-        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
-    )
-    second = DescriptorEntity(
-        name="Second",
-        table="second_tbl",
-        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
-        attributes=(DescriptorAttribute(name="size", type="int32", column="size", nullable=True),),
-    )
-    return formed(DescriptorMetamodel(entities=(root, first, second)))
-
-
-def _row_form(
-    model: Metamodel,
-    target: str,
-    stored: list[MappingRow],
-    *,
-    cataloged: CatalogedModel | None = None,
-    planner: ReadPlanner = UNCACHED_READ_PLANNER,
-) -> tuple[PublishedRow, ...]:
-    query = resolve_read_query(
-        deserialize_query({"target": target, "predicate": {"true": {}}}), model=model, form="rows"
-    )
-    return find_rows(
-        query,
-        cataloged or _cataloged(model),
-        QueuePort([stored]),
-        edition="",
-        planner=planner,
-    ).rows
-
-
-def _counting_publication_preparation(
-    patched: pytest.MonkeyPatch,
-) -> list[tuple[str, str | None]]:
-    derived: list[tuple[str, str | None]] = []
-    prepare = vars(_row_converter)["_row_operation"]
-
-    def counting(contract: ReadResultContract, mapping: Any, variant: str | None) -> object:
-        derived.append((mapping.concrete_entity.name, variant))
-        return prepare(contract, mapping, variant)
-
-    patched.setattr(_row_converter, "_row_operation", counting)
-    return derived
-
-
-def _animal(ordinal: int, kind: str) -> MappingRow:
-    return {**_ANIMAL_ROW, "id": ordinal, "kind": kind}
-
-
-def test_row_form_binds_one_publication_per_concrete_and_variant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Every pair a row can resolve to is bound with the read, the unrecognized
-    # tag's family root included, whichever pairs the rows then name.
-    derived = _counting_publication_preparation(monkeypatch)
-
-    published = _row_form(
-        ANIMAL,
-        "Animal",
-        [
-            _animal(ordinal, kind)
-            for ordinal, kind in enumerate(("dog", "cat", "dog", "zebra", "cat", "zebra"), 1)
-        ],
-    )
-
-    assert len(published) == 6
-    assert derived == [("Cat", "Cat"), ("Dog", "Dog"), ("WildBoar", "WildBoar"), ("Animal", None)]
-
-
-def test_a_row_form_page_reuses_its_bound_publications_without_a_layout_lookup(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cataloged, planner = _cataloged(ANIMAL), ReadPlanCache()
-    stored = [_animal(1, "dog"), _animal(2, "cat")]
-    first = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
-
-    def forbidden(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("row publication looked a bound fact up again")
-
-    monkeypatch.setattr(_row_converter, "member_classifiers", forbidden)
-    monkeypatch.setattr(LayoutCatalog, "entity", forbidden)
-    derived = _counting_publication_preparation(monkeypatch)
-    second = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
-
-    assert second == first
-    assert derived == []
-
-
-def _forbid_row_publication(patched: pytest.MonkeyPatch) -> None:
-    def forbidden(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("a read that publishes no flat row derived a row publication")
-
-    patched.setattr(_row_converter, "_row_operation", forbidden)
-
-
-def test_graph_reads_derive_no_row_publication(monkeypatch: pytest.MonkeyPatch) -> None:
-    _forbid_row_publication(monkeypatch)
-    port = QueuePort([[_animal(1, "dog"), _animal(2, "zebra")]])
-    query = deserialize_query({"target": "Animal", "predicate": {"true": {}}})
-
-    assert _find(query, ANIMAL, port).page.root_count == 2
-
-
-def test_history_reads_derive_no_row_publication(monkeypatch: pytest.MonkeyPatch) -> None:
-    _forbid_row_publication(monkeypatch)
-    port = QueuePort(
-        [
-            [
-                {
-                    "id": 1000,
-                    "invoice_id": 100,
-                    "amount": Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
-                    "out_z": INFINITY,
-                }
-            ]
-        ]
-    )
-    query = deserialize_query(
-        {
-            "target": "InvoiceLine",
-            "predicate": {"eq": {"path": "InvoiceLine.id", "value": 1000}},
-            "temporal": {"transaction-time": {"history": {}}},
-        }
-    )
-
-    assert _find_history(query, INVOICE, port).page.root_count == 1
-
-
-def _items(row: object) -> list[tuple[str, object]]:
-    return list(cast("Mapping[str, object]", row).items())
-
-
-def test_row_form_publishes_renamed_members_after_the_members_it_keeps() -> None:
-    first, second = _row_form(
-        _encoded_payload_family(),
-        "Root",
-        [
-            {"id": 1, "payload": "00ff", "size": None, "family_variant": "First"},
-            {"id": 2, "payload": None, "size": 3, "family_variant": "Second"},
-        ],
-    )
-
-    assert _items(first) == [
-        ("id", 1),
-        ("payload_hex", "00ff"),
-        ("size", None),
-        ("familyVariant", "First"),
-    ]
-    assert _items(second) == [
-        ("id", 2),
-        ("size", 3),
-        ("payload_hex", None),
-        ("familyVariant", "Second"),
-    ]
-
-
-def test_row_form_pads_sibling_keys_in_publication_key_order() -> None:
-    (invoice,) = _row_form(
-        DOCUMENT,
-        "Document",
-        [
-            {
-                "id": 1,
-                "title": "A",
-                "folder_id": None,
-                "currency": "USD",
-                "amount_due": Decimal("2.50"),
-                "body": None,
-                "paid_amount": None,
-                "family_variant": "Invoice",
-            }
-        ],
-    )
-
-    assert _items(invoice) == [
-        ("id", 1),
-        ("title", "A"),
-        ("folder_id", None),
-        ("currency", "USD"),
-        ("amount_due", Decimal("2.50")),
-        ("body", None),
-        ("paid_amount", None),
-        ("familyVariant", "Invoice"),
-    ]
-
-
-def test_row_form_publishes_an_unknown_tag_under_the_family_root_with_no_variant() -> None:
-    (unknown,) = _row_form(ANIMAL, "Animal", [{**_ANIMAL_ROW, "id": 2, "kind": "zebra"}])
-
-    record = cast("InvalidData[Mapping[str, object]]", unknown)
-    assert [issue.code for issue in record.issues] == ["stored-data-family-tag-unknown"]
-    assert _items(record.data) == [
-        ("id", 2),
-        ("name", ""),
-        ("owner_id", 10),
-        ("license_id", None),
-        ("indoor", None),
-        ("bark_volume", None),
-        ("tusk_length", None),
-    ]
-
-
-def test_row_form_publishes_a_member_stored_at_another_members_result_key() -> None:
-    blob = DescriptorEntity(
-        name="Blob",
-        table="blob",
-        attributes=(
-            DescriptorAttribute(name="id", type="int64", column="id", primary_key=True),
-            DescriptorAttribute(name="payload", type="bytes", column="payload", nullable=True),
-            DescriptorAttribute(name="shadow", type="bytes", column="payload_hex", nullable=True),
-        ),
-    )
-
-    (row,) = _row_form(
-        formed(DescriptorMetamodel(entities=(blob,))),
-        "Blob",
-        [{"id": 1, "payload_hex": "00ff", "payload_hex_hex": "0102"}],
-    )
-
-    assert _items(row) == [("id", 1), ("payload_hex", "00ff"), ("payload_hex_hex", "0102")]
-
-
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2007,7 +1729,7 @@ def test_a_dormant_root_prepares_its_levels_but_renders_and_executes_nothing() -
     )
 
     result = find(
-        resolve_read_query(query, model=meta, form="graph"),
+        resolve_read_query(query, model=meta),
         _cataloged(meta),
         QueuePort([]),
         origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
@@ -2198,17 +1920,17 @@ def test_a_dormant_milestone_set_keeps_its_family_temporal_shape_without_a_state
     assert port.executed == []
 
 
-def test_a_dormant_row_form_read_publishes_no_rows_without_a_statement() -> None:
+def test_a_dormant_wire_read_publishes_no_roots_without_a_statement() -> None:
     port = ScriptedAdapter()
     db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
 
-    result = db.read_rows(
+    result = db.wire.find(
         object_query_node(
             dormant.Concept.where(dormant.Concept.all), dormant.DORMANT_POSITION_COLUMNS
         )
     )
 
-    assert result.rows == ()
+    assert result.checked().results() == []
     assert result.edition == db.find(dormant.Concept.where(dormant.Concept.all)).edition
     assert port.calls == []
 
@@ -2262,7 +1984,7 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     query = deserialize_query(document)
     entity = entity_by_name(model, cast("str", document["target"]))
     assert entity is not None
-    validated = resolve_read_query(query, model=model, form="graph")
+    validated = resolve_read_query(query, model=model)
     return slot_table(
         read_planning.plan(
             validated, model, projection=read_planning.ReadProjectionRequest("all", True)
@@ -2479,7 +2201,6 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
     port = ScriptedAdapter(
         Read(rows=[NEW_ROW]),
         Read(rows=[NEW_ROW]),
-        Read(rows=[NEW_ROW]),
         Transact(Read(rows=[NEW_ROW])),
         Read(rows=[NEW_ROW]),
         Transact(Read(rows=[NEW_ROW])),
@@ -2488,16 +2209,13 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
 
     found = db.find(_account_query())
     wired = db.wire.find(_account_node())
-    rows = db.read_rows(_account_node())
     inside = db.transact(lambda tx: (tx.edition, tx.find(_account_query()).edition))
-    assert (found.edition, found.checked().edition, wired.edition, rows.edition) == (
-        "ledger-a",
-    ) * 4
+    assert (found.edition, found.checked().edition, wired.edition) == ("ledger-a",) * 3
     assert inside == ("ledger-a", "ledger-a")
 
     serving.publish(b, expected=a)
 
-    assert (found.edition, wired.edition, rows.edition) == ("ledger-a",) * 3
+    assert (found.edition, wired.edition) == ("ledger-a",) * 2
     assert db.find(_account_query()).edition == "ledger-b"
     assert db.transact(lambda tx: (tx.edition, tx.find(_account_query()).edition)) == (
         "ledger-b",

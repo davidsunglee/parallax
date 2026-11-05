@@ -102,11 +102,11 @@ __all__ = [
     "compile_write_predicate",
 ]
 
-# The read's consumption lane (m-sql *Result form*): a ``row``-form read (the
-# values lane) publishes flat rows, an ``instance``-form read (the object lane —
-# a find / snapshot / deep-fetch whose rows materialize into instances) publishes
-# objects. What either projects is the planned query's own resolved demand; the
-# lane decides only the returned shape.
+# The read's consumption lane (m-sql *Result form*): a ``row``-form read is a
+# write's acquisition, whose rows are consumed as member rows, and an
+# ``instance``-form read (the object lane — a find / snapshot / deep-fetch whose
+# rows materialize into instances) publishes objects. What either projects is the
+# planned query's own resolved demand; the lane decides only the returned shape.
 # PRIVATE: `compile_read`'s ``result_form`` keyword and its semantics are part of
 # the supported interface, but the alias naming them is not — a caller spells the
 # two literals inline (`Literal["row", "instance"]`) rather than importing a name

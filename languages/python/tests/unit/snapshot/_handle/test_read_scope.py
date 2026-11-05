@@ -44,7 +44,6 @@ from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index
 from parallax.core.execution import QueryTargetError, TxnOptions
@@ -66,9 +65,7 @@ from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.predicate import QueryDefinitionError
-from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery import _delivery as delivery
-from parallax.core.read_delivery import _row_lane as row_lane
 from parallax.core.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageRequest,
@@ -93,7 +90,7 @@ from parallax.snapshot._handle._wire import (
     wire_read_query,
 )
 from tests._support import mirrored_models as mm
-from tests._support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdapter
+from tests._support.db_port import Read, RefusingAdapter, ScriptedAdapter
 from tests._support.model_capabilities import (
     cataloged_for,
     graph_construction_for,
@@ -131,10 +128,6 @@ def _wire_node() -> ObjectQueryNode:
     return deserialize_query(
         {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
     )
-
-
-def _rows_node() -> ObjectQueryNode:
-    return object_query_node(_typed_query(), ACCOUNT)
 
 
 def _balance_node(temporal: dict[str, object]) -> ObjectQueryNode:
@@ -316,7 +309,6 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
     executed: list[_Executed] = []
     deliver_find = delivery.deliver_find
     deliver_history = delivery.deliver_history
-    find_rows = row_lane.find_rows
 
     def recording_deliver_find(
         request: EagerPageRequest[Any], publication: Publication[Any, Any]
@@ -354,30 +346,8 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
             planner=planner,
         )
 
-    def recording_find_rows(
-        query: ResolvedObjectQuery,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        *,
-        edition: str,
-        preference: ConcurrencyPreference | None = None,
-        read: ReadActivity = INERT,
-        planner: ReadPlanner,
-    ) -> RowsResult:
-        executed.append(_Executed("find_rows", port, preference, None))
-        return find_rows(
-            query,
-            model,
-            port,
-            edition=edition,
-            preference=preference,
-            read=read,
-            planner=planner,
-        )
-
     patch.setattr(read_pipeline_module, "deliver_find", recording_deliver_find)
     patch.setattr(read_pipeline_module, "deliver_history", recording_deliver_history)
-    patch.setattr(read_pipeline_module, "find_rows", recording_find_rows)
     return executed
 
 
@@ -477,7 +447,6 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
     for verb in (
         lambda: _find(scope, _typed_query()),
         lambda: _stream(scope, _typed_query(), _VALID_BATCH_SIZE),
-        lambda: scope.read_rows(_rows_node()),
         lambda: _wire_find(scope, _wire_node()),
         lambda: _wire_stream(scope, _wire_node(), _VALID_BATCH_SIZE),
     ):
@@ -569,19 +538,17 @@ def test_find_refuses_a_classless_model_before_it_lowers_its_query() -> None:
     assert len(lowered) == 1
 
 
-def test_the_wire_and_row_form_verbs_cross_no_classless_refusal() -> None:
-    # Neither publishes an Entity Class instance, so neither needs the graph
-    # construction the Typed lane refuses without — and both run to completion
+def test_the_wire_verb_crosses_no_classless_refusal() -> None:
+    # It publishes no Entity Class instance, so it needs none of the graph
+    # construction the Typed lane refuses without, and it runs to completion
     # under the same selection `find` was refused under.
-    port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)), Read(rows=list(_ACCOUNT_ROWS)))
+    port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
     published = _wire_find(scope, _wire_node()).result()
-    rows = scope.read_rows(_rows_node())
 
     assert published == {"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}
-    assert len(rows.rows) == 1
-    assert execution.calls == ["begin", "eager", "begin", "eager"]
+    assert execution.calls == ["begin", "eager"]
 
 
 # --------------------------------------------------------------------------- #
@@ -589,7 +556,7 @@ def test_the_wire_and_row_form_verbs_cross_no_classless_refusal() -> None:
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "verb_name",
-    ["find", "read_rows", "wire_find"],
+    ["find", "wire_find"],
 )
 def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str) -> None:
     # A refused read opens no activity and runs no body, which is what leaves a
@@ -600,7 +567,6 @@ def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], object]] = {
         "find": lambda: _find(scope, mm.Balance.where(mm.Balance.id == 1)),
-        "read_rows": lambda: scope.read_rows(unknown),
         "wire_find": lambda: _wire_find(scope, unknown),
     }
 
@@ -631,26 +597,21 @@ def test_a_bad_include_the_gate_refuses_reaches_no_execution_capability(
 # Publication is the call's, never the scope's                                 #
 # --------------------------------------------------------------------------- #
 def test_one_scope_chooses_its_publication_per_call() -> None:
-    # Three reads through ONE scope, published three ways: the publication is
-    # built after the refusal each time and is never retained, so a Handle and
-    # its Wire view sharing one scope is not a Handle sharing one result format.
-    port = ScriptedAdapter(*[Read(rows=list(_ACCOUNT_ROWS)) for _ in range(3)])
+    # Two reads through ONE scope, published two ways: the publication is built
+    # after the refusal each time and is never retained, so a Handle and its Wire
+    # view sharing one scope is not a Handle sharing one result format.
+    port = ScriptedAdapter(*[Read(rows=list(_ACCOUNT_ROWS)) for _ in range(2)])
     scope, execution = _scope(port)
 
     _find(scope, _typed_query()).result()
     _wire_find(scope, _wire_node()).result()
-    scope.read_rows(_rows_node())
 
-    assert execution.interfaces == ["typed", "wire", "rows"]
+    assert execution.interfaces == ["typed", "wire"]
 
 
-def test_the_two_graph_publications_carry_the_selections_edition_and_the_values_lane_has_none() -> (
-    None
-):
+def test_the_two_graph_publications_carry_the_selections_edition() -> None:
     # A publication is the one place the stamp is applied, so both graph
-    # interfaces take it from the selection they were built over. The values
-    # lane publishes no graph at all: it has no publication builder, and the row
-    # form stamps its own result instead.
+    # interfaces take it from the selection they were built over.
     selected = _selection()
     typed = typed_publication_for(selected)
     wire = wire_publication_for(selected)
@@ -712,25 +673,6 @@ def test_every_body_threads_the_port_preference_and_evidence_context_it_was_hand
     assert (first.port, first.preference, first.evidence_context) == (standalone_port, None, None)
     assert (second.port, second.preference) == (participating_port, "locking")
     assert second.evidence_context is evidence_context
-
-
-def test_the_row_form_body_threads_the_preference_and_files_into_no_ledger(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The values lane locks like the graph lane and observes nothing: its
-    # executor takes no evidence context at all, so a preference reaching it while no
-    # evidence does is a property of the one body that calls it.
-    port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
-    evidence_context = _EvidenceContext()
-    scope, _ = _scope(port, preference="locking", evidence_context=evidence_context)
-    executed = _recorded(monkeypatch)
-
-    scope.read_rows(_rows_node())
-
-    (call,) = executed
-    assert (call.executor, call.port, call.preference) == ("find_rows", port, "locking")
-    assert evidence_context.retained == []
-    assert [type(op) for op in port.calls] == [ReadCall]
 
 
 # --------------------------------------------------------------------------- #

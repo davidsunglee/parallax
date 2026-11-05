@@ -668,9 +668,7 @@ def _carriers(predicate: object) -> tuple[tuple[type, object], ...]:
 def test_a_prepared_operand_binds_the_carrier_its_canonical_export_decodes_to(
     query: Any, model: DomainModel
 ) -> None:
-    canonical = resolve_read_query(
-        object_query_node(query, model), model=model_of(model), form="graph"
-    )
+    canonical = resolve_read_query(object_query_node(query, model), model=model_of(model))
     typed = typed_resolved(query, model)
     assert _carriers(typed.predicate) == _carriers(canonical.predicate)
 
@@ -821,7 +819,7 @@ def test_an_unfinished_operation_exports_as_its_serving_model_resolves_it() -> N
 )
 def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> None:
     canonical = resolve_read_query(
-        object_query_node(query, vm.CUSTOMER_MODEL), model=model_of(vm.CUSTOMER_MODEL), form="graph"
+        object_query_node(query, vm.CUSTOMER_MODEL), model=model_of(vm.CUSTOMER_MODEL)
     )
     assert typed_resolved(query, vm.CUSTOMER_MODEL) == canonical
 
@@ -861,7 +859,6 @@ def test_an_illegal_element_scope_interior_is_refused_as_its_canonical_export_is
         resolve_read_query(
             object_query_node(query, vm.CUSTOMER_MODEL),
             model=model_of(vm.CUSTOMER_MODEL),
-            form="graph",
         )
     with pytest.raises(ModelRejectedError) as typed:
         typed_resolved(query, vm.CUSTOMER_MODEL)
@@ -1098,9 +1095,3 @@ def test_a_bad_include_outranks_the_checks_that_follow_the_clause_gate() -> None
         typed_resolved(scanned.include(Policy.coverages), POLICY_MODEL)
     with pytest.raises(QueryDefinitionError, match="no_such_member"):
         typed_resolved(scanned.include(Policy.coverages.no_such_member), POLICY_MODEL)
-    with pytest.raises(ValueError, match="row-form"):
-        typed_resolved(
-            sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.statuses),
-            sm.SNAP_ORDERS_MODEL,
-            form="rows",
-        )

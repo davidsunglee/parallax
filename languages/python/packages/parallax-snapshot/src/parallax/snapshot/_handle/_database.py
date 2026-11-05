@@ -16,9 +16,7 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.entity import DomainModel
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
-from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     check_read_plan_cache_capacity,
@@ -120,9 +118,6 @@ class ScopedDatabase:
     @property
     def wire(self) -> WireDatabaseView:
         return WireDatabaseView(self._execution)
-
-    def read_rows(self, query: ObjectQueryNode) -> RowsResult:
-        return self._execution.read_rows(query)
 
     def transact[T](
         self,

@@ -1855,8 +1855,6 @@ def test_every_included_level_demands_its_whole_position_whatever_the_root_reque
     assert _selected(pair) == every
     assert pair.narrow_to == (_identity(strategy, "Left"), _identity(strategy, "Right"))
     assert all(level.projection.observe_structured_document for level in (broad, single, pair))
-    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
-        projection_support.resolved(query, form="rows")
 
 
 def test_equivalent_requests_resolve_to_one_equal_selection_matched_by_exact_identity() -> None:

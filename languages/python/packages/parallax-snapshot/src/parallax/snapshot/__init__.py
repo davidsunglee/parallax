@@ -1,4 +1,5 @@
 from parallax.core.temporal_read import Edge, Pin
+from parallax.core.wire import WireValue
 from parallax.snapshot._handle._database import Database, ScopedDatabase, connect
 from parallax.snapshot._handle._errors import (
     SnapshotConnectionError,
@@ -29,7 +30,6 @@ from parallax.snapshot._inspection import (
 from parallax.snapshot._publication._root import SnapshotConsistencyError
 from parallax.snapshot._publication._wire import (
     WireEntity,
-    WireValue,
     required_wire_provenance,
     wire_edge_of,
 )

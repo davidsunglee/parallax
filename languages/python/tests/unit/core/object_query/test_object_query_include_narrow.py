@@ -87,7 +87,7 @@ def accepted_read_query(
     the query itself so a case can go on to assert its canonical lowering. A
     rejection propagates.
     """
-    resolve_read_query(object_query_node(query, models), model=model_of(models), form="graph")
+    resolve_read_query(object_query_node(query, models), model=model_of(models))
     return query
 
 
@@ -275,7 +275,7 @@ def _resolved_by_both_flows(query: ObjectQuery[Any, Any]) -> tuple[IncludePathNo
     exported = canonical_query(query, deep.FAMILY)
     assert (
         typed_resolved(query, deep.FAMILY).includes
-        == resolve_read_query(exported, model=model_of(deep.FAMILY), form="graph").includes
+        == resolve_read_query(exported, model=model_of(deep.FAMILY)).includes
     )
     return exported.includes
 
@@ -722,9 +722,7 @@ def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> N
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
     with pytest.raises(DeferredFeatureError) as caught:
-        resolve_read_query(
-            object_query_node(query, POLICY_MODEL), model=model_of(POLICY_MODEL), form="graph"
-        )
+        resolve_read_query(object_query_node(query, POLICY_MODEL), model=model_of(POLICY_MODEL))
     assert caught.value.features == ("snapshot-history-includes",)
 
 

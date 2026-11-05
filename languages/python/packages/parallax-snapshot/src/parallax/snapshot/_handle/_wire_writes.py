@@ -36,7 +36,7 @@ from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.wire import WireValue, decode_wire
+from parallax.core.wire import decode_wire
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
@@ -442,7 +442,7 @@ def _published_address(
         return object_key.primary_key
     key = family_view(meta, entity).primary_key
     name = key.identity.name
-    return ((name, decode_wire(key.type, cast("WireValue", node[name]))),)
+    return ((name, decode_wire(key.type, node[name])),)
 
 
 class WireKeyedWriteSource:

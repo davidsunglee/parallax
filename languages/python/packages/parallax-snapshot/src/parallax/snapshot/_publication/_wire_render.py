@@ -9,6 +9,7 @@ from parallax.core.inheritance import FAMILY_VARIANT_KEY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, InvalidData
 from parallax.core.read_planning import IncludeTree, PositionId, RelationshipViewKey, RenderToken
+from parallax.core.wire import WireValue
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.core.wire._facts import (
     ENCODE,
@@ -26,7 +27,6 @@ from parallax.snapshot._publication._wire import (
     NodeReader,
     RootViewReader,
     WireEntity,
-    WireValue,
     _FrozenMapping,  # pyright: ignore[reportPrivateUsage] - the carriers a renderer fills
     _FrozenSequence,  # pyright: ignore[reportPrivateUsage] - the carriers a renderer fills
     _WireEntityNode,  # pyright: ignore[reportPrivateUsage] - the carriers a renderer fills

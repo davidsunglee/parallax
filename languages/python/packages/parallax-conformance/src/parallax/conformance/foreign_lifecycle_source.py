@@ -94,7 +94,7 @@ class ForeignLifecycleSource:
                 "this source materializes root-only Pages, and the query includes "
                 "a relationship level"
             )
-        validated = resolve_read_query(node, model=self._model.meta, form="graph")
+        validated = resolve_read_query(node, model=self._model.meta)
         result = execute_read(validated, self._model, self._port, origin_collector=_NO_ORIGINS)
         return cast("tuple[S, ...]", self._materialize(result.page))
 

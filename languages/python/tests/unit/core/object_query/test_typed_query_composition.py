@@ -224,7 +224,7 @@ def accepted_read_query(
     the query itself so a case can go on to assert its canonical lowering. A
     rejection propagates.
     """
-    resolve_read_query(object_query_node(query, models), model=model_of(models), form="graph")
+    resolve_read_query(object_query_node(query, models), model=model_of(models))
     return query
 
 

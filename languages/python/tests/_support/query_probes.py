@@ -11,7 +11,7 @@ consumes it.
 from __future__ import annotations
 
 import functools
-from typing import Any, Literal
+from typing import Any
 
 from parallax.core._execution._publication import SelectedReadModel, read_projection
 from parallax.core._execution._read_pipeline import interpreted
@@ -64,12 +64,10 @@ def _selected(model: DomainModel) -> SelectedReadModel:
 def typed_resolved(
     query: ObjectQuery[Any, Any],
     model: DomainModel,
-    *,
-    form: Literal["rows", "graph"] = "graph",
 ) -> ResolvedObjectQuery:
     """``query`` resolved through the Typed adapter against ``model``, exactly as a
     read resolves it once it has adopted that model."""
     selected = _selected(model)
     return resolve_read_query(
-        interpreted(selected, typed_read_query(query)), model=selected.model.meta, form=form
+        interpreted(selected, typed_read_query(query)), model=selected.model.meta
     )

@@ -26,7 +26,6 @@ from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.object_query import deserialize
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import TxnContext, connect
@@ -77,12 +76,9 @@ def test_a_publication_after_a_read_leaves_every_envelope_it_published_on_a(
 
     typed = db.find(Account.where(Account.id == TARGET_ID))
     wired = db.wire.find(_target_node())
-    rows = db.read_rows(deserialize(_target_node()))
     serving.publish(b, expected=a)
 
-    assert (typed.edition, typed.checked().edition, wired.edition, rows.edition) == (
-        "2026-09-a",
-    ) * 4
+    assert (typed.edition, typed.checked().edition, wired.edition) == ("2026-09-a",) * 3
     assert typed.result().balance == Decimal("250.00")
     # The next operation on the same handle adopts what is serving by then.
     assert db.find(Account.where(Account.id == TARGET_ID)).edition == "2026-09-b"

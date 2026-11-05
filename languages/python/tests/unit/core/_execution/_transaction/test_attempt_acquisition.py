@@ -46,6 +46,7 @@ from parallax.core.execution_lifecycle import (
     ReadFailed,
     ReadFinished,
     ReadStarted,
+    TransactionAttemptStarted,
 )
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
@@ -215,9 +216,13 @@ def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> No
         tx.uow.buffer_target(_patch())
 
     scope(port, provider=recorder).transact(fn, itself, concurrency="locking")
-    names = _names(recorder.roots[-1].events)
+    events = recorder.roots[-1].events
+    names = _names(events)
     # The pending insert executes in the pre-commit flush, after the read.
     assert names.index("ReadStarted") < names.index("FlushStarted")
+    attempt = next(event for event in events if isinstance(event, TransactionAttemptStarted))
+    read = next(event for event in events if isinstance(event, ReadStarted))
+    assert (read.parent_activity_id, read.interface) == (attempt.activity_id, "rows")
     assert [type(call) for call in port.calls][:2] == [BeginCall, ReadCall]
     assert isinstance(port.calls[-1], CommitCall)
 

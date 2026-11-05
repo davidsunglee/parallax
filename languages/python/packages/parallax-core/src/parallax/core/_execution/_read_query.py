@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Final, Literal
+from typing import Final
 
 from parallax.core._execution._features import DeferredFeatureError, deferred_features
 from parallax.core.metamodel import Metamodel, entity_by_name
@@ -33,9 +33,7 @@ class QueryTargetError(RuntimeError):
     code: Final[str] = "query-target-not-in-model"
 
 
-def resolve_read_query(
-    query: QueryInput, *, model: Metamodel, form: Literal["rows", "graph"]
-) -> ResolvedObjectQuery:
+def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObjectQuery:
     """Resolve and validate ``query`` against ``model``, and do no I/O.
 
     A canonical query's predicate is validated here; an interpreted query's
@@ -72,9 +70,4 @@ def resolve_read_query(
     deferred = deferred_features(clauses)
     if deferred:
         raise DeferredFeatureError(deferred)
-    if form == "rows" and clauses.requests_includes:
-        raise ValueError(
-            "a row-form read materializes no relationships, so it carries no deep-fetch "
-            "levels; request the graph form to materialize a related level"
-        )
     return resolved

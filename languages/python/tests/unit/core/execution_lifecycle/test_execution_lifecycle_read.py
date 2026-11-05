@@ -61,7 +61,6 @@ from parallax.core.execution_lifecycle._activity import (
     ReadActivity,
     open_read_root,
 )
-from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import ScopedDatabase, SnapshotMaterializationError, connect
@@ -352,21 +351,15 @@ def test_a_failed_sibling_pipeline_balances_every_open_call() -> None:
     assert caused.cause_activity_id == 5
 
 
-def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
+def test_the_wire_lane_names_its_own_interface() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     db = _db(port, recorder)
     db.wire.find({"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}})
-    db.read_rows(
-        deserialize_query(
-            {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}}
-        )
-    )
-    wire_root, rows_root = recorder.roots
-    for root, interface in ((wire_root, "wire"), (rows_root, "rows")):
-        started = root.events[0]
-        assert isinstance(started, ReadStarted)
-        assert started.interface == interface
+    (root,) = recorder.roots
+    started = root.events[0]
+    assert isinstance(started, ReadStarted)
+    assert started.interface == "wire"
 
 
 def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:

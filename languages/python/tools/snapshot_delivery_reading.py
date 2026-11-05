@@ -692,9 +692,7 @@ class ColdPlan:
 
     def __init__(self, model: DomainModel, query: ObjectQuery[Any, Any]) -> None:
         self.model = read_projection(prepare_model(model, edition=PLAN_EDITION)).model
-        self.query = resolve_read_query(
-            object_query_node(query, model), model=self.model.meta, form="graph"
-        )
+        self.query = resolve_read_query(object_query_node(query, model), model=self.model.meta)
         self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
 
     @classmethod
@@ -714,7 +712,6 @@ class ColdPlan:
             model=self.model,
             dialect=POSTGRES,
             query=self.query,
-            result_form="instance",
             preference=None,
         )
 

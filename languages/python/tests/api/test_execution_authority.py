@@ -15,7 +15,6 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
-from parallax.core.object_query import deserialize
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
@@ -85,7 +84,6 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
 
         assert scoped.find(query).result().balance == Decimal("250.00")
         assert scoped.wire.find(_target_node()).result()["balance"] == "250.00"
-        assert scoped.read_rows(deserialize(_target_node())).rows
         with scoped.stream(
             Account.where(Account.id >= 1).order_by(Account.id.asc()), batch_size=1
         ) as stream:

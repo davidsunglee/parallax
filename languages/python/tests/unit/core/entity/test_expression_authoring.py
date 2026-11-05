@@ -325,7 +325,7 @@ def test_a_target_local_narrow_exports_its_reached_entitys_paths_relative() -> N
 
 def _wire_accepts(query: Any, model: DomainModel) -> dict[str, object]:
     node = object_query_node(query, model)
-    resolve_read_query(node, model=model_of(model), form="graph")
+    resolve_read_query(node, model=model_of(model))
     return serialize(node.predicate)
 
 

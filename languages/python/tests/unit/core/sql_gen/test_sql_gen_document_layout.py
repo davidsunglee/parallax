@@ -144,11 +144,11 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     )
     shared = compiled.result_contract.shared_document
     assert shared is not None and shared.column == "payload"
-    # The column is still never a result field: it carries no member here and the
-    # raw value leaves the published row all the same.
+    # The column is still never a member: it carries none here, and the raw value
+    # is handed back beside the row.
     document: DocumentValue = {"berthCode": "NB-118"}
     (row,) = deliver(DOCUMENT, compiled, [{"id": 1, "payload": document}])
-    assert row.published == (("id", 1),)
+    assert row.members == {"id": 1}
     assert row.document == document
 
 
@@ -192,10 +192,10 @@ def test_a_direct_document_carrier_is_a_classified_member() -> None:
     assert [code for code, _stored in row.issues] == ["stored-data-many-wrong-kind"]
 
 
-def test_the_raw_document_is_never_a_result_field() -> None:
+def test_the_raw_document_is_never_a_member() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     (row,) = deliver(DOCUMENT, compiled, [{"id": 1, "payload": {"displayName": "Ada"}}])
-    assert "payload" not in dict(row.published)
+    assert "payload" not in row.members
 
 
 def test_an_entity_document_classifies_each_requested_member() -> None:
@@ -211,12 +211,6 @@ def test_an_entity_document_classifies_each_requested_member() -> None:
         "score": 7,
         "joinedOn": dt.date(2026, 1, 15),
     }
-    assert row.published == (
-        ("id", 1),
-        ("display_name", "Ada"),
-        ("score", 7),
-        ("joined_on", dt.date(2026, 1, 15)),
-    )
 
 
 @pytest.mark.parametrize(

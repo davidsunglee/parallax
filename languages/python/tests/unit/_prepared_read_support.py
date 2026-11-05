@@ -187,7 +187,6 @@ def bound_cells(
             compiled.projection,
             correlation_members=correlation_members,
             singleton=singleton,
-            row_operations=True,
         ),
         result_row(compiled, cells),
     )

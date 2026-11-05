@@ -132,8 +132,6 @@
     "InvalidData",
     "InvalidDataError",
     "MISSING_STORED_VALUE",
-    "PublishedRow",
-    "RowsResult",
     "StoredDataDecodingError",
     "StoredDataIssue",
     "StreamContinuationError",

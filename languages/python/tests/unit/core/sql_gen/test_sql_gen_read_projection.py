@@ -2,17 +2,15 @@
 
 Each case compiles one read under an explicit internal projection request in
 both result forms and grades the statement, its binds and document ordinals,
-the selected occurrences, the document mappings, and the flat-row publication
-keys. The same reads then deliver stored rows, spelled by the names their
-statements select, through binding, conversion, Page judgment, and flat-row
-publication, graded by judged members, stored-data issues, the raw shared
-document, and the published rows' values and iteration order.
+the selected occurrences, and the document mappings. The same reads then deliver
+stored rows, spelled by the names their statements select, through binding,
+conversion, and Page judgment, graded by judged members, stored-data issues, and
+the raw shared document.
 
 The expectations are authored from the fixtures' declarations: a read selects
 every applicable Attribute, the requested Value Objects of its position, and
 the Structured Column wherever a fetched member resides in it or the read
-observes it. Result form decides only sibling padding and the branch-owned
-fields a flat row publishes.
+observes it. Result form changes none of that.
 
 Table-per-hierarchy ``Columns`` layout cannot give two sibling occurrences one
 storage spelling, so its ``Right.home`` keeps the Column ``right_home``.
@@ -40,7 +38,7 @@ from tests.unit.core.sql_gen._plan_reuse_support import assert_planned_once, rec
 
 type _Request = Literal["none", "all", "named"]
 type _Form = Literal["row", "instance"]
-type _Mapping = dict[str, tuple[list[str], tuple[str, ...]]]
+type _Mapping = dict[str, list[str]]
 
 _FORMS: tuple[_Form, ...] = ("row", "instance")
 # Each wide field `facet_NN` declares the occurrence `facetNN`, which is also its
@@ -272,17 +270,14 @@ def _union(shape: _Shape, demand: _Demand) -> tuple[_SelectList, str, tuple[obje
     return first, " union all ".join(branches), binds
 
 
-def _shared(shape: _Shape, demand: _Demand, form: _Form) -> _Mapping | None:
+def _shared(shape: _Shape, demand: _Demand) -> _Mapping | None:
     if shape.layout == "columns" or not _projects_document(shape, demand):
         return None
-    members = {
+    return {
         concrete: (["note", "tags"] if concrete == "Plain" else [])
         + _fetched_by(shape, demand, concrete, column=False)
         for concrete in shape.position
     }
-    pads = form == "row" and ((shape.strategy == "tph" and shape.abstract_target) or shape.union)
-    padding = tuple(dict.fromkeys(key for keys in members.values() for key in keys)) if pads else ()
-    return {concrete: (keys, padding) for concrete, keys in members.items()}
 
 
 def _direct(shape: _Shape, demand: _Demand) -> dict[str, list[str]] | None:
@@ -294,47 +289,6 @@ def _direct(shape: _Shape, demand: _Demand) -> dict[str, list[str]] | None:
         for concrete in shape.position
     }
     return direct if any(direct.values()) else None
-
-
-def _published(shape: _Shape, demand: _Demand, concrete: str, form: _Form) -> tuple[str, ...]:
-    keys = ["id"]
-    if shape.strategy is None:
-        if shape.layout == "columns":
-            keys.extend(_fetched_by(shape, demand, concrete, column=True))
-        return tuple(keys)
-    keys.append("holder_id")
-    shared = _shared(shape, demand, form)
-    if shape.layout == "document":
-        if shared is not None:
-            keys.extend(shared[concrete][1])
-        return tuple(keys)
-    if shape.union:
-        # A row-form union keeps every alias that spells its own key where the
-        # union result placed it, and appends the keys its resolved branch
-        # renames to; an instance-form union keeps only that branch's own
-        # fields, in result order.
-        plain = "Plain" in shape.position and (form == "row" or concrete == "Plain")
-        if form == "instance":
-            keys.append("digest_hex")
-        if plain:
-            keys.extend(("note", "tags"))
-        fetched = _fetched_by(shape, demand, concrete, column=True)
-        keys.extend(name for name in fetched if name != "home")
-        if form == "row":
-            keys.append("digest_hex")
-        keys.extend(name for name in fetched if name == "home")
-        return tuple(keys)
-    keys.append("digest_hex")
-    if "Plain" in shape.position:
-        keys.extend(("note", "tags"))
-    keys.extend(
-        dict.fromkeys(
-            name
-            for member in shape.position
-            for name in _fetched_by(shape, demand, member, column=True)
-        )
-    )
-    return tuple(keys)
 
 
 # --------------------------------------------------------------------------- #
@@ -353,7 +307,7 @@ def _shared_mapping(compiled: CompiledRead) -> _Mapping | None:
         return None
     assert shared.column == "payload"
     return {
-        identity.name: ([key for key, _path in fan_out.members], fan_out.padding)
+        identity.name: [key for key, _path in fan_out.members]
         for identity, fan_out in shared.per_entity
     }
 
@@ -396,8 +350,8 @@ def test_a_read_fetches_its_resolved_demand_whatever_its_result_form(
     assert row.projection.observe_structured_document is demand.observe
     assert tuple(identity.name for identity in row.resolved_position) == shape.position
 
-    for form, compiled in zip(_FORMS, (row, instance), strict=True):
-        assert _shared_mapping(compiled) == _shared(shape, demand, form)
+    for compiled in (row, instance):
+        assert _shared_mapping(compiled) == _shared(shape, demand)
         assert _direct_mapping(compiled) == _direct(shape, demand)
 
 
@@ -587,11 +541,6 @@ def _wide_payload() -> dict[str, object]:
     return payload
 
 
-def _delivered_variant(shape: _Shape, concrete: str) -> str | None:
-    tagged = shape.strategy == "tph" and shape.abstract_target
-    return concrete if concrete != "Root" and (shape.union or tagged) else None
-
-
 def _members(shape: _Shape, demand: _Demand, concrete: str) -> dict[str, object]:
     """The judged member row by declared name, its absent members omitted."""
     stored = _STORED[concrete]
@@ -609,39 +558,6 @@ def _members(shape: _Shape, demand: _Demand, concrete: str) -> dict[str, object]
     return members
 
 
-def _published_row(
-    shape: _Shape, demand: _Demand, concrete: str, form: _Form
-) -> tuple[tuple[str, object], ...]:
-    """The flat row a delivered row publishes, in iteration order: its own
-    unencoded Attributes and carried occurrences in member order, then its
-    encoded Attributes under their encoded keys, then the read's remaining
-    publication keys as null padding, then its `familyVariant`."""
-    members = _members(shape, demand, concrete)
-    published: dict[str, object] = {"id": members["id"], "holder_id": members["holderId"]}
-    if concrete == "Plain":
-        published["note"] = members["note"]
-        published["tags"] = members["tags"]
-    for name in ("origin", "home"):
-        if name in members:
-            spelled = _occurrence_column(shape, concrete, name)
-            published[name if spelled.startswith("parallax_attr_") else spelled] = members[name]
-    if "digest" in members:
-        published["digest_hex"] = _hex(members["digest"])
-    # An unclaimed tag's family root has no document fan-out of its own, while
-    # a shared table's columns pad it as they pad every concrete.
-    padding: tuple[str, ...] = ()
-    if concrete != "Root":
-        padding = _published(shape, demand, concrete, form)
-    elif shape.layout == "columns":
-        padding = _published(shape, demand, shape.position[0], form)
-    for key in padding:
-        published.setdefault(key, None)
-    variant = _delivered_variant(shape, concrete)
-    if variant is not None:
-        published["familyVariant"] = variant
-    return tuple(published.items())
-
-
 def _wide_members(demand: _Demand, row: int) -> dict[str, object]:
     members: dict[str, object] = {"id": row + 1}
     for name in _wide_fetched(demand):
@@ -649,14 +565,11 @@ def _wide_members(demand: _Demand, row: int) -> dict[str, object]:
     return members
 
 
-type _Delivered = tuple[
-    str, str | None, dict[str, object], tuple[tuple[str, object], ...], object, object
-]
+type _Delivered = tuple[str, dict[str, object], tuple[tuple[str, object], ...], object]
 
 
-def _expected_delivery(shape: _Shape, demand: _Demand, form: _Form) -> list[_Delivered]:
-    """Every delivered row as (Entity, variant, members, issues, published items,
-    raw shared document)."""
+def _expected_delivery(shape: _Shape, demand: _Demand) -> list[_Delivered]:
+    """Every delivered row as (Entity, members, issues, raw shared document)."""
     if shape.strategy is None:
         expected: list[_Delivered] = []
         for row in (0, 1):
@@ -666,15 +579,13 @@ def _expected_delivery(shape: _Shape, demand: _Demand, form: _Form) -> list[_Del
                 if shape.layout == "document" and _projects_document(shape, demand)
                 else None
             )
-            expected.append(("WideHolder", None, members, (), tuple(members.items()), document))
+            expected.append(("WideHolder", members, (), document))
         return expected
     return [
         (
             concrete,
-            _delivered_variant(shape, concrete),
             _members(shape, demand, concrete),
             (("stored-data-family-tag-unknown", _UNKNOWN_TAG),) if concrete == "Root" else (),
-            _published_row(shape, demand, concrete, form),
             _payload(concrete)
             if shape.layout == "document" and _projects_document(shape, demand)
             else None,
@@ -691,9 +602,7 @@ def _expected_delivery(shape: _Shape, demand: _Demand, form: _Form) -> list[_Del
     _SHAPES,
     ids=[f"{shape.strategy or 'standalone'}-{shape.layout}-{shape.kind}" for shape in _SHAPES],
 )
-def test_a_read_delivers_its_rows_judged_and_published_in_member_order(
-    shape: _Shape, demand: _Demand
-) -> None:
+def test_a_read_delivers_its_rows_judged_in_member_order(shape: _Shape, demand: _Demand) -> None:
     rows = (
         [_wide_cells(shape, demand, row) for row in (0, 1)]
         if shape.strategy is None
@@ -702,7 +611,6 @@ def test_a_read_delivers_its_rows_judged_and_published_in_member_order(
     for form in _FORMS:
         delivered = deliver(shape.meta(), shape.compile(demand, form), rows)
 
-        assert [
-            (row.entity, row.variant, row.members, row.issues, row.published, row.document)
-            for row in delivered
-        ] == _expected_delivery(shape, demand, form)
+        assert [(row.entity, row.members, row.issues, row.document) for row in delivered] == (
+            _expected_delivery(shape, demand)
+        )

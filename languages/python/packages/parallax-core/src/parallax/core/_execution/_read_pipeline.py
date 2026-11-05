@@ -30,7 +30,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode, QueryInput
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery import RowsResult
 from parallax.core.read_delivery._delivery import deliver_find, deliver_history
 from parallax.core.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
@@ -43,7 +42,6 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.read_delivery._row_lane import find_rows
 from parallax.core.read_delivery._stream import StreamRead
 from parallax.core.temporal_read import scans_resolved_axis
 
@@ -55,7 +53,6 @@ __all__ = [
     "interpreted",
     "read_graph",
     "read_page",
-    "read_rows",
     "resolved",
 ]
 
@@ -141,9 +138,7 @@ def read_graph[Eager](
     is selected inside the bracket, after any read gate.
     """
     selected = read.selected
-    checked = resolve_read_query(
-        interpreted(selected, query), model=selected.model.meta, form="graph"
-    )
+    checked = resolve_read_query(interpreted(selected, query), model=selected.model.meta)
 
     def published(activity: ReadActivity, inputs: ReadInputs) -> Eager:
         if scans_resolved_axis(checked.temporal):
@@ -174,34 +169,9 @@ def read_graph[Eager](
     return read.eager(query.target, publication.interface, published)
 
 
-def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> RowsResult:
-    """One row-form read, published as transformed rows and no graph.
-
-    The values lane needs no materializer, so it crosses no classless refusal;
-    it records no observation either, which is why its body passes no evidence context in
-    either lane. The gate precedes the bracket, so a refused read flushes
-    nothing.
-    """
-    selected = read.selected
-    checked = resolve_read_query(node, model=selected.model.meta, form="rows")
-
-    def published(activity: ReadActivity, inputs: ReadInputs) -> RowsResult:
-        return find_rows(
-            checked,
-            selected.model,
-            inputs.connection,
-            edition=selected.edition,
-            preference=inputs.preference,
-            read=activity,
-            planner=planner,
-        )
-
-    return read.eager(node.target, "rows", published)
-
-
 def resolved(read: BegunRead, query: ReadQuery, /) -> ResolvedObjectQuery:
     """``query`` through the shared read gate, under the selection ``read`` adopted."""
-    return resolve_read_query(interpreted(read.selected, query), model=read.meta, form="graph")
+    return resolve_read_query(interpreted(read.selected, query), model=read.meta)
 
 
 def read_page(

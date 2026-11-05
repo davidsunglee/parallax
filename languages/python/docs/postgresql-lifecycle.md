@@ -313,7 +313,7 @@ Each operation acquires a connection and gives it back:
 
 | Operation | Holds a connection |
 |---|---|
-| Eager read (`db.find`, `db.wire.find`, `db.read_rows`) | For the whole read, materialization included |
+| Eager read (`db.find`, `db.wire.find`) | For the whole read, materialization included |
 | Standalone delivery (`db.stream`, `db.wire.stream`) | For one page at a time, through that page's materialization |
 | Transaction attempt (`db.transact`) | For the attempt, every participating read, write and delivery inside it included |
 

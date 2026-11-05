@@ -9,7 +9,6 @@ row as predecessor evidence for a later keyed write.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 from parallax.core.entity._model import model_of
@@ -28,7 +27,7 @@ _ROW_QUERY = deserialize(
 
 
 # A nullable bytes Column is projected through PostgreSQL's encoded-text alias,
-# but SQL NULL is member absence rather than a Wire literal: row delivery must
+# but SQL NULL is member absence rather than a Wire literal: Wire delivery must
 # publish None without decoding it, Typed Snapshot delivery must hydrate None,
 # and a transaction must retain None under the physical Column as predecessor
 # evidence so editing another member commits without decoding the NULL later.
@@ -52,9 +51,7 @@ def test_nullable_encoded_sql_null_survives_delivery_and_predecessor_observation
         )
     )
 
-    row = db.read_rows(_ROW_QUERY).rows[0]
-    assert isinstance(row, Mapping)
-    assert row["payload_hex"] is None
+    assert db.wire.find(_ROW_QUERY).result()["payload"] is None
 
     delivered = db.find(mm.WritableScalar.where(mm.WritableScalar.id == 1)).result()
     assert delivered.payload is None

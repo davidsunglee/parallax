@@ -14,7 +14,6 @@ from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._inheritance import (
     CellSource,
     DocumentMemberSource,
-    DriverRowSlot,
     EntitySources,
     LiteralRowIdentity,
     MemberSource,
@@ -256,7 +255,7 @@ class SelectListBuilder:
         coordinate_ordinals: list[int] = []
         by_contributor: dict[ColumnContributor, int] = {}
         addressed: set[str] = set()
-        slots: list[DriverRowSlot | None] = []
+        slots: list[ScalarResult | None] = []
         padded: dict[str, int] = {}
         encoded: set[int] = set()
         # A union read narrowing each row to its own branch pads no sibling.
@@ -276,7 +275,8 @@ class SelectListBuilder:
                 shared_ordinal = ordinal
             else:
                 by_contributor[role] = ordinal
-                slots.append(_slot(cell, ordinal, narrow=narrow, padded=padded, encoded=encoded))
+                _record_publication(cell, ordinal, narrow=narrow, padded=padded, encoded=encoded)
+                slots.append(cell.scalar)
                 continue
             slots.append(None)
         if [self._cells[ordinal].alias for ordinal in coordinate_ordinals] != [
@@ -340,24 +340,21 @@ class SelectListBuilder:
         self._cells.append(cell)
 
 
-def _slot(
+def _record_publication(
     cell: _Cell, ordinal: int, *, narrow: bool, padded: dict[str, int], encoded: set[int]
-) -> DriverRowSlot | None:
-    """Value cell ``ordinal``'s publication facts, recording its padding key in
-    ``padded`` and its ordinal in ``encoded`` where they apply.
+) -> None:
+    """Record value cell ``ordinal``'s claim on a publication key in ``padded``
+    and its ordinal in ``encoded``, where they apply.
 
-    A cell keeps its place in every resolved row's flat publication where its
-    name is its own publication key, unless the read narrows each row to what
-    its own branch owns; a renamed or encoded union alias publishes only for
-    its owners.
+    A cell claims its key in every resolved row where its name is its own
+    publication key, unless the read narrows each row to what its own branch
+    owns; a renamed or encoded union alias publishes only for its owners.
     """
     scalar = cell.scalar
     if scalar is not None and scalar.encoded:
         encoded.add(ordinal)
-    if narrow or cell.alias != cell.publication_key:
-        return None if scalar is None else DriverRowSlot(scalar, None)
-    padded[cell.publication_key] = ordinal
-    return DriverRowSlot(scalar, cell.publication_key)
+    if not narrow and cell.alias == cell.publication_key:
+        padded[cell.publication_key] = ordinal
 
 
 class _SourceFactory:

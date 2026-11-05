@@ -175,7 +175,6 @@ def _planning_into_a_second_cache(plan: Callable[[ColdPlan], Any]) -> Callable[[
             model=prepared.model,
             dialect=POSTGRES,
             query=prepared.query,
-            result_form="instance",
             preference=None,
         )
         _REGISTRY.kept.append(spare)

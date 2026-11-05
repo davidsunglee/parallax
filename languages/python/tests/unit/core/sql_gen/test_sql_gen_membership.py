@@ -51,7 +51,7 @@ def _query(
     meta: Metamodel, target: str, predicate: Mapping[str, object], **clauses: object
 ) -> ResolvedObjectQuery:
     document = {"target": target, "predicate": dict(predicate)} | clauses
-    return resolve_read_query(oq.deserialize(document), model=meta, form="rows")
+    return resolve_read_query(oq.deserialize(document), model=meta)
 
 
 def _membership(op: str, path: str, values: Sequence[object]) -> dict[str, object]:

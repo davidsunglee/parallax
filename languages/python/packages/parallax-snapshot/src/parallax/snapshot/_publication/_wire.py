@@ -45,7 +45,7 @@ from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 from parallax.core.read_delivery._page import ABSENT
 from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Edge, TemporalFacet
-from parallax.core.wire import decode_canonical_wire
+from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
     NodeProvenance,
@@ -63,7 +63,6 @@ __all__ = [
     "NodeReader",
     "RootViewReader",
     "WireEntity",
-    "WireValue",
     "authoring_of",
     "opened_wire_entity",
     "projection_entity",
@@ -73,21 +72,6 @@ __all__ = [
     "stored_provenance_of",
     "wire_edge_of",
 ]
-
-type WireValue = bool | int | float | str | list[WireValue] | dict[str, WireValue] | None
-"""One position in a Wire result: a canonical Wire Value, a nested Value Object
-mapping, an included Entity node, or an ordered collection of either.
-
-Structural rather than nominal, deliberately: a runtime Wire value is a frozen
-built-in subclass, so it satisfies this alias while remaining directly
-JSON-serializable and structurally equal to the plain value it mirrors. That
-freezing is a runtime property rather than a static one, and it holds at every
-depth against every mutation reaching a value through the instance; the base
-descriptors a caller can reach around the instance for
-(``dict.__setitem__(value, ...)``, ``list.append(value, ...)``) stay open, for
-the reason :class:`WireEntity` gives. Spelling immutability statically instead,
-through public frozen list and mapping types, would make every ordinary mapping
-statically unusable as Parallax input."""
 
 _FROZEN = "a Wire read result refuses mutation through the instance"
 
@@ -381,7 +365,7 @@ def wire_edge_of(node: object) -> Edge:
             operation="edge_of",
             entity=entity,
         )
-    published = cast("Mapping[str, Any]", node)
+    published = cast("WireEntity", node)
     valid_start = published.get(_VALID_START)
     return Edge(
         tx_time=cast("dt.datetime", decode_canonical_wire(TIMESTAMP, published[_TX_START])),
@@ -667,7 +651,7 @@ def _stated_wire_scalar(neutral_type: NeutralType, value: object) -> WireValue:
         return INFINITY_LITERAL
     if type(value) in (bool, int, str):
         return cast("WireValue", value)
-    return cast("WireValue", encode_managed_wire(neutral_type, cast("ManagedValue", value)))
+    return encode_managed_wire(neutral_type, cast("ManagedValue", value))
 
 
 def _stated_wire_collection(element_type: NeutralType, value: object) -> WireValue:

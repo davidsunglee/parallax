@@ -9,6 +9,22 @@ direct or projected, answers the `Pin` its read retained, with no I/O and no wri
 authority. A non-temporal node raises `snapshot-pin-unavailable`, and anything no read
 published raises `snapshot-node-required`.
 
+`read_rows` is gone from `ScopedDatabase`, `TxnContext`, and `ReadOnlyTxnContext`, and
+`parallax.core.read_delivery` no longer exports `RowsResult` or `PublishedRow`. Migrate
+each read to `find` for Typed nodes or `wire.find` for canonical published mappings.
+Wire nodes are keyed by logical member name rather than by storage column: read
+`node["payload"]`, not `row["payload_hex"]`. Their values are canonical Wire spellings
+rather than native Python values. Both reads project the Entity's Value Objects, so a
+row whose Value Object holds invalid stored data now arrives as `InvalidData` where
+`read_rows` never looked at it, and either read inside a transaction can retain Read
+Evidence where `read_rows` retained none.
+
+`parallax.snapshot.WireValue` is now `parallax.core.wire.WireValue`. Its object member is
+`Mapping[str, WireValue]` rather than `dict[str, WireValue]`, so an immutable mapping
+type-checks where a `WireValue` is expected, and code that treated a value as a `dict`
+statically needs a `Mapping` annotation or a narrowing check. Runtime values are
+unchanged.
+
 Typed include paths now reach any depth the read engine supports:
 `Ticket.parking.vehicle.dealer` authors and executes with dotted syntax, and each
 name past the first relationship is resolved against the serving model's Entity

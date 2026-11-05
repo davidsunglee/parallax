@@ -31,15 +31,15 @@ Database (root) — owns, through RootResources, the runtime, the Serving Model,
             │
             ▼
      ScopedDatabase (db) — wraps one ExecutionScope
-       ├ db.find / db.stream / db.wire.find / db.wire.stream / db.read_rows
+       ├ db.find / db.stream / db.wire.find / db.wire.stream
        │     → ExecutionScope → a StandaloneRead per operation
        ├ db.read_only(fn) → TransactionRunner.read_only
        │     → ReadOnlyTxnAttempt per attempt → read_only_context_for → rtx → fn(rtx)
        └ db.transact(fn)  → TransactionRunner.transact
              → TxnAttempt per attempt         → transaction_for       → tx  → fn(tx)
 
-rtx.find / rtx.stream / rtx.wire.* / rtx.read_rows → the ReadOnlyTxnAttempt
- tx.find /  tx.stream /  tx.wire.* /  tx.read_rows → the TxnAttempt
+rtx.find / rtx.stream / rtx.wire.* → the ReadOnlyTxnAttempt
+ tx.find /  tx.stream /  tx.wire.* → the TxnAttempt
 
 public spelling     captured as (convert_query)                publication           graph execution
 ──────────────────  ─────────────────────────────────────────  ────────────────────  ───────────────────────
@@ -49,7 +49,6 @@ Wire find/stream    mapping → deserialize → ObjectQueryNode    wire_publicat
                     ObjectQueryNode → itself                                         StreamDelivery
                     ObjectQuery → typed_read_query
                       → AuthoredQuery
-read_rows           ObjectQueryNode                            none                  read_rows → find_rows
 ```
 
 The root selects authority and derives option aliases; it runs no read itself. The
@@ -61,11 +60,9 @@ attempt. A retry constructs a fresh attempt; a joining call reuses the active on
 callback still runs a standalone read on its own connection. The three lane objects —
 `StandaloneRead`, `ReadOnlyTxnAttempt` and `TxnAttempt` — all satisfy one protocol,
 `BegunRead`, which supplies the bracket a read runs inside; everything after the
-capture is the same code for every lane and both representations. Typed and Wire graph
-reads both plan with `result_form="instance"`. The row-form lane is separate: it
-publishes plain rows and no graph, and Wire is not built on it. Its rows are published
-by a `RowPublisher` that `ReadRowConverter.row_publisher` opens for one Page; what it
-derives for each Entity from the contract's publication slots dies with that Page.
+capture is the same code for every lane and both representations. Typed and Wire reads
+share one instance-form plan. Row form belongs to a write's acquisition, which compiles
+its read directly and consumes judged member rows; it publishes nothing.
 
 ### Symbols
 
@@ -74,7 +71,6 @@ derives for each Entity from the contract's publication slots dies with that Pag
 - `parallax.snapshot._handle._database:ScopedDatabase.find`
 - `parallax.snapshot._handle._database:ScopedDatabase.stream`
 - `parallax.snapshot._handle._database:ScopedDatabase.wire`
-- `parallax.snapshot._handle._database:ScopedDatabase.read_rows`
 - `parallax.snapshot._handle._database:ScopedDatabase.read_only`
 - `parallax.snapshot._handle._database:ScopedDatabase.transact`
 - `parallax.core._execution._root:DatabaseRoot.using_database_login`
@@ -92,12 +88,10 @@ derives for each Entity from the contract's publication slots dies with that Pag
 - `parallax.snapshot._handle._transaction:ReadOnlyTxnContext.find`
 - `parallax.snapshot._handle._transaction:ReadOnlyTxnContext.stream`
 - `parallax.snapshot._handle._transaction:ReadOnlyTxnContext.wire`
-- `parallax.snapshot._handle._transaction:ReadOnlyTxnContext.read_rows`
 - `parallax.snapshot._handle._transaction:TxnContext`
 - `parallax.snapshot._handle._transaction:TxnContext.find`
 - `parallax.snapshot._handle._transaction:TxnContext.stream`
 - `parallax.snapshot._handle._transaction:TxnContext.wire`
-- `parallax.snapshot._handle._transaction:TxnContext.read_rows`
 - `parallax.snapshot._handle._transaction:read_only_context_for`
 - `parallax.snapshot._handle._transaction:transaction_for`
 - `parallax.snapshot._handle._wire:WireDatabaseView`
@@ -113,10 +107,7 @@ derives for each Entity from the contract's publication slots dies with that Pag
 - `parallax.snapshot._handle._read:typed_publication_for`
 - `parallax.snapshot._handle._read:wire_publication_for`
 - `parallax.core._execution._read_pipeline:read_graph`
-- `parallax.core._execution._read_pipeline:read_rows`
-- `parallax.core.read_delivery._row_lane:find_rows`
-- `parallax.core.read_delivery._row_converter:ReadRowConverter.row_publisher`
-- `parallax.core.read_delivery._row_converter:RowPublisher`
+- `parallax.core.read_delivery._acquired_rows:publishable_member_rows`
 - `parallax.core.read_delivery._stream:StreamDelivery`
 
 ## From query spelling to a judged Page
@@ -153,7 +144,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
  deliver_find(EagerPageRequest(..., origin collector, ...), publication)  _delivery
    ▼
  PageReader.read_page                                                   _page_reader
-   │ ReadPlanner.plan(edition, model, dialect, query, result_form="instance", preference)
+   │ ReadPlanner.plan(edition, model, dialect, query, preference)
    ▼
  ReadPlanCache: hit → reuse; miss → build below, once per key            _read_plan
    ├ read_planning.plan → ObjectQueryPlan
@@ -167,7 +158,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │     a SelectListBuilder per select list renders each cell           sql_gen._select_list
    │       (the dialect renders scalar cells) and records what it carries
    │     → SelectListBuilder.result_contract → one ReadResultContract:
-   │       each Entity's member sources, a publication slot per cell, and the
+   │       each Entity's member sources, a scalar slot per cell, and the
    │       ordinals of the row identity, the shared document and each coordinate
    ├ bind(model, result_contract, projection) → a ReadRowConverter per compiled read
    └ ReadPlan: compiled root + fetch work + converters + ViewSchema
@@ -207,11 +198,10 @@ the cells it emitted, so where each value sits in a driver row is recorded once,
 the statement is rendered. It refuses a select list that does not carry what its plan
 requires, union branches or NULL-tail branches whose cells disagree, and two cells one
 Entity would publish under one key. `bind` builds the converter from that same contract
-and projection. Binding, conversion, row identity, Continuation Order coordinates and
-flat-row publication all index the folded row by ordinal, so no column alias is
-reconciled per row, and nothing above this stage knows whether an Entity is stored in
-Columns or as a document. A position with no concrete subtype compiles to `EmptyRead`
-and executes no statement.
+and projection. Binding, conversion, row identity and Continuation Order coordinates
+all index the folded row by ordinal, so no column alias is reconciled per row, and
+nothing above this stage knows whether an Entity is stored in Columns or as a document.
+A position with no concrete subtype compiles to `EmptyRead` and executes no statement.
 
 `_takes_shared_lock` answers no when there is no Concurrency Preference, which is
 the case for every standalone and read-only read; inside a writable attempt each level
@@ -290,7 +280,6 @@ admission stay outside the cache.
 - `parallax.core.sql_gen._inheritance:ReadResultContract.shared_document_ordinal`
 - `parallax.core.sql_gen._inheritance:ReadResultContract.coordinate_ordinals`
 - `parallax.core.sql_gen._inheritance:EntitySources`
-- `parallax.core.sql_gen._inheritance:DriverRowSlot`
 - `parallax.core.read_delivery._row_converter:bind`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter.record_rows`
@@ -454,7 +443,6 @@ are already published into Wire form in memory, with no further read.
              StandaloneRead / ReadOnlyTxnAttempt (no evidence context),
              or a scanned-axis stream page → EMPTY_PAGE_ORIGIN_COLLECTOR → none
              eager milestone set → find_history observes no origins at all
-             read_rows → find_rows → RowsResult: rows, no graph, no evidence
 ```
 
 The `ReadInputs` a lane passes decide most of this. A standalone read passes its own
@@ -526,7 +514,6 @@ exhausted, failed or stopped early.
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
 - `parallax.core._execution._keyed_writes:validate_source_pin`
 - `parallax.core._execution._keyed_writes:TransactionTimePinReadOnlyError`
-- `parallax.core.read_delivery._row_lane:RowsResult`
 
 ## Where the contracts live
 

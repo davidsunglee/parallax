@@ -78,7 +78,6 @@ def test_document_fan_out_references_complete_residency_while_selecting_only_att
         inheritance.view(DOCUMENT_LAYOUT),
         storage,
         ResolvedReadProjection((), False),
-        pad_siblings=False,
     )
 
     assert shared is not None
@@ -662,9 +661,6 @@ def _ticket_delivery(form: Literal["row", "instance"]) -> list[tuple[object, ...
     stamped = form == "instance"
     card_document = {"detail": "visa", "labels": ["a"], "stamp": {"mark": "m"}}
     null_document = {"detail": "visa", "labels": None, "stamp": None}
-    # A row-form read pads a sibling's fetched keys, which keeps a rejected
-    # `detail` visible as null; an instance-form read narrows to owned members.
-    rejected = (("detail", None),) if form == "row" else ()
     return [
         (
             "CardTicket",
@@ -675,59 +671,36 @@ def _ticket_delivery(form: Literal["row", "instance"]) -> list[tuple[object, ...
                 **({"stamp": {"mark": "m"}} if stamped else {}),
             },
             (),
-            (
-                ("id", 1),
-                ("labels", ("a",)),
-                ("detail", "visa"),
-                *((("stamp", {"mark": "m"}),) if stamped else ()),
-                ("familyVariant", "CardTicket"),
-            ),
             card_document,
         ),
         (
             "CardTicket",
             {"id": 2, "labels": (), "detail": "visa", **({"stamp": None} if stamped else {})},
             (),
-            (
-                ("id", 2),
-                ("labels", ()),
-                ("detail", "visa"),
-                *((("stamp", None),) if stamped else ()),
-                ("familyVariant", "CardTicket"),
-            ),
             null_document,
         ),
         (
             "CashTicket",
             {"id": 3, "labels": (), "detail": Decimal("12.50")},
             (),
-            (
-                ("id", 3),
-                ("labels", ()),
-                ("detail", Decimal("12.50")),
-                ("familyVariant", "CashTicket"),
-            ),
             {"detail": "12.50"},
         ),
         (
             "CashTicket",
             {"id": 4, "labels": ("b", "c")},
             (("stored-data-attribute-null", None),),
-            (("id", 4), ("labels", ("b", "c")), *rejected, ("familyVariant", "CashTicket")),
             {"detail": None, "labels": ["b", "c"]},
         ),
         (
             "CashTicket",
             {"id": 5, "labels": ()},
             (("stored-data-attribute-null", MISSING_STORED_VALUE),),
-            (("id", 5), ("labels", ()), *rejected, ("familyVariant", "CashTicket")),
             {"labels": []},
         ),
         (
             "CashTicket",
             {"id": 6, "labels": ()},
             (("stored-data-attribute-null", MISSING_STORED_VALUE),),
-            (("id", 6), ("labels", ()), *rejected, ("familyVariant", "CashTicket")),
             None,
         ),
     ]
@@ -739,9 +712,9 @@ def test_every_partitioned_tph_statement_delivers_the_same_rows(
     shape: Literal["bare", "wrapped", "locking"], form: Literal["row", "instance"]
 ) -> None:
     # The three statement shapes a variant-partitioned read takes carry one
-    # result: each outermost select list is folded, converted, judged, and
-    # published identically, whether the document pair is selected from a
-    # branch, through the derived union, or off the locked base row.
+    # result: each outermost select list is folded, converted, and judged
+    # identically, whether the document pair is selected from a branch, through
+    # the derived union, or off the locked base row.
     options: dict[str, Any] = {
         "bare": {},
         "wrapped": {"order_by": (oq.OrderKey(attr="Ticket.id", direction="asc"),), "limit": 5},
@@ -762,10 +735,9 @@ def test_every_partitioned_tph_statement_delivers_the_same_rows(
     )
     assert compiled.document_reads == ((2, 3),)
     delivered = deliver(TICKETS, compiled, _TICKET_ROWS)
-    assert [
-        (row.entity, row.members, row.issues, row.published, row.document) for row in delivered
-    ] == _ticket_delivery(form)
-    assert all(row.variant == row.entity for row in delivered)
+    assert [(row.entity, row.members, row.issues, row.document) for row in delivered] == (
+        _ticket_delivery(form)
+    )
 
 
 def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> None:
@@ -790,17 +762,11 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
             {"id": 3, "kind": "wire", "payload": {"detail": "x"}},
         ],
     )
-    assert (card.entity, card.variant, card.issues) == ("CardPayment", "CardPayment", ())
+    assert (card.entity, card.issues) == ("CardPayment", ())
     assert card.members == {"id": 1, "detail": "visa-4242", "authorizationCode": "AUTH-7"}
-    assert card.published == (
-        ("id", 1),
-        ("detail", "visa-4242"),
-        ("authorization_code", "AUTH-7"),
-        ("familyVariant", "CardPayment"),
-    )
-    assert (cash.entity, cash.variant, cash.issues) == ("CashPayment", "CashPayment", ())
+    assert (cash.entity, cash.issues) == ("CashPayment", ())
     assert cash.members == {"id": 2, "detail": Decimal("12.50")}
-    assert (wire.entity, wire.variant) == ("Payment", None)
+    assert wire.entity == "Payment"
     assert wire.issues == (("stored-data-family-tag-unknown", "wire"),)
 
 
@@ -814,13 +780,8 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
         compiled,
         [{"id": 1, "payload": {"detail": "visa-4242", "authorizationCode": "AUTH-7"}}],
     )
-    assert (card.entity, card.variant, card.issues) == ("CardPayment", None, ())
+    assert (card.entity, card.issues) == ("CardPayment", ())
     assert card.members == {"id": 1, "detail": "visa-4242", "authorizationCode": "AUTH-7"}
-    assert card.published == (
-        ("id", 1),
-        ("detail", "visa-4242"),
-        ("authorization_code", "AUTH-7"),
-    )
 
 
 def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
@@ -834,7 +795,7 @@ def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
     assert compiled.statement.sql.startswith("select t0.id, t0.amount, t0.card_network from")
     assert compiled.result_contract.identity_ordinal is None
     (row,) = deliver(PAYMENT, compiled, [{"id": 1, "amount": 10, "card_network": "visa"}])
-    assert (row.entity, row.variant, row.issues) == ("CardPayment", None, ())
+    assert (row.entity, row.issues) == ("CardPayment", ())
     assert compiled.result_contract.resolvable == (card,)
 
 
@@ -863,14 +824,14 @@ def test_tph_document_family_with_no_resident_members_projects_no_document() -> 
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "EmptyRoot"))
     assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
     (row,) = deliver(meta, compiled, [{"id": 1, "kind": "leaf"}])
-    assert (row.entity, row.variant, row.issues) == ("EmptyLeaf", "EmptyLeaf", ())
+    assert (row.entity, row.issues) == ("EmptyLeaf", ())
 
 
 @pytest.mark.parametrize(
     ("strategy", "shared_table"),
     [("table-per-hierarchy", "mixed_family"), ("table-per-concrete-subtype", None)],
 )
-def test_family_document_padding_keeps_an_unselected_occurrence_only_resident_shape(
+def test_a_family_document_keeps_an_unselected_occurrence_only_resident_shape(
     strategy: Literal["table-per-hierarchy", "table-per-concrete-subtype"],
     shared_table: str | None,
 ) -> None:
@@ -1341,15 +1302,9 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
             {"id": 2, "kind": "unknown", "x": None, "meta": {"note": "unclassified"}},
         ],
     )
-    assert (tagged.entity, tagged.variant, tagged.issues) == ("Leaf", "Leaf", ())
+    assert (tagged.entity, tagged.issues) == ("Leaf", ())
     assert tagged.members == {"id": 1, "x": 7, "meta": {"note": "tagged"}}
-    assert tagged.published == (
-        ("id", 1),
-        ("x", 7),
-        ("meta", {"note": "tagged"}),
-        ("familyVariant", "Leaf"),
-    )
-    assert (unknown.entity, unknown.variant) == ("Root", None)
+    assert unknown.entity == "Root"
     assert unknown.members == {"id": 2, "meta": {"note": "unclassified"}}
     assert unknown.issues == (("stored-data-family-tag-unknown", "unknown"),)
 
@@ -1400,14 +1355,8 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
         compiled,
         [{"id": 1, "payload": "00ff", "meta": {"note": "literal"}, "family_variant": "First"}],
     )
-    assert (row.entity, row.variant, row.issues) == ("First", "First", ())
+    assert (row.entity, row.issues) == ("First", ())
     assert row.members == {"id": 1, "payload": b"\x00\xff", "meta": {"note": "literal"}}
-    assert row.published == (
-        ("id", 1),
-        ("meta", {"note": "literal"}),
-        ("payload_hex", "00ff"),
-        ("familyVariant", "First"),
-    )
 
 
 def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
@@ -1422,12 +1371,12 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
         target(ANIMAL, "Animal"),
     )
     dog, boar = deliver(ANIMAL, compiled, [{"id": 1, "kind": "dog"}, {"id": 2, "kind": "boar"}])
-    assert (dog.entity, dog.variant, dog.issues) == ("Dog", "Dog", ())
+    assert (dog.entity, dog.issues) == ("Dog", ())
     # The sibling the narrow excluded is named ahead of any row: `resolvable`
     # is the whole tag map plus the family root, so a consumer preparing one
     # structure per Entity a row can carry prepares WildBoar's before the boar
     # row arrives rather than on reaching it.
-    assert (boar.entity, boar.variant, boar.issues) == ("WildBoar", "WildBoar", ())
+    assert (boar.entity, boar.issues) == ("WildBoar", ())
     assert set(compiled.result_contract.resolvable) == {
         target(ANIMAL, name).identity for name in ("Animal", "Cat", "Dog", "WildBoar")
     }
@@ -1470,7 +1419,7 @@ def test_a_partially_composed_document_root_read_stays_unpartitioned_and_unfilte
         compiled,
         [{"id": 3, "kind": "bear", "leader_id": 1, "payload": {"name": "Bruno"}}],
     )
-    assert (row.entity, row.variant) == ("Beast", None)
+    assert row.entity == "Beast"
     assert row.issues == (("stored-data-family-tag-unknown", "bear"),)
 
 
@@ -1536,13 +1485,13 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
         compiled,
         [{"id": 1, "kind": "wolf", "howl": "aooo"}, {"id": 2, "kind": "bear", "howl": None}],
     )
-    assert (wolf.entity, wolf.variant, wolf.issues) == ("Wolf", "Wolf", ())
+    assert (wolf.entity, wolf.issues) == ("Wolf", ())
     assert bear.issues == (("stored-data-family-tag-unknown", "bear"),)
     # That row resolves to the family ROOT, which no position holds — the root is
     # abstract and only concretes are projected — so `resolvable` is what tells a
     # consumer the Entity exists at all before a bear row proves it.
     beast = target(partial, "Beast").identity
-    assert (bear.entity, bear.variant) == ("Beast", None)
+    assert bear.entity == "Beast"
     assert beast not in compiled.resolved_position
     assert beast in compiled.result_contract.resolvable
 
@@ -1617,7 +1566,7 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     # superset, so a row carries its siblings' occurrence Columns as null. What is
     # classified is the RESOLVED concrete's own occurrences — the tag names a
     # `Tug` row, so `Tug`'s `berth` is decoded, while `Barge`'s stored `deck` is
-    # no member of that row and publishes only as the sibling's null padding.
+    # no member of that row.
     meta = _own_column_occurrences()
     compiled = compile_read(
         oa.TrueNode(), meta, POSTGRES, target(meta, "Vessel"), result_form="instance"
@@ -1633,12 +1582,6 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     )
     assert (tug.entity, tug.issues) == ("Tug", ())
     assert tug.members == {"id": 1, "berth": {"code": "A1"}}
-    assert tug.published == (
-        ("id", 1),
-        ("berth", {"code": "A1"}),
-        ("deck", None),
-        ("familyVariant", "Tug"),
-    )
 
 
 def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
@@ -1671,25 +1614,13 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
     )
     assert (book.entity, book.members["pages"]) == ("Book", 320)
     assert (film.entity, film.members["minutes"]) == ("Film", 320)
-    assert all("payload" not in dict(row.published) for row in (book, film))
+    assert all("payload" not in row.members for row in (book, film))
 
 
 def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     (row,) = deliver(DOCUMENT, compiled, [{"id": 1, "title": "A", "family_variant": "Invoice"}])
-    assert (row.entity, row.variant, row.issues) == ("Invoice", "Invoice", ())
-    # The literal leaves the row as `familyVariant`, and a row-form read keeps
-    # its siblings' null padding under the unrenamed alias.
-    assert row.published == (
-        ("id", 1),
-        ("title", "A"),
-        ("folder_id", None),
-        ("currency", None),
-        ("amount_due", None),
-        ("body", None),
-        ("paid_amount", None),
-        ("familyVariant", "Invoice"),
-    )
+    assert (row.entity, row.issues) == ("Invoice", ())
 
 
 def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
@@ -1739,17 +1670,8 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
             }
         ],
     )
-    assert (row.entity, row.variant, row.issues) == (
-        "SharedVariant",
-        "archive.SharedVariant",
-        (),
-    )
+    assert (row.entity, row.issues) == ("SharedVariant", ())
     assert row.members == {"id": 1, "archiveLabel": "archived"}
-    assert row.published == (
-        ("id", 1),
-        ("shared_label", "archived"),
-        ("familyVariant", "archive.SharedVariant"),
-    )
 
 
 def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
@@ -2021,37 +1943,20 @@ _WRAPPED_TPCS_ROWS: dict[str, tuple[dict[str, object], ...]] = {
 
 def _wrapped_tpcs_delivery(
     layout: support.Layout, form: Literal["row", "instance"]
-) -> list[tuple[str, dict[str, object], tuple[tuple[str, object], ...]]]:
-    """Each delivered row as (Entity, members, published items). A row-form read
-    pads its siblings' fields; an instance-form one fetches every occurrence and
-    narrows to the fields its branch owns. An encoded Column publishes under its
-    encoded key after the row's own members."""
+) -> list[tuple[str, dict[str, object]]]:
+    """Each delivered row as (Entity, members). An instance-form read fetches every
+    occurrence and narrows to the fields its branch owns."""
     instance = form == "instance"
     columns = layout == "columns"
     left_occurrences = {"origin": {"city": "Rome"}, "home": {"city": "Lyon"}} if instance else {}
     plain_occurrences = {"origin": None} if instance else {}
     right_occurrences = {"origin": None, "home": None} if instance else {}
-    padding = () if instance else (("note", None), ("tags", None))
 
     def digest(value: bytes | None) -> dict[str, object]:
         return {"digest": value} if columns else {}
 
-    def encoded(value: str | None) -> tuple[tuple[str, object], ...]:
-        return (("digest_hex", value),) if columns else ()
-
     return [
-        (
-            "Left",
-            {"id": 1, "holderId": 10, **digest(b"\x0a\x0b"), **left_occurrences},
-            (
-                ("id", 1),
-                ("holder_id", 10),
-                *left_occurrences.items(),
-                *encoded("0a0b"),
-                *padding,
-                ("familyVariant", "Left"),
-            ),
-        ),
+        ("Left", {"id": 1, "holderId": 10, **digest(b"\x0a\x0b"), **left_occurrences}),
         (
             "Plain",
             {
@@ -2062,28 +1967,8 @@ def _wrapped_tpcs_delivery(
                 "tags": ("a",),
                 **plain_occurrences,
             },
-            (
-                ("id", 2),
-                ("holder_id", None),
-                ("note", "memo"),
-                ("tags", ("a",)),
-                *plain_occurrences.items(),
-                *encoded(None),
-                ("familyVariant", "Plain"),
-            ),
         ),
-        (
-            "Right",
-            {"id": 3, "holderId": 30, **digest(b"\xff"), **right_occurrences},
-            (
-                ("id", 3),
-                ("holder_id", 30),
-                *right_occurrences.items(),
-                *encoded("ff"),
-                *padding,
-                ("familyVariant", "Right"),
-            ),
-        ),
+        ("Right", {"id": 3, "holderId": 30, **digest(b"\xff"), **right_occurrences}),
     ]
 
 
@@ -2125,10 +2010,10 @@ def test_a_wrapped_tpcs_union_delivers_through_its_outer_select(
 
     delivered = deliver(support.MATRIX_META, compiled, rows)
 
-    assert [(row.entity, row.members, row.published) for row in delivered] == (
+    assert [(row.entity, row.members) for row in delivered] == (
         _wrapped_tpcs_delivery(layout, form)
     )
-    assert all(row.variant == row.entity and row.issues == () for row in delivered)
+    assert all(row.issues == () for row in delivered)
     if layout == "document":
         assert [row.document for row in delivered] == [
             {"origin": {"city": "Rome"}, "home": {"city": "Lyon"}},

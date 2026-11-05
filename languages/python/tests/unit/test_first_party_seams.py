@@ -1,6 +1,5 @@
-"""The first-party seam beside the developer surface — the values lane
-(``db.read_rows`` / ``tx.read_rows``) — and the Wire read the conformance engine
-settles its writes against.
+"""The Wire read the conformance engine settles its writes against, the
+first-party seam beside the Typed developer surface.
 
 Docker-free, against the shared recording port. What these pin is that a caller
 holding no Entity Class reaches the SAME unit of work a typed caller does — the
@@ -13,7 +12,7 @@ then settles against.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from decimal import Decimal
 from typing import cast
 
@@ -105,10 +104,6 @@ def _account_query(target: str = "parallax.compatibility.Account") -> ObjectQuer
     )
 
 
-def _latest(*dimensions: str) -> dict[str, object]:
-    return {dimension: {"asOf": "latest"} for dimension in dimensions}
-
-
 def _account_state() -> ObjectStateKey:
     return VersionedObjectStateKey(ObjectKey(_account(), (("id", 3),)), 1)
 
@@ -122,27 +117,8 @@ def _run[T](adapter: DatabaseAdapter, fn: Callable[[TxnContext], T]) -> T:
 
 
 # --------------------------------------------------------------------------- #
-# The values lane and the Wire read participate exactly as find does.          #
+# The Wire read participates exactly as find does.                             #
 # --------------------------------------------------------------------------- #
-
-
-def test_a_participating_row_read_publishes_the_rows_it_materialized() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW])))
-    rows = _run(port, lambda tx: tx.read_rows(_account_query()).rows)
-    assert list(rows) == [ACCOUNT_ROW]
-    assert port.calls == [
-        BeginCall(),
-        ReadCall(FIND_SQL_UNLOCKED, (3,), read_only=True),
-        CommitCall(),
-    ]
-
-
-def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> None:
-    port = ScriptedAdapter(Read(rows=[dict(ACCOUNT_ROW)]))
-    row = account_db(port).read_rows(_account_query()).rows[0]
-    assert isinstance(row, Mapping)
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", row)["owner"] = "mutated"
 
 
 def test_a_standalone_wire_read_takes_no_lock_and_files_no_record() -> None:
@@ -188,12 +164,12 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
     assert [key.object.primary_key for key in keys] == [(("id", 1),), (("id", 10),)]
 
 
-def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
+def test_a_participating_wire_read_force_flushes_a_pending_write_first() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(), Read(rows=[ACCOUNT_ROW])))
 
     def fn(tx: TxnContext) -> None:
         tx.wire.amend(_node(tx), {"balance": "11.00"})
-        tx.read_rows(_account_query())
+        tx.wire.find(_account_query())
 
     _run(port, fn)
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, ReadCall, CommitCall]
@@ -392,9 +368,9 @@ def test_a_predicate_write_of_a_versioned_target_is_refused_at_the_shared_predic
 # --------------------------------------------------------------------------- #
 
 
-def test_the_row_read_is_refused_for_an_undeclared_target() -> None:
+def test_the_wire_read_is_refused_for_an_undeclared_target() -> None:
     with pytest.raises(QueryTargetError):
-        account_db(ScriptedAdapter()).read_rows(
+        account_db(ScriptedAdapter()).wire.find(
             _account_query("parallax.compatibility.NoSuchEntity")
         )
 
@@ -408,7 +384,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
 
     def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Account", {"id": 7, "owner": "N", "balance": "5.00"})
-        tx.read_rows(query)
+        tx.wire.find(query)
 
     with raises_contextualized(QueryTargetError):
         _run(port, fn)
@@ -457,57 +433,6 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
         _policy_db(port).transact(fn)
     assert raised.value.features == ("snapshot-history-includes",)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
-
-
-def test_a_row_form_read_refuses_the_relationship_levels_it_cannot_materialize() -> None:
-    query = deserialize_query(
-        {
-            "target": "parallax.compatibility.Policy",
-            "predicate": {"true": {}},
-            "temporal": _latest("transaction-time", "valid-time"),
-            "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
-        }
-    )
-    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
-        _policy_db(ScriptedAdapter()).read_rows(query)
-
-
-def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
-    # The form refusal is the read gate's, not the values lane's, so it lands on
-    # the same side of `uow.read`'s force-flush as the other three: a pending
-    # buffered write is still pending when the refusal escapes, and the
-    # transaction rolls back having executed no DML.
-    port = ScriptedAdapter(Transact())
-    query = deserialize_query(
-        {
-            "target": "parallax.compatibility.Order",
-            "predicate": {"true": {}},
-            "includes": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
-        }
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.wire.insert("parallax.compatibility.Order", _ORDER_PAYLOAD)
-        tx.read_rows(query)
-
-    with raises_contextualized(ValueError, match="row-form read materializes no relationships"):
-        _run_on(db_for(MODELS["orders"], port), fn)
-    assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
-
-
-def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
-    # The refusal is about a relationship level, not about how many clauses a
-    # query fills: ordering and a cap add none.
-    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]))
-    query = deserialize_query(
-        {
-            "target": "parallax.compatibility.Order",
-            "predicate": {"true": {}},
-            "orderBy": [{"attr": "parallax.compatibility.Order.id"}],
-            "limit": 1,
-        }
-    )
-    assert db_for(MODELS["orders"], port).read_rows(query).rows == (_ORDER_ROW,)
 
 
 def _policy_db(adapter: DatabaseAdapter) -> ScopedDatabase:

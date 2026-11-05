@@ -37,14 +37,11 @@ def test_a_row_form_read_projects_every_collection_as_a_document_pair() -> None:
     assert compiled.document_reads[0] == (1, 2)
 
 
-def test_a_bytes_collection_publishes_under_its_storage_key_rather_than_an_encoded_one() -> None:
+def test_a_bytes_collection_decodes_each_element_it_stores_encoded() -> None:
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
     (row,) = deliver(_COLUMNS, compiled, [{"id": 1, "tags": ["b", "a"], "blobs": ["0a1b"]}])
 
     assert (row.members["tags"], row.members["blobs"]) == (("b", "a"), (b"\x0a\x1b",))
-    published = dict(row.published)
-    assert published["blobs"] == (b"\x0a\x1b",)
-    assert "blobs_hex" not in published
 
 
 def test_a_collection_column_classifies_through_the_codec_with_its_logical_path() -> None:

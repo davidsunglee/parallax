@@ -374,7 +374,7 @@ class PageFixture:
                 compiled.projection,
                 singleton=self._proved,
             )
-        ref, _resolved, _document, _variant = prepared.record_row(
+        ref, _resolved, _document = prepared.record_row(
             result_row(compiled, driver_row(compiled, columns)), self._builder, source=ROOT_LEVEL
         )
         return ref

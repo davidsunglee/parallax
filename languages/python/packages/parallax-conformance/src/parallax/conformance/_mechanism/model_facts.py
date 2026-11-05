@@ -222,11 +222,11 @@ def gate_read(query: ObjectQueryNode, model: AcceptedMetamodel) -> None:
     """Run production's own read gate (`execution._read_query.resolve_read_query`)
     over ``query`` for its refusal alone: it resolves the target, validates every
     clause from that root, and classifies Deferred Execution Features."""
-    resolve_read_query(query, model=model, form="graph")
+    resolve_read_query(query, model=model)
 
 
 def read_scans(query: ObjectQueryNode, model: AcceptedMetamodel) -> bool:
     """Whether ``query`` scans any temporal dimension — a milestone-set read — as
     production's own gate (`execution._read_query.resolve_read_query`) validates
     it."""
-    return scans_resolved_axis(resolve_read_query(query, model=model, form="graph").temporal)
+    return scans_resolved_axis(resolve_read_query(query, model=model).temporal)

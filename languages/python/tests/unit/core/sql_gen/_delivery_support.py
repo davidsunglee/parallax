@@ -3,10 +3,10 @@
 A suite authors the cells a statement's rows hold by the names its SQL selects
 them under. The structural port fake folds them into positional driver rows by
 that SQL and its document-read ordinals, and the rows then cross the production
-boundary every read crosses: ``bind``, ``ReadRowConverter.record_row``, the
-Page-owned stored-value judgment, and the converter's flat-row publisher. No
-step reads the compiled result contract's keys, so an expectation authored from
-a model's declarations stays independent of them.
+boundary every read crosses: ``bind``, ``ReadRowConverter.record_row``, and the
+Page-owned stored-value judgment. No step reads the compiled result contract's
+keys, so an expectation authored from a model's declarations stays independent
+of them.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -18,7 +18,6 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
 
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
@@ -35,33 +34,20 @@ from parallax.core.temporal_read import Pin
 from tests._support.document_reads import fold_mapping_rows
 from tests.unit.snapshot._snapshot_page_support import rendered_members
 
-__all__ = ["DeliveredRow", "deliver", "plain"]
+__all__ = ["DeliveredRow", "deliver"]
 
 
 @dataclass(frozen=True, slots=True)
 class DeliveredRow:
-    """One delivered row: the Entity it resolved to and its `familyVariant`,
-    its judged members by declared name with absent members omitted, each stored
-    data issue judgment recorded as its code beside the stored value it rejected,
-    its published flat row as items in iteration order, and the raw shared
+    """One delivered row: the Entity it resolved to, its judged members by
+    declared name with absent members omitted, each stored data issue judgment
+    recorded as its code beside the stored value it rejected, and the raw shared
     document conversion handed back."""
 
     entity: str
-    variant: str | None
     members: dict[str, object]
     issues: tuple[tuple[str, object], ...]
-    published: tuple[tuple[str, object], ...]
     document: object | None
-
-
-def plain(value: object) -> object:
-    """``value`` with every mapping view a published occurrence holds made a
-    ``dict``, so a published row compares against literal expectations."""
-    if isinstance(value, Mapping):
-        return {key: plain(item) for key, item in cast("Mapping[str, object]", value).items()}
-    if isinstance(value, tuple):
-        return tuple(plain(item) for item in cast("tuple[object, ...]", value))
-    return value
 
 
 def deliver(
@@ -77,29 +63,23 @@ def deliver(
     for row in rows:
         unknown = [key for key in row if re.search(rf"\b{re.escape(key)}\b", sql) is None]
         assert not unknown, f"{unknown} are not spelled by {sql!r}"
-    converter = bind(
-        CatalogedModel(model), compiled.result_contract, compiled.projection, row_operations=True
-    )
+    converter = bind(CatalogedModel(model), compiled.result_contract, compiled.projection)
     builder = PageBuilder(ViewSchema.of())
     converted = [
         converter.record_row(row, builder, source=ROOT_LEVEL)
         for row in fold_mapping_rows(rows, compiled.document_reads, sql)
     ]
     page = page_rows(builder.finish(tuple(ref for ref, *_rest in converted), Pin()))
-    publisher = converter.row_publisher()
     delivered: list[DeliveredRow] = []
-    for root, (_ref, resolved, document, variant) in zip(page.roots, converted, strict=True):
+    for root, (_ref, resolved, document) in zip(page.roots, converted, strict=True):
         state = entity_state(page, root)
         layout = page.layouts[root]
         assert layout.concrete == resolved
-        published = publisher.publish(resolved, state.member_row, variant)
         delivered.append(
             DeliveredRow(
                 resolved.name,
-                variant,
                 rendered_members(layout, state.member_row),
                 tuple((issue.code, issue.stored_value) for issue in state.findings),
-                tuple((key, plain(value)) for key, value in published.items()),
                 document,
             )
         )

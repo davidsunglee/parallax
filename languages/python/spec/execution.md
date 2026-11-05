@@ -153,7 +153,7 @@ count.
 
 `scope.read_only(fn, *, retry=..., isolation=...)` is the read-only
 entrypoint, callback-only on the same terms. Its callback receives a
-`ReadOnlyTxnContext`: `find`, `stream`, `read_rows`, a `wire` that is the
+`ReadOnlyTxnContext`: `find`, `stream`, a `wire` that is the
 read-only `WireDatabaseView`, `edition`, and `options` — a
 `ReadOnlyTxnOptions` — and no mutation verb. Each attempt asks the port for a
 read-only boundary, and each attempt of `transact` for a read/write one; the

@@ -5,7 +5,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Final, Literal, NamedTuple, Protocol, assert_never
+from typing import Final, NamedTuple, Protocol, assert_never
 
 from parallax.core import concurrency, inheritance, read_planning
 from parallax.core.concurrency import ConcurrencyFacet, ConcurrencyPreference
@@ -65,8 +65,6 @@ __all__ = [
     "check_read_plan_cache_capacity",
     "repeating_levels",
 ]
-
-type ResultForm = Literal["row", "instance"]
 
 DEFAULT_READ_PLAN_CACHE_CAPACITY: Final = 128
 """The bounded plan reuse a root composed without an explicit capacity gets."""
@@ -170,7 +168,6 @@ class ReadPlanner(Protocol):
         model: CatalogedModel,
         dialect: Dialect,
         query: ResolvedObjectQuery,
-        result_form: ResultForm,
         preference: ConcurrencyPreference | None,
     ) -> ReadPlan: ...
 
@@ -226,7 +223,6 @@ class _ReadPlanKey(NamedTuple):
     model: _Identity
     dialect: _Identity
     query: _QueryKey
-    result_form: ResultForm
     preference: ConcurrencyPreference | None
     delivery: object
 
@@ -235,7 +231,6 @@ class _ReadPlanKey(NamedTuple):
             self.edition == other.edition
             and self.model == other.model
             and self.dialect == other.dialect
-            and self.result_form == other.result_form
             and self.preference == other.preference
             and self.query == other.query
         )
@@ -254,7 +249,6 @@ def _read_plan_key(
     model: CatalogedModel,
     dialect: Dialect,
     query: ResolvedObjectQuery,
-    result_form: ResultForm,
     preference: ConcurrencyPreference | None,
 ) -> _ReadPlanKey:
     paging = query.paging
@@ -273,7 +267,6 @@ def _read_plan_key(
         _Identity(model),
         _Identity(dialect),
         _QueryKey(_query_key(query)),
-        result_form,
         preference,
         delivery,
     )
@@ -470,7 +463,6 @@ def _plan_uncached(
     model: CatalogedModel,
     dialect: Dialect,
     query: ResolvedObjectQuery,
-    result_form: ResultForm,
     preference: ConcurrencyPreference | None,
     reusable: ReadPlan | None = None,
     templated: bool = False,
@@ -479,10 +471,7 @@ def _plan_uncached(
     template every cached delivery renders."""
     versioning = concurrency.view(model.meta)
     empty_root = _empty_root(model, query)
-    projection = read_planning.ReadProjectionRequest(
-        "none" if result_form == "row" else "all",
-        result_form == "instance",
-    )
+    projection = read_planning.ReadProjectionRequest("all", True)
     planned = (
         read_planning.plan(
             query, model.meta, projection=projection, defer_execution_values=templated
@@ -503,16 +492,16 @@ def _plan_uncached(
         shared_lock = _takes_shared_lock(versioning, query.root.identity, preference)
         if templated:
             root_template = compile_template(
-                planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
+                planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
             )
             root = root_template.compiled
         else:
             root = compile_read(
-                planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
+                planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
             )
     if reusable is None:
         fetches = _fetch_work(
-            planned, model, dialect, result_form, versioning, preference, empty_root=empty_root
+            planned, model, dialect, versioning, preference, empty_root=empty_root
         )
         correlations = correlation_table(
             planned,
@@ -554,7 +543,7 @@ def _plan_uncached(
                 (model.layouts.entity(entity.identity) for entity in model.meta.entities),
                 repeating_levels=repeating,
             )
-            if result_form == "instance" and not scans_resolved_axis(query.temporal)
+            if not scans_resolved_axis(query.temporal)
             else ViewSchema.of(repeating_levels=repeating)
         )
     else:
@@ -575,7 +564,6 @@ def _plan_uncached(
             root.projection,
             correlation_members=correlations[0],
             singleton=not schema.may_repeat_rows(ROOT_LEVEL),
-            row_operations=result_form == "row",
         ),
         schema,
         correlations,
@@ -613,7 +601,6 @@ def _fetch_work(
     planned: read_planning.ObjectQueryPlan,
     model: CatalogedModel,
     dialect: Dialect,
-    result_form: ResultForm,
     versioning: ConcurrencyFacet,
     preference: ConcurrencyPreference | None,
     *,
@@ -639,7 +626,7 @@ def _fetch_work(
                     step.query,
                     model.meta,
                     dialect,
-                    result_form=result_form,
+                    result_form="instance",
                     shared_lock=_takes_shared_lock(versioning, step.query.target, preference),
                 )
             )
@@ -675,7 +662,6 @@ class ReadPlanCache:
         model: CatalogedModel,
         dialect: Dialect,
         query: ResolvedObjectQuery,
-        result_form: ResultForm,
         preference: ConcurrencyPreference | None,
     ) -> ReadPlan:
         if self._capacity == 0:
@@ -683,7 +669,6 @@ class ReadPlanCache:
                 model=model,
                 dialect=dialect,
                 query=query,
-                result_form=result_form,
                 preference=preference,
             ).render(query)
         key = _read_plan_key(
@@ -691,7 +676,6 @@ class ReadPlanCache:
             model=model,
             dialect=dialect,
             query=query,
-            result_form=result_form,
             preference=preference,
         )
         reusable: ReadPlan | None = None
@@ -726,7 +710,6 @@ class ReadPlanCache:
                 model=model,
                 dialect=dialect,
                 query=query,
-                result_form=result_form,
                 preference=preference,
                 reusable=reusable,
                 templated=True,

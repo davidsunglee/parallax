@@ -77,7 +77,6 @@ def encoded_identity_read() -> ReadRowConverter:
         CatalogedModel(ENCODED_IDENTITY),
         compiled.result_contract,
         compiled.projection,
-        row_operations=True,
     )
 
 

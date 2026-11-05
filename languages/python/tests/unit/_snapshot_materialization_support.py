@@ -257,7 +257,6 @@ def query(layout: Layout, model: Metamodel) -> ResolvedObjectQuery:
     return resolve_read_query(
         _WORKLOADS[layout].query,
         model=model,
-        form="graph",
     )
 
 
@@ -269,7 +268,6 @@ def read_plan(model: CatalogedModel, validated: ResolvedObjectQuery) -> ReadPlan
         model=model,
         dialect=POSTGRES,
         query=validated,
-        result_form="instance",
         preference=None,
     )
 
