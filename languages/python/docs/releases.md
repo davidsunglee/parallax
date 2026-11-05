@@ -2,10 +2,7 @@
 
 ## 0.1.0
 
-These notes describe the first coordinated production release for early adopters.
-Availability and publication evidence are recorded by the
-[release workflow](../../../.github/workflows/release.yml); this entry alone does
-not establish index availability.
+First coordinated release for early adopters.
 
 The release includes the common runtime, Snapshot application API, PostgreSQL
 adapter, model evolution and schema deltas, descriptor interchange, and optional
@@ -19,8 +16,7 @@ history, model evolution and explicit database resource ownership. The
 [Python binding](../spec/python.md) and executable guide define the supported
 surface, including the implemented errors and temporal-bound interfaces.
 
-This is a normal `0.1.0` install candidate. The
-[compatibility and maintenance policy](releasing.md#compatibility-and-maintenance)
+The [compatibility and maintenance policy](releasing.md#compatibility-and-maintenance)
 explains coordinated versions, backward-compatible patch releases, migration
 guidance for breaking pre-1.0 minor changes and newest-minor-only maintenance.
 Environment support is declared by the metadata and binding links in
