@@ -4224,6 +4224,94 @@
       "valueObject": {}
     }
   },
+  "models/rate-sheet-document.yaml": {
+    "parallax.compatibility.RateSheet": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.SheetDeposit": {
+      "attribute": {
+        "grade": "grade"
+      },
+      "documentPath": {
+        "grade": "payload:grade"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.SheetLoan": {
+      "attribute": {
+        "spread": "spread"
+      },
+      "documentPath": {
+        "spread": "payload:spread"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.SheetRate": {
+      "attribute": {
+        "id": "id",
+        "priority": "priority",
+        "sheetId": "sheet_id",
+        "tier": "tier",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/rate-sheet.yaml": {
+    "parallax.compatibility.RateSheet": {
+      "attribute": {
+        "id": "id",
+        "name": "name",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.SheetDeposit": {
+      "attribute": {
+        "grade": "grade"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.SheetLoan": {
+      "attribute": {
+        "spread": "spread"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.SheetRate": {
+      "attribute": {
+        "id": "id",
+        "priority": "priority",
+        "sheetId": "sheet_id",
+        "tier": "tier",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/rate.yaml": {
     "parallax.compatibility.DepositRate": {
       "attribute": {
