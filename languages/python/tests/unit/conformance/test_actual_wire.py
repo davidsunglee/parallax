@@ -1,6 +1,6 @@
 """The production-side oracle for non-Wire observations: the codec arm an actual
-selects from accepted Metadata, the row variant a reused column is projected
-under, and the refusals a malformed or unowned member meets.
+selects from accepted Metadata and the refusals a malformed or unowned member
+meets.
 """
 
 from __future__ import annotations
@@ -8,12 +8,11 @@ from __future__ import annotations
 import dataclasses
 import decimal
 import uuid
-from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, models
+from parallax.conformance import models
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY
@@ -22,14 +21,8 @@ from parallax.core.metamodel import (
     EntityIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.wire import WireEncodingError
 from parallax.core.write_plan import ObjectKey
-from tests._support.case_corpus import case as corpus_case
-
-
-def _case(case_id: str) -> case_format.Case:
-    return corpus_case(case_id, reachable=True)
 
 
 def test_run_read_case_wire_renders_managed_row_values() -> None:
@@ -67,46 +60,6 @@ def test_actual_wire_projects_only_the_managed_open_bound_at_an_axis_end() -> No
         projection.scalar(valid_end, "infinity")
 
 
-def test_read_row_projects_reused_tph_columns_from_each_row_variant() -> None:
-    case = _case("m-inheritance-124")
-    model = models.load_models()["document-layout"]
-    when = cast("Mapping[str, object]", case.document["when"])
-    query = deserialize_query(when["objectQuery"])
-    projection = ActualWireProjection(model)
-
-    card = projection.published_row(
-        query,
-        {
-            "id": 1,
-            "detail": "visa-4242",
-            "authorization_code": "AUTH-7",
-            "familyVariant": "CardPayment",
-        },
-    )
-    cash = projection.published_row(
-        query,
-        {
-            "id": 2,
-            "detail": decimal.Decimal("12.50"),
-            "authorization_code": None,
-            "familyVariant": "CashPayment",
-        },
-    )
-
-    assert card["detail"] == "visa-4242"
-    assert cash["detail"] == "12.50"
-
-
-def test_read_row_requires_variant_provenance_for_reused_columns() -> None:
-    case = _case("m-inheritance-124")
-    model = models.load_models()["document-layout"]
-    when = cast("Mapping[str, object]", case.document["when"])
-    query = deserialize_query(when["objectQuery"])
-
-    with pytest.raises(ValueError, match="requires familyVariant"):
-        ActualWireProjection(model).published_row(query, {"id": 1, "detail": "ambiguous"})
-
-
 def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_objects() -> None:
     model = models.load_models()["document-codec"]
     entity = model.entities[0]
@@ -117,10 +70,7 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     entries = profile.value_object("entries")
     assert entries is not None
     projection = ActualWireProjection(model)
-    query = deserialize_query({"target": entity.identity.canonical, "predicate": {"true": {}}})
 
-    with pytest.raises(ValueError, match="no projected member owns"):
-        projection.published_row(query, {"unknown": 1})
     with pytest.raises(ValueError, match="no applicable member"):
         projection.entity_values(entity, {"unknown": 1})
     with pytest.raises(ValueError, match="many occurrence requires a sequence"):
@@ -128,8 +78,8 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     with pytest.raises(ValueError, match="element requires a mapping"):
         projection.value_object(profile, "not-a-document")
 
-    assert projection.published_row(query, {"profile": {"amount": decimal.Decimal("12.50")}}) == {
-        "profile": {"amount": "12.50"}
+    assert projection.value_object(profile, {"amount": decimal.Decimal("12.50")}) == {
+        "amount": "12.50"
     }
     assert projection.value_object(profile, None) is None
     label = entity.attribute("label")
@@ -146,36 +96,10 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     with pytest.raises(ValueError, match="element requires a mapping"):
         projection.published_value_object(entries, ["corrupt"])
 
-    unknown_query = deserialize_query(
-        {"target": "parallax.compatibility.Missing", "predicate": {"true": {}}}
-    )
-    with pytest.raises(ValueError, match="no such Entity"):
-        projection.published_row(unknown_query, {})
     with pytest.raises(ValueError, match="no such Entity"):
         projection.object_key(ObjectKey(EntityIdentity(None, "Missing"), (("id", 1),)))
     with pytest.raises(ValueError, match="no applicable Attribute"):
         projection.object_key(ObjectKey(entity.identity, (("missing", 1),)))
-
-    narrowed_query = deserialize_query(
-        {
-            "target": entity.identity.canonical,
-            "predicate": {"true": {}},
-            "narrowTo": [entity.identity.canonical],
-        }
-    )
-    assert projection.published_row(narrowed_query, {}) == {}
-
-    orders = models.load_models()["orders"]
-    order = next(item for item in orders.entities if item.identity.name == "Order")
-    order_item = next(item for item in orders.entities if item.identity.name == "OrderItem")
-    invalid_narrow = deserialize_query(
-        {
-            "target": order.identity.canonical,
-            "predicate": {"true": {}},
-            "narrowTo": [order_item.identity.canonical],
-        }
-    )
-    assert ActualWireProjection(orders).published_row(invalid_narrow, {}) == {}
 
 
 def test_actual_wire_projection_rejects_unresolved_physical_contributors() -> None:
@@ -245,39 +169,6 @@ def test_actual_wire_projection_rejects_unresolved_physical_contributors() -> No
         ActualWireProjection(model).table_row(missing_value_object, {slot.column.name: {}})
 
     assert ActualWireProjection(model)._table_row_entity(layout, {}) is entity  # pyright: ignore[reportPrivateUsage] - unit test drives the projection's private entity lookup directly
-
-
-def test_actual_wire_projection_rejects_a_narrowing_product_with_no_position(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = models.load_models()["document-codec"]
-    entity = model.entities[0]
-    real = inheritance.view(model).entity(entity.identity)
-    assert real is not None
-
-    class MissingNarrow:
-        @staticmethod
-        def entity(_identity: object) -> object:
-            return real
-
-        @staticmethod
-        def position(_identities: object) -> None:
-            return None
-
-    def missing_view(_model: object) -> MissingNarrow:
-        return MissingNarrow()
-
-    monkeypatch.setattr(inheritance, "view", missing_view)
-    query = deserialize_query(
-        {
-            "target": entity.identity.canonical,
-            "predicate": {"true": {}},
-            "narrowTo": [entity.identity.canonical],
-        }
-    )
-
-    with pytest.raises(ValueError, match="narrowing resolves no position"):
-        ActualWireProjection(model).published_row(query, {})
 
 
 def test_actual_wire_projects_scalar_collections_element_wise_and_keeps_corruption() -> None:

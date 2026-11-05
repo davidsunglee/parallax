@@ -25,6 +25,7 @@ from parallax.core.metamodel._shape import BoundShape
 
 __all__ = [
     "FACET_KEY",
+    "FAMILY_VARIANT_KEY",
     "INHERITANCE_MODULE",
     "EntityMemberSelection",
     "InheritanceEntityFacts",
@@ -40,6 +41,11 @@ __all__ = [
 INHERITANCE_MODULE: Final[str] = "m-inheritance"
 """The catalog identity that owns inheritance formation, its Issue Codes, and
 the Inheritance Facet."""
+
+FAMILY_VARIANT_KEY: Final[str] = "familyVariant"
+"""The key an inheritance participant's stable variant spelling is published
+under. It names no declared member, which is why it is fixed here rather than
+resolved from the model."""
 
 
 class InheritancePositionView(Protocol):

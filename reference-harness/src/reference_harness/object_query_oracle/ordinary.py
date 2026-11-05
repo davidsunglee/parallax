@@ -80,10 +80,13 @@ def _assert_no_concrete_read(case: Case) -> None:
 
 
 def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
-    """Assert a row-form read: one golden statement, materialized, against ``then.rows``.
+    """Assert a flat read: one golden statement, materialized, against ``then.rows``.
 
     The two shape refusals run first and issue no SQL: an authored golden whose
     lowering is already wrong must fail the case rather than reach a database.
+    ``then.rows`` chooses no read form, so the statement is the instance-form read
+    any other result member grades, and the assertion's scalar-column view is taken
+    after it, of the golden and the independent oracle alike.
     """
     dialect = reader.dialect
     (golden,) = case.golden_statements(dialect)
@@ -99,10 +102,12 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
     # Relational Document Layout fan-out under the names a Column of each would
     # have had (m-storage-layout / m-sql), and `familyVariant` from the tag
     # metadata map rather than from any projected column (m-inheritance / m-sql,
-    # resolved Q6). Its row-form reading of this case is what leaves the Value
-    # Object occurrences out.
-    golden_rows = materialize.materialize_read(
-        case, execute.query_rows(case, reader, golden, case.statement_binds(0, dialect))
+    # resolved Q6).
+    golden_rows = materialize.scalar_columns(
+        case,
+        materialize.materialize_read(
+            case, execute.query_rows(case, reader, golden, case.statement_binds(0, dialect))
+        ),
     )
     expected = case.expected_rows
     tolerance = case.tolerance
@@ -117,8 +122,8 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        reference = materialize.materialize_read(
-            case, execute.reference_rows(reader, reference_sql)
+        reference = materialize.scalar_columns(
+            case, materialize.materialize_read(case, execute.reference_rows(reader, reference_sql))
         )
         if not row.rows_equal(reference, expected, case.model, entity, tolerance):
             raise CaseFailure(
@@ -276,7 +281,7 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
     publishes each milestone's own ``familyVariant`` and its Structured Column's
     members, never the storage they were derived from. Its NODES are then narrowed
     per variant exactly as a single-statement graph's are, a declared graph being
-    the same instance-form member either way; the roots themselves stay unnarrowed,
+    the same member either way; the roots themselves stay unnarrowed,
     because the pins key on edge coordinates and the independent oracle grades the
     whole milestone row set.
     """
@@ -329,9 +334,9 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
       rather than through a deep fetch. A no-op for an entity that declares no
       value objects.
     * **An abstract-target inheritance read** (m-inheritance): additionally
-      materializes ``familyVariant`` through the same oracle the row-form path
+      materializes ``familyVariant`` through the same oracle the flat path
       uses, and then narrows each node to its own concrete variant's declared
-      columns — the instance-form per-variant node shape, distinct from row-form's
+      columns — the per-variant node shape, distinct from ``then.rows``'s
       unnarrowed superset. A no-op for a concrete-target read.
 
     A ``referenceSql`` oracle independently pins the matched row SET, identity

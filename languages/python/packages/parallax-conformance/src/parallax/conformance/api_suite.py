@@ -2022,6 +2022,14 @@ _VO_PREDICATE_SIBLING_REASON: Final[str] = (
     "shape to add, the SAME mechanism already proven against Postgres"
 )
 
+_VO_CLASSIFIED_SELECTION_REASON: Final[str] = (
+    "a representative sibling of the Customer.address stories executed for real: the nested "
+    "null test (m-value-object-007) and bare `none` (m-value-object-016) already select through "
+    "the absence collapse, and the whole-composite read (m-value-object-023) publishes these "
+    "rows' classifications. This case composes them on one read, adding no developer-facing "
+    "shape; the run sweep grades its diagnoses against `then.storedDataIssues`"
+)
+
 # Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
 # against the shipped surface) to have NO idiomatic spelling that reaches
 # `validate_predicate` with the corpus's own invalid shape — four DISTINCT
@@ -2853,6 +2861,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-063": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-064": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-065": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-079": _VO_CLASSIFIED_SELECTION_REASON,
     "m-value-object-068": (
         "a scoped `where` constraining ONE element-relative path twice with different "
         "values: the quantifier spelling is the same one the flagship same-element "

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.sole_connection import ConnectsAsItself, body_outcome
@@ -67,14 +66,12 @@ def planned_read(
     dialect: Dialect,
     query: ObjectQueryNode,
     *,
-    form: Literal["rows", "graph"] = "graph",
     transaction: TransactionKeywords | None = None,
     access_mode: AccessMode = "read_write",
 ) -> tuple[LoweredStatement, ...]:
     """The read statements production issues for ``query`` before any row arrives.
 
-    The read runs through the public Snapshot surface — ``read_rows`` for the
-    row form, ``wire.find`` for the graph form — inside a transaction with
+    The read is the public ``wire.find``, inside a transaction with
     ``transaction``'s keywords when given, opened through the entrypoint
     ``access_mode`` selects, so the lock suffix is the one that transaction's
     resolved preference and the target's Concurrency Facet produce, or none
@@ -90,7 +87,7 @@ def planned_read(
         db = root.using_database_login()
 
         def read(source: ScopedDatabase | TxnContext | ReadOnlyTxnContext) -> object:
-            return source.read_rows(query) if form == "rows" else source.wire.find(query)
+            return source.wire.find(query)
 
         if transaction is None:
             underlying(lambda: read(db))

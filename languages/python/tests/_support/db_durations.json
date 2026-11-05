@@ -2520,7 +2520,6 @@
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-010]": 0.286,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-017]": 0.375,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-018]": 0.488,
- "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-019]": 0.521,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-020]": 0.638,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-021]": 0.614,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-storage-layout-025]": 0.295,

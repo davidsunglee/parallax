@@ -1,6 +1,6 @@
 """The read lanes, compiled purely and run against a fake in-memory
 ``m-db-port`` (no Docker): the golden the compile lane matches, the driver
-translation and wire rendering the row-form run reports, the envelope the
+translation and wire rendering the `then.rows` run reports, the envelope the
 graph-form and milestone-set runs report around production's Wire result, the
 streamed delivery's refusals, and every refusal the lanes translate into an
 ``EngineError`` naming the case.
@@ -22,19 +22,22 @@ from parallax.conformance import case_format
 from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core.base import INFINITY, StructuredDocument
+from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
     DeferredFeatureError,
     TxnOptions,
 )
+from parallax.core.execution_lifecycle import ReadStarted
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    MemberIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.read_delivery import InvalidData, StoredDataIssue
 from parallax.core.temporal_read import Pin
 from tests._support.case_corpus import case as corpus_case
 from tests._support.case_corpus import cases as corpus_cases
@@ -82,7 +85,8 @@ def test_compile_read_case_matches_golden() -> None:
     assert database_calls == 1
     assert emissions[0].case_pointer == "/objectQuery"
     assert emissions[0].sql == (
-        "select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
+        "select t0.id, t0.name, not t0.address is null, t0.address from customer t0 "
+        "where jsonb_extract_path_text(t0.address, ?) = ?"
     )
     assert emissions[0].binds == ("city", "Oslo")
     assert emissions[0].to_json()["casePointer"] == "/objectQuery"
@@ -93,7 +97,10 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     emissions, rows, database_calls = reads.run_read_case(_case("m-value-object-001"), port)
     assert database_calls == 1
     assert rows == [{"id": 1, "name": "Grace"}]
-    assert emissions[0].sql.count("?") == 2
+    assert emissions[0].sql == (
+        "select t0.id, t0.name, not t0.address is null, t0.address from customer t0 "
+        "where jsonb_extract_path_text(t0.address, ?) = ?"
+    )
     driver_sql, driver_binds = port.executed[0]
     assert "%s" in driver_sql and "?" not in driver_sql
     assert driver_binds == ["city", "Oslo"]
@@ -331,6 +338,247 @@ def test_run_graph_case_unwinds_a_back_reference_finitely() -> None:
     assert back["id"] == 1
     assert back["name"] == "Ada"
     assert "items" not in back
+
+
+def test_run_read_case_states_the_scalars_of_a_read_that_carried_its_value_object() -> None:
+    port = FakeDbPort(
+        [{"id": 1, "name": "Grace", "address": StructuredDocument({"street": "1 Main"})}]
+    )
+    _emissions, rows, _database_calls = reads.run_read_case(_case("m-value-object-001"), port)
+    assert rows == [{"id": 1, "name": "Grace"}]
+
+
+def _flattening_refused(*_arguments: object, **_keywords: object) -> list[MappingRow]:
+    raise AssertionError("a record reached the flat renderer")
+
+
+def _rows_case(model: str, target: str) -> case_format.Case:
+    """A `then.rows` read of every ``target`` under ``model``."""
+    return dataclasses.replace(
+        _synthetic(
+            {
+                "model": model,
+                "when": {
+                    "objectQuery": {
+                        "target": f"parallax.compatibility.{target}",
+                        "predicate": {"true": {}},
+                    }
+                },
+                "then": {"rows": []},
+            }
+        ),
+        model=model,
+    )
+
+
+def _traveler_rows_case() -> case_format.Case:
+    """A read of Relational Document Layout's Traveler, whose members are all
+    document-resident beside the `id` Column: four scalars and two top-level Value
+    Objects sharing the one `payload` document."""
+    return _rows_case("models/document-layout.yaml", "Traveler")
+
+
+def _traveler(payload: dict[str, DocumentValue]) -> MappingRow:
+    return {"id": 1, "payload": StructuredDocument(payload)}
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        pytest.param({"street": "1 Main", "geo": "unknown"}, id="wrong-kind-one"),
+        pytest.param({"street": "1 Main", "phones": "555-0000"}, id="wrong-kind-many"),
+        pytest.param({"city": "Oslo"}, id="required-attribute-absent"),
+    ],
+)
+def test_a_record_with_every_issue_under_a_value_object_reads_as_a_row(
+    address: dict[str, DocumentValue],
+) -> None:
+    port = FakeDbPort([{"id": 6, "name": "Rin", "address": StructuredDocument(address)}])
+    _emissions, rows, _database_calls = reads.run_read_case(_case("m-value-object-001"), port)
+    assert rows == [{"id": 6, "name": "Rin"}]
+
+
+@pytest.mark.parametrize(
+    "occurrence",
+    [pytest.param({"address": "unknown"}, id="one"), pytest.param({"tags": "x"}, id="many")],
+)
+def test_a_document_resident_value_object_issue_leaves_the_scalars_beside_it_stated(
+    occurrence: dict[str, DocumentValue],
+) -> None:
+    port = FakeDbPort([_traveler({"displayName": "Ada", "score": 7, **occurrence})])
+    _emissions, rows, _database_calls = reads.run_read_case(_traveler_rows_case(), port)
+    assert rows == [{"id": 1, "display_name": "Ada", "score": 7, "joined_on": None, "note": None}]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"displayName": 7}, id="undecodable-scalar"),
+        pytest.param({"displayName": 7, "address": "unknown"}, id="beside-a-value-object-issue"),
+    ],
+)
+def test_a_document_resident_scalar_issue_is_refused_before_flattening(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, DocumentValue]
+) -> None:
+    monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads.run_read_case(_traveler_rows_case(), FakeDbPort([_traveler(payload)]))
+
+
+@pytest.mark.parametrize(
+    ("model", "row"),
+    [
+        pytest.param(
+            "models/scalar-collection-layout-twin-columns.yaml",
+            {"id": 1, "tags": StructuredDocument("not-a-collection")},
+            id="own-column",
+        ),
+        pytest.param(
+            "models/scalar-collection-layout-twin-document.yaml",
+            {"id": 1, "payload": StructuredDocument({"tags": "not-a-collection"})},
+            id="document-resident",
+        ),
+    ],
+)
+def test_a_scalar_collection_issue_is_refused_before_flattening(
+    monkeypatch: pytest.MonkeyPatch, model: str, row: MappingRow
+) -> None:
+    monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads.run_read_case(_rows_case(model, "CollectionTwinItem"), FakeDbPort([row]))
+
+
+def test_a_value_object_issue_with_no_hydrated_data_is_refused_before_flattening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
+    address = StructuredDocument({"street": "1 Main", "city": 7})
+    port = FakeDbPort([{"id": 1, "name": "Ada", "address": address}])
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads.run_read_case(_case("m-value-object-001"), port)
+
+
+def test_a_non_hydrating_scalar_issue_is_refused_before_flattening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
+    port = FakeDbPort(
+        [
+            {
+                "bal_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("100.00"),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": None,
+            }
+        ]
+    )
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads.run_read_case(_load_case("m-temporal-read-004"), port)
+
+
+def _classified_item_port(root_profile: dict[str, DocumentValue]) -> QueueDbPort:
+    """`m-storage-layout-027`'s read of one item under ``root_profile``, whose
+    included child stores a `profile` omitting its required `street`."""
+    return QueueDbPort(
+        [
+            [{"profile": {"street": "4 Main", "city": "Boston"}}],
+            [{"id": 1, "profile": StructuredDocument(root_profile)}],
+            [{"id": 12, "item_id": 1, "profile": StructuredDocument({"city": "Oslo"})}],
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "root_profile",
+    [
+        pytest.param({"street": "1 Main", "city": None}, id="alone"),
+        pytest.param({"city": None}, id="mixed-with-the-roots-own-value-object-issue"),
+    ],
+)
+def test_an_issue_under_an_included_nodes_value_object_is_refused_before_flattening(
+    monkeypatch: pytest.MonkeyPatch, root_profile: dict[str, DocumentValue]
+) -> None:
+    monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
+    case = _load_case("m-storage-layout-027")
+    _emissions, _graph, _calls, records = reads.run_graph_case(
+        case, _classified_item_port(root_profile)
+    )
+    assert records is not None
+    assert [record["hydrated"] for record in records] == [True]
+    with pytest.raises(EngineError, match="published an InvalidData record"):
+        reads.run_read_case(case, _classified_item_port(root_profile))
+
+
+_CUSTOMER: Final = EntityIdentity("parallax.compatibility", "Customer")
+_ADDRESS: Final = ValueObjectIdentity(_CUSTOMER, ("address",))
+
+
+def _hydrated_record(*members: MemberIdentity | None) -> InvalidData[object]:
+    issues = frozenset(
+        StoredDataIssue(
+            "stored-data-many-wrong-kind", _CUSTOMER, member, path=(), stored_value="wrong"
+        )
+        for member in members
+    )
+    return InvalidData(issues, {"id": 1}, None, None, None, 0)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        pytest.param(_ADDRESS, id="the-occurrence"),
+        pytest.param(ValueObjectIdentity(_CUSTOMER, ("address", "geo")), id="nested-occurrence"),
+        pytest.param(ValueObjectAttributeIdentity(_ADDRESS, "city"), id="attribute"),
+        pytest.param(
+            ValueObjectAttributeIdentity(
+                ValueObjectIdentity(_CUSTOMER, ("address", "geo")), "country"
+            ),
+            id="nested-attribute",
+        ),
+    ],
+)
+def test_an_issue_under_an_omitted_occurrence_keeps_the_records_data(
+    member: MemberIdentity,
+) -> None:
+    conforming = reads._conforming_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
+        _case("m-value-object-001"), frozenset({_ADDRESS}), _hydrated_record(member)
+    )
+    assert conforming == {"id": 1}
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        pytest.param(None, id="no-member"),
+        pytest.param(AttributeIdentity(_CUSTOMER, "name"), id="attribute"),
+        pytest.param(ValueObjectIdentity(_CUSTOMER, ("mailing",)), id="another-occurrence"),
+        pytest.param(
+            ValueObjectIdentity(EntityIdentity("parallax.compatibility", "Location"), ("address",)),
+            id="another-entity",
+        ),
+    ],
+)
+def test_an_issue_outside_every_omitted_occurrence_is_refused(
+    member: MemberIdentity | None,
+) -> None:
+    for record in (_hydrated_record(member), _hydrated_record(_ADDRESS, member)):
+        with pytest.raises(EngineError, match="published an InvalidData record"):
+            reads._conforming_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
+                _case("m-value-object-001"), frozenset({_ADDRESS}), record
+            )
+
+
+def test_run_read_case_observes_a_wire_read() -> None:
+    port = FakeDbPort(
+        [{"id": 3, "owner": "Grace", "balance": decimal.Decimal("10.00"), "version": 1}]
+    )
+    run = lifecycle_run(None)
+    reads.run_read_case(_load_case("m-execution-lifecycle-001"), port, run)
+    (root,) = run.roots
+    started = root.events[0]
+    assert isinstance(started, ReadStarted)
+    assert started.interface == "wire"
 
 
 def test_run_graph_case_reports_the_records_a_classified_root_published() -> None:
@@ -857,7 +1105,7 @@ def _rooted(case_id: str, *, uow: dict[str, object] | None = None) -> case_forma
 
 def test_a_standalone_read_under_a_locking_root_opens_no_transaction_and_takes_no_lock() -> None:
     # The root configures `locking`, and the case requests nothing: the read
-    # stays the standalone `db.read_rows` every other unrequesting read is, so
+    # stays the standalone `db.wire.find` every other unrequesting read is, so
     # no boundary is asked for at all and the emitted statement carries no lock
     # suffix — the root's defaults govern transactions, and this read opens none.
     port = FakeDbPort([{"id": 1, "name": "Grace"}])

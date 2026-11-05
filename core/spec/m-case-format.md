@@ -414,7 +414,7 @@ in decimal space under any authored `tolerance`.
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
-| `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
+| `then.storedDataIssues` | `then` | read | the stored-data diagnoses a graph-form read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, scenario, or `when.concurrency` case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
 | `then.units` | `then` | state-graded scenario | each `uow` group's fate, keyed by its label: `outcome` `committed` or `rolledBack`, and for a group a flush failure ended, its `flushFailure` (see *Unit fates*, below); a golden-graded group stating none commits |
 | `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall of a gated conflict, `1` = success) |
@@ -507,39 +507,30 @@ Selection a query carries is validated pre-SQL against the family's effective
 concrete-subtype set (`m-inheritance`); an invalid selection is a `rejected` case
 (see the narrow rules in *Rejected cases*).
 
-**A "complete concrete instance" means something different in each result
-form** (*Read result form*, below), so what ELSE a leaf carries beyond
-`familyVariant` diverges by lane — independently of the Document-tier
-projection split that section otherwise fixes:
+**A "complete concrete instance" reads differently through each result
+member** (*Read result form*, below), so what ELSE a leaf carries beyond
+`familyVariant` diverges by assertion over one and the same read:
 
-- **Row-form** (`then.rows`) is the flat SQL projection observed unfiltered:
-  every leaf carries the full non-Document **Position Layout** sequence in
-  table-wide semantic tier order, with root-first ancestry, local declaration
-  order, and canonical concrete order stable only within a tier. Non-applicable
-  subtype contributors are `null` — the values lane reports the query's own
-  fixed-superset `select` list exactly as it comes back (`m-sql` *Read
-  projection*).
-- **Instance-form**, at a **top-level read case's own `then.graph` leaves**
+- **`then.rows`** is the flat view of the read's scalar columns: every leaf carries
+  the full non-Document **Position Layout** sequence in table-wide semantic tier
+  order, with root-first ancestry, local declaration order, and canonical concrete
+  order stable only within a tier. Non-applicable subtype contributors are `null`,
+  the fixed superset every row of the position occupies (`m-sql` *Read projection*).
+- **`then.graph`**, at a **top-level read case's own leaves**
   (a `shape: read` case whose query names no Includes), is the
   **per-variant node shape**: each node carries **only its own branch's
   members** — its inherited chain plus its own declared attributes — and
   **omits every sibling branch's column entirely**, with **no null sibling
   padding** — a materialized `Dog` node has no `indoor` key to be null, exactly
   as an ordinary (non-inheritance) instance never carries an undeclared member.
-  This per-variant reduction is **materialization-time** narrowing, but result
-  form still affects projection. The target position fixes the family, physical
-  Table/branch shape, and non-Document Position Layout sequence. Instance-form
-  then adds applicable `Document` slots, while row-form omits them (`m-sql`
-  *Read projection*). The paired goldens named here are byte-identical only
-  because their models have no applicable top-level Value Objects; in general,
-  SQL differs by that Document-slot delta. Graph assembly — never branch shape
-  or the non-Document sequence — narrows values to the variant's own declared
-  shape. `m-inheritance-003`/`-013`/`-015`/`-052`
-  (row-form) and their `then.graph` siblings `m-inheritance-106`/`-107`/
-  `-108`/`-109` (instance-form) are this divergence's own result-form pair
-  (like the supplier form-divergence witness, *Read result form*, below): the
-  row-form original stays the values-lane witness, its sibling the
-  instance-form (developer-surface) witness.
+  This per-variant reduction is **materialization-time** narrowing: the target
+  position fixes the family, physical Table/branch shape, and Position Layout
+  sequence, and the read's SQL is the same under either assertion (`m-sql`
+  *Read projection*). Graph assembly — never branch shape or the sequence —
+  narrows values to the variant's own declared shape.
+  `m-inheritance-003`/`-013`/`-015`/`-052` (`then.rows`) and their `then.graph`
+  siblings `m-inheritance-106`/`-107`/`-108`/`-109` are this divergence's own
+  pair: one read, stated both ways.
 
 This per-variant node shape is scoped, for now, to a read case's own top-level
 `then.graph` leaves — the shape a `scope.find` on an abstract multi-concrete
@@ -604,38 +595,37 @@ position needs nothing new: the root and every live level author their
 statements, the empty level authors none, and `then.graph` shows the requested
 view loaded empty (`[]`) or null.
 
-#### Read result form (row-form vs instance-form)
+#### Read result form
 
-**Every** read a case asserts carries a **result form** — the **object lane**
-(**instance-form**) or the **values lane** (**row-form**) of `m-sql`'s *Read result form*
-— and that form fixes the read's **default** Document-slot selection (`m-sql`, *Read
-projection*: instance-form projects every applicable top-level Value Object
-`Document` slot; row-form omits those slots).
-The form follows the read's **nature**, and a case expresses that nature in one of two
-ways, keyed on **where** the read is asserted — never on a bare member name alone:
+**Every** read a case asserts is **instance-form** — the **object lane** of `m-sql`'s
+*Result form* — so it projects every applicable top-level Value Object `Document` slot
+(`m-sql`, *Read projection*). `m-sql`'s other lane, row-form, is internal write
+acquisition, which no read case asserts. What a case chooses is an **assertion over
+that read**, never the read itself, keyed on **where** the read is asserted:
 
-- **A top-level read case** expresses the form through **which result member it asserts**
-  (the member names the nature):
-  - **`then.rows`** — the **row-form** / **values lane**: a flat value observation of the
-    scalar columns only. It omits every value-object document column.
-  - **`then.graph`** / **`then.graphs`** — the **instance-form** / **object lane**: the
-    result materializes into instances (a snapshot graph, per-milestone graphs, or a
-    deep-fetch tree), so the projection additionally carries every declared value-object
-    document column (`m-value-object`).
+- **A top-level read case** states one result member:
+  - **`then.rows`** — a flat observation of the read's **scalar columns**, one row per
+    result position. It leaves every top-level Value Object contributor out: a value-object
+    document column is read, and is not stated. A scalar collection and a
+    document-resident scalar are scalar columns and are stated. A position whose only
+    stored-data issues lie in those left-out contributors still reads as a row, because
+    nothing the row states contradicted the model. Any other record is not a row:
+    `then.rows` cannot state one, and `then.graph` grades its diagnoses through
+    `then.storedDataIssues`.
+  - **`then.graph`** / **`then.graphs`** — the read's instances (a snapshot graph,
+    per-milestone graphs, or a deep-fetch tree), each declared value object decoded
+    (`m-value-object`).
 - **A scenario / coherence / concurrency step** asserts its read with a step-level
-  **`expectRows`** / **`observeRows`** — a uniform observation channel that does *not*
-  name the form — so the form follows the **step's read semantics** (`m-sql`: "any find
-  whose rows become objects"). **Every** SQL-producing read step is classified below, so
-  no read-bearing step location is left without a form:
+  **`expectRows`** / **`observeRows`**, a uniform observation channel. **Every**
+  SQL-producing read step is instance-form:
   - A **managed-object find or refresh step** — a developer-facing find whose rows become
     managed instances: an identity-map coordinate / refresh read, a coherence re-fetch, a
     scenario observation find, or a **concurrency full-scalar shared read** that observes
-    the object (`m-concurrency`) — is **instance-form** (object lane), exactly like a
-    `then.graph` read.
+    the object (`m-concurrency`).
   - A relationship **`action: load` step** and the **first `action: access` step** of a
     relationship or query-backed list (`m-op-list`) — the SQL-producing read that
     first **materializes** the loaded / accessed related objects (a deferred deep fetch,
-    or a query-backed list's first resolution) — is likewise **instance-form** (object lane):
+    or a query-backed list's first resolution):
     it projects the read entity's own instance-form list (its scalars plus any
     value-object document column it declares), exactly as a deep-fetch / snapshot **child
     level** does (`m-sql`, *Read result form*). A **subsequent** `action: access` of an
@@ -645,24 +635,14 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
     **every** instance-form step above, even though the channel is `expectRows` /
     `observeRows`.
 
-Row-form is **not a developer surface** — the idiomatic find API is instance-form
-(results always materialize). Row-form is the internal / conformance consumption lane
-(predicate `read` cases and aggregation results — `m-agg`). The form is **structural intent** an adapter's
-`compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
-no case edit. The two forms' Document-slot divergence is witnessed at **case** level, by
-the `then.rows` reads over `customer`, which omit `address`, against the `then.graph`
-reads of that same model, which project it.
-The Document-slot delta is not the forms' only divergence overall: the
-abstract-target per-variant materialization narrowing established above (*Read
+`then.rows` and `then.graph` therefore differ only in what they state of one read:
+the `then.rows` reads over `customer` state its scalars while their statements carry
+`address`, and the abstract-target per-variant narrowing established above (*Read
 targeting*, `then.graph`'s per-variant node shape vs `then.rows`'s concrete-superset
-row) is the other — a graph-assembly-time shape difference over the same
-non-Document Position Layout, not a Document projection difference. The
-lifecycle-action `load` / first-`access` witnesses carry value-object-bearing
-instance-form step reads (each projecting its read entity's own `address` Document
-slot). Every other entity read at a step (`balance`, `position`, `account`,
-`order_item`, and the rest) declares no value object, so instance-form and row-form
-project the same columns there: the classification pins the answer for the
-value-object-bearing step reads and leaves every other golden untouched.
+row) is a graph-assembly-time shape difference over the same Position Layout, not a
+projection difference. The lifecycle-action `load` / first-`access` witnesses carry
+value-object-bearing step reads (each projecting its read entity's own `address`
+Document slot).
 
 #### Milestone-set graphs (`then.graphs`)
 
@@ -710,8 +690,8 @@ streamed read it exposes; two surfaces over one materialization are `m-wire`'s
 subject, not this one's.
 
 `when.stream` is admitted beside `then.graph` and beside `then.graphs`, and never
-beside `then.rows`, which has no streamed peer — a values-lane read publishes no
-roots to deliver one at a time.
+beside `then.rows`, which has no streamed peer: its flat observation states a whole
+result rather than roots delivered one at a time.
 
 The member has a **second placement**: a scenario READ step (*Streamed read
 steps*, below). It means one thing in both — this read is delivered one root at a

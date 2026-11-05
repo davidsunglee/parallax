@@ -29,7 +29,7 @@ _ORDERS_OBJECT_QUERY_READS: Final[frozenset[str]] = frozenset(
     f"m-object-query-{n:03d}" for n in range(1, 8)
 )
 _VALUE_OBJECT_MATERIALIZATION_READS: Final[frozenset[str]] = frozenset(
-    {"m-value-object-023", "m-value-object-024"}
+    {"m-value-object-023", "m-value-object-024", "m-value-object-079"}
 )
 _TEMPORAL_READ_ROW_FORM: Final[frozenset[str]] = frozenset(
     f"m-temporal-read-{n:03d}" for n in (*range(1, 9), 13, 14, 15, 16, 17, 22)
@@ -94,7 +94,7 @@ _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)
 )
 _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS: Final[frozenset[str]] = frozenset(
-    {f"m-storage-layout-{n:03d}" for n in (*range(17, 22), 25, 26)}
+    {f"m-storage-layout-{n:03d}" for n in (17, 18, 20, 21, 25, 26)}
     | {
         "m-inheritance-123",
         "m-inheritance-124",

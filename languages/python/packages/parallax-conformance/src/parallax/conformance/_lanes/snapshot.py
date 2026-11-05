@@ -63,7 +63,6 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Database, Snapshot, WireEntity
-from parallax.snapshot._publication._wire import FAMILY_VARIANT_KEY
 
 __all__ = ["compile_scenario", "run_scenario"]
 
@@ -599,7 +598,7 @@ def _edited_node_identity(
     position = facet.entity(target)
     if position is None or position.strategy is None:
         return target
-    variant = node.get(FAMILY_VARIANT_KEY)
+    variant = node.get(inheritance.FAMILY_VARIANT_KEY)
     if not isinstance(variant, str):
         return target
     for concrete in position.concrete_subtypes:

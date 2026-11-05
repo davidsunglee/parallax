@@ -13,8 +13,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)
-        mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_length(t0.address, ?) > ?
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_length(t0.address, ?) > ?
       binds:
         postgres: [phones, 'array', phones, '[]']
         mariadb: ['$.phones', 'ARRAY', '$.phones', 0]

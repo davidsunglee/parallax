@@ -42,6 +42,7 @@ from parallax.core.navigate import (
 from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_template
+from parallax.core.sql_gen._compile import compile_read as production_compile_read
 from parallax.core.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
@@ -82,6 +83,36 @@ def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all(
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
     assert compiled.statement.sql == "select t0.id from marker t0"
     assert compiled.result_contract.shared_document is None
+
+
+def _target_read(target: EntityMetadata, *, retain_predecessor: bool) -> CompiledRead:
+    return production_compile_read(
+        read_planning.plan_target_read(
+            target, model=DOCUMENT, key="id", key_value=1, retain_predecessor=retain_predecessor
+        ),
+        DOCUMENT,
+        POSTGRES,
+        result_form="row",
+    )
+
+
+def test_a_target_read_retaining_nothing_of_a_direct_only_entity_projects_no_document() -> None:
+    compiled = _target_read(entity(DOCUMENT, "Marker"), retain_predecessor=False)
+
+    assert compiled.statement.sql == "select t0.id from marker t0 where t0.id = ?"
+    assert compiled.document_reads == ()
+    assert compiled.result_contract.shared_document is None
+
+
+def test_a_target_read_retaining_its_row_projects_the_stored_document() -> None:
+    compiled = _target_read(entity(DOCUMENT, "Marker"), retain_predecessor=True)
+
+    assert compiled.statement.sql == (
+        "select t0.id, not t0.payload is null, t0.payload from marker t0 where t0.id = ?"
+    )
+    assert compiled.document_reads == ((1, 2),)
+    shared = compiled.result_contract.shared_document
+    assert shared is not None and shared.column == "payload"
 
 
 def _instance_form(target: EntityMetadata) -> CompiledRead:

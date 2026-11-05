@@ -14,8 +14,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as real) > ?
-        mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as float) > ?
+        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as real) > ?
+        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(json_value(t0.profile, ?) as float) > ?
       binds:
         postgres: [ratio, 2.0]
         mariadb: ['$.ratio', 2.0]

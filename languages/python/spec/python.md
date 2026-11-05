@@ -666,9 +666,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   and judge every case write against the production write preparation through
   `build_write_preparation`;
   Wire submission and the snapshot lane check source pins through `validate_source_pin`,
-  read from the execution modules that define them, and the snapshot lane
-  spells a Wire family variant with `FAMILY_VARIANT_KEY` from the Wire
-  publication module. The scenario lane runs each simulated transaction through
+  read from the execution modules that define them. The scenario lane runs each simulated transaction through
   an ordinary unit of work over the attempt's own lifetime implementation,
   `parallax.core._execution._transaction._lifetime.TxnAttemptLifetime`, rather
   than a second lifetime of its own. Wire submission reads each published Wire value's Read Evidence

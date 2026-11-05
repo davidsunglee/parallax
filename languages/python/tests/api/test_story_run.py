@@ -18,6 +18,7 @@ from parallax.conformance import engine
 from parallax.conformance._lanes import scenario as scenario_lane
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism import envelope
+from parallax.conformance._mechanism.flat_rows import flat_rows
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
@@ -600,7 +601,10 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Snapshot[Any]) ->
     step = _scenario_finds(case_id)[index]
     query = scenario_lane.step_query(step, model)
     compare_rows(
-        [dict(row) for row in scenario_lane.graph_rows(model, query, _projected_roots(snapshot))],
+        [
+            dict(row)
+            for row in flat_rows(model, query, _projected_roots(snapshot), value_objects=True)
+        ],
         cast("list[dict[str, Any]]", step["expectRows"]),
     )
 
@@ -1232,7 +1236,9 @@ def _assert_projected_graph(case_id: str, snapshot: Snapshot[Any]) -> None:
 
 def _projected_rows(case_id: str, snapshot: Snapshot[Any]) -> list[dict[str, object]]:
     model, query = _read_case_query(case_id)
-    return [dict(row) for row in scenario_lane.graph_rows(model, query, _projected_roots(snapshot))]
+    return [
+        dict(row) for row in flat_rows(model, query, _projected_roots(snapshot), value_objects=True)
+    ]
 
 
 def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_member: str) -> None:

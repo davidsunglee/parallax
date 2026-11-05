@@ -262,12 +262,11 @@ def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRo
 
     *read* is the ``read`` case whose golden statement returned *rows* — for a
     Scenario step, that step presented as the one read it is. Everything the
-    sequence needs it states: the target and any ``narrowTo``, the golden text the
-    projection shape is asserted from, and the result member the form is read off.
-    So the form is DERIVED here (:func:`.tpcs.is_instance_form`) rather than
-    passed: a caller that could state it could state one the case contradicts, and
-    a row-form read asks for the Attributes alone while an instance-form one
-    additionally carries every applicable Value Object occurrence.
+    sequence needs it states: the target and any ``narrowTo``, and the golden text
+    the projection shape is asserted from. Every read a case states is instance-form
+    (`m-sql` *Read projection*), so each carries every applicable Value Object
+    occurrence whichever result member asserts it; the flat assertion
+    :func:`scalar_columns` leaves them out afterward.
 
     The order is the sequence's own. The Relational Document Layout fan-out runs
     first, because it is what puts each member back under the result name the
@@ -285,12 +284,9 @@ def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRo
     needs the unnarrowed rows either way.
     """
     _refuse_a_case_the_sequence_cannot_read(read)
-    instance_form = tpcs.is_instance_form(read)
-    materialized = _materialize_target_tph_document_layout(
-        read, rows, include_value_objects=instance_form
+    materialized = _carrying_value_object_columns(
+        read, _materialize_target_tph_document_layout(read, rows)
     )
-    if instance_form:
-        materialized = _carrying_value_object_columns(read, materialized)
     target = read.model.entity(read.object_query["target"])
     return [
         _published(_with_direct_collections_decoded(read.model, target, row))
@@ -316,12 +312,9 @@ def materialize_navigated(
             _with_direct_collections_decoded(
                 case.model,
                 entity,
-                _materialize_document_layout(
-                    case,
-                    variant_entity(case.model, entity, row),
-                    [row],
-                    include_value_objects=True,
-                )[0],
+                _materialize_document_layout(case, variant_entity(case.model, entity, row), [row])[
+                    0
+                ],
             )
         )
         for row in _materialize_navigated_family_variant(case, entity, rows)
@@ -367,7 +360,7 @@ def materialize_hop_level(
     elif tag_column is None:
         return [
             _published(_with_direct_collections_decoded(case.model, entity, row))
-            for row in _materialize_document_layout(case, entity, rows, include_value_objects=True)
+            for row in _materialize_document_layout(case, entity, rows)
         ]
     else:
         family_root = _family_root(case, entity.canonical_name)
@@ -389,12 +382,9 @@ def materialize_hop_level(
             _with_direct_collections_decoded(
                 case.model,
                 entity,
-                _materialize_document_layout(
-                    case,
-                    case.model.entity(row["familyVariant"]),
-                    [row],
-                    include_value_objects=True,
-                )[0],
+                _materialize_document_layout(case, case.model.entity(row["familyVariant"]), [row])[
+                    0
+                ],
             )
         )
         for row in at_their_variant
@@ -402,26 +392,14 @@ def materialize_hop_level(
 
 
 def _refuse_a_case_the_sequence_cannot_read(read: Case) -> None:
-    """Refuse a case that cannot answer what the read sequence asks of it.
-
-    Both facts are read off the case rather than taken from the caller, so both
-    are refused here: a case of another shape carries a different action member
-    and would answer ``target`` and ``statements`` from somewhere else, and a case
-    stating no result member has no form for the projection to follow.
-    """
+    """Refuse a case of another shape: it carries a different action member and
+    would answer ``target`` and ``statements`` from somewhere else."""
     if read.shape != "read":
         raise CaseFailure(
             f"{read.path.name}: rows are materialized against the READ they belong to, "
             f"but this case's shape is {read.shape!r}. A Scenario step, a write, or any "
             f"other shape is presented as the one read it states before its rows are "
             f"materialized (m-case-format)."
-        )
-    if "rows" not in read.then and read.expected_graph is None and read.expected_graphs is None:
-        raise CaseFailure(
-            f"{read.path.name}: the read states no result member, so its result FORM is "
-            f"undecided; a row-form read materializes its Attributes alone while an "
-            f"instance-form one additionally carries every applicable Value Object "
-            f"occurrence (m-case-format *Read result form*)."
         )
 
 
@@ -448,10 +426,10 @@ def _position_value_object_columns(case: Case, entity: Entity) -> set[str]:
     non-inheritance target.
     """
     family = Family(case.model.entity_defs)
-    position = family.concrete_descendants(entity.name) if entity.role else []
+    position = family.concrete_descendants(entity.canonical_name) if entity.role else []
     return {
         occurrence["column"]
-        for name in (entity.name, *position)
+        for name in (entity.canonical_name, *position)
         for occurrence in case.model.entity(name).value_objects
     }
 
@@ -482,21 +460,14 @@ def _document_value(document: Any, path: tuple[str, ...]) -> Any:
 
 
 def _materialize_document_layout(
-    case: Case,
-    entity: Entity,
-    rows: list[dict[str, Any]],
-    *,
-    include_value_objects: bool,
+    case: Case, entity: Entity, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Fan a Relational Document Layout read's Structured Column out into the members
-    it was asked for, under the result names a ``Columns`` layout would have used.
+    """Fan a Relational Document Layout read's Structured Column out into its members,
+    under the result names a ``Columns`` layout would have used.
 
     The same shape as :func:`_materialize_family_variant`: the golden SQL projects a
     raw column and the logical result is derived from it here, because the Structured
-    Column is never itself a result field (`m-sql`). Which members a read asked for
-    is the result form's answer — a row-form read takes the scalars alone while an
-    instance form additionally carries every applicable occurrence — so the caller
-    states it rather than this deriving a second projection rule of its own.
+    Column is never itself a result field (`m-sql`).
 
     ``entity`` owns ``rows``, which is the level of a deep fetch they came from
     rather than always the case's read target: every level projects its own
@@ -515,16 +486,13 @@ def _materialize_document_layout(
     column, members = document.column, document.members
     if not column:
         return rows
-    selected = [
-        member for member in members if include_value_objects or member.type_spelling is not None
-    ]
     materialized: list[dict[str, Any]] = []
     for row in rows:
         if column not in row:
             return rows
         document = decode_stored(row[column])
         node = {key: value for key, value in row.items() if key != column}
-        for member in selected:
+        for member in members:
             stored = _document_value(document, member.path)
             node[member.column] = (
                 stored if member.type_spelling is None else _decoded_leaf(entity, member, stored)
@@ -561,8 +529,8 @@ def _with_direct_collections_decoded(
     the elements a read publishes, or to the judgement leaving its root unhydratable.
 
     A collection the Relational Document Layout fan-out already read out of the
-    shared document is left alone, so every published row — row form or instance
-    form, golden or ``referenceSql`` — carries one logical value per collection
+    shared document is left alone, so every published row — golden or
+    ``referenceSql`` — carries one logical value per collection
     whichever Column stored it, exactly as :func:`_decoded_leaf` does for the
     document arm.
     """
@@ -603,7 +571,7 @@ def _leaf_nullable(entity: Entity, member: DocumentMember) -> bool:
 
 
 def _materialize_target_document_layout(
-    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
+    case: Case, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """:func:`_materialize_document_layout` over the case's own read target.
 
@@ -614,55 +582,28 @@ def _materialize_target_document_layout(
     target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return rows
-    return _materialize_document_layout(
-        case,
-        case.model.entity(target_name),
-        rows,
-        include_value_objects=include_value_objects,
-    )
+    return _materialize_document_layout(case, case.model.entity(target_name), rows)
 
 
 def _materialize_target_tph_document_layout(
-    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
+    case: Case, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Decode an abstract TPH document only after its raw tag resolves the variant."""
     position = query_position(case.object_query, case.model.entity_defs)
     if position is None or position.strategy != STRATEGY_TPH:
-        return _materialize_target_document_layout(
-            case, rows, include_value_objects=include_value_objects
-        )
-    family, target_name = position.family, position.target
-    target = case.model.entity(target_name)
+        return _materialize_target_document_layout(case, rows)
+    target = case.model.entity(position.target)
     if not case.model.storage_layout.document(target.canonical_name).column:
-        return _materialize_target_document_layout(
-            case, rows, include_value_objects=include_value_objects
-        )
+        return _materialize_target_document_layout(case, rows)
 
     tagged = _materialize_family_variant(case, rows)
-    effective = read_effective_set(case, family, target_name)
-    scalar_superset = {
-        member.column
-        for concrete in effective
-        for member in case.model.storage_layout.document(
-            case.model.entity(concrete).canonical_name
-        ).members
-        if member.type_spelling is not None
-    }
     materialized: list[dict[str, Any]] = []
     for row in tagged:
         variant = row.get("familyVariant")
         if not isinstance(variant, str):
             materialized.append(row)
             continue
-        (decoded,) = _materialize_document_layout(
-            case,
-            case.model.entity(variant),
-            [row],
-            include_value_objects=include_value_objects,
-        )
-        if not include_value_objects:
-            for column_name in scalar_superset:
-                decoded.setdefault(column_name, None)
+        (decoded,) = _materialize_document_layout(case, case.model.entity(variant), [row])
         materialized.append(decoded)
     return materialized
 
@@ -826,18 +767,11 @@ def _rows_at_their_union_branch(
     """Grade a multi-concrete deep-fetch level's `union all`, then restore its rows.
 
     The table-per-concrete-subtype analogue of :func:`_materialize_hop_variant`. A
-    level is instance-form by classification, so the branch superset its rows align to
-    is the instance-form one.
+    level's rows align to the position's whole superset, as every read's do.
     """
     family = Family(case.model.entity_defs)
-    position = _tpcs_position(case, family, union.concretes, instance_form=True)
-    tpcs.assert_level_union_shape(
-        case,
-        position.view,
-        position.branch_variants,
-        union,
-        document_resident=position.document_resident,
-    )
+    position = _tpcs_position(case, family, union.concretes)
+    tpcs.assert_level_union_shape(case, position.view, position.branch_variants, union)
     return [
         _tpcs_row_at_its_branch(case, position, row, subject=f"polymorphic hop {view_key}")
         for row in rows
@@ -849,15 +783,8 @@ def level_order_binds(
 ) -> tuple[str, ...]:
     """What a level over *concretes* ordered by *order_by* binds after every branch."""
     family = Family(case.model.entity_defs)
-    position = _tpcs_position(case, family, concretes, instance_form=True)
-    return tpcs.level_order_binds(
-        case,
-        position.view,
-        position.branch_variants,
-        order_by,
-        dialect,
-        document_resident=position.document_resident,
-    )
+    position = _tpcs_position(case, family, concretes)
+    return tpcs.level_order_binds(case, position.view, position.branch_variants, order_by, dialect)
 
 
 def _materialize_navigated_family_variant(
@@ -873,8 +800,7 @@ def _materialize_navigated_family_variant(
     carries no branch carrier at all; a multi-concrete one is polymorphic under both
     strategies, publishing ``familyVariant`` from a table-per-hierarchy tag or from
     the ``union all`` branch literal a table-per-concrete-subtype hop projects
-    (`m-read-planning`). Navigating is instance-form, so the branch superset that hop
-    aligns to is the instance-form one.
+    (`m-read-planning`).
 
     A row carrying no branch carrier stands somewhere else — a multi-hop load
     aggregates the levels it walked THROUGH as well as the one it ended at — and is
@@ -890,9 +816,7 @@ def _materialize_navigated_family_variant(
     if position.strategy == STRATEGY_TPCS:
         if not any(tpcs.VARIANT_COLUMN in row for row in rows):
             return rows
-        tpcs_position = _tpcs_position(
-            case, family, family.effective_concrete_set(target), instance_form=True
-        )
+        tpcs_position = _tpcs_position(case, family, family.effective_concrete_set(target))
         return [
             _tpcs_row_at_its_branch(
                 case, tpcs_position, row, subject=f"navigated position {target}"
@@ -930,9 +854,9 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
 
     A materialized instance carries only its own branch's members — its inherited
     chain plus its own declared attributes — never a sibling branch's null-padded
-    column: a `Dog` node has no `indoor` key to be null. Row-form (`then.rows`)
-    keeps the full concrete-superset row unchanged (:func:`_materialize_family_variant`
-    alone); this ADDITIONAL narrowing applies only where a row already carries a
+    column: a `Dog` node has no `indoor` key to be null. A `then.rows` assertion
+    keeps the full concrete-superset row instead (:func:`scalar_columns`); this
+    ADDITIONAL narrowing applies only where a row already carries a
     materialized ``familyVariant`` (a no-op for a concrete-target read, or a
     non-inheritance entity, whose rows carry none).
 
@@ -967,6 +891,62 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
             )
         )
     return narrowed
+
+
+def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
+    """*rows* as the scalar-column view a `then.rows` assertion states.
+
+    The read published every member; the assertion observes its scalars across the
+    position's superset (`m-case-format` *Read result form*). So a Value Object
+    contributor leaves the row, a sibling's document-resident scalar the row's own
+    branch places nowhere is padded ``null`` exactly as a Column would have been, and
+    nothing else moves: a scalar collection, a document-resident scalar, and any
+    unexpected scalar column stay for the comparison to judge, including a scalar
+    reusing the Column a sibling's Value Object occupies.
+
+    Like :func:`narrow_to_variant_columns` this projects what a read published, so
+    each row arrives with that provenance and leaves carrying it forward.
+    """
+    target = case.model.entity(case.object_query["target"])
+    position = query_position(case.object_query, case.model.entity_defs)
+    concretes = (
+        [target]
+        if position is None
+        else [
+            case.model.entity(name)
+            for name in read_effective_set(case, position.family, position.target)
+        ]
+    )
+    value_objects = {
+        occurrence["column"] for entity in concretes for occurrence in entity.value_objects
+    }
+    padding = (
+        []
+        if position is None
+        else [
+            member.column
+            for entity in concretes
+            for member in case.model.storage_layout.document(entity.canonical_name).members
+            if member.type_spelling is not None
+        ]
+    )
+    scalars: list[PublishedRow] = []
+    for row in rows:
+        _refuse_an_unpublished_row(case, "the scalar-column assertion", row)
+        own = {
+            attribute["column"] for attribute in variant_entity(case.model, target, row).attributes
+        }
+        scalars.append(
+            _published(
+                dict.fromkeys(padding)
+                | {
+                    key: value
+                    for key, value in row.items()
+                    if key not in value_objects or key in own
+                }
+            )
+        )
+    return scalars
 
 
 # --- Value Object occurrences -----------------------------------------------
@@ -1146,30 +1126,19 @@ def _refuse_a_carried_branch(case: Case, entity: Entity, row: Mapping[str, Any])
     )
 
 
-def _has_document_resident_attribute(case: Case, entity: Entity) -> bool:
-    """Whether the layout placed any of *entity*'s own Attributes inside its
-    Structured Column — the one need that reaches a Relational Document Layout's
-    shared Column from a row-form read (`m-sql` *Read projection*, rule 5)."""
-    resident = {
-        member.name for member in case.model.storage_layout.document(entity.canonical_name).members
-    }
-    return any(attribute["name"] in resident for attribute in entity.attributes)
-
-
 class _TpcsPosition(NamedTuple):
     """What restoring one `union all` row to its own branch takes.
 
-    ``view``, ``branch_variants`` and ``document_resident`` are the position's own
-    layout facts, which :mod:`.tpcs` also grades the golden against; the rest is the
-    aligned projection those facts and the read's result form derive — the physical
-    spelling each ordinal carries, the collision-safe alias it is projected under,
-    how many ordinals share that spelling, and per variant the slot-or-absence entry
-    and Table layout its branch reads.
+    ``view`` and ``branch_variants`` are the position's own layout facts, which
+    :mod:`.tpcs` also grades the golden against; the rest is the aligned projection
+    those facts derive — the physical spelling each ordinal carries, the
+    collision-safe alias it is projected under, how many ordinals share that
+    spelling, and per variant the slot-or-absence entry and Table layout its branch
+    reads.
     """
 
     view: PositionLayoutView
     branch_variants: list[tuple[PositionBranch, str]]
-    document_resident: bool
     superset: list[str]
     result_aliases: list[str]
     column_counts: dict[str, int]
@@ -1177,9 +1146,7 @@ class _TpcsPosition(NamedTuple):
     layouts_by_variant: dict[str, TableLayout]
 
 
-def _tpcs_position(
-    case: Case, family: Family, effective: list[str], *, instance_form: bool
-) -> _TpcsPosition:
+def _tpcs_position(case: Case, family: Family, effective: list[str]) -> _TpcsPosition:
     """The table-per-concrete-subtype position *effective* selects, as its rows read it."""
     ordered = family.canonical_concrete_order(effective)
     view = position_view(case.model.storage_layout, family, effective)
@@ -1190,25 +1157,14 @@ def _tpcs_position(
             f"onto one family's canonical concrete selection."
         )
     branch_variants = tpcs.branch_variants(case, family, ordered, view)
-    document_resident = any(
-        _has_document_resident_attribute(case, case.model.entity(name))
-        for _branch, name in branch_variants
-    )
-    ordinals = tpcs.projected_position_ordinals(
-        view, instance_form=instance_form, document_resident=document_resident
-    )
-    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
+    superset = list(view.column_spellings)
     return _TpcsPosition(
         view=view,
         branch_variants=branch_variants,
-        document_resident=document_resident,
         superset=superset,
         result_aliases=tpcs.result_aliases(superset),
         column_counts={column: superset.count(column) for column in set(superset)},
-        slots_by_variant={
-            name: tuple(branch.slots[ordinal] for ordinal in ordinals)
-            for branch, name in branch_variants
-        },
+        slots_by_variant={name: branch.slots for branch, name in branch_variants},
         layouts_by_variant={name: branch.layout for branch, name in branch_variants},
     )
 
@@ -1268,18 +1224,8 @@ def _materialize_tpcs_family_variant(
     ``then.rows`` — the TPCS counterpart of the TPH tag-to-variant materialization
     (m-inheritance / m-sql).
     """
-    position = _tpcs_position(
-        case,
-        family,
-        read_effective_set(case, family, target_name),
-        instance_form=tpcs.is_instance_form(case),
-    )
-    tpcs.assert_union_shape(
-        case,
-        position.view,
-        position.branch_variants,
-        document_resident=position.document_resident,
-    )
+    position = _tpcs_position(case, family, read_effective_set(case, family, target_name))
+    tpcs.assert_union_shape(case, position.view, position.branch_variants)
     return [
         _tpcs_row_at_its_branch(
             case, position, row, subject="table-per-concrete-subtype abstract read"

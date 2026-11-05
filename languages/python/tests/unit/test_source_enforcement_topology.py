@@ -575,9 +575,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance._lanes.snapshot", "parallax.core._execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),
-    ("parallax.conformance._lanes.snapshot", "parallax.snapshot._publication._wire"): frozenset(
-        {"FAMILY_VARIANT_KEY"}
-    ),
     # The unit of work's implementation leaves the case lanes build writes
     # through: the instruction vocabulary and its prepared forms, and the
     # row-acquisition requests a case state is read by. The facade exports

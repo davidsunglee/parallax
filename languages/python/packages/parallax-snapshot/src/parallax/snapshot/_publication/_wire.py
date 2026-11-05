@@ -33,6 +33,7 @@ from parallax.core.entity._instance_state import (
     relationship as relationship_state,
 )
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.inheritance import FAMILY_VARIANT_KEY
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -58,7 +59,6 @@ from parallax.snapshot._inspection import (
 from parallax.snapshot._publication._root import RootView
 
 __all__ = [
-    "FAMILY_VARIANT_KEY",
     "InstanceReader",
     "NodeReader",
     "RootViewReader",
@@ -88,11 +88,6 @@ descriptors a caller can reach around the instance for
 the reason :class:`WireEntity` gives. Spelling immutability statically instead,
 through public frozen list and mapping types, would make every ordinary mapping
 statically unusable as Parallax input."""
-
-FAMILY_VARIANT_KEY = "familyVariant"
-"""The key an inheritance participant's stable variant spelling is published
-under. It names no declared member, which is why it is fixed here rather than
-resolved from the model."""
 
 _FROZEN = "a Wire read result refuses mutation through the instance"
 

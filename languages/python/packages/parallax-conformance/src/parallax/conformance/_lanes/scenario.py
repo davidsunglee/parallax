@@ -29,6 +29,7 @@ from parallax.conformance._mechanism.envelope import (
     EngineError,
     ScenarioRun,
 )
+from parallax.conformance._mechanism.flat_rows import flat_rows
 from parallax.conformance._mechanism.given_state import (
     apply_given_apply,
     seed_store_from_fixtures,
@@ -91,14 +92,9 @@ from parallax.core.execution import (
     TxnOptions,
 )
 from parallax.core.metamodel import (
-    AbstractRoot,
-    AbstractSubtype,
     AttributeIdentity,
-    AttributeMetadata,
     EntityMetadata,
-    MemberIdentity,
     PrimaryKey,
-    ValueObjectMetadata,
     entity_by_name,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -157,7 +153,6 @@ __all__ = [
     "entry_instant",
     "execute_keyed_unit",
     "flush_failure",
-    "graph_rows",
     "group_tx_instant",
     "is_predicate_write_step",
     "lower_writes",
@@ -1034,136 +1029,6 @@ def run_standalone_find(
         )
 
 
-def graph_rows(
-    model: AcceptedMetamodel, query: ObjectQueryNode, roots: Sequence[object]
-) -> list[Mapping[str, object]]:
-    """Published result positions as physically-keyed rows — what a read step's
-    ``expectRows`` grades.
-
-    The corpus states a find step's expectation in the projection's own physical
-    spelling while a Wire root is keyed by declared member name, so each member's
-    value is re-keyed by the slot it occupies. It is a rendering of what
-    production published, never a second traversal, and it reads nothing about how
-    the roots arrived: an eager result and a delivery's concatenated pages render
-    identically.
-
-    An ABSTRACT position publishes one CONCRETE node per row, so the read's own
-    projection is the position's fixed superset rather than the addressed
-    position's applicable members: each row carries every column the superset
-    places, ``null`` where the row's own branch contributes none, plus the
-    ``familyVariant`` the node itself publishes (`m-case-format` *Read
-    targeting*). Rendering the branch's members alone would DROP what the read
-    published; rendering the raw tag column would report a storage value no node
-    carries, which is exactly why the format names the variant instead.
-    """
-    columns, family = _read_projection(model, query)
-    superset = (
-        dict.fromkeys(column for options in columns.values() for column, _member in options)
-        if family
-        else None
-    )
-    projection = ActualWireProjection(model)
-    return [
-        _projected_row(model, projection, columns, superset, envelope.graph_root(root) or {})
-        for root in roots
-    ]
-
-
-def _projected_row(
-    model: AcceptedMetamodel,
-    projection: ActualWireProjection,
-    columns: Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]],
-    superset: Mapping[str, None] | None,
-    node: Mapping[str, object],
-) -> Mapping[str, object]:
-    """One published node as its projection's row.
-
-    ``superset`` holds an abstract position's superset columns, each ``null``
-    until the node fills it, and is ``None`` for a concrete read.
-    """
-    variant = node.get("familyVariant")
-    selected = _variant_members(model, node) if superset is not None and node else None
-    published: dict[str, object] = {}
-    for name, value in node.items():
-        options = columns.get(name, ())
-        if not options:
-            continue
-        if len(options) == 1:
-            column, member = options[0]
-        else:
-            matches = tuple(
-                option
-                for option in options
-                if selected is not None and option[1].identity in selected
-            )
-            if len(matches) != 1:
-                raise EngineError(
-                    f"{variant!r} does not select one declaration for published member {name!r}"
-                )
-            column, member = matches[0]
-        if value is None:
-            published[column] = None
-        elif isinstance(member, AttributeMetadata):
-            published[column] = projection.published_scalar(member, value)
-        else:
-            published[column] = projection.published_value_object(member, value)
-    if superset is None or not node:
-        return published
-    return {**superset, **published, "familyVariant": variant}
-
-
-def _variant_members(
-    model: AcceptedMetamodel, node: Mapping[str, object]
-) -> frozenset[MemberIdentity]:
-    variant = node.get("familyVariant")
-    if not isinstance(variant, str):
-        raise EngineError(
-            "an abstract-position read publishes a concrete node carrying "
-            f"`familyVariant`; this one published {sorted(node)}"
-        )
-    entity = case_entity(model, variant)
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - every accepted Entity has a view
-        raise EngineError(f"{entity.identity.canonical}: no inheritance position")
-    return frozenset(
-        member.identity for member in (*view.applicable_attributes, *view.applicable_value_objects)
-    )
-
-
-def _read_projection(
-    model: AcceptedMetamodel, query: ObjectQueryNode
-) -> tuple[
-    Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]],
-    bool,
-]:
-    """The columns ``query`` projects, and whether it reads an abstract position.
-
-    Abstractness is the ADDRESSED position's own role, exactly as it is where
-    production decides to project the discriminator, while the column set follows
-    the query's resolved narrowing: narrowing an abstract read shrinks its
-    superset without making the read concrete.
-    """
-    facet = inheritance.view(model)
-    entity = case_entity(model, query.target.canonical)
-    view = facet.entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {}, False
-    if not isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype)):
-        return _member_columns(view.applicable_attributes, view.applicable_value_objects), False
-    position: inheritance.InheritancePositionView = view
-    if query.narrow_to:
-        narrowed = facet.position(
-            [case_entity(model, spelling).identity for spelling in query.narrow_to]
-        )
-        if narrowed is None:  # pragma: no cover - a read whose roots exist resolved it
-            raise EngineError(
-                f"narrowing {query.target.canonical!r} to {list(query.narrow_to)} resolves "
-                "no position of one inheritance family"
-            )
-        position = narrowed
-    return _member_columns(position.superset_attributes, position.superset_value_objects), True
-
-
 def step_rows(
     model: AcceptedMetamodel, index: int, query: ObjectQueryNode, roots: Sequence[object]
 ) -> dict[str, object]:
@@ -1176,25 +1041,8 @@ def step_rows(
     """
     return {
         "at": f"/scenario/{index}",
-        "rows": [dict(row) for row in graph_rows(model, query, roots)],
+        "rows": [dict(row) for row in flat_rows(model, query, roots, value_objects=True)],
     }
-
-
-def _member_columns(
-    attributes: Sequence[AttributeMetadata], value_objects: Sequence[ValueObjectMetadata]
-) -> Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]]:
-    """Each member name paired with its own column, in projection order."""
-    columns: dict[
-        str, dict[MemberIdentity, tuple[str, AttributeMetadata | ValueObjectMetadata]]
-    ] = {}
-    for member in (*attributes, *value_objects):
-        name = (
-            member.identity.name
-            if isinstance(member, AttributeMetadata)
-            else member.identity.path[-1]
-        )
-        columns.setdefault(name, {})[member.identity] = (member.storage.name, member)
-    return {name: tuple(options.values()) for name, options in columns.items()}
 
 
 def _lower_scenario_step(

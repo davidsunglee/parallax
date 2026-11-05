@@ -51,7 +51,6 @@ _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later
 _ABSTRACT_FIND = "m-inheritance-130-tph-abstract-find-licenses-concrete-update.yaml"
 _FIND_AFTER_A_WRITE = "m-batch-write-005-predicate-delete-readless.yaml"
 _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
-_TPCS_ROW_FORM_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
 _POLYMORPHIC_OWNER = "m-identity-map-005-family-root-vs-leaf.yaml"
 _DOCUMENT_LAYOUT_DEEP_FETCH = "m-read-planning-024-document-layout-graph.yaml"
@@ -395,18 +394,30 @@ def test_an_abstract_step_decodes_its_document_at_the_row_s_own_concrete(
         assert_unit_work_scenario(undecoded, ScriptedProvider(script=_rows(_DOCUMENT_FAMILY)))
 
 
+def _without_annotation(case: Case) -> Case:
+    """*case* with `Memo`'s `Document` read pair gone from every branch of its golden."""
+    sql = case.then["statements"][0]["sql"]
+    for dialect, statement in sql.items():
+        for pair in (
+            "false, cast(null as jsonb) annotation, ",
+            "false, cast(null as char) annotation, ",
+            "not t0.annotation is null, t0.annotation, ",
+        ):
+            statement = statement.replace(pair, "")
+        sql[dialect] = statement
+    return case
+
+
 def test_an_observation_find_step_is_graded_in_the_instance_form_it_reads(
     damaged_case: CaseLoader,
 ) -> None:
-    """An observation find is the object lane, so its `union all` superset carries the slot.
+    """An observation find is instance-form, so its `union all` superset carries the slot.
 
-    The two goldens are the same query in the two result forms, and they differ by
-    exactly the top-level Value Object `Document` pair rule 3 adds. The row-form one
-    an eager `then.rows` case authors is therefore not an observation find's golden:
-    presented as such a step it is refused for the column it omits, and the refusal is
-    reached from the golden text alone, so it does not depend on a row arriving.
+    A golden without the top-level Value Object `Document` pair rule 3 adds is refused
+    for the column it omits, and the refusal is reached from the golden text alone, so
+    it does not depend on a row arriving.
     """
-    case = _as_a_one_step_scenario(damaged_case(_TPCS_ROW_FORM_READ), [])
+    case = _as_a_one_step_scenario(_without_annotation(damaged_case(_TPCS_INSTANCE_FORM_READ)), [])
 
     with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows([])))
@@ -879,9 +890,9 @@ def test_a_first_access_of_an_abstract_list_is_graded_as_the_read_it_resolves(
     step authored — so what it publishes is that read's own result: the `union all`
     branch literal materialized as `familyVariant`, and each row's `Document` slot
     decoded at the concrete the literal names rather than at the abstract position,
-    which declares none of its members. Presenting the row-form golden the same way
-    is refused for the slot its lane omits, which is what pins that the read carried
-    over is graded in the access's own lane.
+    which declares none of its members. Presenting a golden without that slot the same
+    way is refused for the column it omits, which is what pins that the read carried
+    over is graded as the instance-form read it is.
     """
     resolved = _as_a_constructed_list_first_accessed(
         damaged_case(_TPCS_INSTANCE_FORM_READ), _DOCUMENT_FAMILY_ROWS
@@ -889,9 +900,11 @@ def test_a_first_access_of_an_abstract_list_is_graded_as_the_read_it_resolves(
     with ScriptedProvider(script=_rows(_DOCUMENT_FAMILY)) as db:
         assert_unit_work_scenario(resolved, db)
 
-    row_form = _as_a_constructed_list_first_accessed(damaged_case(_TPCS_ROW_FORM_READ), [])
+    omitting = _as_a_constructed_list_first_accessed(
+        _without_annotation(damaged_case(_TPCS_INSTANCE_FORM_READ)), []
+    )
     with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
-        assert_unit_work_scenario(row_form, ScriptedProvider(script=_rows([])))
+        assert_unit_work_scenario(omitting, ScriptedProvider(script=_rows([])))
 
 
 _PAYMENT_FAMILY: list[dict[str, Any]] = [

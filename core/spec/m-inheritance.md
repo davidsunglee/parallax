@@ -367,20 +367,15 @@ subtypes; when two concrete subtypes in one family share a local name across
 namespaces, each such subtype uses its canonical qualified Entity spelling. Thus
 existing families retain `Dog`, while duplicate local names render, for example,
 `catalog.SharedVariant` and `archive.SharedVariant`. What each returned leaf carries **beyond**
-that tag depends on the read's result form (`m-case-format` *Read result
-form*): a **row-form** (values lane) leaf is the flat SQL superset row (every
-branch's projected columns, non-applicable ones `null`); an **instance-form**
-(object lane) leaf, at a read case's own top-level leaves, is a **complete
-concrete instance** in the ordinary sense — only its own branch's inherited-
-plus-own members, never a sibling's null-padded column. Inheritance resolves the
-same effective concrete set and branch applicability for both forms. `m-sql`
-owns result projection: both forms select the same applicable non-Document
-Position Layout sequence and every applicable scalar collection's own Document
-slot, while instance-form additionally selects applicable top-level Value Object
-Document slots and row-form omits them. The SQL is
-therefore identical only when that Document-slot delta is empty. After the read,
-instance-form materialization narrows the branch-backed values to the concrete
-variant's own declared shape. This is the read-side counterpart of *Concrete-
+that tag depends on how the read is observed (`m-case-format` *Read result form*):
+a **`then.rows`** leaf is the flat superset row of the read's scalar columns (every
+branch's columns, non-applicable ones `null`); a **`then.graph`** leaf, at a read
+case's own top-level leaves, is a **complete concrete instance** in the ordinary
+sense — only its own branch's inherited-plus-own members, never a sibling's
+null-padded column. Inheritance resolves one effective concrete set and branch
+applicability for the read, and `m-sql` owns its projection, which neither
+observation changes. After the read, materialization narrows the branch-backed
+values to the concrete variant's own declared shape. This is the read-side counterpart of *Concrete-
 subtype writes*, below: a discriminated union at both boundaries, with family
 semantics retained here and result projection retained by SQL.
 
