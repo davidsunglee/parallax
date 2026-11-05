@@ -223,7 +223,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._publication", "_model"): frozenset({"ClassIndex"}),
     ("parallax.core._execution._read_pipeline", "_authored_resolver"): frozenset(
-        {"typed_interpretation"}
+        {"typed_predicate_interpretation"}
     ),
     ("parallax.core._execution._read_pipeline", "_expressions"): frozenset({"AuthoredQuery"}),
     ("parallax.core._execution._retention", "_construction_input"): frozenset({"ABSENT"}),
@@ -258,7 +258,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._handle._read", "_expressions"): frozenset({"include_traversal"}),
     ("parallax.snapshot._handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot._handle._typed_writes", "_authored_resolver"): frozenset(
-        {"typed_interpretation"}
+        {"typed_predicate_interpretation"}
     ),
     ("parallax.snapshot._handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot._publication._root", "_layout"): frozenset({"EntityLayout"}),

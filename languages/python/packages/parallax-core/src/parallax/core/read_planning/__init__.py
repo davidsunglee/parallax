@@ -573,7 +573,7 @@ class _PlanBuilder:
         )
 
         rel_local = direction.identity.name
-        attach_key = _view_key(rel_local, narrowed, position, self.families)
+        attach_key = _attach_key(rel_local, narrowed, position, self.families)
         view = RelationshipViewKey(
             direction.identity, None if attach_key == rel_local else attach_key
         )
@@ -809,7 +809,7 @@ def _resolve_root_source(
     return tuple(_entity_view(facet, root.identity).concrete_subtypes)
 
 
-def _view_key(
+def _attach_key(
     rel_local: str,
     narrowed: bool,
     position: tuple[EntityIdentity, ...],

@@ -14,7 +14,7 @@ from parallax.core._execution._routing import OperationRouting
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity._authored_resolver import typed_interpretation
+from parallax.core.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -71,7 +71,8 @@ def interpreted(selected: SelectedReadModel, query: ReadQuery) -> QueryInput:
     if isinstance(query, ObjectQueryNode):
         return query
     return InterpretedQuery(
-        query, typed_interpretation(query.predicate, selected.model.meta, selected.classes)
+        query,
+        typed_predicate_interpretation(query.predicate, selected.model.meta, selected.classes),
     )
 
 

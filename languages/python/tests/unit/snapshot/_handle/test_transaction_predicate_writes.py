@@ -56,9 +56,9 @@ from parallax.core.document_codec import (
     MemberShape,
     prepare_effective_change,
 )
-from parallax.core.entity._authored_resolver import typed_interpretation
+from parallax.core.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._expressions import AuthoredPath, UnfinishedOperation
+from parallax.core.entity._expressions import AuthoredMemberPath, UnfinishedOperation
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
@@ -540,7 +540,7 @@ def _classless(model: DomainModel) -> DomainModel:
 
 
 def _unfinished(entity: type[Entity], *names: str, operands: tuple[object, ...]) -> Predicate[Any]:
-    path = AuthoredPath(entity.identity, names, unfinished=True)
+    path = AuthoredMemberPath(entity.identity, names, unfinished=True)
     return Predicate(UnfinishedOperation(path, COMPARE["eq"], operands))
 
 
@@ -578,13 +578,13 @@ def test_a_typed_predicate_write_binds_against_the_adopted_write_projection(
     later = prepare_model(DomainModel(*cast("Any", class_index(PERSON)).by_class), edition="later")
     serving = ServingModel(adopted)
     bound: list[tuple[object, object]] = []
-    bind = typed_interpretation
+    bind = typed_predicate_interpretation
 
     def recording(predicate: Any, model: Any, classes: Any) -> Any:
         bound.append((model, classes))
         return bind(predicate, model, classes)
 
-    monkeypatch.setattr(typed_writes, "typed_interpretation", recording)
+    monkeypatch.setattr(typed_writes, "typed_predicate_interpretation", recording)
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:

@@ -49,7 +49,7 @@ from parallax.core.entity import _authored_resolver
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import (
     AuthoredConstant,
-    AuthoredPath,
+    AuthoredMemberPath,
     AuthoredQuery,
     PreparedOperation,
     UnfinishedOperation,
@@ -619,7 +619,7 @@ def _unfinished(
     operands: tuple[object, ...],
     operator: ScalarOperator = COMPARE["eq"],
 ) -> Predicate[Any]:
-    path = AuthoredPath(entity.identity, names, unfinished=True)
+    path = AuthoredMemberPath(entity.identity, names, unfinished=True)
     return Predicate(UnfinishedOperation(path, operator, operands))
 
 
