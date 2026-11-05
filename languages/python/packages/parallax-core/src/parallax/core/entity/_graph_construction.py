@@ -324,12 +324,13 @@ class EntityGraphConstruction:
     catalog that did not produce it is unconstructible rather than checked.
     """
 
-    __slots__ = ("_cataloged", "_facts")
+    __slots__ = ("_cataloged", "_classes", "_facts")
 
     def __init__(self, cataloged: CatalogedModel, classes: ClassIndex) -> None:
         """Derive every Entity's construction facts, or raise
         :class:`GraphConstructionError`."""
         self._cataloged = cataloged
+        self._classes = classes
         self._facts: Mapping[EntityIdentity, EntityFacts] = MappingProxyType(
             {
                 entity.identity: _entity_facts(cataloged, classes, entity.identity)
@@ -360,6 +361,11 @@ class EntityGraphConstruction:
     def cataloged(self) -> CatalogedModel:
         """The cataloged model whose layouts every Entity's facts were proved against."""
         return self._cataloged
+
+    @property
+    def classes(self) -> ClassIndex:
+        """The index of the classes composed under :attr:`cataloged`."""
+        return self._classes
 
     def proves(self, cls: type, entity: EntityIdentity) -> bool:
         """Whether ``cls`` is the class this model composed for ``entity``, and so

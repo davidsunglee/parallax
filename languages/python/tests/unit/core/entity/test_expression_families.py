@@ -36,6 +36,7 @@ from parallax.core.entity._expressions import (
     RelationshipExpr,
     ScalarElementExpr,
     ScalarExpr,
+    UnfinishedExpr,
 )
 from parallax.core.predicate import Comparison, FieldSubject, Quantifier
 from tests._support.query_probes import predicate_node
@@ -134,6 +135,23 @@ def test_a_relationship_narrow_continues_only_as_an_include_path() -> None:
     assert type(narrowed.name) is IncludePath
     with pytest.raises(TypeError):
         _ = narrowed.name > 1  # pyright: ignore[reportOperatorIssue, reportUnknownVariableType]
+
+
+def test_a_continuation_keeps_its_family_at_every_depth() -> None:
+    # Only the first hop is statically precise: a continuation's target is `Any`
+    # however deep it runs, and its source survives the narrow that keeps it.
+    assert_type(Route.carrier.name, UnfinishedExpr[Any])
+    assert_type(Route.carrier.name.deeper.deepest, UnfinishedExpr[Any])
+    assert type(Route.carrier.name.deeper.deepest) is UnfinishedExpr
+    narrowed = Route.carrier.narrow(Carrier)
+    assert_type(narrowed.name.deeper.deepest, IncludePath[Route, Any])
+    assert type(narrowed.name.deeper.deepest) is IncludePath
+    assert_type(Route.carrier.name.deeper.narrow(Carrier), IncludePath[Any, Any])
+    assert_type(
+        Route.carrier.name.narrow(Carrier).deeper.deepest,
+        IncludePath[Any, Any],
+    )
+    assert type(Route.carrier.name.narrow(Carrier).deeper.deepest) is IncludePath
 
 
 @pytest.mark.parametrize("name", ["any", "all", "none", "element", "is_a", "exists", "like"])

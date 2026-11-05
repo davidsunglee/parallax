@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
 
@@ -22,6 +22,7 @@ from parallax.core.metamodel import (
     MemberDefinition,
     ModelLocation,
     Multiplicity,
+    RelationshipIdentity,
     ValueObjectAttributeDeclaration,
     ValueObjectLocation,
     ValueObjectMetadata,
@@ -30,7 +31,6 @@ from parallax.core.metamodel import (
     judge_assignment,
 )
 from parallax.core.object_query import (
-    IncludeSegment,
     OrderKey,
     subtype_spelling,
 )
@@ -53,9 +53,8 @@ from parallax.core.predicate._nodes import QuantifierKind
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from parallax.core.entity._declaration import ValueObjectShape
+    from parallax.core.entity._declaration import ValueObjectShape, WireNames
     from parallax.core.object_query._nodes import (
-        IncludePathNode,
         TemporalDimension,
         TemporalSelection,
     )
@@ -73,6 +72,8 @@ __all__ = [
     "AuthoredConstant",
     "AuthoredElement",
     "AuthoredGroup",
+    "AuthoredIncludePath",
+    "AuthoredIncludeSegment",
     "AuthoredMemberPath",
     "AuthoredNarrow",
     "AuthoredNot",
@@ -82,7 +83,6 @@ __all__ = [
     "AuthoredQuantifier",
     "AuthoredQuery",
     "IncludePath",
-    "IncludeTraversal",
     "ManyRelationshipExpr",
     "ManyScalarExpr",
     "ManyValueObjectExpr",
@@ -98,8 +98,8 @@ __all__ = [
     "UnfinishedOperation",
     "ValueObjectExpr",
     "ValueObjectReceiver",
+    "authored_include_path",
     "conjoin",
-    "include_traversal",
     "judged_edit_violation",
     "managed_literal",
     "member_expression",
@@ -153,10 +153,8 @@ def snake_to_camel(name: str) -> str:
     """The canonical member name a snake_case Python spelling denotes by
     convention, absent an explicit ``name=``.
 
-    A declaration applies it once and records the correspondence; predicate
-    paths resolve Python names through those records. An Include segment past
-    the hop its descriptor seeded reaches no declaration and so applies it to
-    the spelling alone.
+    A declaration applies it once and records the correspondence; authored
+    paths resolve Python names through those records.
     """
     head, *tail = name.split("_")
     return head + "".join(part[:1].upper() + part[1:] for part in tail)
@@ -323,7 +321,8 @@ _NO_TEMPORAL: Mapping[TemporalDimension, TemporalSelection] = MappingProxyType({
 @dataclass(frozen=True, slots=True)
 class AuthoredQuery:
     """The authored state of one Typed Object Query: its target, its authored
-    predicate, and its other clauses in their canonical spellings.
+    predicate and Include paths, and its other clauses in their canonical
+    spellings.
 
     Model-free and immutable, so one value serves every model that accepts its
     target; nothing resolved is attached back to it.
@@ -335,7 +334,11 @@ class AuthoredQuery:
     temporal: Mapping[TemporalDimension, TemporalSelection] = _NO_TEMPORAL
     order_by: tuple[OrderKey, ...] = ()
     limit: int | None = None
-    includes: tuple[IncludePathNode, ...] = field(default_factory=tuple)
+    includes: tuple[AuthoredIncludePath, ...] = field(default_factory=tuple)
+
+    @property
+    def requests_includes(self) -> bool:
+        return bool(self.includes)
 
 
 def _subject_described(element: AuthoredElement) -> str:
@@ -1147,54 +1150,88 @@ def judged_edit_violation(
 
 
 @dataclass(frozen=True, slots=True)
-class IncludeTraversal:
-    """The canonical Include facts one Include source derives.
+class AuthoredIncludeSegment:
+    """One segment of an authored Include path, by the Python member name it was
+    written with.
 
-    ``segments`` is the traversal in ``m-read-planning``'s own ``IncludeSegment``
-    shape; ``target`` is the canonical Entity spelling the traversal currently
-    points at, absent once it continued past the hop its descriptor seeded;
-    ``source`` is the Entity the seeding class access reached the first hop
-    through, which an Object Query turns into the path-root guard.
+    ``root_relationship`` is the identity a path's first segment took from its
+    descriptor; a continuation has none, because only the classes of a serving
+    model or of a reached node say what its name denotes.
     """
 
-    segments: tuple[IncludeSegment, ...]
-    target: str | None
-    source: str | None = None
+    py_name: str
+    root_relationship: RelationshipIdentity | None = None
+    narrow_to: SubtypeSelection = ()
+
+    def relationship_in(self, names: WireNames) -> RelationshipIdentity | None:
+        """The relationship this segment denotes on the class ``names`` describes.
+
+        A root segment applies only where the name answers its own identity, so a
+        sibling's identically named relationship is never its relationship.
+        """
+        found = names.relationship_identities.get(self.py_name)
+        root = self.root_relationship
+        return found if root is None or found == root else None
+
+    def described(self) -> str:
+        root = self.root_relationship
+        return self.py_name if root is None else f"{root.source_entity.canonical}.{root.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredIncludePath:
+    """An Include path as written: its segments, and the Entity ``access_source``
+    the first was reached through, which binding measures against the queried
+    position to decide the path-root guard."""
+
+    segments: tuple[AuthoredIncludeSegment, ...]
+    access_source: str | None = None
+
+    def continued(self, name: str) -> AuthoredIncludePath:
+        return replace(self, segments=(*self.segments, AuthoredIncludeSegment(name)))
+
+    def described(self) -> str:
+        return ".".join(segment.described() for segment in self.segments)
 
 
 @dataclass(frozen=True, slots=True)
 class _RootSegment:
-    """The first relationship hop a descriptor seeded."""
+    """The first relationship segment a descriptor seeded."""
 
     ref: RelationshipRef
     py_name: str
-    target: str
     source: str | None
     many: bool
 
-    def traversal(self) -> IncludeTraversal:
-        return IncludeTraversal((IncludeSegment(rel=str(self.ref)),), self.target, self.source)
+    def authored_path(self, names: tuple[str, ...] = ()) -> AuthoredIncludePath:
+        identity = RelationshipIdentity(_entity_identity(self.ref.entity), self.ref.relationship)
+        return AuthoredIncludePath(
+            (
+                AuthoredIncludeSegment(self.py_name, identity),
+                *(AuthoredIncludeSegment(name) for name in names),
+            ),
+            self.source,
+        )
 
     def member_path(self) -> AuthoredMemberPath:
         return AuthoredMemberPath(_entity_identity(self.ref.entity), (self.ref.relationship,))
 
 
 def root_segment(
-    ref: RelationshipRef, py_name: str, target: str, source: str | None, *, many: bool
+    ref: RelationshipRef, py_name: str, source: str | None, *, many: bool
 ) -> _RootSegment:
-    """The first hop a relationship descriptor seeds, reached through ``source``."""
-    return _RootSegment(ref, py_name, target, source, many)
+    """The first segment a relationship descriptor seeds, reached through ``source``."""
+    return _RootSegment(ref, py_name, source, many)
 
 
-def include_traversal(path: IncludePath[Any, Any]) -> IncludeTraversal:
-    """The canonical Include facts ``path`` derives when an Include consumes it,
-    refusing anything but an Include path — a Value Object or scalar member is
-    no relationship to fetch through."""
+def authored_include_path(path: IncludePath[Any, Any]) -> AuthoredIncludePath:
+    """The authored path ``path`` carries, refusing anything but an Include path —
+    a Value Object or scalar member is no relationship to fetch through."""
     if not isinstance(path, IncludePath):  # pyright: ignore[reportUnnecessaryIsInstance] - untyped callers
         raise TypeError(
             f"{type(path).__name__} is not an Include path; include takes relationships"
         )
-    return path._include()  # pyright: ignore[reportPrivateUsage] - the carrier's own module derives its facts
+    return path._authored_path()  # pyright: ignore[reportPrivateUsage] - the carrier's own module reads its path
 
 
 class IncludePath[E, R]:
@@ -1209,16 +1246,15 @@ class IncludePath[E, R]:
     narrowed to a descendant target stands wherever the broad hop does, because
     everything it reaches is also reached by the broad one.
 
-    It authors no predicate. Continuing it reaches the next Include hop, which
-    the declaration supplies no class for: the segment is composed from the
-    current target's canonical spelling and the member's spelling, and the
-    model resolves it at execution preflight.
+    It authors no predicate. Continuing it keeps the Python member name as
+    written, and the serving model's Entity Classes resolve that name when an
+    operation binds the path.
     """
 
-    __slots__ = ("_traversal",)
+    __slots__ = ("_authored",)
 
-    def __init__(self, traversal: IncludeTraversal | None) -> None:
-        self._traversal = traversal
+    def __init__(self, authored: AuthoredIncludePath | None) -> None:
+        self._authored = authored
 
     if TYPE_CHECKING:
 
@@ -1233,19 +1269,16 @@ class IncludePath[E, R]:
             that makes ``R`` covariant."""
             ...
 
-    def _include(self) -> IncludeTraversal:
-        traversal = self._traversal
-        if traversal is None:  # pragma: no cover - subclasses derive their own
-            raise QueryDefinitionError(code="query-path-invalid", message="no Include traversal")
-        return traversal
+    def _authored_path(self) -> AuthoredIncludePath:
+        authored = self._authored
+        if authored is None:  # pragma: no cover - subclasses derive their own
+            raise QueryDefinitionError(code="query-path-invalid", message="no Include path")
+        return authored
 
     def __getattr__(self, name: str) -> IncludePath[E, Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        try:
-            return IncludePath(_next_hop(self._include(), name))
-        except QueryDefinitionError as refusal:
-            raise AttributeError(refusal.message) from None
+        return IncludePath(self._authored_path().continued(name))
 
     def narrow[N](self: IncludePath[Any, N], *subtypes: type[N]) -> IncludePath[E, N]:
         """A hop-level narrowed-view request (``Owner.pets.narrow(Dog)``),
@@ -1258,13 +1291,14 @@ class IncludePath[E, R]:
         at preflight. Narrowing is single-shot per segment and needs at least one
         subtype, so a request can never silently answer the broad path.
         """
-        traversal = self._include()
-        *head, last = traversal.segments
+        authored = self._authored_path()
+        *head, last = authored.segments
+        described = authored.described()
         if last.narrow_to:
             raise QueryDefinitionError(
                 code="query-path-invalid",
                 message=(
-                    f"{last.rel}: narrowing is single-shot per path segment and this hop is "
+                    f"{described}: narrowing is single-shot per path segment and this hop is "
                     f"already narrowed to {', '.join(last.narrow_to)}; derive the segment from "
                     "the un-narrowed hop"
                 ),
@@ -1272,63 +1306,29 @@ class IncludePath[E, R]:
         if not subtypes:
             raise QueryDefinitionError(
                 code="query-path-invalid",
-                message=f"{last.rel}: narrow requires at least one subtype",
+                message=f"{described}: narrow requires at least one subtype",
             )
         narrowed = tuple(subtype_spelling(subtype) for subtype in subtypes)
         if len(set(narrowed)) != len(narrowed):
             raise QueryDefinitionError(
                 code="query-path-invalid",
-                message=f"{last.rel}: narrow alternatives must not repeat the same subtype",
+                message=f"{described}: narrow alternatives must not repeat the same subtype",
             )
-        narrowed = canonical_subtype_selection(narrowed)
-        target = narrowed[0] if len(narrowed) == 1 else traversal.target
+        selection = canonical_subtype_selection(narrowed)
         return IncludePath(
-            IncludeTraversal(
-                (*head, IncludeSegment(rel=last.rel, narrow_to=narrowed)),
-                target,
-                traversal.source,
-            )
+            replace(authored, segments=(*head, replace(last, narrow_to=selection))),
         )
 
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
             return NotImplemented
-        return self._include() == cast("IncludePath[Any, Any]", other)._include()
+        return self._authored_path() == cast("IncludePath[Any, Any]", other)._authored_path()
 
     def __hash__(self) -> int:
-        return hash(self._include())
+        return hash(self._authored_path())
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._include()!r})"
-
-
-def _next_hop(traversal: IncludeTraversal, name: str) -> IncludeTraversal:
-    """The Include traversal continued by the member ``name``.
-
-    The segment is composed rather than resolved: the target's own canonical
-    Entity spelling and the canonical member name the Python spelling denotes.
-    A member a declaration renames, one an ancestor declares, and what the hop
-    points at all erase here, so a traversal stops after the hop past its seed;
-    root a longer one at the Entity the deeper hop starts from.
-    """
-    if traversal.target is None:
-        raise QueryDefinitionError(
-            code="query-path-invalid",
-            message=(
-                f"{traversal.segments[-1].rel}.{name}: this path already continued past the hop "
-                "its descriptor seeded, and query authoring reaches no model to resolve what "
-                f"that hop points at — root the deeper traversal at the Entity {name!r} is "
-                "declared on and add it as its own `.include(...)` path"
-            ),
-        )
-    return IncludeTraversal(
-        (
-            *traversal.segments,
-            IncludeSegment(rel=f"{traversal.target}.{snake_to_camel(name)}"),
-        ),
-        None,
-        traversal.source,
-    )
+        return f"{type(self).__name__}({self._authored_path()!r})"
 
 
 def subtype_selection(spellings: tuple[str, ...]) -> SubtypeSelection:
@@ -1369,62 +1369,62 @@ class RelationshipExpr[E, R](IncludePath[E, R]):
     position.
     """
 
-    __slots__ = ("_hop",)
+    __slots__ = ("_root",)
 
-    def __init__(self, hop: _RootSegment) -> None:
-        super().__init__(hop.traversal())
-        self._hop = hop
+    def __init__(self, root: _RootSegment) -> None:
+        super().__init__(root.authored_path())
+        self._root = root
 
     def __getattr__(self, name: str) -> UnfinishedExpr[Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return UnfinishedExpr(self._hop, (name,))
+        return UnfinishedExpr(self._root, (name,))
 
     def exists(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether this relationship reaches an Entity; with ``predicate``,
         whether a reached Entity makes it true. False and unknown do not match."""
-        return _presence(False, self._hop.member_path(), predicate)
+        return _presence(False, self._root.member_path(), predicate)
 
     def not_exists(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether this relationship reaches no Entity; with ``predicate``,
         whether no reached Entity makes it true."""
-        return _presence(True, self._hop.member_path(), predicate)
+        return _presence(True, self._root.member_path(), predicate)
 
     def is_a[S](self, *subtypes: type[S], where: Predicate[S] | None = None) -> Predicate[Any]:
         """Whether the reached Entity belongs to ``subtypes`` and, with
         ``where``, makes it true there. An absent or unselected target is
         false; a selected one keeps ``where``'s unknown."""
-        return _narrowed(self._hop.member_path(), subtypes, where)
+        return _narrowed(self._root.member_path(), subtypes, where)
 
 
 class ManyRelationshipExpr[E, R](IncludePath[E, R]):
     """A to-many relationship: quantified over its related Entities with
     predicates built from the target Class ``R``, besides its Include path."""
 
-    __slots__ = ("_hop",)
+    __slots__ = ("_root",)
 
-    def __init__(self, hop: _RootSegment) -> None:
-        super().__init__(hop.traversal())
-        self._hop = hop
+    def __init__(self, root: _RootSegment) -> None:
+        super().__init__(root.authored_path())
+        self._root = root
 
     def __getattr__(self, name: str) -> UnfinishedExpr[Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return UnfinishedExpr(self._hop, (name,))
+        return UnfinishedExpr(self._root, (name,))
 
     def any(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether some related Entity makes ``predicate`` true; bare, whether
         any is related."""
-        return _quantified("any", self._hop.member_path(), predicate, binds="entity")
+        return _quantified("any", self._root.member_path(), predicate, binds="entity")
 
     def all(self, predicate: Predicate[R]) -> Predicate[Any]:
         """Whether every related Entity makes ``predicate`` true."""
-        return _quantified("all", self._hop.member_path(), predicate, binds="entity")
+        return _quantified("all", self._root.member_path(), predicate, binds="entity")
 
     def none(self, predicate: Predicate[R] | None = None) -> Predicate[Any]:
         """Whether no related Entity makes ``predicate`` true; bare, whether
         none is related."""
-        return _quantified("none", self._hop.member_path(), predicate, binds="entity")
+        return _quantified("none", self._root.member_path(), predicate, binds="entity")
 
 
 class UnfinishedExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
@@ -1434,34 +1434,31 @@ class UnfinishedExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
     It offers every candidate operation — scalar, presence, subtype, and
     quantifier — and the serving model admits only the ones applicable to what
     the Python names resolve to, before any I/O. It is query-only: it neither
-    assigns nor orders. Consumed as an Include, it keeps the Include spelling
-    rules, which stop after the hop past its seed.
+    assigns nor orders. Consumed as an Include, the same names bind as its
+    segments.
     """
 
-    __slots__ = ("_hop", "_names")
+    __slots__ = ("_names", "_root")
 
-    def __init__(self, hop: _RootSegment, names: tuple[str, ...]) -> None:
-        self._traversal = None
-        self._hop = hop
+    def __init__(self, root: _RootSegment, names: tuple[str, ...]) -> None:
+        self._authored = None
+        self._root = root
         self._names = names
 
     def _member_path(self) -> AuthoredMemberPath:
-        receiver = _entity_identity(self._hop.ref.entity)
-        return AuthoredMemberPath(receiver, (self._hop.py_name, *self._names), unfinished=True)
+        receiver = _entity_identity(self._root.ref.entity)
+        return AuthoredMemberPath(receiver, (self._root.py_name, *self._names), unfinished=True)
 
-    def _include(self) -> IncludeTraversal:
-        traversal = self._hop.traversal()
-        for name in self._names:
-            traversal = _next_hop(traversal, name)
-        return traversal
+    def _authored_path(self) -> AuthoredIncludePath:
+        return self._root.authored_path(self._names)
 
     def __getattr__(self, name: str) -> UnfinishedExpr[E]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return UnfinishedExpr(self._hop, (*self._names, name))
+        return UnfinishedExpr(self._root, (*self._names, name))
 
     def _described(self) -> str:
-        return ".".join((self._hop.ref.entity, self._hop.py_name, *self._names))
+        return ".".join((self._root.ref.entity, self._root.py_name, *self._names))
 
     def _operand_type(self) -> None:
         return None
@@ -1499,7 +1496,7 @@ class UnfinishedExpr[E](_ScalarAuthoring[E], IncludePath[E, Any]):
         return _narrowed(self._member_path(), subtypes, where)
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
-        return hash((self._hop, self._names))
+        return hash((self._root, self._names))
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self._described()})"

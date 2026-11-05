@@ -1,15 +1,14 @@
 """How a Relationship Path continues past its first hop (`queries-and-results.md`).
 
 The first hop is the relationship descriptor's own and carries the declaration's
-exact facts — its canonical member name and its target's namespaced spelling.
-Every hop past it is composed rather than resolved: authoring reaches no model,
-so the segment is spelled from the path's target and the member's own name, and
-the model states the whole rule at execution preflight.
+exact identity. Every hop past it keeps the Python member name it was written
+with, because authoring reaches no model: the serving model's classes spell the
+segment when an operation binds the path, and the model states the whole rule
+there.
 
-These fixtures pin both halves — what a composed hop spells, and what preflight
-does with it — including the two authoring facts that erase in consequence: a
-member its declaration renames, and one an ancestor declares rather than the
-target itself. Both are refused rather than accepted wrongly.
+These fixtures pin both halves — what authoring retains, and what binding spells
+from it — including the two facts only a declaration knows: a member its
+declaration renames, and one an ancestor declares rather than the target itself.
 
 This module omits ``from __future__ import annotations`` so a relationship target
 spelled as a class object reaches the engine live, which is what lets one module
@@ -35,11 +34,15 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import IncludePath
-from parallax.core.entity._expressions import IncludeTraversal, include_traversal
+from parallax.core.entity._declaration import wire_names_of
+from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._model import model_of
+from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment, validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
+from parallax.core.predicate import ModelRejectedError
 from tests._support.query_probes import canonical_query
+from tests.unit import _deep_include_support as deep
 
 
 class Leaf(Entity, table="leaf", namespace="orchard"):
@@ -126,18 +129,17 @@ def _preflight(
     return query.includes
 
 
-def test_a_deeper_hop_spells_its_owner_from_the_paths_target() -> None:
-    # The owner is the hop target's own canonical Entity spelling, and the member
-    # is the canonical name its Python spelling denotes.
-    path = include_traversal(SalesOrder.customer.notes)
-    assert [segment.rel for segment in path.segments] == [
-        "sales.Order.customer",
-        "sales.Customer.notes",
+def _spelled(node: IncludePathNode) -> list[tuple[str, tuple[str, ...]]]:
+    return [(segment.rel, segment.narrow_to) for segment in node.segments]
+
+
+def test_authoring_retains_a_continuation_as_the_python_name_it_was_written_with() -> None:
+    path = authored_include_path(SalesOrder.customer.notes)
+    assert [segment.py_name for segment in path.segments] == ["customer", "notes"]
+    assert [segment.root_relationship for segment in path.segments] == [
+        RelationshipIdentity(EntityIdentity("sales", "Order"), "customer"),
+        None,
     ]
-
-
-def test_a_deeper_hop_camel_cases_a_snake_case_member_spelling() -> None:
-    assert include_traversal(Owner.dogs.some_member).segments[-1].rel == "Dog.someMember"
 
 
 def test_a_deeper_hop_validates_as_an_include_path() -> None:
@@ -152,70 +154,55 @@ def test_a_deeper_hop_validates_as_an_include_path() -> None:
     )
 
 
-def test_a_deeper_hop_across_namespaces_names_the_target_it_was_composed_from() -> None:
-    # The hop is spelled from the path's own target, exactly, so a second
+def test_a_deeper_hop_across_namespaces_names_the_target_its_model_resolved() -> None:
+    # The hop is spelled from the identity the reached class declares, so a second
     # namespace declaring the local name `Customer` does not reach it: the same
-    # query validates against both models and addresses `sales.Customer`
-    # either way. A bare owner would have named two Entities and therefore none.
-    query = canonical_query(
-        SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes), TWO_NAMESPACE_LEDGER
-    )
-    validate_object_query(
-        TWO_NAMESPACE_LEDGER.meta(SalesOrder), query, model_of(TWO_NAMESPACE_LEDGER)
-    )
+    # query binds against both models and addresses `sales.Customer` either way.
+    for model in (LEDGER, TWO_NAMESPACE_LEDGER):
+        (node,) = _preflight(model, SalesOrder, SalesOrder.customer.notes)
+        assert _spelled(node)[-1] == ("sales.Customer.notes", ())
 
 
-def test_a_renamed_deeper_member_erases_and_preflight_refuses_it() -> None:
-    # `Branch.leaves` declares the canonical name `canopy`. A composed hop has no
-    # declaration to read, so it spells `Branch.leaves` — which the model refuses
-    # rather than silently fetching the wrong relationship. Reaching the member
-    # through a path rooted at the Entity that declares it keeps the exact name.
-    with pytest.raises(ValueError, match="names no declared relationship on Branch"):
-        _preflight(ORCHARD, Root, Root.branches.leaves)
-    assert include_traversal(Branch.leaves).segments == (
-        IncludeSegment(rel="orchard.Branch.canopy"),
-    )
+def test_a_renamed_deeper_member_spells_its_declared_name() -> None:
+    # `Branch.leaves` declares the canonical name `canopy`.
+    (node,) = _preflight(ORCHARD, Root, Root.branches.leaves)
+    assert _spelled(node) == [("orchard.Root.branches", ()), ("orchard.Branch.canopy", ())]
 
 
-def test_an_inherited_deeper_member_erases_and_preflight_refuses_it() -> None:
+def test_an_inherited_deeper_member_spells_its_declaring_ancestor() -> None:
     # `Dog` declares no relationship of its own; `toys` is its family's, declared
-    # on `Animal` under the canonical name `playthings`. A composed hop names
-    # neither the declaring Entity nor that name.
-    with pytest.raises(ValueError, match="names no declared relationship on Dog"):
-        _preflight(PETS, Owner, Owner.dogs.toys)
+    # on `Animal` under the canonical name `playthings`.
+    (node,) = _preflight(PETS, Owner, Owner.dogs.toys)
+    assert _spelled(node) == [("pets.Owner.dogs", ()), ("pets.Animal.playthings", ())]
 
 
-def test_a_hop_naming_no_relationship_of_the_target_is_refused_at_preflight() -> None:
-    with pytest.raises(ValueError, match="names no declared relationship on Customer"):
+def test_a_hop_naming_no_relationship_of_the_target_is_refused_at_binding() -> None:
+    with pytest.raises(QueryDefinitionError, match="SalesCustomer declares no") as caught:
         _preflight(LEDGER, SalesOrder, SalesOrder.customer.missing)
+    assert caught.value.code == "query-path-invalid"
 
 
-def test_a_hop_naming_an_attribute_of_the_target_is_refused_at_preflight() -> None:
-    # `customerId` is a declared member of the hop's target, but not a relationship.
-    with pytest.raises(ValueError, match="names no declared relationship on Customer"):
-        _preflight(LEDGER, SalesOrder, SalesOrder.customer.customer_id)
-
-
-def test_a_first_hop_target_is_the_canonical_entity_spelling() -> None:
-    assert include_traversal(SalesOrder.customer).target == "sales.Customer"
-    assert include_traversal(Root.branches).target == "orchard.Branch"
+def test_a_hop_naming_an_attribute_of_the_target_is_refused_at_binding() -> None:
+    # `id` is a declared member of the hop's target, but not a relationship.
+    with pytest.raises(QueryDefinitionError, match="SalesCustomer declares no") as caught:
+        _preflight(LEDGER, SalesOrder, SalesOrder.customer.id)
+    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_first_hop_reference_names_its_owner_exactly_and_its_declared_member() -> None:
     # The reference splits the first segment the way the wire spells it: the
     # owner's canonical Entity spelling, and the relationship's own declared
     # name rather than the Python member it was authored as.
-    assert include_traversal(Root.branches).segments[0].rel == "orchard.Root.branches"
-    assert include_traversal(Branch.leaves).segments[0].rel == "orchard.Branch.canopy"
-    assert include_traversal(SalesOrder.customer).segments[0].rel == "sales.Order.customer"
+    assert authored_include_path(Root.branches).described() == "orchard.Root.branches"
+    assert authored_include_path(Branch.leaves).described() == "orchard.Branch.canopy"
+    assert authored_include_path(SalesOrder.customer).described() == "sales.Order.customer"
 
 
-def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
+def test_a_hop_narrowed_to_one_class_names_it_canonically() -> None:
     # A narrow list is a reference position like any other, so it names each
-    # class exactly — the same spelling the path's own target takes.
-    path = include_traversal(Root.branches.narrow(Branch))
+    # class exactly.
+    path = authored_include_path(Root.branches.narrow(Branch))
     assert path.segments[-1].narrow_to == ("orchard.Branch",)
-    assert path.target == "orchard.Branch"
 
 
 def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically() -> None:
@@ -227,9 +214,8 @@ def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically()
     class Bare:
         pass
 
-    path = include_traversal(Root.branches.narrow(Bare))  # pyright: ignore[reportArgumentType]
+    path = authored_include_path(Root.branches.narrow(Bare))  # pyright: ignore[reportArgumentType]
     assert path.segments[-1].narrow_to == ("Bare",)
-    assert path.target == "Bare"
 
 
 def test_a_hop_narrow_to_no_subtype_is_refused_rather_than_erased() -> None:
@@ -260,25 +246,95 @@ def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
     # Single-shot is per segment rather than per path: continuing to another
     # relationship starts a fresh alternative list, and the hop it continued
     # keeps the one it was given.
-    path = include_traversal(Root.branches.narrow(Branch).leaves.narrow(Leaf))
-    assert [(segment.rel, segment.narrow_to) for segment in path.segments] == [
+    (node,) = _preflight(ORCHARD, Root, Root.branches.narrow(Branch).leaves.narrow(Leaf))
+    assert _spelled(node) == [
         ("orchard.Root.branches", ("orchard.Branch",)),
-        ("orchard.Branch.leaves", ("orchard.Leaf",)),
+        ("orchard.Branch.canopy", ("orchard.Leaf",)),
     ]
 
 
-def test_a_path_that_already_continued_cannot_continue_again() -> None:
-    # What a composed hop points at is a declaration fact of an Entity this path
-    # reaches no class for, so a third hop has no owner to spell itself from.
-    assert include_traversal(SalesOrder.customer.notes).target is None
-    with pytest.raises(QueryDefinitionError, match="already continued past the hop") as caught:
-        SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes.deeper)
+def test_a_continuation_is_refused_by_binding_rather_than_by_its_depth() -> None:
+    # Authoring accepts any depth, so what stops this path is that `SalesNote`
+    # declares no `deeper`, not how far it had already come.
+    query = SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes.deeper)
+    with pytest.raises(QueryDefinitionError, match="SalesNote declares no") as caught:
+        canonical_query(query, LEDGER)
     assert caught.value.code == "query-path-invalid"
 
 
-def test_a_directly_built_path_carries_no_target_and_cannot_continue() -> None:
-    built: IncludePath[SalesOrder, Any] = IncludePath(
-        IncludeTraversal(segments=(IncludeSegment(rel="sales.Order.customer"),), target=None)
+def _bound(path: IncludePath[Any, Any]) -> list[tuple[str, tuple[str, ...]]]:
+    (node,) = _preflight(deep.FAMILY, deep.Keeper, path)
+    return _spelled(node)
+
+
+_ANIMALS = (f"{deep.FAMILY_NS}.Keeper.animals", ())
+_NARROWED_TO_DOG = (f"{deep.FAMILY_NS}.Keeper.animals", (f"{deep.FAMILY_NS}.Dog",))
+
+
+def test_a_continuation_reaches_a_target_its_declaration_named_forward() -> None:
+    # `Animal.keeper` names `Keeper` before that class exists; the identity and
+    # its target were settled when the model formed, so binding reads neither
+    # the annotation nor the import order.
+    assert _bound(deep.Keeper.animals.keeper) == [
+        _ANIMALS,
+        (f"{deep.FAMILY_NS}.Animal.keeper", ()),
+    ]
+
+
+def test_a_narrow_at_an_intermediate_hop_reads_the_subtypes_own_relationship() -> None:
+    assert _bound(deep.Keeper.animals.narrow(deep.Dog).gear) == [
+        _NARROWED_TO_DOG,
+        (f"{deep.FAMILY_NS}.Dog.gear", ()),
+    ]
+
+
+def test_a_continuation_past_a_narrow_spells_the_declaring_ancestor_not_the_subtype() -> None:
+    assert _bound(deep.Keeper.animals.narrow(deep.Dog).toys.maker) == [
+        _NARROWED_TO_DOG,
+        (f"{deep.FAMILY_NS}.Animal.playthings", ()),
+        (f"{deep.FAMILY_NS}.Toy.maker", ()),
+    ]
+
+
+def test_a_narrow_to_several_subtypes_continues_through_what_the_hop_points_at() -> None:
+    both = deep.Keeper.animals.narrow(deep.Dog, deep.Cat)
+    assert _bound(both.toys)[-1] == (f"{deep.FAMILY_NS}.Animal.playthings", ())
+    # No single subtype is reached, so a subtype's own member answers nothing,
+    # even one both alternatives happen to declare under one Python name.
+    with pytest.raises(QueryDefinitionError, match="Animal declares no relationship") as caught:
+        _bound(both.gear)
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_a_subtypes_relationship_is_unreachable_past_the_broad_hop() -> None:
+    with pytest.raises(QueryDefinitionError, match="Animal declares no relationship") as caught:
+        _bound(deep.Keeper.animals.gear)
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_a_narrow_outside_the_hops_target_keeps_its_portable_refusal_when_continued() -> None:
+    # The continuation binds through the class the narrow names, and the rule the
+    # narrow breaks stays the validator's.
+    with pytest.raises(ModelRejectedError) as caught:
+        _bound(deep.Keeper.animals.narrow(deep.Toy).maker)  # pyright: ignore[reportArgumentType]
+    assert caught.value.rule == "narrow-outside-relationship-target"
+
+
+def test_a_root_guard_survives_every_continuation_of_its_path() -> None:
+    (node,) = _preflight(deep.FAMILY, deep.Animal, deep.Dog.toys.maker)
+    assert node.applies_to == (f"{deep.FAMILY_NS}.Dog",)
+    assert _spelled(node) == [
+        (f"{deep.FAMILY_NS}.Animal.playthings", ()),
+        (f"{deep.FAMILY_NS}.Toy.maker", ()),
+    ]
+
+
+def test_a_root_segment_applies_only_where_its_name_answers_its_own_identity() -> None:
+    # Two siblings declare `gear`, so the name alone would answer on both.
+    dog_gear = authored_include_path(deep.Dog.gear).segments[0]
+    assert dog_gear.relationship_in(wire_names_of(deep.Dog)) == dog_gear.root_relationship
+    assert dog_gear.relationship_in(wire_names_of(deep.Cat)) is None
+    continuation = authored_include_path(deep.Keeper.animals.gear).segments[1]
+    assert continuation.relationship_in(wire_names_of(deep.Cat)) == RelationshipIdentity(
+        deep.Cat.identity, "gear"
     )
-    with pytest.raises(AttributeError, match="already continued past the hop"):
-        _ = built.notes

@@ -606,9 +606,6 @@ class Rel[T]:
     ``UNLOADED`` sentinel written through ``object.__setattr__`` still routes
     through :meth:`__get__`.
 
-    ``target`` is the canonical spelling of the Entity this relationship points
-    at, so a continuing Include hop keeps the namespace a local name would drop.
-
     The class-access overloads resolve the expression's target parameter to the
     relationship's ELEMENT type. Declaration order is load-bearing: overload
     resolution is first-match and a bare ``R`` unifies with anything, so the
@@ -620,15 +617,12 @@ class Rel[T]:
     was reached through — which an Object Query turns into a path-ROOT guard.
     """
 
-    __slots__ = ("_index", "_many", "_py_name", "_ref", "_target")
+    __slots__ = ("_index", "_many", "_py_name", "_ref")
 
-    def __init__(
-        self, ref: RelationshipRef, py_name: str, index: int, target: str, *, many: bool
-    ) -> None:
+    def __init__(self, ref: RelationshipRef, py_name: str, index: int, *, many: bool) -> None:
         self._ref = ref
         self._py_name = py_name
         self._index = index
-        self._target = target
         self._many = many
 
     def rebound(self, index: int) -> Rel[T]:
@@ -637,7 +631,7 @@ class Rel[T]:
         A relationship position sits after the exact class's own member count, so
         no position survives inheritance and a descendant installs its own.
         """
-        return Rel(self._ref, self._py_name, index, self._target, many=self._many)
+        return Rel(self._ref, self._py_name, index, many=self._many)
 
     @overload
     def __get__[E, R](
@@ -653,12 +647,10 @@ class Rel[T]:
     def __get__(self, obj: object, _owner: type | None = None, /) -> T: ...
     def __get__(self, obj: object | None, _owner: type | None = None) -> Any:
         if obj is None:
-            hop = root_segment(
-                self._ref, self._py_name, self._target, _access_source(_owner), many=self._many
-            )
+            root = root_segment(self._ref, self._py_name, _access_source(_owner), many=self._many)
             if self._many:
-                return ManyRelationshipExpr[Any, Any](hop)
-            return RelationshipExpr[Any, Any](hop)
+                return ManyRelationshipExpr[Any, Any](root)
+            return RelationshipExpr[Any, Any](root)
         try:
             value = object.__getattribute__(obj, COMPACT_STATE_SLOT)[self._index]
         except AttributeError, TypeError:

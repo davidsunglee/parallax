@@ -98,7 +98,7 @@ class _StreamWireProjection:
             concrete = reader.concrete(node)
         position = wire_position(
             self._includes,
-            self._construction.cataloged,
+            self._construction,
             at,
             operation="SnapshotStream.wire",
         )

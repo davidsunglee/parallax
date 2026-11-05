@@ -63,7 +63,8 @@ def validate_object_query(
     whose resolved position the predicate and the Sort Keys are both measured
     against — then Includes, measured against the unnarrowed queried position.
     A canonical query's predicate is validated where an interpreted query's
-    adapter is invoked, once, at that same position.
+    predicate adapter is invoked, once, at that same position; its Include adapter
+    is invoked once, at the Includes step.
     """
     clauses: QueryClauses
     if isinstance(query, InterpretedQuery):
@@ -81,7 +82,8 @@ def validate_object_query(
             raise ValueError(f"{key.attr!r} names no declared ordering attribute")
         require_single_scalar(key.attr, member)
         order_terms.append(ResolvedOrderTerm(member, key.direction or "asc", key.nulls or "last"))
-    includes = tuple(validate_include_path(path, model, queried) for path in clauses.includes)
+    paths = query.includes() if isinstance(query, InterpretedQuery) else query.includes
+    includes = tuple(validate_include_path(path, model, queried) for path in paths)
     narrowed = (
         None
         if clauses.narrow_to is None

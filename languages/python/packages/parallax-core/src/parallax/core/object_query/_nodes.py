@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import ClassVar, Final, Literal, Protocol, Self
@@ -21,6 +21,7 @@ __all__ = [
     "AsOf",
     "AsOfRange",
     "History",
+    "IncludeInterpretation",
     "IncludePathNode",
     "IncludeSegment",
     "InterpretedQuery",
@@ -254,9 +255,16 @@ class ObjectQueryNode:
     limit: int | None = None
     includes: tuple[IncludePathNode, ...] = field(default_factory=tuple)
 
+    @property
+    def requests_includes(self) -> bool:
+        return bool(self.includes)
+
 
 class QueryClauses(Protocol):
-    """The clauses of an Object Query other than its predicate, read-only."""
+    """The clauses of an Object Query other than its predicate and Include paths,
+    read-only; of those paths, only whether any are requested, because an
+    interpreted query's paths have no canonical form before the gate binds them.
+    """
 
     @property
     def target(self) -> EntityIdentity: ...
@@ -274,16 +282,23 @@ class QueryClauses(Protocol):
     def limit(self) -> int | None: ...
 
     @property
-    def includes(self) -> tuple[IncludePathNode, ...]: ...
+    def requests_includes(self) -> bool: ...
+
+
+type IncludeInterpretation = Callable[[], tuple[IncludePathNode, ...]]
+"""An adapter's Include paths as canonical nodes, invoked at the gate's Includes
+step so a refusal lands in clause order."""
 
 
 @dataclass(frozen=True, slots=True)
 class InterpretedQuery:
-    """An Object Query whose predicate an adapter interprets rather than a
-    canonical node: the ``clauses`` beside the captured ``predicate``."""
+    """An Object Query whose predicate and Include paths adapters interpret rather
+    than canonical nodes: the ``clauses`` beside the captured ``predicate`` and
+    ``includes``."""
 
     clauses: QueryClauses
     predicate: PredicateInterpretation
+    includes: IncludeInterpretation
 
 
 type QueryInput = ObjectQueryNode | InterpretedQuery

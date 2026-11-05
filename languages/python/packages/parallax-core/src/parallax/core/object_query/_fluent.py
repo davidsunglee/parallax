@@ -9,14 +9,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from parallax.core.base import TIMESTAMP, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata, EntityIdentity
 from parallax.core.metamodel import TemporalDimension as AxisKind
-from parallax.core.object_query._canonical import canonical_includes, subtype_spelling
+from parallax.core.object_query._canonical import subtype_spelling
 from parallax.core.object_query._nodes import (
     TX_TIME,
     VALID_TIME,
     AsOf,
     AsOfRange,
     History,
-    IncludePathNode,
     Latest,
     TemporalDimension,
     TemporalDimensionConstant,
@@ -87,8 +86,9 @@ class ObjectQuery[E, S]:
     source is legal against the queried position, while a sort key addresses the
     rows the query actually returns.
 
-    Every field is private authoring state: the authored predicate and the other
-    clauses in their canonical spellings, and no canonical Object Query. An Object
+    Every field is private authoring state: the authored predicate and Include
+    paths, the other clauses in their canonical spellings, and no canonical Object
+    Query. An Object
     Query exposes no execution, serialization, canonical-query inspection, or
     refinement ``.where(...)``, carries no Snapshot feature tags and no model, and
     defines no structural equality or semantic hash — two independently authored
@@ -112,9 +112,10 @@ class ObjectQuery[E, S]:
         """Deep-fetch one or more relationship paths:
         ``Order.where(...).include(Order.items, Order.tags)``. One path grammar
         shared with predicates; a longer path implies its intermediates.
-        Accumulates across calls (not single-shot) into the canonical include
-        set: sorted, deduplicated, and stripped of exact prefixes a retained
-        extension already materializes.
+        Accumulates across calls (not single-shot). Each operation binds the paths
+        against its serving model, and their resolved spellings form the canonical
+        include set: sorted, deduplicated, and stripped of exact prefixes a
+        retained extension already materializes.
 
         Legality is measured against the QUERIED Entity, never against the
         narrowed result: a result narrowing constrains which objects come back,
@@ -133,15 +134,9 @@ class ObjectQuery[E, S]:
             raise QueryDefinitionError(
                 code="query-clause-invalid", message="include requires at least one path"
             )
-        from parallax.core.entity._expressions import include_traversal
+        from parallax.core.entity._expressions import authored_include_path
 
-        traversals = tuple(include_traversal(path) for path in paths)
-        added = tuple(
-            IncludePathNode(
-                segments=traversal.segments, applies_to=self._source_guard(traversal.source)
-            )
-            for traversal in traversals
-        )
+        added = tuple(authored_include_path(path) for path in paths)
         return self._with(includes=self._query.includes + added)
 
     def order_by(self, *keys: SortKey[S]) -> ObjectQuery[E, S]:
@@ -318,23 +313,6 @@ class ObjectQuery[E, S]:
         name: _DimensionName = "valid_time" if dimension.dimension == "valid-time" else "tx_time"
         return self._with_temporal({self._dimension(name): History()})
 
-    def _source_guard(self, source: str | None) -> tuple[str, ...] | None:
-        """The source guard an include path seeded through ``source`` authors.
-
-        A guard is what makes a path start from fewer than every queried object,
-        so it is the ACCESS SOURCE — the Entity the first hop was reached
-        through — measured against this query's own queried position, never
-        against the relationship's declaring Entity. That distinction is the
-        whole point of keeping the two identities apart: ``Dog.doghouse``,
-        declared on ``Dog``, and ``Dog.owner``, inherited from ``Animal``, guard
-        an ``Animal`` query identically. Reaching the first hop through the
-        queried position itself guards nothing, so it authors no selection at all
-        rather than one resolving to the whole position.
-        """
-        if source is None or source == self._query.target.canonical:
-            return None
-        return (source,)
-
     def _with_temporal(
         self, selections: Mapping[TemporalDimension, TemporalSelection]
     ) -> ObjectQuery[E, S]:
@@ -365,10 +343,6 @@ class ObjectQuery[E, S]:
         if "temporal" in clauses:
             clauses["temporal"] = MappingProxyType(
                 dict(cast("Mapping[TemporalDimension, TemporalSelection]", clauses["temporal"]))
-            )
-        if "includes" in clauses:
-            clauses["includes"] = canonical_includes(
-                cast("tuple[IncludePathNode, ...]", clauses["includes"])
             )
         return replace(self, _query=replace(self._query, **clauses))
 
@@ -463,8 +437,8 @@ def typed_read_query(query: ObjectQuery[Any, Any]) -> AuthoredQuery:
     while further clauses were still legal — the target's own temporal
     completeness. An omitted Transaction-Time selection becomes the explicit
     ``asOf latest`` a canonical document always states, and an omitted Valid-Time
-    selection on a Bitemporal target raises. The predicate stays authored: the
-    read resolves it against the model it adopts.
+    selection on a Bitemporal target raises. The predicate and Include paths stay
+    authored: the read resolves them against the model it adopts.
     """
     return query._completed()  # pyright: ignore[reportPrivateUsage] - the seam reads the query's own clause state
 

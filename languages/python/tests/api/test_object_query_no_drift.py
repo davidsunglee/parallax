@@ -254,7 +254,23 @@ _DESCRIPTOR_MODELS = load_domain_models()
 # Queries whose dotted paths continue past a relationship keep Python member
 # names until a model with Entity Classes resolves them, so a descriptor-formed
 # model, which indexes no class, can neither resolve nor export them.
-_UNFINISHED: frozenset[str] = frozenset({"m-navigate-007", "m-navigate-011"})
+_UNFINISHED: frozenset[str] = frozenset(
+    {
+        "m-inheritance-076",
+        "m-inheritance-078",
+        "m-inheritance-154",
+        "m-inheritance-155",
+        "m-inheritance-158",
+        "m-inheritance-159",
+        "m-inheritance-160",
+        "m-inheritance-161",
+        "m-navigate-007",
+        "m-navigate-011",
+        "m-snapshot-read-004",
+        "m-snapshot-read-005",
+        "m-snapshot-read-011",
+    }
+)
 
 
 def _case_query(case_id: str) -> dict[str, Any]:

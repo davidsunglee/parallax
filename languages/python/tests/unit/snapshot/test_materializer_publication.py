@@ -16,6 +16,7 @@ state here is carried by encoded Bytes Columns and document members.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 from decimal import Decimal
 from enum import IntEnum
@@ -45,8 +46,7 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
 from parallax.core.db_port import Row
-from parallax.core.entity import GraphConstructionError, IncludePath
-from parallax.core.entity._expressions import IncludeTraversal
+from parallax.core.entity import GraphConstructionError
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -57,7 +57,6 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.object_query import IncludeSegment
 from parallax.core.read_delivery import InvalidData, StoredDataDecodingError
 from parallax.core.read_delivery._page import (
     ABSENT,
@@ -906,24 +905,15 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
 
 
 def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> None:
-    # A `IncludePath` is a frozen value carrying nothing but its segments,
-    # its target spelling and its source, so a directly built path and a copy
-    # each key the same view as the class-derived one.
+    # An `IncludePath` is a frozen value carrying nothing but its authored path,
+    # so a copy keys the same view as the class-derived one.
     fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
     (root,) = fixture.materialize(owner)
     derived = sm.AnimalOwner.pets.narrow(sm.Dog)
-    direct: IncludePath[sm.AnimalOwner, sm.Dog] = IncludePath(
-        IncludeTraversal(
-            segments=(
-                IncludeSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog",)),
-            ),
-            target="Dog",
-        )
-    )
-    for path in (derived, direct):
+    for path in (derived, copy.copy(derived)):
         reached = cast("tuple[object, ...]", view(root, path))
         assert type(reached[0]) is sm.Dog
 

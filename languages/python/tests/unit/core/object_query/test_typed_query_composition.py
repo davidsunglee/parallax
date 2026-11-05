@@ -114,7 +114,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._expressions import AuthoredConstant, include_traversal
+from parallax.core.entity._expressions import AuthoredConstant, authored_include_path
 from parallax.core.entity._model import model_of
 from parallax.core.predicate import TrueNode
 from parallax.core.unit_work import (
@@ -881,7 +881,7 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
             ]
         }
     ]
-    assert include_traversal(broad).segments[-1].narrow_to == ()
+    assert authored_include_path(broad).segments[-1].narrow_to == ()
 
 
 def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
@@ -914,11 +914,13 @@ def test_a_path_reaches_the_element_type_of_every_declared_relationship_shape() 
     optional: IncludePath[Beast, Keeper] = Beast.keeper
     exact: IncludePath[Keeper, Badge] = Keeper.badge
     unextracted: IncludePath[Keeper, tuple[Beast, ...]] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
-    assert [include_traversal(path).target for path in (to_many, optional, exact, unextracted)] == [
-        f"{_NS}.Beast",
-        f"{_NS}.Keeper",
-        f"{_NS}.Badge",
-        f"{_NS}.Beast",
+    assert [
+        authored_include_path(path).described() for path in (to_many, optional, exact, unextracted)
+    ] == [
+        f"{_NS}.Keeper.beasts",
+        f"{_NS}.Beast.keeper",
+        f"{_NS}.Keeper.badge",
+        f"{_NS}.Keeper.beasts",
     ]
 
 
@@ -945,30 +947,35 @@ def test_a_reference_names_the_namespace_its_own_class_declares() -> None:
     )
 
 
-def test_a_relationship_hop_past_the_first_erases_and_the_gate_refuses_it() -> None:
-    # A deeper hop is composed from a member name against a target the path
-    # reaches no class for, so nothing about it is typed — no suppression belongs
-    # on this line — and the model states the whole rule at the gate.
-    with pytest.raises(ValueError, match="names no declared relationship on Beast"):
+def test_a_relationship_hop_past_the_first_erases_and_binding_refuses_it() -> None:
+    # A continuation keeps its Python name and nothing else, so nothing about it
+    # is typed — no suppression belongs on this line — and the serving model's
+    # classes state the whole rule when an operation binds the path.
+    with pytest.raises(QueryDefinitionError, match="declares no relationship") as caught:
         accepted_read_query(Keeper.where(Keeper.all).include(Keeper.beasts.no_such_hop), _BESTIARY)
-
-
-def test_an_authored_chain_stops_at_the_second_hop() -> None:
-    # The consequence of the same erasure: a third hop has no owner to spell its
-    # segment from, because what the second hop points at is a declaration fact
-    # of an Entity the path reaches no class for. The path's target parameter
-    # cannot supply it — a type parameter is checker-only, and this is run time —
-    # so a longer traversal is authored as a path rooted where the deeper hop
-    # starts.
-    second = include_traversal(Keeper.beasts.keeper)
-    assert [segment.rel for segment in second.segments] == [
-        "parallax.tests.typed.Keeper.beasts",
-        "parallax.tests.typed.Beast.keeper",
-    ]
-    assert second.target is None
-    with pytest.raises(QueryDefinitionError, match="already continued past the hop") as caught:
-        Keeper.where(Keeper.all).include(Keeper.beasts.keeper.badge)
     assert caught.value.code == "query-path-invalid"
+
+
+def test_an_authored_chain_continues_past_the_second_hop() -> None:
+    # The first hop's own declaration names `Keeper.beasts`; each hop past it is
+    # spelled by the class the previous one reached, however many there are.
+    document = canonical_document(
+        accepted_read_query(
+            Keeper.where(Keeper.all).include(Keeper.beasts.keeper.beasts.keeper.badge), _BESTIARY
+        ),
+        _BESTIARY,
+    )
+    assert document["includes"] == [
+        {
+            "segments": [
+                {"rel": f"{_NS}.Keeper.beasts"},
+                {"rel": f"{_NS}.Beast.keeper"},
+                {"rel": f"{_NS}.Keeper.beasts"},
+                {"rel": f"{_NS}.Beast.keeper"},
+                {"rel": f"{_NS}.Keeper.badge"},
+            ]
+        }
+    ]
 
 
 def test_a_value_object_member_is_known_from_its_declared_shape() -> None:

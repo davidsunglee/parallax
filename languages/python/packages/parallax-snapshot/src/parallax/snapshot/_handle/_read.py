@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 from parallax.core import read_planning
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
-from parallax.core.entity._expressions import include_traversal
+from parallax.core.entity._authored_resolver import include_path_node
+from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
-from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
 from parallax.core.read_delivery import InvalidData, InvalidDataError
@@ -224,7 +224,7 @@ class Snapshot[T]:
         reader = _require_projection_inputs((value,), projection)
         position = wire_position(
             includes,
-            reader.model,
+            projection,
             None if at is _WIRE_AT_OMITTED else cast("IncludePath[Entity, Any] | None", at),
         )
         return _project_eager_values((value,), includes, projection, wire, position, reader=reader)[
@@ -285,29 +285,26 @@ def _require_projection_inputs(
 
 def wire_position(
     includes: read_planning.IncludeTree,
-    model: CatalogedModel,
+    construction: EntityGraphConstruction,
     path: IncludePath[Entity, Any] | None,
     *,
     operation: str = "Snapshot.wire",
 ) -> read_planning.PositionId:
     if path is None:
         return includes.root
-    root = model.meta.entity(includes.queried)
+    meta = construction.cataloged.meta
+    root = meta.entity(includes.queried)
     if root is None:  # pragma: no cover - the tree came from this exact model
         raise SnapshotInspectionError(
             code="snapshot-wire-at-unrequested",
             message=f"the retained model declares no query root {includes.queried.canonical}",
             operation=operation,
         )
-    traversal = include_traversal(path)
-    authored = IncludePathNode(
-        segments=traversal.segments,
-        applies_to=None
-        if traversal.source is None or traversal.source == includes.queried.canonical
-        else (traversal.source,),
-    )
     try:
-        resolved = validate_include_path(authored, model.meta, root_position(model.meta, root))
+        bound = include_path_node(
+            authored_include_path(path), includes.queried, meta, construction.classes
+        )
+        resolved = validate_include_path(bound, meta, root_position(meta, root))
         position = includes.requested_position(resolved)
     except Exception as error:
         raise SnapshotInspectionError(

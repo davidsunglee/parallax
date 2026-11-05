@@ -49,7 +49,7 @@ from parallax.core._execution import _read_pipeline
 from parallax.core.base import INT64, ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, DatabaseAdapter, MappingRow
-from parallax.core.entity._authored_resolver import typed_predicate_interpretation
+from parallax.core.entity._authored_resolver import typed_query_interpretation
 from parallax.core.execution import (
     DeferredFeatureError,
     QueryTargetError,
@@ -58,6 +58,7 @@ from parallax.core.execution import (
 )
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import (
     InvalidData,
     InvalidDataError,
@@ -313,21 +314,29 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
         stream.__enter__()
 
 
+_ONE_BINDING: Final = ["parallax.compatibility.Order", "includes"]
+
+
 def _counted_bindings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Each Typed predicate resolution a read performs, by queried Entity."""
+    """Each Typed clause resolution a read performs: its predicate by queried
+    Entity, then its Include paths."""
     bindings: list[str] = []
-    bind = typed_predicate_interpretation
+    bind = typed_query_interpretation
 
-    def counting(predicate: Any, model: Any, classes: Any) -> Any:
-        interpret = bind(predicate, model, classes)
+    def counting(query: Any, model: Any, classes: Any) -> Any:
+        interpreted = bind(query, model, classes)
 
-        def counted(root: Any, position: Any, /) -> Any:
+        def predicate(root: Any, position: Any, /) -> Any:
             bindings.append(root.identity.canonical)
-            return interpret(root, position)
+            return interpreted.predicate(root, position)
 
-        return counted
+        def includes() -> Any:
+            bindings.append("includes")
+            return interpreted.includes()
 
-    monkeypatch.setattr(_read_pipeline, "typed_predicate_interpretation", counting)
+        return replace(interpreted, predicate=predicate, includes=includes)
+
+    monkeypatch.setattr(_read_pipeline, "typed_query_interpretation", counting)
     return bindings
 
 
@@ -343,14 +352,51 @@ def test_a_typed_stream_binds_its_query_once_at_entry_for_every_page(
         stream = reads_from.stream(_all_orders(), batch_size=2)
         assert bindings == []
         with stream:
-            assert bindings == ["parallax.compatibility.Order"]
+            assert bindings == _ONE_BINDING
             return _ids(iter(stream))
 
     database = _orders(port)
     delivered = database.transact(deliver) if participating else deliver(database)
     assert delivered == [1, 2, 3, 4, 5]
     assert len(_reads(port)) == 3
-    assert bindings == ["parallax.compatibility.Order"]
+    assert bindings == _ONE_BINDING
+
+
+@pytest.mark.parametrize("participating", [False, True], ids=["standalone", "participating"])
+def test_a_deep_include_binds_once_at_entry_and_reaches_its_leaf_on_every_page(
+    monkeypatch: pytest.MonkeyPatch, participating: bool
+) -> None:
+    bindings = _counted_bindings(monkeypatch)
+    pages = (
+        Read(rows=[_order_row(1), _order_row(2)]),
+        Read(rows=[_item_row(11, 1)]),
+        Read(rows=[{**_status_row(21, 1), "order_item_id": 11}]),
+        Read(rows=[_order_row(2)]),
+        Read(rows=[_item_row(12, 2)]),
+        Read(rows=[{**_status_row(22, 2), "order_item_id": 12}]),
+    )
+    port = ScriptedAdapter(Transact(*pages)) if participating else ScriptedAdapter(*pages)
+    query = _all_orders().include(Order.items.statuses)
+
+    def deliver(reads_from: ScopedDatabase | TxnContext) -> list[int]:
+        stream = reads_from.stream(query, batch_size=1)
+        assert bindings == []
+        with stream:
+            assert bindings == _ONE_BINDING
+            return [root.items[0].statuses[0].id for root in stream]
+
+    database = _orders(port)
+    delivered = database.transact(deliver) if participating else deliver(database)
+    assert delivered == [21, 22]
+    assert len(_reads(port)) == 6
+    assert bindings == _ONE_BINDING
+
+
+def test_a_bad_continuation_refuses_a_stream_at_entry_rather_than_at_the_call() -> None:
+    stream = _orders(RefusingAdapter()).stream(_all_orders().include(Order.items.no_such_member))
+    with pytest.raises(QueryDefinitionError, match="no_such_member") as caught:
+        stream.__enter__()
+    assert caught.value.code == "query-path-invalid"
 
 
 def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:

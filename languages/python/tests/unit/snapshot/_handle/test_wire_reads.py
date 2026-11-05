@@ -42,6 +42,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import _layout as entity_layout
+from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -64,7 +65,7 @@ from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, Page, PageBuilder, ViewSchema
-from parallax.core.read_planning import IncludeTree
+from parallax.core.read_planning import DeepFetchError, IncludeTree
 from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
@@ -92,8 +93,10 @@ from parallax.snapshot._publication._wire import (
     wire_pin_of,
 )
 from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
+    ReadCall,
     RefusingAdapter,
     ScriptedAdapter,
     Transact,
@@ -104,6 +107,7 @@ from tests._support.document_reads import fold_mapping_rows
 from tests._support.model_capabilities import wire_facts_for
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
+from tests.unit import _deep_include_support as deep
 from tests.unit._metamodel_support import Declaration, key, source
 from tests.unit._prepared_read_support import (
     bound_cells,
@@ -622,6 +626,43 @@ def test_typed_projection_matches_direct_wire_alias_and_cycle_boundaries() -> No
     assert _mapping(items[1])["order"] is back
     assert back is not projected
     assert "items" not in back
+
+
+# --------------------------------------------------------------------------- #
+# A Typed include past three hops, through every standalone read.              #
+# --------------------------------------------------------------------------- #
+_ORDER_CLASSES = class_models.MODELS["orders"]
+
+
+@pytest.mark.parametrize(("read", "leaves"), deep.DEEP_READS)
+def test_a_typed_include_past_three_hops_executes_to_its_leaf(
+    read: Callable[[ScopedDatabase], Any], leaves: Callable[[Any], list[int]]
+) -> None:
+    with ScriptedAdapter(*deep.deep_order_reads()) as port:
+        database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
+        assert leaves(read(database)) == deep.LEAF_ITEMS
+    assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 5
+
+
+def test_a_typed_query_and_its_canonical_export_read_one_graph_past_three_hops() -> None:
+    query = deep.deep_order_query()
+    with ScriptedAdapter(*deep.deep_order_reads(), *deep.deep_order_reads()) as port:
+        database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
+        typed = database.wire.find(query).result()
+        canonical = database.wire.find(object_query_node(query, _ORDER_CLASSES)).result()
+    assert typed == canonical
+    assert port.calls[:5] == port.calls[5:]
+
+
+@pytest.mark.parametrize("read", deep.BACK_REFERENCE_READS)
+def test_a_typed_continuation_past_a_back_reference_stays_an_execution_failure(
+    read: Callable[[ScopedDatabase], object],
+) -> None:
+    port = ScriptedAdapter()
+    database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
+    with raises_contextualized(DeepFetchError, match="back-reference"):
+        read(database)
+    assert [call for call in port.calls if isinstance(call, ReadCall)] == []
 
 
 # --------------------------------------------------------------------------- #
