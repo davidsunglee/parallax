@@ -102,6 +102,8 @@ from parallax.core.temporal_read import view as temporal_view
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
+from tests.unit._document_layout_support import document_model
+from tests.unit._document_layout_support import entity as document_entity
 from tests.unit._gc_reachability import reachable_objects
 
 ORDERS = accepted_model("orders")
@@ -1677,6 +1679,24 @@ def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(
         rate, model=RATE, key="id", terms=((1, (TimeInterval(jan, INFINITY),)),)
     )
     assert (target.projection == coverage.projection) is retain_predecessor
+
+
+@pytest.mark.parametrize(
+    ("retain_predecessor", "observed"), [(False, False), (True, True)], ids=["revision", "retained"]
+)
+def test_a_direct_only_document_target_observes_its_document_only_where_it_retains_it(
+    retain_predecessor: bool, observed: bool
+) -> None:
+    model = document_model()
+    target = read_planning.plan_target_read(
+        document_entity(model, "Marker"),
+        model=model,
+        key="id",
+        key_value=1,
+        retain_predecessor=retain_predecessor,
+    )
+
+    assert target.projection == read_planning.ResolvedReadProjection((), observed)
 
 
 def test_concrete_target_root_query_injects_a_pinned_axis() -> None:

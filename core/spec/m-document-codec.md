@@ -223,8 +223,8 @@ stored, unknown keys included — which is what carrying an UNASSIGNED occurrenc
 forward across a temporal successor needs (`m-unit-work`), since an assignment
 supplies its own document and reads no stored state at all. A path naming no
 member of the shape is a caller error, not an absence. Decoding is per path rather
-than whole-document because a row-form read needs only the members its consumer
-asked for and never pays to decode the rest; a consumer that wants an occurrence's
+than whole-document because a write's row-acquisition read needs only the members its
+consumer asked for and never pays to decode the rest; a consumer that wants an occurrence's
 members decodes them against that occurrence's shape and its returned document.
 For a `Many` that returned document is the array, and **each of its elements is
 itself a document over that same shape**: the elements are decoded one at a time,

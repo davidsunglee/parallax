@@ -364,23 +364,23 @@ whether `Document` slots are selected:
   (its scalars, plus any value-object document columns it declares) — as does a deferred
   `load` / first `access`, which is a child level resolved on demand.
 - **Row-form** (the **values lane**) — the result is consumed as flat values, with no
-  instance constructed. It omits Document slots by default. The corpus's predicate
-  `read` cases (`then.rows`) and the internal row-acquisition reads a write makes
-  (`m-unit-work` *Row acquisition*) are the values lane; aggregation results
-  (`m-agg`) use this lane too. A row-acquisition read is the one row-form read
+  instance constructed. It omits Document slots by default. The internal
+  row-acquisition reads a write makes (`m-unit-work` *Row acquisition*) are the
+  values lane; aggregation results (`m-agg`) use this lane too. A row-acquisition
+  read is the one row-form read
   whose consumer can widen the default: a temporal target's projects every declared
   Document slot, because the observation it records is a complete Predecessor Row
   (`m-write-plan`) — the **predecessor projection**. Widening the projection does
   not make it instance-form — it still constructs no instance.
 
 Row-form is **not a developer surface**: the idiomatic find API always materializes,
-so the developer path is instance-form; row-form is the internal / conformance
-consumption lane. `m-case-format` fixes the selector — a **top-level** read case's result
-form is declared by **which result member it asserts** (`then.rows` = row-form;
-`then.graph` / `then.graphs` = instance-form), and a scenario / coherence / concurrency
-**step** read (asserted with `expectRows` / `observeRows`) is fixed by the step's read
-semantics: a managed-object find or refresh, a relationship `load`, a query-backed
-list's first `access`, and a full-scalar shared concurrency read are **instance-form**.
+so the developer path is instance-form; row-form is the internal acquisition
+lane. `m-case-format` fixes what a case observes: every read a case asserts is
+**instance-form**, whichever member asserts it. `then.rows` is a flat assertion over
+that read rather than a choice of lane, and a scenario / coherence / concurrency
+**step** read (asserted with `expectRows` / `observeRows`) — a managed-object find or
+refresh, a relationship `load`, a query-backed list's first `access`, and a
+full-scalar shared concurrency read — is instance-form likewise.
 
 Everything already specified composes with this rule unchanged: a version
 Attribute is an applicable Attribute slot; a TPH abstract read selects its

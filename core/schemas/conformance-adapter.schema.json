@@ -538,7 +538,7 @@
       "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
-      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Flush. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Flush. `interface` is what the Read serves — the public `typed` or `wire` interface publishing its result, or the internal `rows` target acquisition of a write, which publishes neither — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "interface"],

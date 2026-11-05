@@ -41,9 +41,9 @@
 # `Beacon` and `Mooring` exist for the projection rule alone, and they divide its two
 # halves. Both declare the same layout and NO document-resident member at all, so each
 # one's Structured Column is physically present, `NOT NULL`, and holds a document
-# nothing ever extracts from. `Beacon` is the half that projects nothing: a row-form
-# read of its one member emits no document extraction whatsoever, because no member it
-# was asked for lives inside one. `Mooring` is the half that projects anyway: it is
+# nothing ever extracts from. `Beacon` is the half no member needs: only a read that
+# observes it reaches its Column, and no extraction ever does, because nothing it
+# declares lives inside the document. `Mooring` is the half that projects anyway: it is
 # Bitemporal, and a read that OBSERVES it — an instance-form find, or the row
 # acquisition a keyed write makes — carries the stored document itself,
 # because that is what its Predecessor Row retains and what every rectangle a split

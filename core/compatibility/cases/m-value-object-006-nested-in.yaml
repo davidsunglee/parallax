@@ -15,8 +15,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))
-        mariadb: select t0.id, t0.name from customer t0 where json_value(t0.address, ?) in (?, ?)
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where json_value(t0.address, ?) in (?, ?)
       binds:
         postgres: [city, [Oslo, Boston]]
         mariadb: ['$.city', Oslo, Boston]

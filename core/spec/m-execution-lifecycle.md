@@ -192,7 +192,10 @@ ReadStarted(target, interface, edition)
 ReadFinished(ReadCompleted | ReadFailed(failure))
 ```
 
-`interface` is `typed`, `wire`, or internal `rows`. A Read starts after public
+`interface` is `typed`, `wire`, or internal `rows`. `typed` and `wire` name the
+representation a public read publishes; `rows` names a write's target acquisition,
+whose rows are recorded for the write and publish neither (`m-unit-work` *Row
+acquisition*). A Read starts after public
 preflight and any read-dependency Flush. It spans planning, lowering, all
 of its Database Calls, conversion, materialization, and publication until the
 public result is ready. It has no root-count or materialized-node count.

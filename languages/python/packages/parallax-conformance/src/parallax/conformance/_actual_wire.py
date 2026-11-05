@@ -6,10 +6,7 @@ from typing import cast
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, INFINITY_LITERAL, JSON, ManagedValue, NeutralType
 from parallax.core.db_port import MappingRow
-from parallax.core.dialect import scalar_result
 from parallax.core.metamodel import (
-    AbstractRoot,
-    AbstractSubtype,
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
@@ -20,9 +17,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectIdentity,
     ValueObjectMetadata,
-    entity_by_name,
 )
-from parallax.core.object_query import ObjectQueryNode
 from parallax.core.storage_layout import RelationalDocument, TableLayout
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import (
@@ -39,8 +34,8 @@ __all__ = ["ActualWireProjection"]
 class ActualWireProjection:
     """Project managed production values into canonical Wire observations.
 
-    The accepted model is retained because physical rows, logical published
-    rows, Object Keys, and create/change payloads each name metadata differently.
+    The accepted model is retained because physical table rows, Object Keys, and
+    create/change payloads each name metadata differently.
     The public methods hide those lookups and converge on :meth:`scalar`.
     """
 
@@ -58,75 +53,6 @@ class ActualWireProjection:
         if member.multiplicity is Multiplicity.MANY:
             return self._typed_collection(member.type, value)
         return self._typed(member.type, value)
-
-    def published_row(self, query: ObjectQueryNode, row: Mapping[str, object]) -> MappingRow:
-        """A row-form query result, resolved from its projected physical columns."""
-        attributes, value_objects = self._query_members(query)
-        by_column: dict[
-            str,
-            dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata | ValueObjectMetadata],
-        ] = {}
-        for member in (*attributes, *value_objects):
-            by_column.setdefault(member.storage.name, {})[member.identity] = member
-            if isinstance(member, AttributeMetadata):
-                by_column.setdefault(
-                    scalar_result(member.storage.name, member.type).publication_key, {}
-                )[member.identity] = member
-        selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
-        projected: MappingRow = {}
-        for name, value in row.items():
-            if name == "familyVariant":
-                projected[name] = value
-                continue
-            options = tuple(by_column.get(name, {}).values())
-            if len(options) == 1:
-                member = options[0]
-            elif options:
-                if selected is None:
-                    concrete_attributes, concrete_value_objects = self._published_row_members(
-                        query, row
-                    )
-                    selected = {
-                        item.storage.name: item
-                        for item in (*concrete_attributes, *concrete_value_objects)
-                    }
-                    selected.update(
-                        {
-                            scalar_result(item.storage.name, item.type).publication_key: item
-                            for item in concrete_attributes
-                        }
-                    )
-                member = selected.get(name)
-            else:
-                member = None
-            if isinstance(member, AttributeMetadata):
-                result = scalar_result(member.storage.name, member.type)
-                projected[name] = (
-                    self.published_scalar(member, value)
-                    if result.encoded and name == result.publication_key
-                    else self.scalar(member, value)
-                )
-            elif member is not None:
-                projected[name] = self.value_object(member, value)
-            else:
-                raise ValueError(
-                    f"{query.target.canonical}: no projected member owns column {name!r}"
-                )
-        return projected
-
-    def _published_row_members(
-        self, query: ObjectQueryNode, row: Mapping[str, object]
-    ) -> tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]:
-        variant = row.get("familyVariant")
-        if not isinstance(variant, str):
-            raise ValueError(
-                f"{query.target.canonical}: an ambiguous projected column requires familyVariant"
-            )
-        entity = self._entity_by_name(variant)
-        view = inheritance.view(self._model).entity(entity.identity)
-        if view is None:  # pragma: no cover - every accepted Entity has a view
-            raise ValueError(f"{entity.identity.canonical}: no inheritance position")
-        return tuple(view.applicable_attributes), tuple(view.applicable_value_objects)
 
     def entity_values(
         self, entity: EntityMetadata, values: Mapping[str, object], *, omit_framework: bool = False
@@ -324,25 +250,6 @@ class ActualWireProjection:
             projected[name] = item
         return projected
 
-    def _query_members(
-        self, query: ObjectQueryNode
-    ) -> tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]:
-        entity = self._entity_by_name(query.target.canonical)
-        facet = inheritance.view(self._model)
-        view = facet.entity(entity.identity)
-        if view is None:  # pragma: no cover
-            raise ValueError(entity.identity.canonical)
-        if query.narrow_to:
-            narrowed = facet.position(
-                [self._entity_by_name(spelling).identity for spelling in query.narrow_to]
-            )
-            if narrowed is None:
-                raise ValueError(f"{query.target.canonical}: narrowing resolves no position")
-            return tuple(narrowed.superset_attributes), tuple(narrowed.superset_value_objects)
-        if isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype)):
-            return tuple(view.superset_attributes), tuple(view.superset_value_objects)
-        return tuple(view.applicable_attributes), tuple(view.applicable_value_objects)
-
     def _relational_document(
         self, layout: TableLayout, row: Mapping[str, object], value: object
     ) -> WireValue:
@@ -436,12 +343,6 @@ class ActualWireProjection:
             f"{layout.table.name}: row does not identify one of "
             f"{[entity.identity.canonical for entity, _view in candidates]}"
         )
-
-    def _entity_by_name(self, name: str) -> EntityMetadata:
-        entity = entity_by_name(self._model, name)
-        if entity is None:
-            raise ValueError(f"{name!r}: no such Entity")
-        return entity
 
     def _entity(self, identity: EntityIdentity) -> EntityMetadata:
         entity = self._model.entity(identity)

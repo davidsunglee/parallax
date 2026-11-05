@@ -15,8 +15,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)
-        mariadb: select t0.id, t0.name from customer t0 where lower(json_value(t0.address, ?)) like lower(?)
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where lower(json_value(t0.address, ?)) like lower(?)
       binds:
         postgres: [city, OSLO]
         mariadb: ['$.city', OSLO]

@@ -5,6 +5,7 @@ from typing import Any, Final, cast
 
 from parallax.core import concurrency, temporal_read
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
+from parallax.core.inheritance import FAMILY_VARIANT_KEY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, InvalidData
 from parallax.core.read_planning import IncludeTree, PositionId, RelationshipViewKey, RenderToken
@@ -22,7 +23,6 @@ from parallax.snapshot._inspection import RootConformance
 from parallax.snapshot._publication._classify import ConformingRoot, classify_root
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._wire import (
-    FAMILY_VARIANT_KEY,
     NodeReader,
     RootViewReader,
     WireEntity,

@@ -175,9 +175,6 @@ class ScenarioRowObservations:
         reference = self._reference_rows(step, reader)
         if reference is not None:
             self._assert_reference_rows(step_index, reference, rows, entity)
-        # The step is presented as the read it is, so the seam reads its result
-        # form off the step's own read semantics rather than being told one: every
-        # step read is the object lane.
         published = materialize.materialize_read(step_read, rows)
         rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
         return retained.Observation(
@@ -630,17 +627,12 @@ def _step_as_read(case: Case, step_index: int) -> Case:
     """The step at *step_index* presented as the READ case its materialization belongs to.
 
     A row materializer asks a case for the read it is materializing — the target
-    its Object Query names, the projection shape its golden ``select`` states, and
-    the result form that shape belongs to — because a `read` case has exactly one
-    of each. A Scenario read step has its own, so it is handed over in the
-    vocabulary those materializers already speak rather than each of them being
-    taught a second place to look. Everything they read BESIDE those three stays
-    the case's own: the model, the path a failure names, and the comparison
-    tolerance.
-
-    A step's own ``expectRows`` names no form, so the form follows the step's read
-    semantics (`m-case-format` *Read result form*): an observation find, a resolving
-    ``load``, and a first ``access`` are all the object lane.
+    its Object Query names and the projection shape its golden ``select`` states —
+    because a `read` case has exactly one of each. A Scenario read step has its own,
+    so it is handed over in the vocabulary those materializers already speak rather
+    than each of them being taught a second place to look. Everything they read
+    BESIDE those two stays the case's own: the model, the path a failure names, and
+    the comparison tolerance.
     """
     step = case.scenario[step_index]
     return _as_read(
@@ -682,9 +674,8 @@ def _as_read(
 ) -> Case:
     """*case* restated as the one-read `read` case *when* and *statements* describe.
 
-    A read case states its lane by WHICH result member it carries, so that is how
-    this presentation states it. The member's CONTENTS are never read: what a step
-    observed is graded against the step's own ``expectRows`` / ``expectGraph``.
+    The result member's CONTENTS are never read: what a step observed is graded
+    against the step's own ``expectRows`` / ``expectGraph``.
     Both placements a preference or level can be resolved from travel with the
     step — the scenario's own ``when.uow`` request and its root's
     ``given.databaseOptions`` — so the restated read resolves exactly what the

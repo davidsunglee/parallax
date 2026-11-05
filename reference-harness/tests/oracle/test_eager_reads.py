@@ -29,6 +29,7 @@ _ORDER_BY_LIMIT = "m-object-query-001-order-by-limit.yaml"
 _DOCUMENT_LAYOUT = "m-storage-layout-017-document-layout-provisioned-read.yaml"
 _TPH_ABSTRACT_ROOT = "m-inheritance-003-tph-abstract-root-read.yaml"
 _TPCS_ABSTRACT_ROOT = "m-inheritance-050-tpcs-abstract-root-read.yaml"
+_TPCS_NO_DOCUMENT_SLOT = "m-inheritance-052-tpcs-narrow-to-abstract-subtype.yaml"
 _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
 _PARTIAL_TPH_ROOT = "m-inheritance-147-partial-tph-root-read-unknown-tag.yaml"
 _LOCKED_TPH_DOCUMENT = "m-concurrency-054-document-layout-tph-partitioned.yaml"
@@ -297,13 +298,88 @@ def test_a_table_per_concrete_subtype_read_renames_the_branch_literal(
 
 
 def test_a_union_branch_reading_the_wrong_table_fails(damaged_case: CaseLoader) -> None:
-    case = damaged_case(_TPCS_ABSTRACT_ROOT)
+    case = damaged_case(_TPCS_NO_DOCUMENT_SLOT)
     for dialect, sql in case.then["statements"][0]["sql"].items():
-        case.then["statements"][0]["sql"][dialect] = sql.replace("from memo t0", "from invoice t0")
+        case.then["statements"][0]["sql"][dialect] = sql.replace(
+            "from receipt t0", "from invoice t0"
+        )
     reads = ScriptedReads(results=[_tpcs_rows(case)])
 
     with pytest.raises(CaseFailure, match="`union all` branch 1 must read from"):
         assert_case_read(case, reads)
+
+
+_VALUE_OBJECT_ROWS = "m-value-object-001-nested-eq.yaml"
+_DOCUMENT_RESIDENT_VALUE_OBJECTS = "m-storage-layout-017-document-layout-provisioned-read.yaml"
+_ORDERED_TPCS_VALUE_OBJECT = "m-inheritance-134-tpcs-union-ordered.yaml"
+
+_ADA = {"id": 1, "name": "Ada", "address": {"city": "Oslo"}}
+_LINUS = {"id": 2, "name": "Linus", "address": {"city": "Oslo"}}
+
+
+def test_a_flat_assertion_omits_a_value_object_from_the_golden_and_the_reference(
+    corpus_case: CaseLoader,
+) -> None:
+    """`then.rows` states scalars, whichever statement carried the Document slot."""
+    assert_case_read(
+        corpus_case(_VALUE_OBJECT_ROWS), ScriptedReads(results=[[_ADA, _LINUS], [_ADA, _LINUS]])
+    )
+
+
+def test_a_flat_assertion_omits_a_document_resident_value_object(
+    corpus_case: CaseLoader,
+) -> None:
+    case = corpus_case(_DOCUMENT_RESIDENT_VALUE_OBJECTS)
+    stored = [
+        {
+            "id": row["id"],
+            "payload": {
+                "displayName": row["display_name"],
+                "score": row["score"],
+                "joinedOn": row["joined_on"],
+                "note": row["note"],
+                "address": {"city": "Oslo"},
+                "tags": [{"label": "one"}],
+            },
+        }
+        for row in case.expected_rows
+    ]
+
+    assert_case_read(case, ScriptedReads(results=[stored]))
+
+
+def test_a_flat_assertion_omits_every_branch_of_a_union_value_object(
+    corpus_case: CaseLoader,
+) -> None:
+    case = corpus_case(_ORDERED_TPCS_VALUE_OBJECT)
+    stored = [
+        row | {"annotation": {"note": "kept"} if row["family_variant"] == "Memo" else None}
+        for row in _tpcs_rows(case)
+    ]
+
+    assert_case_read(case, ScriptedReads(results=[stored, stored]))
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        pytest.param([[_ADA | {"surprise": 1}, _LINUS], [_ADA, _LINUS]], id="golden"),
+        pytest.param([[_ADA, _LINUS], [_ADA | {"surprise": 1}, _LINUS]], id="reference"),
+    ],
+)
+def test_a_flat_assertion_keeps_an_unexpected_scalar_column(
+    corpus_case: CaseLoader, results: list[list[dict[str, Any]]]
+) -> None:
+    with pytest.raises(CaseFailure, match=r"rows != then\.rows"):
+        assert_case_read(corpus_case(_VALUE_OBJECT_ROWS), ScriptedReads(results=results))
+
+
+def test_a_flat_assertion_cannot_state_a_value_object(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_VALUE_OBJECT_ROWS)
+    case.then["rows"][0]["address"] = _ADA["address"]
+
+    with pytest.raises(CaseFailure, match=r"rows != then\.rows"):
+        assert_case_read(case, ScriptedReads(results=[[_ADA, _LINUS]]))
 
 
 def test_a_document_layout_read_fans_the_structured_column_into_its_members(
@@ -401,21 +477,6 @@ def test_a_case_that_is_not_read_shaped_is_refused(damaged_case: CaseLoader) -> 
     reads = ScriptedReads(results=[_ORDER_ROWS])
 
     with pytest.raises(CaseFailure, match="this case's shape is 'boundary'"):
-        assert_case_read(case, reads)
-
-
-def test_a_read_stating_no_result_member_is_refused(damaged_case: CaseLoader) -> None:
-    """The result form is derived from the member the case authored, never passed.
-
-    A row-form read materializes its Attributes alone and an instance-form one
-    additionally carries every applicable Value Object occurrence, so a read
-    stating neither member leaves that undecided rather than defaulting.
-    """
-    case = damaged_case(_ORDER_BY_LIMIT)
-    del case.then["rows"]
-    reads = ScriptedReads(results=[_ORDER_ROWS])
-
-    with pytest.raises(CaseFailure, match="states no result member"):
         assert_case_read(case, reads)
 
 

@@ -48,6 +48,7 @@ from reference_harness.inheritance import (
     validate_query_inheritance,
 )
 from reference_harness.object_query_oracle import assert_case_read
+from reference_harness.object_query_oracle import materialize as oracle_materialize
 from reference_harness.predicate_validate import validate_query_predicate
 from reference_harness.schema_validate import _structurally_empty_read_problems
 from reference_harness.storage_layout import compile_storage_layout, position_projection
@@ -660,7 +661,7 @@ class _RefusingDb:
 
 
 def test_run_case_validates_a_deep_fetch_reads_positions_before_any_sql() -> None:
-    # Guards the WIRING: every read result form reaches the positional oracle through
+    # Guards the WIRING: every read result member reaches the positional oracle through
     # one owner in `run_case`, so a read carrying Includes is validated exactly as a
     # flat one is. This query orders the whole Animal family by a Dog-declared
     # attribute with no narrowing to bring it into scope; if the graph forms were
@@ -1005,20 +1006,22 @@ def _document_defs() -> list[dict[str, Any]]:
 # (id, title, folder_id) first, then the OWN-column blocks in alphabetical subtype
 # order — Invoice's amount_due, Memo's body, Receipt's paid_amount (currency is
 # FinancialDocument's inherited attribute, contributed where Invoice's chain first
-# surfaces it; folder_id is the polymorphic-owner FK on the root). The
-# failing-mode tests mutate one aspect of this to witness the check.
+# surfaces it; folder_id is the polymorphic-owner FK on the root), and last Memo's
+# `annotation` Document slot as its read pair. The failing-mode tests mutate one
+# aspect of this to witness the check.
 _DOCUMENT_ROOT_UNION = (
     "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, "
     "cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, "
-    "'Invoice' family_variant from invoice t0 "
+    "false, cast(null as jsonb) annotation, 'Invoice' family_variant from invoice t0 "
     "union all "
     "select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, "
     "cast(null as decimal(18, 2)) amount_due, t0.body, "
-    "cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant from memo t0 "
+    "cast(null as decimal(18, 2)) paid_amount, not t0.annotation is null, t0.annotation, "
+    "'Memo' family_variant from memo t0 "
     "union all "
     "select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, "
-    "cast(null as varchar(64)) body, t0.paid_amount, 'Receipt' family_variant "
-    "from receipt t0"
+    "cast(null as varchar(64)) body, t0.paid_amount, false, cast(null as jsonb) annotation, "
+    "'Receipt' family_variant from receipt t0"
 )
 
 
@@ -1110,6 +1113,36 @@ def test_tpcs_missing_superset_column_is_rejected() -> None:
         assert_case_read(case, _Reads([]))
 
 
+def test_tpcs_flat_read_omitting_a_value_object_slot_is_rejected() -> None:
+    # `then.rows` selects no read form: the golden is the read every other result
+    # member grades, so dropping the slot fails the shape rather than the comparison.
+    golden = _DOCUMENT_ROOT_UNION.replace("false, cast(null as jsonb) annotation, ", "").replace(
+        "not t0.annotation is null, t0.annotation, ", ""
+    )
+    with pytest.raises(CaseFailure, match=r"not the stable superset.*'annotation'"):
+        assert_case_read(_document_case("Document", golden), _Reads([]))
+
+
+def test_a_scalar_reusing_a_siblings_value_object_column_stays_in_the_flat_view() -> None:
+    # `annotation` is `Memo`'s Value Object; an `Invoice` scalar spelled the same is an
+    # ordinary contributor, which the flat view must not drop by its column name.
+    (invoice_row,) = oracle_materialize.materialize_read(
+        _document_case("Document"), [{"id": 1, "family_variant": "Invoice"}]
+    )
+    model = copy.deepcopy(_document_model())
+    invoice = next(entity for entity in model.entity_defs if entity["name"] == "Invoice")
+    invoice["attributes"].append({"name": "annotation", "type": "string", "nullable": True})
+    reusing = Case(
+        path=Path("m-inheritance-999-x.yaml"), raw=_document_case("Document").raw, model=model
+    )
+
+    (flat,) = oracle_materialize.scalar_columns(
+        reusing, [oracle_materialize.edited(invoice_row, {"annotation": "stated"})]
+    )
+
+    assert flat["annotation"] == "stated"
+
+
 def test_tpcs_wrong_variant_literal_is_rejected() -> None:
     # A branch whose familyVariant literal is not its concrete subtype name.
     golden = _DOCUMENT_ROOT_UNION.replace("'Memo' family_variant", "'Note' family_variant")
@@ -1131,11 +1164,12 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
     # (Invoice, Memo); the oracle recomputes the shape from the narrow's effective set.
     golden = (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, "
-        "cast(null as varchar(64)) body, 'Invoice' family_variant from invoice t0 "
+        "cast(null as varchar(64)) body, false, cast(null as jsonb) annotation, "
+        "'Invoice' family_variant from invoice t0 "
         "union all "
         "select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, "
-        "cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant "
-        "from memo t0"
+        "cast(null as decimal(18, 2)) amount_due, t0.body, not t0.annotation is null, "
+        "t0.annotation, 'Memo' family_variant from memo t0"
     )
     memo_row = {
         "id": 1,
@@ -1215,8 +1249,10 @@ def test_tpcs_applicable_column_projected_as_null_is_rejected() -> None:
 
 
 # The MariaDB abstract-root golden: bounded strings cast to `char`, decimals identical.
-_DOCUMENT_ROOT_UNION_MARIADB = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)").replace(
-    "varchar(3)", "char(3)"
+_DOCUMENT_ROOT_UNION_MARIADB = (
+    _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)")
+    .replace("varchar(3)", "char(3)")
+    .replace("cast(null as jsonb)", "cast(null as char)")
 )
 
 
@@ -1229,7 +1265,9 @@ def test_tpcs_mariadb_char_cast_golden_is_accepted() -> None:
 def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
     # A MariaDB golden that used `varchar` (MariaDB's placeholder spelling is `char`) is
     # rejected by the per-dialect cast-type check.
-    bad_mariadb = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)")  # leaves varchar(3)
+    bad_mariadb = _DOCUMENT_ROOT_UNION_MARIADB.replace(
+        "cast(null as char(3))", "cast(null as varchar(3))"
+    )
     case = _document_case("Document")
     case.raw["then"]["statements"][0]["sql"] = {"mariadb": bad_mariadb}
     with pytest.raises(CaseFailure, match="declared type"):

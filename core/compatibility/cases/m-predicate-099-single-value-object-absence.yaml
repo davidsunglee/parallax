@@ -10,7 +10,7 @@ when:
       notExists: {path: parallax.compatibility.Customer.address.geo}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.name from customer t0 where not coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)'}
+  - sql: {postgres: 'select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where not coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)'}
     binds: [geo, object]
   referenceSql: select id, name from customer where coalesce(jsonb_typeof(address -> 'geo') <> 'object', true)
   rows:

@@ -14,8 +14,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?
-        mariadb: select t0.id, t0.name from customer t0 where cast(json_value(t0.address, ?) as double) between ? and ?
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where cast(json_value(t0.address, ?) as double) between ? and ?
       binds:
         postgres: [geo, elevation, 5, 12]
         mariadb: ['$.geo.elevation', 5, 12]

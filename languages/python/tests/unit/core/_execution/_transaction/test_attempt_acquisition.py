@@ -501,7 +501,13 @@ class DocumentHull(
     marks: Attr[tuple[HullMark, ...]]
 
 
-_HULLS: Final = DomainModel(ColumnsHull, DocumentHull)
+class DirectHull(
+    Bitemporal, table="hull_direct", namespace="parallax.execution", layout=Document()
+):
+    id: Attr[int] = attr(primary_key=True)
+
+
+_HULLS: Final = DomainModel(ColumnsHull, DocumentHull, DirectHull)
 _JAN: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _SQL_NULL_OCCURRENCE: Final = object()
@@ -572,6 +578,39 @@ def _member_rows(
 ) -> list[tuple[object, ...]]:
     del request, selection, absent, documents, root_count
     return list(rows)
+
+
+@pytest.mark.parametrize(
+    ("retains", "projection"),
+    [
+        (False, "t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z"),
+        (
+            True,
+            "t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload",
+        ),
+    ],
+    ids=["revision", "retained"],
+)
+def test_a_target_acquisition_reads_the_document_of_a_direct_only_entity_only_to_retain_it(
+    retains: bool, projection: str
+) -> None:
+    axes: dict[str, object] = {"from_z": _JAN, "thru_z": INFINITY, "in_z": _T0, "out_z": INFINITY}
+    row: MappingRow = {"id": 1, **axes} | (
+        {"payload": StructuredDocument({"note": "kept"})} if retains else {}
+    )
+    port = ScriptedAdapter(Transact(Read(rows=[row])))
+    metadata, key = _hull_keys(DirectHull)
+
+    def fn(tx: TxnAttempt) -> None:
+        count, _retained, document = tx.uow.acquire_rows(
+            TargetReadRequest(metadata, key, _MAR, retains=retains), consume_target
+        )
+        assert count == 1
+        assert document == ({"note": "kept"} if retains else None)
+
+    scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    (read,) = (call for call in port.calls if isinstance(call, ReadCall))
+    assert read.sql.startswith(f"select {projection} from hull_direct t0 where ")
 
 
 @pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])

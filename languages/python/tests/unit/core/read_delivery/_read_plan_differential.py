@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, cast
 
 from parallax.conformance import _case_ingress, case_format, engine
 from parallax.core._execution._read_query import resolve_read_query
@@ -58,7 +58,6 @@ class CorpusRead:
     case: case_format.Case
     meta: Metamodel
     query: ResolvedObjectQuery
-    result_form: Literal["row", "instance"]
 
     @property
     def golden_applies(self) -> bool:
@@ -79,12 +78,10 @@ def _when(case: case_format.Case) -> Mapping[str, object]:
 
 def corpus_read(case: case_format.Case) -> CorpusRead:
     """``case``'s read as the binding resolves it before planning."""
-    then = cast("Mapping[str, object]", case.document.get("then", {}))
-    instance = "graph" in then or "graphs" in then
     meta = engine.load_case_metamodel(case)
     node = _case_ingress.normalize_case_query(deserialize(_when(case)["objectQuery"]), meta)
-    query = resolve_read_query(node, model=meta, form="graph" if instance else "rows")
-    return CorpusRead(case, meta, query, "instance" if instance else "row")
+    query = resolve_read_query(node, model=meta, form="graph")
+    return CorpusRead(case, meta, query)
 
 
 # Finite temporal bounds move by a step no authored operand takes, so a

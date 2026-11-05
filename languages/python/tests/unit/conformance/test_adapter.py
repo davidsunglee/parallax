@@ -1828,7 +1828,7 @@ def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None
                         "parent": None,
                         "readStarted": {
                             "target": "parallax.compatibility.Account",
-                            "interface": "rows",
+                            "interface": "wire",
                             "edition": "account",
                         },
                     },

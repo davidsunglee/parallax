@@ -13,8 +13,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
-        mariadb: select t0.id, t0.name from customer t0 where not json_value(t0.address, ?) = ?
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where not jsonb_extract_path_text(t0.address, ?) = ?
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where not json_value(t0.address, ?) = ?
       binds:
         postgres: [city, Oslo]
         mariadb: ['$.city', Oslo]

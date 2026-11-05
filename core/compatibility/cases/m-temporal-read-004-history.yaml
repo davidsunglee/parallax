@@ -15,7 +15,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ?
+        postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? order by t0.bal_id asc, t0.in_z asc
       binds: [1]
   referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where bal_id = 1
   rows:

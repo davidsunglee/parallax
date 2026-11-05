@@ -858,14 +858,13 @@ UTC-instant type, byte-array type — so every consumer above the seam reasons i
 managed types and none re-parses driver text.
 
 The compatibility harness (`m-case-format`) grades in a **different** domain and
-must not be conflated with the runtime path. It takes the adapter's **managed** rows
-and projects them through explicit Metadata to canonical Wire values
-(`m-conformance-adapter`, `m-wire`) for its result envelope, then grades by exact
-Wire structural equality except where the case authors an explicit tolerance
-(`m-case-format`). Grading is therefore cross-language-consistent and independent
-of any one language's managed representation. **The Wire rendering is a
-conformance concern, never an adapter concern:** a concrete adapter emits managed
-types only and contains **no** Wire or grading logic.
+must not be conflated with the runtime path. Its result envelope holds canonical Wire
+values (`m-conformance-adapter`, `m-wire`), rendered above the port from managed
+values through explicit Metadata, and it grades by exact Wire structural equality
+except where the case authors an explicit tolerance (`m-case-format`). Grading is
+therefore cross-language-consistent and independent of any one language's managed
+representation. **Wire rendering is never an adapter concern:** a concrete adapter
+emits managed types only and contains **no** Wire or grading logic.
 
 `DocumentRead` is likewise a managed transport value, but never a developer or
 grader result cell. The compiled row transform consumes it to preserve or

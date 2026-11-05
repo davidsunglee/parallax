@@ -14,8 +14,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as boolean) = ?
-        mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as signed) = ?
+        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as boolean) = ?
+        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(json_value(t0.profile, ?) as signed) = ?
       binds:
         postgres: [flag, true]
         mariadb: ['$.flag', true]

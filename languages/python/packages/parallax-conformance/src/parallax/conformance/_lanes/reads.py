@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal, cast
+from typing import cast
 
 from parallax.conformance import _case_ingress, case_format
 from parallax.conformance._actual_wire import ActualWireProjection
@@ -14,6 +14,7 @@ from parallax.conformance._lifecycle_observation import (
 from parallax.conformance._mechanism import case_document, envelope
 from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import READ_ERRORS, Emission, EngineError
+from parallax.conformance._mechanism.flat_rows import flat_rows, omitted_value_objects
 from parallax.conformance._mechanism.given_state import apply_given_corrupt
 from parallax.conformance._mechanism.model_facts import (
     case_serving_model,
@@ -98,21 +99,6 @@ def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQuery
     return _case_ingress.normalize_case_query(deserialize_query(body["objectQuery"]), model)
 
 
-def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
-    """The read's result form from its asserted result member (m-case-format / m-sql).
-
-    A top-level read case declares its consumption lane by which result member it
-    asserts: ``then.graph`` / ``then.graphs`` materialize instances (instance-form,
-    the object lane), so the read projects the value-object document columns (slot
-    4); every other read (``then.rows``) is row-form (the values lane) and omits
-    them.
-    """
-    then = case.document.get("then")
-    if isinstance(then, Mapping) and ("graph" in then or "graphs" in then):
-        return "instance"
-    return "row"
-
-
 def _is_transactional(case: case_format.Case) -> bool:
     """Whether a read-shape case runs inside a unit of work: exactly when it
     carries `when.uow`, the block spelling what its outer invocation requests.
@@ -120,7 +106,7 @@ def _is_transactional(case: case_format.Case) -> bool:
     The block's presence is the boundary; its contents are the request. A read
     carrying the block with no `concurrency` of its own is still a transactional
     read whose preference production resolves against the root, and a read
-    carrying no block is the plain, non-transactional `db.read_rows` surface every
+    carrying no block is the plain, non-transactional `db.wire.find` surface every
     other reachable read models, which takes no lock under any root
     (`m-case-format` *Root configuration*).
     """
@@ -152,7 +138,6 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
             case_format.database_options(case),
             dialect_for(dialect_name),
             query,
-            form="graph" if _result_form(case) == "instance" else "rows",
             transaction=case_format.transaction_keywords(case) if _is_transactional(case) else None,
             access_mode=case_format.access_mode(case),
         )
@@ -166,57 +151,36 @@ def run_read_case(
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[MappingRow], int]:
-    """Run a row-form read case through the production values lane.
+    """Run a `then.rows` read case through production's ordinary Wire read.
 
-    The whole lane is ``db.read_rows`` / ``tx.read_rows``: canonicalization,
-    compilation, the read-lock suffix, the Database Call, `familyVariant`
-    materialization, and the Database Call count are all production's, and what is
-    left here is wire rendering and the case's own routing. A row this adapter
-    reports is the row production materialized, not a row this adapter
-    re-derived from the query a second time.
+    The whole read is ``wire.find`` on the surface :func:`_case_read` selects:
+    canonicalization, compilation, the read-lock suffix, the Database Call,
+    judgement, and publication are all production's, and `then.rows` chooses none
+    of them. What is left here is rendering the published roots into the scalar
+    columns the case states (:func:`~parallax.conformance._mechanism.flat_rows.flat_rows`),
+    so a row this adapter reports is a value production published rather than a
+    row re-derived from the query.
 
     A case carrying `when.uow` is RUN in a transaction (`m-concurrency` *What
     each strategy promises*), opened with only the fields that block authors: the
-    lock suffix is
-    derived inside production from the preference that call resolves — the
-    authored one, else the root this lane connected — and the read target's own
-    Concurrency Facet, exactly as it is for a developer's ``tx.find``, rather
-    than from a lock this lane asked a compiler for while executing outside any
-    boundary. Begin and commit reach the database but are no Database Call, so
-    the Database Calls a locking case reports are the read's alone.
-
-    The adapter returns **managed** Python values (``Decimal``, ``datetime``,
-    ``UUID``, ``bytes``, …); the conformance harness grades in **wire space**, so
-    each observed row is rendered to canonical wire form here — the grader-side
-    serialization the ``m-db-port`` boundary fixes, keeping the adapter free of any
-    wire/grading logic and the observation envelope JSON-serializable.
-
-    Wire rendering FOLLOWS production's own row transform, because that transform
-    may itself produce a managed value: a Relational Document Layout read projects
-    one Structured Column and fans it out into members decoded by their declared
-    Neutral Type (`m-sql`), so a `timestamp` member arrives here as a `datetime`
-    exactly as the same member does when it is a column of its own. Rendering
-    first would hand the wire that member's document spelling instead, making one
-    logical value observably different under the two layouts.
+    lock suffix is derived inside production from the preference that call
+    resolves — the authored one, else the root this lane connected — and the read
+    target's own Concurrency Facet, exactly as it is for a developer's
+    ``tx.find``, rather than from a lock this lane asked a compiler for while
+    executing outside any boundary. Begin and commit reach the database but are no
+    Database Call, so the Database Calls a locking case reports are the read's
+    alone.
     """
     model = load_case_metamodel(case)
     query = _read_query(case, model)
-    observed = lifecycle_run(lifecycle).observation()
-    apply_given_corrupt(case, load_case_setup_metamodel(case), port)
-    with case_database(case, port, observed.provider) as root:
-        db = root.using_database_login()
-        try:
-            result = _case_read(case, db, lambda reader: reader.read_rows(query))
-        except READ_ERRORS as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        return (
-            _read_emissions(observed),
-            [
-                ActualWireProjection(model).published_row(query, _conforming_row(case, row))
-                for row in result.rows
-            ],
-            observed.database_calls,
-        )
+    snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
+    omitted = omitted_value_objects(model, query)
+    roots = [_conforming_row(case, omitted, root) for root in snapshot.checked().results()]
+    return (
+        _read_emissions(observed),
+        flat_rows(model, query, roots, value_objects=False),
+        observed.database_calls,
+    )
 
 
 type _Reader = ScopedDatabase | TxnContext | ReadOnlyTxnContext
@@ -239,22 +203,36 @@ def _case_read[T](case: case_format.Case, db: ScopedDatabase, read: Callable[[_R
 
 
 def _conforming_row(
-    case: case_format.Case, row: read_delivery.PublishedRow
-) -> Mapping[str, object]:
-    """One published row-form element as the row a `then.rows` case grades.
+    case: case_format.Case, omitted: frozenset[ValueObjectIdentity], root: object
+) -> object:
+    """One published result position as the root a `then.rows` case grades.
 
-    A row whose stored state contradicted the model publishes its record instead
-    of itself, and the row-form observation has no place to carry one, so this
-    lane names the shape rather than grading a record as though it were a row.
-    Graph-form cases grade `InvalidData` through `then.storedDataIssues`.
+    A record whose every issue lies under a top-level Value Object `then.rows`
+    leaves out still reads as a row, because no diagnosis touches what the case
+    states, so its hydrated data is what is graded. Any other record is no row,
+    and this lane names the shape rather than grading it as though it were one:
+    graph cases grade `InvalidData` through `then.storedDataIssues`.
     """
-    if isinstance(row, read_delivery.InvalidData):
+    if not isinstance(root, read_delivery.InvalidData):
+        return root
+    record = cast("read_delivery.InvalidData[object]", root)
+    if record.data is None or not all(
+        _outermost_occurrence(issue.member) in omitted for issue in record.issues
+    ):
         raise EngineError(
-            f"{case.path.name}: a row-form read published an InvalidData record — stored data "
-            "that contradicts the model is graded through a `then.graph` case's own "
-            "`storedDataIssues`, never as a row"
+            f"{case.path.name}: a `then.rows` read published an InvalidData record that is no "
+            "row — stored data contradicting what a row states is graded through a "
+            "`then.graph` case's own `storedDataIssues`"
         )
-    return row
+    return record.data
+
+
+def _outermost_occurrence(member: MemberIdentity | None) -> ValueObjectIdentity | None:
+    """The top-level occurrence holding ``member``, or ``None`` for one outside any."""
+    occurrence = member.value_object if isinstance(member, ValueObjectAttributeIdentity) else member
+    if not isinstance(occurrence, ValueObjectIdentity):
+        return None
+    return ValueObjectIdentity(occurrence.entity, occurrence.path[:1])
 
 
 # read, so every level's compile, execute, convert, merge, classify, and unwind #
@@ -268,7 +246,7 @@ def _wire_read(
     port: CaseDatabase,
     lifecycle: LifecycleRun,
 ) -> tuple[Snapshot[WireEntity], LifecycleObservation]:
-    """One graph-form Wire read of the case's own Object Query, and what it ran.
+    """One Wire read of the case's own Object Query, and what it ran.
 
     The whole lane is ``wire.find`` on the surface :func:`_case_read` selects:
     target resolution, validation, deep-fetch planning, per-level compilation

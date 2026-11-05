@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from parallax.core.inheritance._compile import MODEL_COMPILER, root_metadata
 from parallax.core.inheritance._facet import (
     FACET_KEY,
+    FAMILY_VARIANT_KEY,
     INHERITANCE_MODULE,
     EntityMemberSelection,
     InheritanceEntityView,
@@ -32,6 +33,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
 __all__ = [
     "FACET_KEY",
+    "FAMILY_VARIANT_KEY",
     "INHERITANCE_MODULE",
     "ISSUE_CODES",
     "MODEL_COMPILER",
@@ -85,7 +87,7 @@ def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> st
     return concrete.canonical if matches > 1 else concrete.name
 
 
-_FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", "familyVariant"})
+_FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", FAMILY_VARIANT_KEY})
 
 
 def validate_subtype_write(

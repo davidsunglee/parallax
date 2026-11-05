@@ -43,6 +43,7 @@ from parallax.conformance import engine, graph_stories
 from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance._lanes import scenario as scenario_lane
 from parallax.conformance._mechanism import envelope
+from parallax.conformance._mechanism.flat_rows import flat_rows
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
@@ -890,10 +891,11 @@ def _assert_authored_observation(
     model = engine.load_case_metamodel(case)
     row_oracle = authored.get("expectRows", authored.get("rows"))
     if row_oracle is not None:
-        observed_rows = scenario_lane.graph_rows(
+        observed_rows = flat_rows(
             model,
             query,
             cast("Sequence[object]", snapshot.checked().results()),
+            value_objects=True,
         )
         expected_rows = cast("list[dict[str, object]]", row_oracle)
         expected_fields = {key for row in expected_rows for key in row}

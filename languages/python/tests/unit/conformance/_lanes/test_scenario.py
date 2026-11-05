@@ -69,8 +69,6 @@ from parallax.core.metamodel import (
     EntityIdentity,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     AdmittedWrite,
@@ -504,117 +502,6 @@ def test_run_scenario_case_reports_each_streamed_steps_own_delivered_roots() -> 
             ],
         },
     ]
-
-
-def _abstract_step_query(case_id: str) -> ObjectQueryNode:
-    """The first scenario step's query of ``case_id`` — an abstract-position read."""
-    case = _case(case_id)
-    steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", case.document)["when"])
-    return scenario.step_query(
-        cast("list[dict[str, Any]]", cast("dict[str, Any]", steps)["scenario"])[0],
-        model_facts.load_case_metamodel(case),
-    )
-
-
-# `m-inheritance-130`'s step 0 reads the abstract root `Vehicle` and is handed the
-# concrete `Car` that row resolves to: id 1, `Sedan`, version 5, four doors, and no
-# `axles` key at all, a materialized node carrying only its own branch's members.
-_PUBLISHED_CAR: MappingRow = {
-    "id": 1,
-    "name": "Sedan",
-    "version": 5,
-    "doors": 4,
-    "familyVariant": "Car",
-}
-
-
-def test_graph_rows_renders_an_abstract_positions_whole_projection() -> None:
-    # What an abstract step's `expectRows` state is the projection the published
-    # node OCCUPIES (m-case-format "Read targeting"): every column the position's
-    # superset places, `null` where the row's own branch contributes none, and the
-    # `familyVariant` the node carries. Rendering the ADDRESSED position's
-    # applicable members instead drops `doors` — a value the read published — and
-    # reports no variant, which is a node no case could state.
-    case = _case("m-inheritance-130")
-
-    rows = scenario.graph_rows(
-        model_facts.load_case_metamodel(case),
-        _abstract_step_query("m-inheritance-130"),
-        [dict(_PUBLISHED_CAR)],
-    )
-
-    assert rows == [
-        {
-            "id": 1,
-            "name": "Sedan",
-            "version": 5,
-            "doors": 4,
-            "axles": None,
-            "familyVariant": "Car",
-        }
-    ]
-
-
-def test_graph_rows_narrows_an_abstract_positions_projection_to_its_selection() -> None:
-    # Narrowing shrinks the superset the position projects without making the read
-    # concrete: over `[Car]` alone the sibling `axles` is no column of the
-    # projection at all, and the node still states the variant it resolved to.
-    case = _case("m-inheritance-130")
-    query = dataclasses.replace(
-        _abstract_step_query("m-inheritance-130"), narrow_to=("parallax.compatibility.Car",)
-    )
-
-    rows = scenario.graph_rows(model_facts.load_case_metamodel(case), query, [dict(_PUBLISHED_CAR)])
-
-    assert rows == [{"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}]
-
-
-def test_graph_rows_selects_reused_member_names_from_each_published_variant() -> None:
-    case = _case("m-inheritance-124")
-    when = cast("Mapping[str, object]", case.document["when"])
-    query = deserialize_query(when["objectQuery"])
-
-    rows = scenario.graph_rows(
-        model_facts.load_case_metamodel(case),
-        query,
-        [
-            {
-                "id": 1,
-                "detail": "visa-4242",
-                "authorizationCode": "AUTH-7",
-                "familyVariant": "CardPayment",
-            },
-            {"id": 2, "detail": "12.50", "familyVariant": "CashPayment"},
-        ],
-    )
-
-    assert rows == [
-        {
-            "id": 1,
-            "detail": "visa-4242",
-            "authorization_code": "AUTH-7",
-            "familyVariant": "CardPayment",
-        },
-        {
-            "id": 2,
-            "detail": "12.50",
-            "authorization_code": None,
-            "familyVariant": "CashPayment",
-        },
-    ]
-
-
-def test_graph_rows_refuses_an_abstract_read_that_published_no_variant() -> None:
-    # An abstract position publishes concrete nodes, so a node arriving without the
-    # variant is a lane that resolved nothing rather than a row to render: which
-    # branch its columns belong to would have to be guessed.
-    case = _case("m-inheritance-130")
-    node = {key: value for key, value in _PUBLISHED_CAR.items() if key != "familyVariant"}
-
-    with pytest.raises(EngineError, match="familyVariant"):
-        scenario.graph_rows(
-            model_facts.load_case_metamodel(case), _abstract_step_query("m-inheritance-130"), [node]
-        )
 
 
 _ORDER_1_ROW: MappingRow = {
@@ -2991,22 +2878,6 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
     )
     with pytest.raises(EngineError, match="undeclared member"):
         scenario.run_conflict_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW_2]))
-
-
-def test_a_projected_row_rejects_an_ambiguous_member() -> None:
-    model = models.load_models()["document-codec"]
-    entity = model.entities[0]
-    first, second = entity.declared_attributes[:2]
-    columns = {"ambiguous": (("first", first), ("second", second))}
-
-    with pytest.raises(EngineError, match="does not select one declaration"):
-        scenario._projected_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            model,
-            ActualWireProjection(model),
-            columns,
-            None,
-            {"ambiguous": 1},
-        )
 
 
 def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused() -> None:

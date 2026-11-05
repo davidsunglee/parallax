@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Final
 
-from parallax.core.inheritance._facet import INHERITANCE_MODULE
+from parallax.core.inheritance._facet import FAMILY_VARIANT_KEY, INHERITANCE_MODULE
 from parallax.core.inheritance._table_groups import (
     AncestryResolution,
     CyclicAncestry,
@@ -259,7 +259,7 @@ def _rendered_keys(
 ) -> Iterator[tuple[str, ModelLocation]]:
     """Every field key one rendered node claims, in the order it claims them."""
     if family_root is not None:
-        yield "familyVariant", EntityLocation(family_root)
+        yield FAMILY_VARIANT_KEY, EntityLocation(family_root)
     for declaration in declarations:
         for attribute in declaration.attributes:
             yield attribute.storage.name, AttributeLocation(attribute.identity)

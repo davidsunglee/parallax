@@ -286,13 +286,12 @@ rather than left true by omission:
    there is no per-value-object fetch, and `m-read-planning` never applies. This
    whole-document projection is the owner's applicable Storage Layout
    `Document` slot (`m-sql`, *Read projection*): it is selected on every
-   **instance-form read** — one that materializes instances (`then.graph` /
-   `then.graphs`) — and a plain row-form value
-   read (`then.rows`) omits it. Because materialization requires the document, an
-   instance-form read of a value-object-bearing entity always projects it. A
-   row-form read projects it only where its consumer needs the document — a
-   write's row-acquisition read, whose observation on a temporal target retains
-   the whole predecessor row (`m-write-plan`).
+   **instance-form read** — every read a developer or a case makes. Because
+   materialization requires the document, an instance-form read of a
+   value-object-bearing entity always projects it. The internal row-form lane
+   projects it only where its consumer needs the document — a write's
+   row-acquisition read, whose observation on a temporal target retains the whole
+   predecessor row (`m-write-plan`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
 4. **Not a navigation or deep-fetch target.** An Include Path (`m-read-planning`)

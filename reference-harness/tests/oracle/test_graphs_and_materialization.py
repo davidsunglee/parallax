@@ -771,24 +771,24 @@ def test_the_milestone_reference_oracle_cross_checks_the_whole_set(
         assert_case_read(case, reads)
 
 
-# --- scalar collections in row form -------------------------------------------
+# --- scalar collections in a flat assertion -----------------------------------
 
 
-def _as_row_form(case: Case, rows: list[dict[str, Any]]) -> Case:
-    """*case* reading its target in row form, published as *rows*."""
+def _as_flat_assertion(case: Case, rows: list[dict[str, Any]]) -> Case:
+    """*case* asserting *rows* through `then.rows` instead of `then.graph`."""
     del case.then["graph"]
     case.then["rows"] = rows
     return case
 
 
-def test_a_row_form_read_publishes_a_columns_collection_as_its_elements(
+def test_a_flat_read_publishes_a_columns_collection_as_its_elements(
     damaged_case: CaseLoader,
 ) -> None:
     """MariaDB hands a structured Column back as JSON text, and the published row
     carries the decoded elements under either driver, so `then.rows` and the
     independent oracle both compare logical collections."""
     expected = {"id": 1, "tags": ["b", "a", "b"], "blobs": ["0aff", ""]}
-    case = _as_row_form(damaged_case(_COLLECTION_COLUMNS), [expected])
+    case = _as_flat_assertion(damaged_case(_COLLECTION_COLUMNS), [expected])
     stored = {"id": 1, "tags": json.dumps(["b", "a", "b"]), "blobs": ["0aff", ""]}
     reads = ScriptedReads("mariadb", results=[[stored]])
 
@@ -798,11 +798,11 @@ def test_a_row_form_read_publishes_a_columns_collection_as_its_elements(
     assert published["tags"] == ["b", "a", "b"]
 
 
-def test_a_row_form_read_publishes_an_omitted_document_collection_as_empty(
+def test_a_flat_read_publishes_an_omitted_document_collection_as_empty(
     damaged_case: CaseLoader,
 ) -> None:
     expected = {"id": 2, **{name: [] for name in _COLLECTIONS}} | {"tags": ["z"]}
-    case = _as_row_form(damaged_case(_COLLECTION_DOCUMENT), [expected])
+    case = _as_flat_assertion(damaged_case(_COLLECTION_DOCUMENT), [expected])
     reads = ScriptedReads(results=[[{"id": 2, "payload": {"tags": ["z"], "flags": None}}]])
 
     assert_case_read(case, reads)
@@ -829,7 +829,7 @@ def test_a_malformed_collection_leaves_its_published_row_unhydratable(
     assert oracle_materialize.is_unavailable(published)
 
 
-_TPCS_ROW_FORM_COLLECTIONS = (
+_TPCS_FLAT_COLLECTIONS = (
     "m-inheritance-145-scalar-collection-tpcs-row-read-layout-twin-columns.yaml"
 )
 
@@ -840,7 +840,7 @@ def _presence(*ordinals_and_values: tuple[int, bool]) -> dict[str, bool]:
     }
 
 
-def test_a_row_form_tpcs_read_projects_every_branch_collection(corpus_case: CaseLoader) -> None:
+def test_a_flat_tpcs_read_projects_every_branch_collection(corpus_case: CaseLoader) -> None:
     """Each collection's presence cell is proven over the branches owning its
     Column, a typed `null` placeholder arm included, so none reaches the row."""
     reads = ScriptedReads(
@@ -856,13 +856,13 @@ def test_a_row_form_tpcs_read_projects_every_branch_collection(corpus_case: Case
         ]
     )
 
-    assert_case_read(corpus_case(_TPCS_ROW_FORM_COLLECTIONS), reads)
+    assert_case_read(corpus_case(_TPCS_FLAT_COLLECTIONS), reads)
 
 
-def test_a_row_form_tpcs_read_dropping_its_collections_is_refused(
+def test_a_flat_tpcs_read_dropping_its_collections_is_refused(
     damaged_case: CaseLoader,
 ) -> None:
-    case = damaged_case(_TPCS_ROW_FORM_COLLECTIONS)
+    case = damaged_case(_TPCS_FLAT_COLLECTIONS)
     for dialect in ("postgres", "mariadb"):
         case.then["statements"][0]["sql"][dialect] = (
             "select u.id, u.family_variant from (select t0.id, 'TagDrill' family_variant "

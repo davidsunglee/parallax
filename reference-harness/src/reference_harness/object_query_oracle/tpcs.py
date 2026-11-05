@@ -40,14 +40,12 @@ from ..sql_wrapped_union import (
     wrapped_union_source,
 )
 from ..storage_layout import (
-    AttributeContributor,
     ColumnSlot,
     ColumnTier,
     DocumentPath,
     PositionBranch,
     PositionColumn,
     PositionLayoutView,
-    ValueObjectContributor,
 )
 from .execute import (
     assert_lists_every_key,
@@ -107,52 +105,6 @@ def _placeholder_types(
     """
     declarations = declared_contributors(model)
     return [declarations.get(column.contributor) for column in columns]
-
-
-def is_instance_form(case: Case) -> bool:
-    """Whether a read case's authored result form is the object lane.
-
-    `m-case-format` *Read result form*: a ``then.graph`` / ``then.graphs``
-    observation is instance-form and ``then.rows`` is row-form, which is the same
-    partition the read dispatch routes on.
-    """
-    return case.expected_graph is not None or case.expected_graphs is not None
-
-
-def projected_position_ordinals(
-    view: PositionLayoutView, *, instance_form: bool, document_resident: bool
-) -> tuple[int, ...]:
-    """The position-column ordinals a read of the given result form projects.
-
-    Every non-`Document` contributor is projected in both result forms, and so is a
-    scalar collection's own `Document`-tier slot (`m-sql` *Read projection*, rule
-    1). The other `Document` contributors are not: a top-level Value Object
-    occurrence's own Structured Column reaches only an instance-form read (rule 3),
-    and a Relational Document Layout's shared Structured Column reaches a row-form
-    read as well, but only to produce a member the layout placed inside it (rule
-    5) — and in a row-form read the members requested are the Attributes alone,
-    rule 3 having already omitted every occurrence. So the superset a `union all`
-    branch aligns to, and the result aliases allocated over it, are form-dependent
-    wherever the position holds a Value Object or shared Structured Column.
-
-    *document_resident* is that last fact — whether any branch's concrete places an
-    Attribute of its own inside the shared Structured Column — and it is stated by the
-    caller, because the layout's member placement is the materializer's vocabulary and
-    the `union all` shape is this module's. *instance_form* is stated the same way: a
-    read case states it through the result member it authored
-    (:func:`is_instance_form`), while a navigated position is one by classification.
-    """
-    return tuple(
-        ordinal
-        for ordinal, column in enumerate(view.columns)
-        if column.tier is not ColumnTier.DOCUMENT
-        or isinstance(column.contributor, AttributeContributor)
-        or (
-            instance_form
-            if isinstance(column.contributor, ValueObjectContributor)
-            else instance_form or document_resident
-        )
-    )
 
 
 def _union_all_body(case: Case, tree: Any, dialect: str, facts: WrapFacts) -> Any:
@@ -281,7 +233,6 @@ def _order_keys(
     case: Case,
     view: PositionLayoutView,
     branch_variants: list[tuple[PositionBranch, str]],
-    ordinals: tuple[int, ...],
     aliases: list[str],
     sort_keys: Sequence[dict[str, Any]],
 ) -> tuple[WrapOrderKey, ...]:
@@ -326,9 +277,9 @@ def _order_keys(
         contributor, document_path = placed.pop()
         alias = next(
             (
-                aliases[index]
-                for index, ordinal in enumerate(ordinals)
-                if view.columns[ordinal].contributor == contributor
+                alias
+                for alias, column in zip(aliases, view.columns, strict=True)
+                if column.contributor == contributor
             ),
             None,
         )
@@ -357,20 +308,18 @@ def _wrap_facts(
     case: Case,
     view: PositionLayoutView,
     branch_variants: list[tuple[PositionBranch, str]],
-    ordinals: tuple[int, ...],
     sort_keys: Sequence[dict[str, Any]],
     limit: int | None = None,
 ) -> WrapFacts:
-    """What a statement over *ordinals* cannot say about its own wrap."""
-    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
-    aliases = result_aliases(superset)
+    """What a statement over the position cannot say about its own wrap."""
+    aliases = result_aliases(list(view.column_spellings))
     return WrapFacts(
         document_aliases=frozenset(
             alias
-            for alias, ordinal in zip(aliases, ordinals, strict=True)
-            if view.columns[ordinal].tier is ColumnTier.DOCUMENT
+            for alias, column in zip(aliases, view.columns, strict=True)
+            if column.tier is ColumnTier.DOCUMENT
         ),
-        order_keys=_order_keys(case, view, branch_variants, ordinals, aliases, sort_keys),
+        order_keys=_order_keys(case, view, branch_variants, aliases, sort_keys),
         limit=limit,
     )
 
@@ -379,8 +328,6 @@ def assert_union_shape(
     case: Case,
     view: PositionLayoutView,
     branch_variants: list[tuple[PositionBranch, str]],
-    *,
-    document_resident: bool,
 ) -> None:
     """Assert the table-per-concrete-subtype abstract-read `union all` shape (m-sql).
 
@@ -398,24 +345,19 @@ def assert_union_shape(
     row-count-independent — a zero-row abstract read still witnesses a mis-ordered
     branch, a dropped superset column, a bare/mis-typed placeholder, or a wrong literal.
 
-    The superset is the position's contributor sequence restricted to what the
-    case's own result form projects (:func:`projected_position_ordinals`), so a
-    row-form read of a position holding a Value Object slot is graded on omitting it
-    rather than on carrying it.
+    The superset is the position's whole contributor sequence: every read a case
+    states is instance-form (`m-sql` *Read projection*), whichever result member
+    asserts it, so a position holding a Value Object slot is graded on carrying it.
 
     An ordered or limited read additionally wraps its union, and the wrap's own shape
     is graded against the same facts: which result alias holds a `Document`, and the
     Sort Keys and cap the Object Query authored, each rendered as the dialect under
     test spells it.
     """
-    ordinals = projected_position_ordinals(
-        view, instance_form=is_instance_form(case), document_resident=document_resident
-    )
     facts = _wrap_facts(
         case,
         view,
         branch_variants,
-        ordinals,
         case.object_query.get("orderBy") or [],
         case.object_query.get("limit"),
     )
@@ -431,7 +373,6 @@ def assert_union_shape(
             union_branch_selects(_union_all_body(case, tree, dialect, dialect_facts)),
             view,
             branch_variants,
-            ordinals,
             dialect,
         )
 
@@ -441,18 +382,15 @@ def _assert_union_branches(
     branches: list[Any],
     view: PositionLayoutView,
     branch_variants: list[tuple[PositionBranch, str]],
-    ordinals: tuple[int, ...],
     dialect: str,
 ) -> None:
     """Assert one statement's `union all` branches against the position they read.
 
     What a whole read and a deep-fetch level share: the branch count and order, the
-    Table each branch reads, its aligned projection over *ordinals*, and its
-    `familyVariant` literal.
+    Table each branch reads, its aligned projection, and its `familyVariant` literal.
     """
-    superset = [view.column_spellings[ordinal] for ordinal in ordinals]
-    position_types = _placeholder_types(case.model, view.columns)
-    placeholder_types = [position_types[ordinal] for ordinal in ordinals]
+    superset = list(view.column_spellings)
+    placeholder_types = _placeholder_types(case.model, view.columns)
     expected_columns = [*result_aliases(superset), VARIANT_COLUMN]
     if len(branches) != len(branch_variants):
         raise CaseFailure(
@@ -494,7 +432,7 @@ def _assert_union_branches(
             position,
             name,
             superset,
-            tuple(position_branch.slots[ordinal] for ordinal in ordinals),
+            position_branch.slots,
             placeholder_types,
             dialect,
         )
@@ -536,15 +474,12 @@ def _level_wrap_facts(
     view: PositionLayoutView,
     branch_variants: list[tuple[PositionBranch, str]],
     order_by: Sequence[dict[str, Any]],
-    *,
-    document_resident: bool,
 ) -> WrapFacts:
     """The wrap facts of a level ordered by its relationship's *order_by*."""
     return _wrap_facts(
         case,
         view,
         branch_variants,
-        projected_position_ordinals(view, instance_form=True, document_resident=document_resident),
         [{**key, "attr": key["attribute"]} for key in order_by],
     )
 
@@ -555,13 +490,9 @@ def level_order_binds(
     branch_variants: list[tuple[PositionBranch, str]],
     order_by: Sequence[dict[str, Any]],
     dialect: str,
-    *,
-    document_resident: bool,
 ) -> tuple[str, ...]:
     """What an ordered level binds after every branch (m-sql)."""
-    facts = _level_wrap_facts(
-        case, view, branch_variants, order_by, document_resident=document_resident
-    )
+    facts = _level_wrap_facts(case, view, branch_variants, order_by)
     return order_key_binds(facts.order_keys, dialect)
 
 
@@ -592,8 +523,6 @@ def assert_level_union_shape(
     view: PositionLayoutView,
     branch_variants: list[tuple[PositionBranch, str]],
     level: LevelUnion,
-    *,
-    document_resident: bool,
 ) -> None:
     """Assert one deep-fetch level's `union all` shape (m-sql, m-read-planning).
 
@@ -610,9 +539,7 @@ def assert_level_union_shape(
     engine = sqlglot_dialect(level.dialect)
     tree = sqlglot.parse_one(level.statement, read=engine)
     assert_union_all_only(case, tree)
-    facts = _level_wrap_facts(
-        case, view, branch_variants, level.order_by, document_resident=document_resident
-    )
+    facts = _level_wrap_facts(case, view, branch_variants, level.order_by)
     body = _level_union_body(case, tree, level, replace(facts, binds=level.binds))
     branches = union_branch_selects(body)
     _assert_union_branches(
@@ -620,7 +547,6 @@ def assert_level_union_shape(
         branches,
         view,
         branch_variants,
-        projected_position_ordinals(view, instance_form=True, document_resident=document_resident),
         level.dialect,
     )
     for position, (branch, (_, name)) in enumerate(zip(branches, branch_variants, strict=True)):
