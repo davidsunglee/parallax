@@ -188,6 +188,7 @@ jobs:
           retention-days: 90
 
   rehearsal:
+    if: always() && !cancelled() && needs.candidate.result == 'success'
     needs: candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -256,6 +257,7 @@ jobs:
           if-no-files-found: error
 
   retain-rehearsal:
+    if: always() && !cancelled() && needs.candidate.result == 'success' && needs.rehearsal.result == 'success'
     needs: [candidate, rehearsal]
     runs-on: ubuntu-24.04
     permissions:
@@ -272,7 +274,7 @@ jobs:
       - run: gh release upload "release-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" testpypi-evidence.tar.gz --repo "$GITHUB_REPOSITORY"
 
   publish:
-    if: inputs.operation != 'bootstrap' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: always() && !cancelled() && inputs.operation != 'bootstrap' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.candidate.result == 'success' && needs.rehearsal.result == 'success' && needs.retain-rehearsal.result == 'success'
     needs: [candidate, rehearsal, retain-rehearsal]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -337,6 +339,7 @@ jobs:
           if-no-files-found: error
 
   announce:
+    if: always() && !cancelled() && needs.candidate.result == 'success' && needs.publish.result == 'success'
     needs: [candidate, publish]
     runs-on: ubuntu-24.04
     permissions:
