@@ -11951,6 +11951,504 @@
       ]
     }
   },
+  "models/rate-sheet-document.yaml": {
+    "rate_sheet": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.RateSheet.id",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.RateSheet.name",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.validStart",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.validEnd",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.txStart",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.txEnd",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3,
+        5
+      ]
+    },
+    "sheet_deposit": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.id",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "sheet_id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.sheetId",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.SheetRate",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3,
+        5
+      ]
+    },
+    "sheet_loan": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.id",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "sheet_id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.sheetId",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.SheetRate",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3,
+        5
+      ]
+    }
+  },
+  "models/rate-sheet.yaml": {
+    "rate_sheet": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.RateSheet.id",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.RateSheet.name",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.validStart",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.validEnd",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.txStart",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.RateSheet"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.RateSheet.txEnd",
+          "declaringOwner": "parallax.compatibility.RateSheet",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3,
+        5
+      ]
+    },
+    "sheet_deposit": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.id",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "sheet_id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.sheetId",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "priority",
+          "contributor": "attribute:parallax.compatibility.SheetRate.priority",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "tier",
+          "contributor": "attribute:parallax.compatibility.SheetRate.tier",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "grade",
+          "contributor": "attribute:parallax.compatibility.SheetDeposit.grade",
+          "declaringOwner": "parallax.compatibility.SheetDeposit",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetDeposit"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        6,
+        8
+      ]
+    },
+    "sheet_loan": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.id",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "sheet_id",
+          "contributor": "attribute:parallax.compatibility.SheetRate.sheetId",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "priority",
+          "contributor": "attribute:parallax.compatibility.SheetRate.priority",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "tier",
+          "contributor": "attribute:parallax.compatibility.SheetRate.tier",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "spread",
+          "contributor": "attribute:parallax.compatibility.SheetLoan.spread",
+          "declaringOwner": "parallax.compatibility.SheetLoan",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.validEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txStart",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SheetLoan"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.SheetRate.txEnd",
+          "declaringOwner": "parallax.compatibility.SheetRate",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        6,
+        8
+      ]
+    }
+  },
   "models/rate.yaml": {
     "deposit_rate": {
       "columns": [
