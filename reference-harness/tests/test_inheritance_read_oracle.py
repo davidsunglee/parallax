@@ -28,7 +28,7 @@ from typing import Any, cast
 
 import pytest
 
-from reference_harness.case import Case, load_model
+from reference_harness.case import Case, load_case, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import run_case
 from reference_harness.inheritance import (
@@ -1209,6 +1209,56 @@ def test_a_flat_row_states_a_scalar_sharing_its_spelling_with_a_value_object(
     stored: dict[str, Any], stated: dict[str, Any]
 ) -> None:
     assert_case_read(_reused_annotation_case([stated]), _Reads([stored]))
+
+
+_REFERENCE_SQL = "select id, title, family_variant from invoice"
+
+
+class _ReadsAgainstReference(_Reads):
+    """A read executor answering the golden and ``referenceSql`` with their own rows."""
+
+    def __init__(self, golden: list[dict[str, Any]], reference: list[dict[str, Any]]) -> None:
+        super().__init__(golden)
+        self._reference = reference
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        if sql == _REFERENCE_SQL:
+            return [dict(row) for row in self._reference]
+        return super().query(sql, binds)
+
+
+def test_a_reference_omitting_a_scalar_its_own_branch_holds_fails_the_comparison() -> None:
+    stored = _stored_document("Invoice", None, None)
+    case = _reused_annotation_case([_stated_document("Invoice", None)])
+    case.raw["then"]["referenceSql"] = _REFERENCE_SQL
+    omitting = {key: value for key, value in stored.items() if key != "parallax_attr_0"}
+
+    with pytest.raises(CaseFailure, match=r"referenceSql rows != then\.rows"):
+        assert_case_read(case, _ReadsAgainstReference([stored], [omitting]))
+
+
+def test_a_reference_omitting_a_scalar_only_a_sibling_holds_still_reads_as_null() -> None:
+    stored = _stored_document("Receipt", None, None)
+    case = _reused_annotation_case([_stated_document("Receipt", None)])
+    case.raw["then"]["referenceSql"] = _REFERENCE_SQL
+    omitting = {key: value for key, value in stored.items() if key != "parallax_attr_0"}
+
+    assert_case_read(case, _ReadsAgainstReference([stored], [omitting]))
+
+
+def test_a_flat_row_pads_a_siblings_document_member_and_never_its_own() -> None:
+    case = load_case(
+        _COMPATIBILITY_ROOT,
+        _COMPATIBILITY_ROOT / "cases/m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml",
+    )
+    card, cash = oracle_materialize.materialize_read(
+        case, [{"id": 1, "kind": "card"}, {"id": 2, "kind": "cash"}]
+    )
+
+    flat_card, flat_cash = oracle_materialize.scalar_columns(case, [card, cash])
+
+    assert "authorization_code" not in flat_card
+    assert flat_cash["authorization_code"] is None
 
 
 def test_tpcs_wrong_variant_literal_is_rejected() -> None:

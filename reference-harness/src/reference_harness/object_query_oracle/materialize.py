@@ -905,7 +905,9 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
     its own branch restored (:func:`_tpcs_row_at_its_branch`) — exactly as any other
     Column is, and nothing else moves: a scalar collection, a document-resident
     scalar, and any unexpected scalar column stay for the comparison to judge,
-    including a scalar reusing the Column a sibling's Value Object occupies.
+    including a scalar reusing the Column a sibling's Value Object occupies. A scalar
+    the row's own concrete declares is never padded, so a read that lost it still
+    fails the comparison.
 
     Like :func:`narrow_to_variant_columns` this projects what a read published, so
     each row arrives with that provenance and leaves carrying it forward.
@@ -944,7 +946,7 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
         }
         scalars.append(
             _published(
-                dict.fromkeys(padding)
+                dict.fromkeys(column for column in padding if column not in own)
                 | {
                     key: value
                     for key, value in row.items()
