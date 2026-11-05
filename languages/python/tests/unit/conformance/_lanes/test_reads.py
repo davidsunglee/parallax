@@ -12,7 +12,7 @@ import dataclasses
 import datetime as dt
 import decimal
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -35,6 +35,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.temporal_read import Pin
 from tests._support.case_corpus import case as corpus_case
 from tests._support.case_corpus import cases as corpus_cases
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort
@@ -521,7 +522,7 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
     ]
 
 
-def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs() -> None:
+def test_run_streamed_graphs_case_groups_a_delivery_back_into_milestone_ranked_graphs() -> None:
     # A delivery publishes ROOTS, in the Continuation Order — the key, then the
     # edge — so two objects standing at one milestone reach the caller in two
     # runs. The observation groups them wherever they fall and ranks the entries
@@ -556,6 +557,127 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs
     assert [
         [row["amount"] for row in _rows(_entry(g, "graph"), "InvoiceLine")] for g in graphs
     ] == [["50.00", "25.00"], ["75.00"]]
+
+
+def _invoice_line(amount: str, in_z: object, out_z: object) -> MappingRow:
+    return {
+        "id": 1000,
+        "invoice_id": 100,
+        "amount": decimal.Decimal(amount),
+        "in_z": in_z,
+        "out_z": out_z,
+    }
+
+
+_JANUARY: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_APRIL: Final = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+
+
+def test_run_graphs_case_closes_a_partition_wherever_the_pin_changes() -> None:
+    # Eager roots arrive in chronological milestone order, so a pin met again is
+    # a milestone a scan answered twice: adjacency keeps it apart.
+    port = QueueDbPort(
+        [
+            [
+                _invoice_line("50.00", _JANUARY, _APRIL),
+                _invoice_line("75.00", _APRIL, INFINITY),
+                _invoice_line("50.00", _JANUARY, _APRIL),
+            ]
+        ]
+    )
+    _emissions, graphs, _calls = reads.run_graphs_case(_case("m-snapshot-read-013"), port)
+    assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
+        "2024-01-01T00:00:00.000000Z",
+        "2024-04-01T00:00:00.000000Z",
+        "2024-01-01T00:00:00.000000Z",
+    ]
+
+
+def test_a_milestone_observation_states_the_pin_production_retained_rather_than_the_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def retained(_node: object) -> Pin:
+        return Pin(tx_time=dt.datetime(2030, 1, 1, tzinfo=dt.UTC))
+
+    monkeypatch.setattr(reads, "pin_of", retained)
+    port = QueueDbPort([[_invoice_line("50.00", _JANUARY, INFINITY)]])
+    _emissions, graphs, _calls = reads.run_graphs_case(_case("m-snapshot-read-013"), port)
+    assert [_entry(g, "pin") for g in graphs] == [
+        {"transaction-time": "2030-01-01T00:00:00.000000Z"}
+    ]
+
+
+def _run_eager_milestones(port: QueueDbPort) -> object:
+    return reads.run_graphs_case(_case("m-snapshot-read-013"), port)
+
+
+def _run_streamed_milestones(port: QueueDbPort) -> object:
+    case = _doctored("m-snapshot-read-013", stream={"batchSize": 10})
+    return reads.run_streamed_graphs_case(case, port)
+
+
+_MILESTONE_LANES: Final = pytest.mark.parametrize(
+    "run",
+    [
+        pytest.param(_run_eager_milestones, id="eager"),
+        pytest.param(_run_streamed_milestones, id="streamed"),
+    ],
+)
+
+
+@_MILESTONE_LANES
+@pytest.mark.parametrize("start", [None, INFINITY], ids=["null-start", "infinite-start"])
+def test_a_milestone_root_retaining_the_empty_pin_is_no_observation(
+    run: Callable[[QueueDbPort], object], start: object
+) -> None:
+    with pytest.raises(EngineError, match="no decoded milestone start"):
+        run(QueueDbPort([[_invoice_line("50.00", start, INFINITY)]]))
+
+
+@_MILESTONE_LANES
+def test_a_non_hydrating_milestone_root_has_no_pin_to_observe(
+    run: Callable[[QueueDbPort], object],
+) -> None:
+    with pytest.raises(EngineError, match="published no value to pin"):
+        run(QueueDbPort([[_invoice_line("50.00", _JANUARY, None)]]))
+
+
+def test_a_hydrated_diagnostic_milestone_root_observes_its_own_retained_pin() -> None:
+    row = {
+        "br_id": 1,
+        "name": "Central",
+        "address": {"street": "1 Main", "city": "Oslo", "phones": {"type": "x"}},
+        "from_z": _JANUARY,
+        "thru_z": INFINITY,
+        "in_z": _APRIL,
+        "out_z": INFINITY,
+    }
+    case = dataclasses.replace(
+        _synthetic(
+            {
+                "model": "models/branch.yaml",
+                "when": {
+                    "objectQuery": {
+                        "target": "Branch",
+                        "predicate": {"true": {}},
+                        "temporal": {
+                            "valid-time": {"history": {}},
+                            "transaction-time": {"history": {}},
+                        },
+                    },
+                },
+                "then": {"graphs": []},
+            }
+        ),
+        model="models/branch.yaml",
+    )
+    _emissions, graphs, _calls = reads.run_graphs_case(case, QueueDbPort([[row]]))
+    assert [_entry(g, "pin") for g in graphs] == [
+        {
+            "valid-time": "2024-01-01T00:00:00.000000Z",
+            "transaction-time": "2024-04-01T00:00:00.000000Z",
+        }
+    ]
 
 
 def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
@@ -673,7 +795,7 @@ def test_run_stream_case_refuses_a_case_declaring_no_delivery() -> None:
 def test_run_stream_case_refuses_a_milestone_set_read() -> None:
     # The two streamed lanes answer the two result members, exactly as the two
     # eager ones do: a milestone-set delivery publishes one root per milestone at
-    # its own edge pin, which is `then.graphs`, so the `then.graph` lane refuses
+    # its own milestone pin, which is `then.graphs`, so the `then.graph` lane refuses
     # it rather than reporting one flat graph the case never stated.
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 2})
     with pytest.raises(EngineError, match=re.escape("asserts `then.graphs`")):

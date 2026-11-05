@@ -490,12 +490,12 @@ exposes and reports:
   (`history` / `asOfRange`), reported exactly as the eager milestone-set read
   reports it: the ordered per-milestone `{pin, graph}` entries. A delivery has no
   graphs to report directly — it publishes roots — so the entries are recovered
-  from each published root's own edge pin, which is the coordinate the entry
+  from each published root's own milestone pin, which is the coordinate the entry
   states. Roots of one milestone are grouped wherever they fall in the delivery
   and never only where they fall adjacently: a delivery arrives in the
   Continuation Order, the key before the edge, so several objects standing at one
   milestone reach the caller in as many runs as there are objects. The entries
-  are ordered by **edge rank**, Valid Time before Transaction Time — the eager
+  are ordered by **milestone rank**, Valid Time before Transaction Time — the eager
   order — because what a milestone-set result states is which milestones the read
   reached, and an order the delivery happened to visit them in would make the
   observation depend on the page size. An adapter reports whichever of the two

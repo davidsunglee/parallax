@@ -47,7 +47,7 @@ from parallax.snapshot._publication._wire import (
     WireEntity,
     authoring_of,
     opened_wire_entity,
-    stored_entity_of,
+    stored_provenance_of,
 )
 
 __all__ = [
@@ -340,10 +340,10 @@ def editable_wire_data(attempt: TxnAttempt, source: object) -> dict[str, object]
 def published_entity(meta: Metamodel, node: object, verb: str) -> EntityMetadata:
     """The concrete Entity a node Parallax published names, by the provenance
     it carries, or the refusal for anything else."""
-    stored = stored_entity_of(node) if isinstance(node, WireEntity) else None
+    stored = stored_provenance_of(node) if isinstance(node, WireEntity) else None
     authoring = authoring_of(node) if isinstance(node, WireEntity) else None
     entity = (
-        stored
+        stored.entity
         if stored is not None
         else authoring.object_key.entity
         if authoring is not None
@@ -608,10 +608,10 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
     published as diagnostic data under an invalid root. They differ only in how
     the provenance is absent; none can authorize a keyed write.
     """
-    stored = stored_entity_of(observed) if isinstance(observed, WireEntity) else None
+    stored = stored_provenance_of(observed) if isinstance(observed, WireEntity) else None
     authoring = authoring_of(observed) if isinstance(observed, WireEntity) else None
     entity = (
-        stored
+        stored.entity
         if stored is not None
         else authoring.object_key.entity
         if authoring is not None

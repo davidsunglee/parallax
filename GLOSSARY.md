@@ -45,6 +45,7 @@ contract owners; this index does not add requirements.
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Concurrency policy](core/spec/m-concurrency.md#strategy-derivation) |
 | Retry Policy | The retry bound and the backoff, one immutable value resolved whole | [Bounded retry](core/spec/m-auto-retry.md#the-retry-policy) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
+| Pin / Edge / Milestone Pin | Where a read stood, where a node's own milestone starts, and the Pin of a history or range root, which holds that root's own Edge instants | [Temporal reads](core/spec/m-temporal-read.md) |
 | Read Delivery | Turning a validated read into a judged Page, delivered whole or streamed | [Read delivery](core/spec/m-read-delivery.md) |
 | Page / Entity State | One read's bounded fetched-row table, and the judged member row it holds for one logical row | [Read delivery](core/spec/m-read-delivery.md) |
 | Fetched row / Row key / Logical row / Stored values | One database row as one statement returned it at one level, the (family, primary key, as-of coordinates) identity it records, every fetched row on a Page sharing one row key, and a fetched row's provider-normalized values before judgment | [Read delivery](core/spec/m-read-delivery.md) |

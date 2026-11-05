@@ -37,12 +37,13 @@ __all__ = [
     "SnapshotInspectionError",
     "SnapshotNodeState",
     "bind_insertion",
-    "edge_of",
     "insertion_of",
     "is_view_loaded",
     "pin_for_shape",
-    "pin_of",
+    "required_pin",
     "snapshot_state_of",
+    "typed_edge_of",
+    "typed_pin_of",
     "view",
 ]
 
@@ -178,7 +179,7 @@ class SnapshotNodeState:
     there is what makes ordinary attribute access raise.
 
     ``edge_cache`` is present exactly for a node whose family declares as-of
-    axes. It holds the family's Temporal Shape until :func:`edge_of` first
+    axes. It holds the family's Temporal Shape until :func:`typed_edge_of` first
     resolves it into the node's milestone Edge, which then replaces it. That
     rewrite changes only the form of one fact the node already determines, so
     the field takes no part in comparison.
@@ -252,13 +253,13 @@ def bind_insertion(value: Entity, identity: InsertionIdentity) -> None:
     )
 
 
-def pin_of(node: object) -> Pin:
-    """The as-of coordinates ``node`` was read at.
+def typed_pin_of(node: object) -> Pin:
+    """The Pin retained by a Typed ``node``'s Snapshot state."""
+    return required_pin(_required_state(node, "pin_of").provenance)
 
-    Every node of one ``find`` shares the whole-graph pin; a milestone-set read's
-    roots each carry their own milestone-derived pin instead.
-    """
-    provenance = _required_state(node, "pin_of").provenance
+
+def required_pin(provenance: NodeProvenance) -> Pin:
+    """The Pin ``provenance`` retains, refusing a node no As-Of Axis pinned."""
     if provenance.pin is None:
         raise SnapshotInspectionError(
             code="snapshot-pin-unavailable",
@@ -271,7 +272,7 @@ def pin_of(node: object) -> Pin:
     return provenance.pin
 
 
-def edge_of(node: object) -> Edge:
+def typed_edge_of(node: object) -> Edge:
     """A Typed ``node``'s own milestone :class:`~parallax.core.temporal_read.Edge`
     — the finite from-instant on every axis its family declares.
 

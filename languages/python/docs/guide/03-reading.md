@@ -23,6 +23,7 @@ from parallax.core import (
     TX_TIME,
     VALID_TIME,
     Attr,
+    Pin,
     QueryDefinitionError,
     TemporalBound,
     TxTemporal,
@@ -41,6 +42,7 @@ from parallax.snapshot import (
     TxnContext,
     WireEntity,
     is_view_loaded,
+    pin_of,
 )
 ```
 <!-- /example -->
@@ -790,6 +792,30 @@ def customer_for_page_and_api(db: ScopedDatabase, customer_id: int) -> tuple[Cus
 
 Projection runs in memory and keeps the relationships the read loaded. A Typed stream
 offers the same for the result it has just handed you, with `stream.wire(value)`.
+
+A Wire node's members are domain data alone, so they do not say where its read stood.
+Ask `pin_of`:
+
+<!-- example: inspect-where-a-wire-read-stood -->
+```python
+def a_wire_price_and_its_pin(
+    db: ScopedDatabase, sku: str, day: dt.datetime
+) -> tuple[WireEntity, Pin]:
+    """A price as Wire data, and where its read stood, to log beside what was sent."""
+    price = db.wire.find(Price.where(Price.sku == sku).as_of(valid_time=day)).result()
+    return price, pin_of(price)
+```
+<!-- /example -->
+
+For a day in July, the pin holds that day as its Valid Time and `LATEST` as its
+Transaction Time: what the query selected, not where the price begins, which is what
+[`edge_of`](04-writing.md#wire-writes) answers. Every temporal node of one read shares
+this pin, direct or projected, root or included, eager or streamed, and each root of a
+history or range read holds the start of its own milestone. A hydrated node inside
+`InvalidData` answers too, but the record itself does not. `pin_of` performs no I/O and
+grants no write authority. It raises `SnapshotInspectionError` with
+`snapshot-pin-unavailable` for a non-temporal node, and with `snapshot-node-required` for
+anything no read published, such as the node an insert returned, or a `dict(node)` copy.
 
 A Wire read follows the same rules as a Typed one everywhere else in this chapter: where
 it runs, what it locks, and which values can license a write.

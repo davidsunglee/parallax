@@ -710,7 +710,7 @@ def test_the_deep_fetch_reference_oracle_grades_the_root_rows(corpus_case: CaseL
 # --- milestone sets -----------------------------------------------------------
 
 
-def test_a_milestone_set_partitions_its_rows_into_edge_pinned_graphs(
+def test_a_milestone_set_partitions_its_rows_into_milestone_pinned_graphs(
     corpus_case: CaseLoader,
 ) -> None:
     case = corpus_case(_HISTORY_GRAPHS)
@@ -1000,7 +1000,7 @@ def _as_a_milestone_set_read(case: Case) -> Case:
     The corpus authors no ``then.graphs`` over an inheritance family, so the pairing
     is fabricated in a private copy: the same family, the same golden projection —
     identity, raw tag, concrete superset, interval columns — with Valid Time scanned
-    rather than pinned and the result stated as one edge-pinned graph per milestone.
+    rather than pinned and the result stated as one graph per milestone.
     """
     case.raw["when"]["objectQuery"]["temporal"] = {
         "transaction-time": {"asOf": "latest"},

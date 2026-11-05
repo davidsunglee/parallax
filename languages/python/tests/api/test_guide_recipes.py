@@ -13,7 +13,7 @@ import io
 import json
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, assert_type, cast
 
 import pytest
 
@@ -40,6 +40,7 @@ from parallax.conformance.guide_recipes import (
     StorePickup,
     a_scope_for_reports,
     a_scope_for_slow_conflicts,
+    a_wire_price_and_its_pin,
     add_a_customer_from_json,
     add_a_surcharge_to_every_order,
     add_and_find_a_customer,
@@ -123,7 +124,7 @@ from parallax.conformance.guide_recipes import (
     withdraw_a_credit_limit,
 )
 from parallax.conformance.scripted_clock import ScriptedClock
-from parallax.core import LATEST, TX_TIME, DomainModel, TemporalBound
+from parallax.core import LATEST, TX_TIME, DomainModel, Edge, Pin, TemporalBound
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
@@ -168,6 +169,8 @@ from parallax.snapshot import (
     TxnContext,
     WireEntity,
     connect,
+    edge_of,
+    pin_of,
 )
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.retry import TINY_BACKOFF
@@ -685,6 +688,27 @@ def test_a_valid_time_range_returns_each_price_in_effect(profile_run: Any) -> No
         (_JUN, Decimal("8.00")),
         (_SEP, Decimal("12.00")),
     ]
+
+
+def test_a_wire_price_answers_where_its_read_stood_rather_than_where_it_begins(
+    profile_run: Any,
+) -> None:
+    db = _seed_the_first_three_price_transactions(profile_run)
+
+    price, pin = a_wire_price_and_its_pin(db, "TEA-1", _JUL)
+
+    assert price["amount"] == "8.00"
+    assert pin == Pin(valid_time=_JUL, tx_time=LATEST)
+    assert edge_of(price) == Edge(valid_time=_JUN, tx_time=_T4)
+
+
+def test_pin_of_is_statically_one_pin_for_both_representations(profile_run: Any) -> None:
+    db = _seed_the_first_three_price_transactions(profile_run)
+    snapshot = db.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=_JUL))
+    typed = snapshot.result()
+    wire = snapshot.wire().result()
+
+    assert assert_type(pin_of(typed), Pin) == assert_type(pin_of(wire), Pin)
 
 
 def test_a_wire_document_reads_a_customer_ready_to_serialize(profile_run: Any) -> None:
@@ -1680,6 +1704,10 @@ def _tea_prices_from_may_to_july(db: ScopedDatabase) -> object:
     return prices_during(db, "TEA-1", _MAY, _JUL)
 
 
+def _tea_price_in_july_as_wire_with_its_pin(db: ScopedDatabase) -> object:
+    return a_wire_price_and_its_pin(db, "TEA-1", _JUL)
+
+
 def _customer_one_as_json(db: ScopedDatabase) -> str:
     return customer_as_json(db, 1)
 
@@ -1905,6 +1933,7 @@ def _place_two_orders_together_serializably(db: ScopedDatabase) -> tuple[bool, b
         pytest.param(_current_limit_of_customer_one, ([_CREDIT_LIMIT_ROW],), id="latest"),
         pytest.param(_limit_history_of_customer_one, ([_CREDIT_LIMIT_ROW],), id="history"),
         pytest.param(_tea_price_in_july, ([_PRICE_ROW],), id="valid-time"),
+        pytest.param(_tea_price_in_july_as_wire_with_its_pin, ([_PRICE_ROW],), id="wire-pin"),
         pytest.param(_tea_price_in_july_as_recorded_in_march, ([_PRICE_ROW],), id="both-axes"),
         pytest.param(_tea_prices_from_may_to_july, ([_PRICE_ROW],), id="valid-time-range"),
         pytest.param(_where_the_tea_price_in_july_ends, ([_PRICE_ROW],), id="open-valid-end"),
@@ -2125,6 +2154,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             StorePickup,
             a_scope_for_reports,
             a_scope_for_slow_conflicts,
+            a_wire_price_and_its_pin,
             add_a_customer_from_json,
             add_a_surcharge_to_every_order,
             add_and_find_a_customer,

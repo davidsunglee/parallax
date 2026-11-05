@@ -189,10 +189,10 @@ graph represents the same instant, so a reference can never silently cross
 temporal contexts.
 
 A `history` / `asOfRange` read returns one flat root sequence in Continuation
-Order (`m-read-delivery`), each root pinned at its **edge pin** — the milestone's own from-instant
+Order (`m-read-delivery`), each root pinned at its **milestone pin** — the milestone's own from-instant
 (`m-temporal-read`; for a half-open `[from, to)` interval the from-instant is the
 one instant guaranteed to select exactly that milestone). A conformance oracle
-may group that flat sequence by edge to state `then.graphs`; the grouping is a
+may group that flat sequence by milestone pin to state `then.graphs`; the grouping is a
 presentation of the result, not a materialization boundary. Combining a history
 read with `includes` is
 the **`snapshot-history-includes` feature** — carried on its own feature tag so

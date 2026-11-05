@@ -758,7 +758,7 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
 def _graphs_read_case() -> dict[str, Any]:
     """A read case carrying per-milestone `then.graphs`.
 
-    A `history` snapshot read materializes one edge-pinned graph per milestone: the
+    A `history` snapshot read materializes one graph per milestone: the
     `then.graphs` array pairs each milestone's `pin` (its own from-instant, keyed by
     the as-of attribute) with the graph materialized at it, coexisting with the
     single-graph `then.graph` exactly as `then.rows` does.

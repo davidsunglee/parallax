@@ -37,6 +37,7 @@ from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_
 from parallax.snapshot import (
     Database,
     SnapshotInspectionError,
+    TxnContext,
     _inspection,
     edge_of,
     is_view_loaded,
@@ -49,7 +50,7 @@ from parallax.snapshot._inspection import (
     snapshot_state_of,
 )
 from tests._support import snapshot_models as sm
-from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root
 from tests.unit import _deep_include_support as deep
 from tests.unit._gc_reachability import reachable_objects
@@ -356,6 +357,23 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
     with pytest.raises(SnapshotInspectionError) as refusal:
         view(root, sm.AnimalOwner.animals.items)
     assert refusal.value.code == "snapshot-view-owner-mismatch"
+
+
+def test_a_value_a_typed_insert_took_stands_at_no_read_pin() -> None:
+    refusals: list[SnapshotInspectionError] = []
+
+    def fn(tx: TxnContext) -> None:
+        balance = read_models.Balance(id=1, acct_num="A-1", value=Decimal("5.00"))
+        tx.insert(balance)
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            pin_of(balance)
+        refusals.append(refusal.value)
+
+    root = own_root(Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE))
+    root.using_database_login().transact(fn)
+    (refusal,) = refusals
+    assert refusal.code == "snapshot-node-required"
+    assert refusal.operation == "pin_of"
 
 
 # --------------------------------------------------------------------------- #

@@ -43,7 +43,7 @@ from parallax.conformance.read_models import (
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
-from parallax.core import LATEST, DomainModel, ObjectQuery
+from parallax.core import LATEST, DomainModel, ObjectQuery, Pin
 from parallax.core._execution._options import (
     OMITTED,
     Omitted,
@@ -360,6 +360,14 @@ def test_a_temporal_union_level_reads_every_branch_at_the_root_pin(profile_run: 
     assert type(rates[1]) is SheetDeposit
     assert rates[1].grade == "B"
     assert type(rates[2]) is SheetLoan
+    read_pin = Pin(
+        valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC),
+    )
+    projected = next(sheet for sheet in snapshot.wire().results() if sheet["id"] == 100)
+    for child in (*retail.rates, *cast("list[WireEntity]", projected["rates"])):
+        assert pin_of(child) == read_pin
+        assert edge_of(child).valid_time != read_pin.valid_time
     _grade_union_level(story.case_id, snapshot, db)
 
 

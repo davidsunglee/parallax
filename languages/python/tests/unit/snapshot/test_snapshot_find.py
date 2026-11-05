@@ -32,6 +32,7 @@ from parallax.core import (
     LATEST,
     ONE_TO_MANY,
     TX_TIME,
+    VALID_TIME,
     AbstractRoot,
     AbstractSubtype,
     Attr,
@@ -826,7 +827,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     )
 
 
-def test_find_history_returns_chronologically_ordered_edge_pinned_roots() -> None:
+def test_find_history_returns_chronologically_ordered_milestone_pinned_roots() -> None:
     port = QueuePort(
         [
             [
@@ -942,6 +943,82 @@ def test_find_history_trusts_a_native_temporal_start_but_cannot_derive_an_edge()
         ),
     )
     assert not isinstance(verdict, NonConformingRoot)
+
+
+_BALANCE_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_POLICY_START: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+
+
+def _balance_milestone(start: object) -> MappingRow:
+    return {
+        "bal_id": 1,
+        "acct_num": "A-1",
+        "val": Decimal("5.00"),
+        "in_z": start,
+        "out_z": INFINITY,
+    }
+
+
+def _policy_milestone(valid_start: object, tx_start: object) -> MappingRow:
+    return {
+        "id": 1,
+        "name": "Home",
+        "from_z": valid_start,
+        "thru_z": INFINITY,
+        "in_z": tx_start,
+        "out_z": INFINITY,
+    }
+
+
+_UNDECODED_STARTS: Final = pytest.mark.parametrize(
+    ("model", "query", "row"),
+    [
+        pytest.param(
+            read_models.BALANCE_MODEL,
+            read_models.Balance.where(read_models.Balance.id == 1).history(TX_TIME),
+            _balance_milestone(None),
+            id="null-start",
+        ),
+        pytest.param(
+            read_models.BALANCE_MODEL,
+            read_models.Balance.where(read_models.Balance.id == 1).history(TX_TIME),
+            _balance_milestone(INFINITY),
+            id="infinite-start",
+        ),
+        pytest.param(
+            POLICY_MODEL,
+            Policy.where(Policy.id == 1).history(TX_TIME).history(VALID_TIME),
+            _policy_milestone(_POLICY_START, None),
+            id="bitemporal-undecoded-transaction-start",
+        ),
+        pytest.param(
+            POLICY_MODEL,
+            Policy.where(Policy.id == 1).history(TX_TIME).history(VALID_TIME),
+            _policy_milestone(None, _BALANCE_START),
+            id="bitemporal-undecoded-valid-start",
+        ),
+    ],
+)
+
+
+@_UNDECODED_STARTS
+def test_a_milestone_root_with_an_undecoded_start_publishes_at_the_whole_empty_pin(
+    model: DomainModel, query: Any, row: MappingRow
+) -> None:
+    # One undecoded start empties the root's whole milestone pin, never leaving
+    # the axis that did decode behind as a partial one.
+    port = ScriptedAdapter(Read(rows=[row]), Read(rows=[row]), Read(rows=[row]))
+    db = own_root(Database.connect(port, model)).using_database_login()
+
+    snapshot = db.find(query)
+    direct = db.wire.find(query).result()
+    with db.wire.stream(query, batch_size=10) as stream:
+        (streamed,) = stream
+
+    assert pin_of(snapshot.result()) == Pin()
+    assert pin_of(snapshot.wire().result()) == Pin()
+    assert pin_of(direct) == Pin()
+    assert pin_of(streamed) == Pin()
 
 
 def test_find_history_does_not_reclassify_a_native_primary_key() -> None:

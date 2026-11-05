@@ -173,7 +173,9 @@ Time `v`?
 A Pin contains every selected dimension that is pinned rather than scanned; its
 coordinates may be Latest or finite. An Edge contains one finite start instant
 for every declared dimension of a materialized milestone. History and range
-results use the milestone's own start as their Edge coordinate.
+results use the milestone's own start as their Edge coordinate. A **milestone
+pin** is the Pin of one history or range root: it holds that root's own Edge
+instants, so each root of the result stands at its own.
 
 Relationship traversal propagates selections by dimension, never by physical
 column or positional axis. A target that declares the same dimension receives

@@ -413,7 +413,7 @@ in decimal space under any authored `tolerance`.
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
-| `then.graphs` | `then` | read | an ORDERED array of per-milestone edge-pinned graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
+| `then.graphs` | `then` | read | an ORDERED array of per-milestone graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
 | `then.storedDataIssues` | `then` | read | the stored-data diagnoses a read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
 | `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, scenario, or `when.concurrency` case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
 | `then.units` | `then` | state-graded scenario | each `uow` group's fate, keyed by its label: `outcome` `committed` or `rolledBack`, and for a group a flush failure ended, its `flushFailure` (see *Unit fates*, below); a golden-graded group stating none commits |
@@ -678,13 +678,13 @@ read case satisfies its `then` requirement with any one of `rows` / `graph` /
 Each entry's **`pin`** is the milestone's OWN edge coordinate — its from-instant
 per declared dimension, keyed by `valid-time` or `transaction-time` — and its
 **`graph`** is the plain-value graph materialized at that
-pin, the same root-class-keyed shape as `then.graph`. The pins are **edge pins,
-not a shared root pin**: `history` returns each milestone edge-pinned to its own
+pin, the same root-class-keyed shape as `then.graph`. The pins are **milestone
+pins, not a shared root pin**: `history` returns each milestone pinned to its own
 from-instant, and `asOfRange` returns every overlapping milestone independently
-edge-pinned to its own from-instant (never to the window bounds) — the
+pinned to its own from-instant (never to the window bounds) — the
 `m-temporal-read` edge-point read, now observed as a graph per milestone. The
 single root query returns the whole milestone set in one Database Call; the
-harness partitions those rows by edge pin (matching each pin's per-axis
+harness partitions those rows by milestone pin (matching each pin's per-axis
 from-instant to the row's from-column) and asserts each partition equals its
 declared graph. The pins are **pairwise disjoint** — every milestone belongs to
 **exactly one** declared graph, so an overlapping or duplicated pin (two graphs
@@ -761,7 +761,7 @@ carries, so a streamed case needs no authoring form of its own for its result.
 `then.graph` is the roots an **eager** read publishes, in the same order.
 `then.graphs` is a **streamed milestone-set read** (*Milestone-set graphs*,
 above), whose roots the delivery publishes one at a time, each standing at its
-own edge pin: the graphs are recovered by partitioning the delivered roots by
+own milestone pin: the graphs are recovered by partitioning the delivered roots by
 that pin under the same pairwise-disjointness rule the eager form states, so what
 the two forms assert is one milestone set either way.
 

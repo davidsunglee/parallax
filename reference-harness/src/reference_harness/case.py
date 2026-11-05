@@ -1378,7 +1378,7 @@ class Case:
 
     @property
     def expected_graphs(self) -> list[dict[str, Any]] | None:
-        """The ordered per-milestone edge-pinned graphs of a `history` / `asOfRange`
+        """The ordered per-milestone graphs of a `history` / `asOfRange`
         snapshot read (``then.graphs``), or ``None`` (m-snapshot-read, Q5a).
 
         Each entry is ``{"pin": {dimension: start-instant}, "graph": {Class: [node, …]}}``:
