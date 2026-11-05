@@ -121,7 +121,7 @@ def _replaced(old: str, new: str) -> Callable[[str], str]:
     [
         ("fixture", _commented),
         ("fixture", _replaced("tags: [m-perf-bench, stream]", "tags: [m-perf-bench]")),
-        ("fixture", lambda text: f"{text}\nunmeasured: fixture metadata\n"),
+        ("fixture", _replaced("tags:", "unmeasured: fixture metadata\ntags:")),
         ("fixture", _replaced('predicate: { "true": {} }', 'predicate: {"true": {}}')),
         ("model", _commented),
     ],
