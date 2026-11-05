@@ -719,24 +719,26 @@ def execute_fetch_levels(
         label = (
             f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} ({step.view_key})"
         )
-        if step.union_set is not None and step.order_by:
-            raise CaseFailure(
-                f"{label} declares an `orderBy` over a `union all` level, whose canonical "
-                f"form m-sql does not state, so the oracle cannot grade it."
-            )
         expected_suffix = (
             execute.expected_pin_suffix(step.child_entity, root_pins)
             if step.child_entity.is_temporal
             else []
         )
         key_type = step.child_entity.attribute_by_name(step.child_attr)["type"]
-        executed_binds = [
+        order_binds = (
+            ()
+            if step.union_set is None
+            else materialize.level_order_binds(case, step.union_set, step.order_by, dialect)
+        )
+        branch_authored = raw_authored[: len(raw_authored) - len(order_binds)]
+        branch_binds = [
             bind
-            for authored in _branch_bind_groups(label, step, raw_authored)
+            for authored in _branch_bind_groups(label, step, branch_authored)
             for bind in _checked_branch_binds(
                 label, step, dialect, authored, parent_keys, expected_suffix, key_type
             )
         ]
+        executed_binds = [*branch_binds, *raw_authored[len(branch_authored) :]]
 
         child_col = column_of(step.child_entity, step.child_attr)
         key_array = column_array_parameter(key_type) if dialect == "postgres" else None
@@ -772,7 +774,9 @@ def execute_fetch_levels(
                 key_column=child_col,
                 key_count=len(parent_keys),
                 key_array=key_array,
-                branch_binds=len(executed_binds) // step.branch_count,
+                branch_binds=len(branch_binds) // step.branch_count,
+                order_by=step.order_by,
+                binds=tuple(executed_binds),
             ),
         )
         rows_by_hop[step.hop_key] = published

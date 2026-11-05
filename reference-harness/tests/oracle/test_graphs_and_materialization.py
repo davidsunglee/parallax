@@ -1669,14 +1669,139 @@ def test_a_temporal_union_branch_carrying_the_wrong_as_of_bind_is_refused(
         assert_case_read(case, ScriptedReads(results=_chain()))
 
 
-def test_an_ordered_union_level_is_refused_rather_than_graded_as_unordered(
-    damaged_case: CaseLoader,
+_TEMPORAL_UNION = "m-read-planning-028-temporal-union-level.yaml"
+_ORDERED_UNION = "m-read-planning-029-ordered-temporal-union-level.yaml"
+_DOCUMENT_KEY_UNION = "m-read-planning-030-ordered-union-level-document-key.yaml"
+_INTERVAL = {"from_z": _JANUARY, "thru_z": _FOREVER, "in_z": _JANUARY, "out_z": _FOREVER}
+_SHEETS: list[dict[str, Any]] = [
+    {"id": 100, "name": "Retail", **_INTERVAL},
+    {"id": 101, "name": "Business", **_INTERVAL},
+]
+
+
+def _sheet_rate(
+    key: int, sheet: int, priority: int | None, tier: int | None, variant: str
+) -> dict[str, Any]:
+    return {
+        "id": key,
+        "sheet_id": sheet,
+        "priority": priority,
+        "tier": tier,
+        "grade": None,
+        "spread": None,
+        **_INTERVAL,
+        "family_variant": variant,
+    }
+
+
+_RANKED_RATES = [
+    _sheet_rate(2, 100, 20, 1, "SheetLoan"),
+    _sheet_rate(1, 100, 20, None, "SheetDeposit"),
+    _sheet_rate(6, 101, 10, 1, "SheetDeposit"),
+    _sheet_rate(4, 100, 10, None, "SheetLoan"),
+    _sheet_rate(5, 101, None, 1, "SheetLoan"),
+    _sheet_rate(3, 100, None, 2, "SheetDeposit"),
+]
+
+
+def _sheet_level(case: Case) -> dict[str, Any]:
+    return case.then["statements"][1]
+
+
+def _ranked_reads(dialect: str, rates: list[dict[str, Any]] = _RANKED_RATES) -> ScriptedReads:
+    return ScriptedReads(dialect=dialect, results=[_SHEETS, rates])
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_an_ordered_level_reading_a_bare_union_is_refused(
+    damaged_case: CaseLoader, dialect: str
 ) -> None:
-    def order_the_vehicle_hop(document: dict[str, Any]) -> None:
-        relationship = _entity(document, "Parking")["relationships"][0]
-        relationship["orderBy"] = [{"attribute": "id"}]
+    case = damaged_case(_ORDERED_UNION)
+    sql = _sheet_level(case)["sql"]
+    sql[dialect] = sql[dialect].partition(" from (")[2].rpartition(") u order by ")[0]
 
-    case = _with_descriptor_change(damaged_case(_THREE_HOP), order_the_vehicle_hop)
+    with pytest.raises(CaseFailure, match="wraps its `union all` as the derived table"):
+        assert_case_read(case, _ranked_reads(dialect))
 
-    with pytest.raises(CaseFailure, match="`orderBy` over a `union all` level"):
-        assert_case_read(case, ScriptedReads(results=_chain()))
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_an_ordered_level_hanging_its_order_on_the_union_is_refused(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = damaged_case(_ORDERED_UNION)
+    sql = _sheet_level(case)["sql"]
+    inner, _, order = sql[dialect].partition(" from (")[2].rpartition(") u order by ")
+    sql[dialect] = f"{inner} order by {order.replace('u.', '')}"
+
+    with pytest.raises(CaseFailure, match="wraps its `union all` as the derived table"):
+        assert_case_read(case, _ranked_reads(dialect))
+
+
+@pytest.mark.parametrize(
+    ("dialect", "old", "new"),
+    [
+        ("postgres", "u.priority desc nulls last, ", "u.priority desc, "),
+        ("postgres", ", u.id asc", ""),
+        ("postgres", ", u.id asc", ", u.id desc"),
+        ("mariadb", "u.tier is null, ", ""),
+        ("mariadb", "u.priority desc, ", "u.tier asc, "),
+    ],
+)
+def test_an_ordered_level_departing_from_its_declared_keys_is_refused(
+    damaged_case: CaseLoader, dialect: str, old: str, new: str
+) -> None:
+    case = damaged_case(_ORDERED_UNION)
+    sql = _sheet_level(case)["sql"]
+    assert old in sql[dialect]
+    sql[dialect] = sql[dialect].replace(old, new)
+
+    with pytest.raises(CaseFailure, match="does not wrap its `union all`"):
+        assert_case_read(case, _ranked_reads(dialect))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_an_ordered_level_answering_out_of_order_is_refused(
+    corpus_case: CaseLoader, dialect: str
+) -> None:
+    rates = list(reversed(_RANKED_RATES))
+
+    with pytest.raises(CaseFailure, match="not in declared orderBy order"):
+        assert_case_read(corpus_case(_ORDERED_UNION), _ranked_reads(dialect, rates))
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+def test_an_unordered_level_carrying_a_wrap_is_refused(
+    damaged_case: CaseLoader, dialect: str
+) -> None:
+    case = damaged_case(_TEMPORAL_UNION)
+    sql = _sheet_level(case)["sql"]
+    sql[dialect] = f"select u.id from ({sql[dialect]}) u order by u.id asc"
+
+    with pytest.raises(CaseFailure, match="one bare `union all`"):
+        assert_case_read(case, _ranked_reads(dialect))
+
+
+@pytest.mark.parametrize(
+    ("dialect", "authored"),
+    [("postgres", ["tier", "priority"]), ("mariadb", ["$.priority", "$.tier", "$.priority"])],
+)
+def test_a_document_key_binding_another_members_path_is_refused(
+    damaged_case: CaseLoader, dialect: str, authored: list[str]
+) -> None:
+    case = damaged_case(_DOCUMENT_KEY_UNION)
+    binds = _sheet_level(case)["binds"][dialect]
+    binds[-len(authored) :] = authored
+
+    with pytest.raises(CaseFailure, match="outer wrap binds"):
+        assert_case_read(case, _ranked_reads(dialect, []))
+
+
+@pytest.mark.parametrize(("dialect", "dropped"), [("postgres", 2), ("mariadb", 3)])
+def test_a_document_key_dropping_its_trailing_paths_is_refused(
+    damaged_case: CaseLoader, dialect: str, dropped: int
+) -> None:
+    case = damaged_case(_DOCUMENT_KEY_UNION)
+    del _sheet_level(case)["binds"][dialect][-dropped:]
+
+    with pytest.raises(CaseFailure, match="do not split|as-of suffix|key-set binds"):
+        assert_case_read(case, _ranked_reads(dialect, []))

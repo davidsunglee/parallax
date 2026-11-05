@@ -47,6 +47,7 @@ from parallax.conformance.read_models import (
     PERSON_MODEL,
     PREDICATE_TRAVERSAL_MODEL,
     RATE_MODEL,
+    RATE_SHEET_MODEL,
     READ_ONLY_INHERITANCE_MODEL,
     SCALARS_MODEL,
     Balance,
@@ -645,6 +646,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("policy", POLICY_MODEL),
     ("position", POSITION_MODEL),
     ("rate", RATE_MODEL),
+    ("rate-sheet", RATE_SHEET_MODEL),
     ("wallet", WALLET_MODEL),
     ("pk-sequence", PK_SEQUENCE_MODEL),
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
@@ -938,6 +940,10 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "quote": (
             "no mirror authored; it is the mirrored `rate`'s table-per-concrete-subtype family "
             "with a transaction-time-only root axis in place of the bitemporal pair"
+        ),
+        "rate-sheet-document": (
+            "no mirror authored; it is the mirrored `rate-sheet` with its family's members "
+            "under a root-owned Document Layout"
         ),
         "reading": (
             "no mirror authored; it is the mirrored `payment`'s table-per-hierarchy family with "

@@ -1,0 +1,55 @@
+model: models/rate-sheet.yaml
+tags: [m-read-planning, m-navigate, m-sql, table-per-concrete-subtype, union-all, deep-fetch, relationship, temporal, bitemporal, as-of, familyVariant, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the key-set binds are the distinct keys gathered from the root rows, so the child emission depends on a query result"
+given:
+  fixtures: true
+when:
+  objectQuery:
+    target: parallax.compatibility.RateSheet
+    predicate:
+      "true": {}
+    temporal:
+      transaction-time:
+        asOf: "2024-01-15T00:00:00.000000Z"
+      valid-time:
+        asOf: "2024-06-01T00:00:00.000000Z"
+    includes:
+      - segments:
+          - rel: parallax.compatibility.RateSheet.rates
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from rate_sheet t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from rate_sheet t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+      binds: ["2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z"]
+    - sql:
+        postgres: select t0.id, t0.sheet_id, t0.priority, t0.tier, t0.grade, cast(null as int) spread, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'SheetDeposit' family_variant from sheet_deposit t0 where t0.sheet_id = any(cast(? as bigint[])) and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ? union all select t0.id, t0.sheet_id, t0.priority, t0.tier, cast(null as varchar(8)) grade, t0.spread, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'SheetLoan' family_variant from sheet_loan t0 where t0.sheet_id = any(cast(? as bigint[])) and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.id, t0.sheet_id, t0.priority, t0.tier, t0.grade, cast(null as signed) spread, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'SheetDeposit' family_variant from sheet_deposit t0 where t0.sheet_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ? union all select t0.id, t0.sheet_id, t0.priority, t0.tier, cast(null as char(8)) grade, t0.spread, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'SheetLoan' family_variant from sheet_loan t0 where t0.sheet_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+      binds: { postgres: [[100, 101], "2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", [100, 101], "2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z"], mariadb: [100, 101, "2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", 100, 101, "2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z", "2024-01-15T00:00:00.000000Z"] }
+  graph:
+    RateSheet:
+      - id: 100
+        name: Retail
+        validStart: "2024-01-01T00:00:00.000000Z"
+        validEnd: infinity
+        txStart: "2024-01-01T00:00:00.000000Z"
+        txEnd: infinity
+        rates:
+          - { id: 1, sheetId: 100, priority: 5, tier: null, grade: B, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-02-01T00:00:00.000000Z", familyVariant: SheetDeposit }
+          - { id: 2, sheetId: 100, priority: 20, tier: 1, grade: null, spread: 125, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
+          - { id: 3, sheetId: 100, priority: null, tier: 2, grade: C, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetDeposit }
+          - { id: 4, sheetId: 100, priority: 10, tier: null, grade: null, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
+      - id: 101
+        name: Business
+        validStart: "2024-01-01T00:00:00.000000Z"
+        validEnd: infinity
+        txStart: "2024-01-01T00:00:00.000000Z"
+        txEnd: infinity
+        rates:
+          - { id: 5, sheetId: 101, priority: null, tier: 1, grade: null, spread: 300, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
+          - { id: 6, sheetId: 101, priority: 10, tier: 1, grade: null, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetDeposit }
+  databaseCalls: 2

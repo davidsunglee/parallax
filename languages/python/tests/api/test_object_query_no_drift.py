@@ -41,6 +41,7 @@ from parallax.conformance.read_models import (
     Payment,
     Person,
     Pet,
+    RateSheet,
     Ticket,
     WildBoar,
 )
@@ -89,6 +90,19 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-snapshot-read-005": lambda: Order.where(Order.id == 4).include(Order.items.statuses),
     "m-snapshot-read-011": lambda: Order.where(Order.id == 1).include(Order.items.order),
     "m-snapshot-read-051": lambda: Ticket.where(Ticket.all).include(Ticket.parking.vehicle.dealer),
+    "m-read-planning-028": lambda: (
+        RateSheet.where(RateSheet.all)
+        .as_of(
+            valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC),
+        )
+        .include(RateSheet.rates)
+    ),
+    "m-read-planning-029": lambda: (
+        RateSheet.where(RateSheet.all)
+        .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), tx_time=LATEST)
+        .include(RateSheet.ranked_rates)
+    ),
     "m-navigate-013": lambda: (
         Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)

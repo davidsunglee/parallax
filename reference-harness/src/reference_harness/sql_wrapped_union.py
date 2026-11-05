@@ -615,6 +615,14 @@ def _assert_wrap_binds(facts: WrapFacts, expected: list[_OrderTerm], dialect: st
         )
 
 
+def order_key_binds(keys: tuple[WrapOrderKey, ...], dialect: str) -> tuple[str, ...]:
+    """The Document paths *keys* bind after every branch bind, in term order."""
+    seam = _DIALECT_SEAM[dialect]
+    return tuple(
+        bind for key in keys for term in _expected_order_terms(key, seam) for bind in term.binds
+    )
+
+
 def _assert_directed_key(term: Expr | None) -> None:
     """One ``order by`` key term spells its direction.
 

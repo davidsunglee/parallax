@@ -22,6 +22,7 @@ from parallax.conformance.read_models import (
     PERSON_MODEL,
     PREDICATE_TRAVERSAL_MODEL,
     RATE_MODEL,
+    RATE_SHEET_MODEL,
     READ_ONLY_INHERITANCE_MODEL,
     SCALARS_MODEL,
 )
@@ -70,6 +71,7 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "position": POSITION_MODEL,
         "predicate-traversal": PREDICATE_TRAVERSAL_MODEL,
         "rate": RATE_MODEL,
+        "rate-sheet": RATE_SHEET_MODEL,
         "read-only-inheritance": READ_ONLY_INHERITANCE_MODEL,
         "scalars": SCALARS_MODEL,
         "shipment": SHIPMENT_MODEL,

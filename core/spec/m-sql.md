@@ -1142,8 +1142,12 @@ single **`union all`** statement whose branches — one per effective concrete
 subtype in canonical alphabetical order (`m-inheritance`) — share the **same**
 parent-id `IN` list (the stable superset projection + per-branch `familyVariant`
 literal of the abstract-read lowering below); the hop remains one statement,
-preserving `1 + L`. A hop whose target position has no concrete subtype issues
-none (*Inheritance — a position with no concrete subtype*).
+preserving `1 + L`. A hop over a relationship declaring `orderBy` applies the
+declared keys as *Ordered or limited abstract read* applies Sort Keys: it wraps
+that union as the derived table `u` and orders against the union's result aliases,
+with the gathered keys and any as-of fragment staying inside each branch. A hop
+whose target position has no concrete subtype issues none (*Inheritance — a position
+with no concrete subtype*).
 
 ## Temporal predicates and write sequences
 

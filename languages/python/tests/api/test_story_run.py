@@ -30,7 +30,16 @@ from parallax.conformance.graph_stories import (
     a_finite_transaction_time_pinned_view_is_read_only,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
-from parallax.conformance.read_models import Animal, Bike, Car, Cat, Dog, Pet
+from parallax.conformance.read_models import (
+    Animal,
+    Bike,
+    Car,
+    Cat,
+    Dog,
+    Pet,
+    SheetDeposit,
+    SheetLoan,
+)
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
@@ -326,6 +335,50 @@ def test_a_three_hop_include_loads_every_level_in_four_calls(profile_run: Any) -
     )
     assert residuals == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[story.case_id]
     assert db.database_calls == [then["databaseCalls"]]
+
+
+def _grade_union_level(story_id: str, snapshot: Any, db: Any) -> None:
+    then = case_document(corpus_case(story_id))["then"]
+    residuals = classify_child_graph_shape_residuals(
+        {"RateSheet": [envelope.graph_root(root) for root in snapshot.wire().checked().results()]},
+        then["graph"],
+        CollectionKinds(engine.load_case_metamodel(corpus_case(story_id))),
+    )
+    assert residuals == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[story_id]
+    assert db.database_calls == [then["databaseCalls"]]
+
+
+def test_a_temporal_union_level_reads_every_branch_at_the_root_pin(profile_run: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-read-planning-028"]
+    meta = _reset_for(story.case_id, profile_run)
+    db = _counting_connect(profile_run.port, meta)
+    snapshot = story.run(db)
+    retail = next(sheet for sheet in snapshot.results() if sheet.id == 100)
+
+    rates = {rate.id: rate for rate in retail.rates}
+    assert sorted(rates) == [1, 2, 3, 4]
+    assert type(rates[1]) is SheetDeposit
+    assert rates[1].grade == "B"
+    assert type(rates[2]) is SheetLoan
+    _grade_union_level(story.case_id, snapshot, db)
+
+
+def test_an_ordered_union_level_sorts_across_its_branches(profile_run: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-read-planning-029"]
+    meta = _reset_for(story.case_id, profile_run)
+    db = _counting_connect(profile_run.port, meta)
+    snapshot = story.run(db)
+    sheets = {sheet.id: sheet for sheet in snapshot.results()}
+
+    assert [type(rate) for rate in sheets[100].ranked_rates] == [
+        SheetLoan,
+        SheetDeposit,
+        SheetLoan,
+        SheetDeposit,
+    ]
+    assert [rate.id for rate in sheets[100].ranked_rates] == [2, 1, 4, 3]
+    assert [rate.id for rate in sheets[101].ranked_rates] == [6, 5]
+    _grade_union_level(story.case_id, snapshot, db)
 
 
 def test_pinned_graph_at_a_past_valid_time_instant(profile_run: Any) -> None:
