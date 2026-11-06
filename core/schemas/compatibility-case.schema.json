@@ -999,7 +999,7 @@
                 "required": ["write"]
               },
               {
-                "description": "An ACTION step names a verb over an earlier published value (`on`) or the unit-of-work boundary. `mutate` derives an edited value; `access` navigates an already-materialized snapshot relationship. Both issue no SQL. `flush` and `commit` carry the buffered DML they execute. Per-step observables report the derived `expectRows`, retained relationship `expectGraph`, raised `expectError`, and `sameObjectAs` view preservation. A scenario with actions carries no top-level `then.statements`.",
+                "description": "An ACTION step names a verb over an earlier published value (`on`) or a value handed to a keyed write verb (`value`). `mutate` derives an edited value; `access` navigates an already-materialized snapshot relationship. Both issue no SQL. Per-step observables report the derived `expectRows`, retained relationship `expectGraph`, raised `expectError`, and `sameObjectAs` view preservation. A scenario with actions carries no top-level `then.statements`.",
                 "required": ["action"]
               }
             ],
@@ -1021,7 +1021,7 @@
                 }
               },
               {
-                "description": "An OBJECT-TARGETING action verb (`mutate` / `access`) acts on a PRIOR step's result, so it MUST name that source with `on`. The BOUNDARY / unit-of-work verbs (`flush` / `commit` / `abort`) operate on the unit of work as a whole rather than a specific prior object, so `on` is OPTIONAL for them (a `flush` MAY still carry `on` to document the buffered write it materializes). This is a per-verb conditional, NOT a blanket `on` requirement — a blanket rule would wrongly reject a legitimate boundary step.",
+                "description": "An OBJECT-TARGETING action verb (`mutate` / `access`) acts on a PRIOR step's result, so it MUST name that source with `on`.",
                 "if": {
                   "required": ["action"],
                   "properties": {
@@ -1216,7 +1216,7 @@
                 "$ref": "#/$defs/goldenStatements"
               },
               "expectRows": {
-                "description": "The rows this step publishes. A read observes scalar values from its instance-form result (m-case-format *Read result form*, m-sql *Read projection*): value-object-bearing targets still project every applicable Storage Layout `Document` slot. A `mutate` publishes the in-memory Wire values derived by replacing the authored bindings whole, without another read.",
+                "description": "The rows this step publishes. A read states its instance-form result (m-case-format *Read result form*, m-sql *Read projection*): unlike `then.rows`, each top-level Value Object contributor is stated, as its document. A `mutate` publishes the in-memory Wire values derived by replacing the authored bindings whole, without another read.",
                 "type": "array",
                 "items": { "type": "object" }
               },
@@ -1239,11 +1239,11 @@
                 "minimum": 0
               },
               "action": {
-                "description": "The action verb (m-case-format): `mutate` derives a copy with the assignments in `set`; `access` navigates an already-materialized snapshot relationship, without SQL. `flush` emits buffered DML, and `commit` or `abort` ends the unit of work. `insert` or `amend` hands the named keyed verb a value of the sibling `value` provenance; this arrangement names no prior result and carries no golden SQL.",
-                "enum": ["mutate", "access", "flush", "commit", "abort", "insert", "amend"]
+                "description": "The action verb (m-case-format): `mutate` derives a copy with the assignments in `set`; `access` navigates an already-materialized snapshot relationship, without SQL. `insert` or `amend` hands the named keyed verb a value of the sibling `value` provenance; this arrangement names no prior result and carries no golden SQL.",
+                "enum": ["mutate", "access", "insert", "amend"]
               },
               "on": {
-                "description": "The zero-based index of the earlier scenario step whose result this action uses. The harness requires `0 <= on < the current step index`. Object-targeting `mutate` and `access` require it; boundary verbs may omit it. A write step has no step-level source: each buffered submission names its own (`$defs/submissionSource`).",
+                "description": "The zero-based index of the earlier scenario step whose result this action uses. The harness requires `0 <= on < the current step index`. Object-targeting `mutate` and `access` require it. A write step has no step-level source: each buffered submission names its own (`$defs/submissionSource`).",
                 "type": "integer",
                 "minimum": 0
               },
@@ -2668,7 +2668,7 @@
       "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
     },
     "lifecycleAttemptFinished": {
-      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency flushes included), `pre-commit` (the boundary-owned final flush), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted). Its attribution is the ordinary rule rather than a fixed answer: an attempt whose own Acquisition granted no connection names that Acquisition and is `caused`, while one whose boundary refused to open on a connection it did acquire has no child holding the failure and is `direct`. Either way the invocation above finishes `failed` caused by it.",
+      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency flushes included), `pre-commit` (the boundary-owned final flush), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted). A boundary that never opened is the failure of the attempt's Acquisition, so the attempt names that Acquisition and is `caused` under the ordinary Holding rule, and the invocation above finishes `failed` caused by it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],

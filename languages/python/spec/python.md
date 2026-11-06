@@ -145,8 +145,8 @@ value never pulls the typed surface in, and one that wants the typed surface nam
 this module. That is what keeps the widening contained rather than leaking through the
 package.
 
-`parallax.core._execution._read_pipeline` is the read pipeline every eager,
-streamed, and row read runs through, scoped apart from its package so its row
+`parallax.core._execution._read_pipeline` is the read pipeline every eager
+and streamed read runs through, scoped apart from its package so its row
 states what a read ladder reaches and what it does not: the query and temporal
 vocabulary it lowers through, the read delivery it hands an adopted read to, the
 Database Port, the unit of work, the authority a scope captured, and the
@@ -174,8 +174,8 @@ through `m-execution-lifecycle`, which the re-entry gate requires. A forbidden r
 whatever the ingress itself imports, and what the row says about them is that
 this scope inherits them rather than that they are forbidden. `m-document-codec`
 IS named for the opposite reason, and not because the closure would otherwise
-lack it: `parallax.core.entity` already carries the codec in, exactly as it
-carries the two traversal modules, so naming it moves no generated contract.
+lack it: `parallax.core.entity` already carries the codec in, so naming it moves
+no generated contract.
 What the row states is direct use — an effective change set is the codec's
 answer and the ingress asks for it itself — which is what tells a reader where
 the ingress's own imports end rather than leaving the codec to be inferred from
@@ -591,7 +591,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   cannot encode this
   partial order: a `layers` contract lets a higher layer import *every* lower
   layer, silently legalizing illegal non-edges (e.g. `m-batch-write`
-  importing `m-sql-gen`), so the gate must reject illegal non-edges,
+  importing `m-sql`), so the gate must reject illegal non-edges,
   not merely confirm that listed edges match `modules.md`. The script
   re-generates and fails on any diff against the committed contracts. Local:
   `uv run python tools/check_dag_sync.py && uv run lint-imports`. CI: the

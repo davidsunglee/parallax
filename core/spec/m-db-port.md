@@ -863,8 +863,9 @@ values (`m-conformance-adapter`, `m-wire`), rendered above the port from managed
 values through explicit Metadata, and it grades by exact Wire structural equality
 except where the case authors an explicit tolerance (`m-case-format`). Grading is
 therefore cross-language-consistent and independent of any one language's managed
-representation. **Wire rendering is never an adapter concern:** a concrete adapter
-emits managed types only and contains **no** Wire or grading logic.
+representation. **Rendering a result into Wire is never an adapter concern:** a
+concrete adapter emits managed types only and contains **no** result-rendering or
+grading logic.
 
 `DocumentRead` is likewise a managed transport value, but never a developer or
 grader result cell. The compiled row transform consumes it to preserve or

@@ -15,11 +15,11 @@
           "$ref": "identity.schema.json#/$defs/entityName"
         },
         "predicate": {
-          "description": "The recursive Boolean selection grammar (m-predicate). REQUIRED: an unfiltered Object Query states `{ \"all\": {} }` rather than omitting the clause.",
+          "description": "The recursive Boolean selection grammar (m-predicate). REQUIRED: an unfiltered Object Query states `{ \"true\": {} }` rather than omitting the clause.",
           "$ref": "predicate.schema.json#/$defs/predicate"
         },
         "narrowTo": {
-          "description": "Constrain the RESULT position to a Subtype Selection (m-inheritance). It narrows which objects come back and nothing else — it grants no attribute scope to the predicate, creates no relationship view, and never restates `target`. Predicate-scoped narrowing stays inside `predicate`; include-path source applicability and segment narrowing stay inside `includes`.",
+          "description": "Constrain the RESULT position to a Subtype Selection (m-inheritance). It narrows which objects come back and nothing else — it creates no relationship view and never restates `target`. Predicate-scoped narrowing stays inside `predicate`; include-path source applicability and segment narrowing stay inside `includes`.",
           "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection"
         },
         "temporal": {

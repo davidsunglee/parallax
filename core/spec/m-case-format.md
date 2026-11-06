@@ -114,8 +114,8 @@ corpus state.
 The two case documents MUST be canonically equal after normalizing their model
 references, omitting routing tags, and removing physical observations. Physical
 observations are `given.apply`, every `statements` group (including its SQL and
-binds), `referenceSql`, `tableState`, and `execution`; each remains authored and
-graded independently in its own file. Everything else is layout-invariant,
+binds), `referenceSql`, and `tableState`; each remains authored and graded
+independently in its own file. Everything else is layout-invariant,
 including the action, `rows`, `graph` / `graphs`, nested step observations,
 errors, affected-row outcomes, and `databaseCalls`. The static equality gate plus
 the ordinary corpus sweep of both members is the proof: no harness provisions
@@ -148,8 +148,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
   `databaseCalls`), the classified `storedDataIssues`, the portable boundary
   `outcome`, the edit `result` / `carry` / preserved `source`, the described
-  `evolution` and its per-dialect `schema`, the execution-provenance `execution`,
-  and the numeric-comparison `tolerance`.
+  `evolution` and its per-dialect `schema`, and the numeric-comparison `tolerance`.
 
 `model` / `tags` / `lane` stay top-level because they are routing/discovery fields
 read by the coverage gate and the language gate; grouping them buys no readability.
@@ -381,7 +380,7 @@ in decimal space under any authored `tolerance`.
 | `model` | top-level | every shape but `evolution` | path (relative to `core/compatibility/`) to the model descriptor. An `evolution` case names two endpoints under `when.evolve` instead, and carries no top-level `model` beside them; its LATER endpoint is the model every per-case check reads |
 | `tags` | top-level | yes | module/feature tags (e.g. `["m-predicate", "eq"]`); drive coverage + test selection |
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
-| `shape` | top-level | yes | the explicit shape discriminator — one of the eleven shapes above; the schema `oneOf` keys on this `const` |
+| `shape` | top-level | yes | the explicit shape discriminator — one of the ten shapes above; the schema `oneOf` keys on this `const` |
 | `grading` | top-level | no | scenario only: `state` grades the case on the state it states rather than on golden SQL per step (see *State-graded scenarios*, below); omitted, every step's golden is graded |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
@@ -499,7 +498,7 @@ resolved Q6) and the harness materializes `familyVariant` from the tag metadata
 map (`tagValue` -> subtype name) — an independent, metadata-derived
 recomputation like the as-of and PK-allocation oracles. A **concrete-target**
 read carries no `familyVariant` (the caller already knows the variant) and
-projects only that concrete instance's columns in either lane. Every Subtype
+projects only that concrete instance's columns. Every Subtype
 Selection a query carries is validated pre-SQL against the family's effective
 concrete-subtype set (`m-inheritance`); an invalid selection is a `rejected` case
 (see the narrow rules in *Rejected cases*).
@@ -613,10 +612,10 @@ that read**, never the read itself, keyed on **where** the read is asserted:
     per-milestone graphs, or a deep-fetch tree), each declared value object decoded
     (`m-value-object`).
 - **A scenario or concurrency read step** asserts its read with step-level
-  **`expectRows`** / **`observeRows`**, a flat observation channel over its
-  instance-form result. A value-object-bearing target projects its whole
-  `Document` slot even though the channel states scalar rows. An `access` step
-  navigates an already-materialized snapshot relationship and issues no read.
+  **`expectRows`**, a flat observation of its instance-form result. Unlike
+  `then.rows`, a step's row also states each top-level Value Object contributor,
+  as its document. An `access` step navigates an already-materialized snapshot
+  relationship and issues no read.
 
 `then.rows` and `then.graph` differ only in what they state of one read: the
 `then.rows` reads over `customer` state its scalars while their statements carry
@@ -650,9 +649,8 @@ declared graph. The pins are **pairwise disjoint** — every milestone belongs t
 **exactly one** declared graph, so an overlapping or duplicated pin (two graphs
 claiming the same milestone) is a loud failure, as is a milestone matched by no
 pin. (A v1 milestone-set graph carries **no** deep-fetch includes —
-history-with-includes (`snapshot-history-includes`) is staged and claimed by
-neither object-lifecycle slice — so each graph is rooted at the read's own query
-`target`.)
+history-with-includes (`snapshot-history-includes`) is staged and unclaimed — so
+each graph is rooted at the read's own query `target`.)
 
 #### Streamed reads (`when.stream`)
 
@@ -1328,10 +1326,9 @@ like any other (see *Compile eligibility*).
 #### Grouping steps into one unit of work (`uow`)
 
 A read or write step MAY carry an OPTIONAL **`uow: <label>`** key — a
-string grouping label (an action step MAY NOT: its lifecycle-object engine
-path does not observe grouping). Steps sharing one label execute inside **one held
-transaction** (one unit of work, one connection) instead of each step's own
-default boundary; a step carrying no `uow` key keeps **exactly** today's
+string grouping label (an action step MAY NOT). Steps sharing one label execute
+inside **one held transaction** (one unit of work, one connection) instead of
+each step's own default boundary; a step carrying no `uow` key keeps **exactly** today's
 semantics (an ungrouped write step is its own commit/rollback boundary, an
 ungrouped find runs on the autocommit connection). This is what lets a story
 whose observing find, versioned write, and dependent find all belong to one
@@ -1500,10 +1497,10 @@ each continuing page binds coordinates read off the previous page's own result.
 
 #### Predicate-selected write instruction
 
-A scenario write MAY retain the legacy string label, or use the canonical object
-form below. This object is the language-neutral requested write consumed by
-`compile`, `run`, and API no-drift checks; golden SQL remains the independent
-expected lowering, never the source from which an adapter deduces the write.
+A scenario write uses the canonical object form below. This object is the
+language-neutral requested write consumed by `compile`, `run`, and API no-drift
+checks; golden SQL remains the independent expected lowering, never the source
+from which an adapter deduces the write.
 
 The canonical write-instruction vocabulary — this predicate-selected shape and
 the keyed `writeSequence` shape — is **hosted in
@@ -1794,27 +1791,22 @@ always has.
 
 A golden-graded Object Query read carries a non-empty `statements` list and
 executes its own read. Retained snapshot access is an action, never a cache-hit
-form of an independent read; state-graded reads instead execute through their
-production query interpreter without authored SQL.
+form of an independent read; a state-graded read states no authored SQL.
 
 Beyond read and write steps, a scenario carries **action steps** over an
-already-published value or the unit-of-work boundary. An action carries an
-**`action`** verb, an **`on`** source where applicable, per-step golden
-`statements` and `databaseCalls`, and the same per-step observables as a read.
+already-published value or a value handed to a keyed write verb. An action
+carries an **`action`** verb, an **`on`** source where applicable, per-step
+`databaseCalls`, and the same per-step observables as a read.
 
 | Verb | Meaning | Targets | Module |
 |---|---|---|---|
 | `mutate` | derive an edited copy by assigning the members in `set`, without SQL | prior object (`on` required) | `m-edit` |
 | `access` | navigate an already-loaded relationship, without SQL | prior object (`on` required) | `m-snapshot-read` |
-| `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
-| `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` |
 | `insert` / `amend` | hand the keyed write verb a value of stated provenance (`value`) | a value (`on` inapplicable) | `m-unit-work` |
 
 **`on` is REQUIRED for `mutate` and `access`** and names the earlier step whose
-result the action uses. The boundary verbs (`flush`, `commit`, `abort`) act on
-the whole unit of work, so `on` is inapplicable and MAY be omitted; a flush MAY
-carry it to document the buffered write it materializes. Every `on` index MUST
-name an earlier step; a forward, self, or out-of-range index is a harness failure.
+result the action uses. Every `on` index MUST name an earlier step; a forward,
+self, or out-of-range index is a harness failure.
 
 ##### Keyed write action steps (the value's provenance)
 
@@ -1963,12 +1955,11 @@ payload may carry no sibling field (`m-inheritance`).
 `path` (the navigated relationship, e.g. `items` or `items.statuses`) is legal
 only on `access`. An access walks the retained snapshot graph and issues no SQL.
 Golden SQL lives per step, so a scenario with action steps carries no top-level
-`then.statements`; flush and commit statements are counted exactly as read and
-write statements are.
+`then.statements`.
 
 #### Per-step lifecycle observables
 
-Read and action steps carry observables beyond their golden SQL. The harness
+Read and action steps carry observables beyond any golden SQL. The harness
 grades `sameObjectAs`, `expectRows`, and `expectGraph`; application-lifecycle
 `expectError` observations are adapter-delegated and verified by each language's API
 Conformance Suite (`m-conformance-adapter`, `m-api-conformance`).
@@ -2251,8 +2242,8 @@ about the connection an attempt holds rather than about the work it does
   runs), `access-mode-mismatch` (a joining call's entrypoint selected the other
   access mode, refused after authority and before options), `boundary-failed` (the boundary never opened), and `connection-refused`
   (the adapter refused the connection it was handed, before any boundary).
-- `then.outcome` also admits a **dialect-keyed map**, the same form `then.sql` and
-  `then.nativeCode` use and with the same rule: a dialect the map omits is one the
+- `then.outcome` also admits a **dialect-keyed map**, the same form
+  `then.statements`' `sql` and `then.nativeCode` use and with the same rule: a dialect the map omits is one the
   case makes no claim about. That is how a nonportable engine floor is graded
   where it holds without asserting anything about an engine that meets it another
   way.
@@ -2332,11 +2323,11 @@ none of them. They are stated once, above every Transaction Attempt, because
 every attempt of one invocation opens in the same requested mode and level.
 
 An operation's connection is observable as two more activities. A standalone
-Read, a Transaction Attempt, and a standalone Stream each carry an
-`acquisitionStarted`/`acquisitionFinished` pair as their FIRST child and — where
-that acquisition granted a connection — a `releaseStarted`/`releaseFinished`
-pair as their LAST. They are siblings of the execution activities between them
-and contain nothing; work that inherits a connection carries neither pair.
+Read, a Transaction Attempt, and each Stream Batch of a standalone Stream each
+carry an `acquisitionStarted`/`acquisitionFinished` pair as their FIRST child
+and — where that acquisition granted a connection — a
+`releaseStarted`/`releaseFinished` pair as their LAST. They are siblings of the
+execution activities between them and contain nothing; work that inherits a connection carries neither pair.
 `acquisitionStarted` names the read `policy` it requested (`m-execution` *Read
 routing*). `acquisitionFinished` names the `route` it landed on and any
 `fallback` that put it there, the `m-db-port` `reason` it failed for, and the
@@ -2349,6 +2340,11 @@ that root requests `writer-only` — relations the harness checks across events.
 the finite conditions it met, and never rewrites the outcome of the activity
 above it. Both omit their monotonic durations for the reason a Database Call
 does.
+
+Every Started transition of an adoption-owning activity — a standalone Read, a
+standalone Stream, and every Transaction Attempt — asserts the literal edition
+the conformance adapter prepared the case's model under
+(`m-conformance-adapter`); a Read or stream under an attempt asserts none.
 
 The shape is a case assertion format, not a public serialization contract. The
 compatibility harness validates `then.executionLifecycle` without producing

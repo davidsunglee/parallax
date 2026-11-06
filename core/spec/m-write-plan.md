@@ -344,8 +344,7 @@ lowered as-of coordinate, because a node's pin drives its relationship
 dereferencing. An Object State Key carries the *observed milestone's own*
 coordinate, so two **distinct** pins that resolve to **one** milestone name
 **one** observed state: an observation records what was read, not the reading,
-and a milestone read twice is one piece
-of evidence.
+and a milestone read twice is one piece of evidence.
 
 ### Predecessor Row
 

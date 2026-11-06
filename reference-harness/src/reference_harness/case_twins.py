@@ -41,7 +41,7 @@ __all__ = [
 type PhysicalMember = Callable[[tuple[str, ...], str], bool]
 """Whether the member at ``(path, key)`` is a physical observation an arm owns."""
 
-TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState", "execution"})
+TOP_LEVEL_PHYSICAL_KEYS = frozenset({"statements", "referenceSql", "tableState"})
 _STEP_STATEMENT_PATHS = frozenset(
     {
         ("when", "scenario", "[]"),

@@ -138,11 +138,11 @@ The contract is layered. For a given dialect, an implementation is correct iff:
 2. **Golden-SQL equivalence.** The SQL the implementation emits, **after
    normalization**, equals the per-dialect `sql` in `then.statements`.
 
-Round 1 shipped golden SQL for **Postgres only**; the contract is per-dialect, so
-additional dialects add a per-dialect `sql` key in each `then.statements` entry
-(e.g. `mariadb`) without changing the rules. **MariaDB** is the second concrete
-dialect (a representative subset of cases now carries a `mariadb` key in their
-`then.statements` entries), proving the per-dialect contract beyond Postgres.
+Golden SQL is per-dialect: a dialect adds a per-dialect `sql` key in each
+`then.statements` entry (e.g. `mariadb`) without changing the rules. **MariaDB**
+is the second concrete dialect (a representative subset of cases carries a
+`mariadb` key in their `then.statements` entries), proving the per-dialect
+contract beyond Postgres.
 
 ## Canonical normalization rules
 
@@ -368,11 +368,8 @@ whether `Document` slots are selected:
   **predecessor projection**. Widening this projection still constructs no instance.
 
 Row-form is **not a developer surface**: the idiomatic find API always
-materializes. Every read a case asserts is **instance-form**, whichever member
-asserts it. `then.rows` is a flat assertion over that read rather than a choice
-of lane, and a scenario or concurrency read asserted with `expectRows` or
-`observeRows` is instance-form likewise. Accessing an already-materialized
-snapshot relationship issues no read.
+materializes. What a case asserts of a read is `m-case-format`'s (*Read result
+form*).
 
 Everything already specified composes with this rule unchanged: a version
 Attribute is an applicable Attribute slot; a TPH abstract read selects its
@@ -703,9 +700,9 @@ literal — the form a written temporal row already binds it in.
 
 **A coordinate bind's reported form is that same split, and it is total over every
 carrier a delivery can reach.** A statement reports its binds in canonical Wire
-(*Bind metadata*), and a carrier is reportable exactly where the form it was bound
-in already answers one: a comparison-text bind reports the extracted text as it
-stands, and a managed bind reports the canonical Wire rendering of a value the
+(*Driver binds and canonical Wire projection*), and a carrier is reportable
+exactly where the form it was bound in already answers one: a comparison-text
+bind reports the extracted text as it stands, and a managed bind reports the canonical Wire rendering of a value the
 declared type admits. Both hold for storage the model contradicts, which is the
 point — a text-compared extraction reports whatever text the document held, and a
 casting extraction reports the engine's own cast result, which is a member of the
@@ -731,7 +728,7 @@ placeholder.
 
 ### Clause order
 
-The `EntityQuery` ordering and cap fields lower into the fixed clause order
+The query's ordering and cap fields lower into the fixed clause order
 (rule 5):
 `select … from … [where …] [order by …] [limit …]`. `orderBy` and `limit`
 therefore always follow any predicate. A paging read's capture cells sit inside
@@ -1357,7 +1354,7 @@ reads those rectangles inside its flush, as an ordinary row-form read of the
 object's current coverage overlapping the part of its extent no row the unit
 already holds covers:
 
-| Extent | Golden read | Binds |
+| Extent | Read | Binds |
 |---|---|---|
 | uncovered to the open bound | `select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z > ? and t0.out_z = ?` | `[pk, uncoveredFrom, infinity]` |
 | uncovered up to `uncoveredUntil` | `… where t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?` | `[pk, uncoveredFrom, uncoveredUntil, infinity]` |
@@ -1378,7 +1375,7 @@ acquisition*) share these reads. One statement names several objects' parts,
 each object's key beside its own parts, and the 64-part bound counts the parts of
 every object it names:
 
-| Extent | Golden read | Binds |
+| Extent | Read | Binds |
 |---|---|---|
 | several objects' uncovered parts | `… where ((t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?))) or (t0.pos_id = ? and t0.thru_z > ?)) and t0.out_z = ?` | `[pk₁, from₁, until₁, from₂, until₂, pk₂, uncoveredFrom, infinity]` |
 
@@ -1443,7 +1440,7 @@ successors, in Valid-Time order. Under
 Locking the write's submission first reads its starting rectangle alone, with
 the predecessor projection and the read-lock suffix:
 
-| Target | Golden read | Binds |
+| Target | Read | Binds |
 |---|---|---|
 | Bitemporal | `… where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0` | `[pk, validFrom, validFrom, infinity]` |
 | Transaction-Time-Only | `… where t0.bal_id = ? and t0.out_z = ? for share of t0` | `[pk, infinity]` |
@@ -2523,7 +2520,7 @@ stores SQL `NULL`. On a temporal owner the same document rides milestone chainin
 like any scalar column (the milestone-chaining write sequences above); there is no
 value-object-specific write machinery. The harness proves each form by **applying**
 the golden DML and reading the resulting `then.tableState` document back (decoding
-the structured-document column to a Python structure so both dialects compare
+the structured-document column to its JSON value so both dialects compare
 against the authored document), the write-sequence oracle (`m-case-format`) — corpus
 `m-value-object-025` (insert), `-026` (whole-document update), `-027` (null-out).
 

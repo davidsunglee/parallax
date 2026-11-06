@@ -106,7 +106,7 @@ The policy applies only where an operation starts NEW execution:
 
 | Operation | Requests |
 |---|---|
-| A standalone read or row read, and every page of a standalone stream | the scope's read policy |
+| A standalone read, and every page of a standalone stream | the scope's read policy |
 | An outer read-only transaction, on every attempt | the scope's read policy |
 | An outer writable transaction, on every attempt | `writer-only`, whatever the scope's policy |
 | A read, stream, or joining call inside an active transaction | nothing: it runs on the attempt's connection |

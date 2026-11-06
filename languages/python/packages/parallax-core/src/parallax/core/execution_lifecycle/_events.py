@@ -357,10 +357,9 @@ automatic flush after the callback returned. ``commit`` is the durability call.
 class AttemptFailure:
     """What ended one physical attempt.
 
-    ``retry_eligible`` is the classifier's verdict under the effective policy and
-    is INDEPENDENT of the budget that remained: an exhausting attempt still
-    reports the truth about the failure, and a rollback failure reports it even
-    though it is never retried.
+    ``retry_eligible`` is the classifier's verdict and is INDEPENDENT of the
+    budget that remained: an exhausting attempt still reports the truth about the
+    failure, and a rollback failure reports it even though it is never retried.
     """
 
     phase: AttemptPhase

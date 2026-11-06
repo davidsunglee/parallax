@@ -543,10 +543,10 @@ specified elsewhere:
   ancestry order is not a promised physical prefix.
 - A **single entity's own members** keep their **declared order** within that
   sequence and therefore remain stable within a Storage Layout tier.
-- A `narrow` node's authored **`to` list** is preserved **verbatim** by serde
-  (`m-predicate`); only the *resolved/effective* concrete set it denotes is
-  canonicalized to this alphabetical order, so `to: [Pet]` and `to: [Cat, Dog]`
-  round-trip as distinct spellings yet resolve to the same ordered set.
+- A `narrow` node's `to` list keeps its authored alternatives in canonical
+  selection order (*Subtype Selection*) rather than the concrete set they resolve
+  to, so `to: [Pet]` and `to: [Cat, Dog]` round-trip as distinct spellings yet
+  resolve to the same ordered set.
 
 ## Family invariants
 

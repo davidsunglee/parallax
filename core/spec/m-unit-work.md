@@ -85,10 +85,10 @@ them entirely**. The
 observable contract:
 
 - A write performed inside a unit of work that aborts **MUST NOT** be observable
-  after the abort — whether it was still **buffered**, had been **force-flushed**
-  to serve a dependent read (read-your-own-writes). A
-  find issued after the abort **MUST** re-resolve and observe the
-  **pre-transaction** state.
+  after the abort — whether it was still **buffered** or had been
+  **force-flushed** to serve a dependent read (read-your-own-writes). A find
+  issued after the abort **MUST** re-resolve and observe the **pre-transaction**
+  state.
 - The transaction callback's return value is **withheld on abort**: if the unit
   of work rolls back — or its commit fails — the operation **fails** rather than
   returning the callback value as though it were durable (promoting ADR 0006 into
@@ -1694,24 +1694,9 @@ A readless predicate write claims nothing: it observes no state and is never
 buffered, and the flush it executes in ends every claim pending before it
 (*Buffered, batched, ordered writes*).
 
-A coalescing witness encodes **both** buffered mutations explicitly by authoring
-the write step as an ordered **buffer-and-flush** scenario. `/scenario/<n>/write`
-carries a **general ordered buffer of one-or-more keyed write instructions** — the
-writes a single unit of work accumulates and flushes together — and the step's
-golden SQL is the independent expected lowering of that flush. **Same-object folding
-at flush is the coalescing rule**, a runtime/planner property rather than a
-structural one: when two buffered instructions name the **same** entity and
-primary-key identity the flush combines them (insert-then-amend writes the final
-value in place; insert-then-delete cancels to no DML — one final-value write, or no
-DML at all). The two-keyed same-object insert-then-amend / insert-then-delete pair
-is that rule's **single-object special case**; the same buffer equally expresses a
-single keyed write and a mixed multi-object flush (an `insert` / `amend` / `delete`
-of **different** objects, ordered by foreign-key dependency). Predicate-selected
-buffered instructions remain **deferred** — the buffer is keyed-only. The buffered
-form and its authoring surface are the case format's (`m-case-format`); the
-instructions themselves are the canonical `write-instruction.schema.json` shapes, so
-an adapter exercises coalescing from the requested operations, never from the golden
-SQL.
+Coalescing is witnessed from ordered buffered instructions (`m-case-format`
+*Buffered keyed write instructions*), so an adapter exercises it from the
+requested operations, never from the golden SQL.
 
 ## The Transaction Instant
 

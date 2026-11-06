@@ -271,9 +271,7 @@ pattern contains an escape sequence. `like`/`notLike` do **not** escape — thei
 `value` is already a pattern.
 
 **Case-insensitive rule.** When `caseInsensitive` is `true`, both the subject and
-the pattern are folded with `lower(...)`: `lower(<subject>) like lower(?)`. (A
-language MAY use a dialect-native case-insensitive operator behind the `m-sql`
-seam; the golden SQL fixes the portable `lower(...)` form.)
+the pattern are folded with `lower(...)`: `lower(<subject>) like lower(?)`.
 
 **Non-string-member rule.** A string predicate reads text, so its resolved
 member's declared neutral type **MUST** be `String`; a resolver **MUST** reject any

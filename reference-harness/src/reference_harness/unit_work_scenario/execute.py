@@ -151,11 +151,10 @@ def _assert_affected_rows(step: _GroupedWrite | _UngroupedWrite, counts: list[in
 def _apply_boundary_action(step: _BoundaryAction, execution: CaseExecution, dialect: str) -> None:
     """Execute a non-read-verb action step's golden DML.
 
-    A `flush` / `commit` commits its buffered statements on the unit of work's
-    connection, and a non-row-observing `mutate` / `abort` commits whatever
-    golden DML it authors (a Valid-Time-past correction's split write); none of
-    them observes rows, and the observables they may declare are adapter-delegated
-    — validated by the schema, graded by each language's API Conformance Suite —
+    A non-row-observing action commits whatever golden DML it authors on the unit
+    of work's connection. It observes no rows, and the observables it may declare
+    are adapter-delegated — validated by the schema, graded by each language's API
+    Conformance Suite —
     so the wire harness runs the DML and nothing else.
 
     Always the provider's autocommit connection: the schema forbids `uow` on an

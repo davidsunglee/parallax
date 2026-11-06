@@ -526,22 +526,14 @@ def test_a_chain_reaching_itself_resolves_to_no_position() -> None:
             ],
             1,
         ),
-        (
-            [
-                {"objectQuery": {"target": _ORDER}},
-                {"action": "commit", "on": 0},
-                {"action": "mutate", "on": 1, "set": {"id": 2}},
-            ],
-            2,
-        ),
     ],
 )
 def test_a_step_resolving_to_no_position_is_left_to_the_on_rules(
     steps: list[Any], index: int
 ) -> None:
-    # An `on` naming a write step, an out-of-range index, no index at all, a GROUP of
-    # sources where the verb acts on one object, or a boundary verb that holds no
-    # queried node resolves to no position: where the step's node stands is undecidable
+    # An `on` naming a write step, an out-of-range index, no index at all, or a GROUP
+    # of sources where the verb acts on one object resolves to no position: where the
+    # step's node stands is undecidable
     # here, and the runtime `on` rules already report the reference itself.
     assert _judged("models/orders.yaml", steps, index) == []
 

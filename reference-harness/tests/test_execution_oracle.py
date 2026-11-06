@@ -993,8 +993,8 @@ def test_a_stream_batch_holds_the_connection_its_page_read_on() -> None:
 
 
 def test_a_begin_failure_caused_by_an_acquisition_that_granted_is_flagged() -> None:
-    """A boundary that refused to open on a connection the attempt DID acquire
-    has no child holding that failure, so it is `direct`."""
+    """A boundary that never opened is the failure of the attempt's Acquisition,
+    so an Acquisition that granted is not what a begin failure names."""
     root = _refused_root()
     root["events"][3]["acquisitionFinished"] = dict(_ACQUIRED)
     problems = validate_execution(_retry_case(root))

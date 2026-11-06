@@ -322,7 +322,8 @@ knowledge, so an implementation MUST NOT infer or report it here. Every attempt
 of one invocation opens in the same requested mode and at the same requested
 level, so both belong to the invocation and no attempt restates them.
 `concurrency` is the resolved Concurrency Preference of a writable invocation,
-and is **absent** for a read-only one, which resolves none.
+and is **absent** for a read-only one, which resolves none. `retry` is the Retry
+Policy the invocation resolved (`m-execution` *Option resolution*).
 
 An Outer Invocation is the root activity. It spans every physical attempt and
 finishes exactly once as:
@@ -378,7 +379,7 @@ attempt with no second Started transition.
 |---|---|
 | `phase` | `callback`, `pre-commit`, or `commit` |
 | `failure` | Direct or Caused Activity Failure |
-| `retryEligible` | classifier verdict under the effective policy, independent of remaining budget |
+| `retryEligible` | classifier verdict, independent of remaining budget |
 
 `callback` includes the callback, joined invocations, reads, and
 read-dependency and predicate-write Flushes. `pre-commit` is the final automatic nonempty Flush
@@ -719,48 +720,8 @@ borrowed events or uses unbounded state violates the Handler contract.
 
 ## Portable lifecycle oracle
 
-The compatibility oracle is `then.executionLifecycle` (`m-case-format`). It
-contains a `roots` list of normalized Root Executions, each with a positive
-first-observation index, kind, and ordered events. A portable event retains sequence, activity,
-parent, transition, outcome, stable code, database category, physical row
-counts, retry classification, and statement indices. It omits UUIDs, monotonic
-durations and the timing identities calls share, implementation type names,
-messages, stack traces, and native codes.
-
-A Database Call transition names its statement by zero-based index into the
-case's flattened golden statement order. Two calls name none: every call on an
-`api-conformance` lane, which authors no golden SQL, and a resolving read a
-keyed write owes, which reaches the database and is counted while the case
-authors no golden for it (`m-case-format`). The indices the remaining calls
-name are that order exactly, in delivery order and once each, and each index is
-named by a call of the kind its own statement is: a query by a read, DML by a
-write. The adapter observation uses the identical shape and indexes its own
-emissions. The shape is a case assertion format, not a public serialization
-contract.
-
-This module owns eleven cases:
-
-| Case | Observable distinction |
-|---|---|
-| standalone read | one Read brackets its Acquisition, its Database Call, and its Release outside a transaction |
-| pre-commit batch | one nonempty boundary Flush brackets two ordered writes |
-| read dependency | the dependency Flush finishes before its sibling Read starts |
-| retry then commit | one invocation contains a rolled-back attempt and a later committed attempt, each acquiring and releasing its own connection, and the first releases before the second acquires; zero-row enforcement is attributed to the completed call |
-| retry exhaustion | every failed call, Flush, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
-| joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit Flush |
-| streamed delivery | a Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
-| isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin; its Acquisition fails with the refused boundary, carrying the cleanup of the connection it was handed and followed by no Release; the attempt finishes `beginFailed` caused by it with no callback and no retry, and the invocation finishes failed caused by the attempt |
-| acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
-| cleanup after commit | a Release reporting an unconfirmed release leaves the attempt committed and the invocation committed |
-| predicate write | each nonempty predicate-selected write is one `predicate-write` Flush holding the writes buffered before it and then its own call, a matching-nothing one included; an empty one emits no Flush |
-
-Every Started transition of an adoption-owning activity in those cases — a
-standalone Read, a standalone Stream, and every Transaction Attempt —
-asserts the literal edition the conformance adapter prepared the case's model
-under (`m-conformance-adapter`); a Read or stream under an attempt asserts none.
-
-The compatibility harness validates oracle shape and correlation but observes no
-execution of its own. Each language grades the oracle through its conformance
+The compatibility oracle is `then.executionLifecycle` (`m-case-format` *The
+execution lifecycle oracle*). Each language grades it through its conformance
 adapter and proves Provider, Handler, fan-out, re-entry, quarantine, logger,
 recorder, allocation, and performance obligations through its idiomatic API and
 internal-seam suites.

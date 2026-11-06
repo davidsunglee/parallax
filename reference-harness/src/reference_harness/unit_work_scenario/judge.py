@@ -219,7 +219,7 @@ def _assert_one_step_owns_each_shared_read(scenario: CompiledScenario) -> None:
     Those writes may share coverage reads, which are statements of the flush
     rather than of any step (`m-case-format` *Resolving reads a write owes*), so
     no step's own Database Calls can hold a read another step's write shares.
-    A find, a boundary verb, or a predicate submission that writes something
+    A find, an action, or a predicate submission that writes something
     ends the flush its group has pending.
     """
     case = scenario.case
