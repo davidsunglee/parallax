@@ -154,9 +154,9 @@ Within **one Root View**, one row key is **one node**:
   path reaches, never the attribute set the level fetched. Levels that reach one
   node with *different* fetched attribute sets still produce **one** node, and
   every attribute any reaching level fetched has a well-defined value (all
-  levels read the same pinned row — the whole-graph pin below), but the exact
-  attribute superset the node carries is **not pinned** here: materializing the
-  union — or whole objects, as Reladomo's deep fetch does — is conforming.
+  levels read the same pinned row — the whole-graph pin below). That node carries
+  its own concrete's members, never a sibling's, whichever level reached it
+  (`m-inheritance` *Abstract-position reads*).
 - References between nodes are **hard pointers** (the language's plain object
   reference). Diamonds are expected; a back-reference include path produces a
   true in-memory cycle, which is legal — JSON-safety is the job of serialization

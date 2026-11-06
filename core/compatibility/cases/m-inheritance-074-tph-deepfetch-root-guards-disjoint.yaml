@@ -39,8 +39,6 @@ then:
         ownerId: 10
         licenseId: L-100
         barkVolume: 7
-        indoor: null
-        tuskLength: null
         familyVariant: Dog
         owner: { id: 10, name: Alice }
       - id: 2
@@ -48,25 +46,18 @@ then:
         ownerId: 11
         licenseId: L-101
         barkVolume: 3
-        indoor: null
-        tuskLength: null
         familyVariant: Dog
         owner: { id: 11, name: Bob }
       - id: 3
         name: Whiskers
         ownerId: 10
         licenseId: L-200
-        barkVolume: null
         indoor: true
-        tuskLength: null
         familyVariant: Cat
         owner: { id: 10, name: Alice }
       - id: 4
         name: Tusker
         ownerId: 12
-        licenseId: null
-        barkVolume: null
-        indoor: null
         tuskLength: "12.50"
         familyVariant: WildBoar
   databaseCalls: 3

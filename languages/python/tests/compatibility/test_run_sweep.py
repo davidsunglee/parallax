@@ -43,10 +43,6 @@ from tests._support.driver_writes import (
     assert_driver_write_document_nulls,
     assert_driver_write_zero_signs,
 )
-from tests._support.graph_residuals import (
-    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
-    classify_child_graph_shape_residuals,
-)
 from tests._support.lane_evidence import capture_rounds, capture_scenario
 from tests._support.repo import validate_adapter_envelope
 from tests._support.sweep_goldens import (
@@ -61,31 +57,6 @@ from tests.compatibility._float_zero_support import (
     project_float_zero_negative,
     spell_float_zero_negative,
 )
-
-# Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
-# level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling
-# branch's null padding, and one logical row rendered twice with different values
-# when two views reach it. Production materializes one MERGED, per-variant-narrowed
-# node per logical row, which is what `then.graph` now grades through, so these
-# cases disagree with it structurally rather than by any defect on either side.
-#
-# `m-case-format` *Read targeting* states the gap itself: the per-variant node
-# shape "is scoped, for now, to a read case's own top-level `then.graph` leaves",
-# and "a deep-fetch or snapshot CHILD level's graph node shape
-# (`m-snapshot-read-012`'s narrowed-vs-broad diamond, for example) is a distinct,
-# already-established convention this decision does not touch; reconciling the
-# two … is left open for a follow-up." Reconciling it moves the corpus AND the
-# reference harness's own deep-fetch grader, so it is a core-specification
-# decision rather than an adapter one.
-#
-# Everything else these cases assert still runs here — every level's SQL and
-# binds (the N+1-elimination proof they exist for) and the Database Call count. Exact
-# `then.graph` equality is withheld only for this child-shape partition; this audit
-# derives which recorded structural residuals explain the observed difference and
-# fails if any other mismatch remains. All but `m-inheritance-073` and `-077` also
-# carry a graph story whose projected and direct Wire publications undergo the same
-# classification against the authored graph; those two have no idiomatic story
-# spelling, so this compatibility audit is their graph-shape evidence.
 
 # The reachable read cases whose fixtures + observation this file runs end-to-
 # end: every compile-exercised read (including the instance-form-graph reads
@@ -304,15 +275,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
     if "rows" in then:
         compare_rows(observations["rows"], then["rows"])
     elif "graph" in then:
-        if case.case_id in CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS:
-            assert (
-                classify_child_graph_shape_residuals(
-                    observations["graph"], then["graph"], CollectionKinds(model)
-                )
-                == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[case.case_id]
-            )
-        else:
-            compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
+        compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
         compare_stored_data_issues(
             observations.get("storedDataIssues"), then.get("storedDataIssues")
         )

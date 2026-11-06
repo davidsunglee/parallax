@@ -27,6 +27,7 @@ from parallax.conformance.identifier_models import (
     UuidLeaf,
     UuidParent,
 )
+from parallax.conformance.rate_sheet_document_models import RateSheet as DocumentRateSheet
 from parallax.conformance.read_models import (
     Animal,
     Balance,
@@ -128,6 +129,14 @@ def an_ordered_union_level_sorts_across_its_branches(db: ScopedDatabase) -> Snap
         RateSheet.where(RateSheet.all)
         .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(RateSheet.ranked_rates)
+    )
+
+
+def an_ordered_union_level_sorts_by_members_of_its_document(db: ScopedDatabase) -> Snapshot[Any]:
+    return db.find(
+        DocumentRateSheet.where(DocumentRateSheet.all)
+        .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), tx_time=LATEST)
+        .include(DocumentRateSheet.ranked_rates)
     )
 
 
@@ -691,6 +700,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "An ordered union level sorts its children across the branches",
         "rate-sheet",
         an_ordered_union_level_sorts_across_its_branches,
+    ),
+    GraphStory(
+        "m-read-planning-030",
+        "An ordered union level sorts by members its document holds",
+        "rate-sheet-document",
+        an_ordered_union_level_sorts_by_members_of_its_document,
     ),
     GraphStory(
         "m-navigate-013",

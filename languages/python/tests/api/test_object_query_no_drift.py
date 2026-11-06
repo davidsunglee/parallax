@@ -32,6 +32,7 @@ from parallax.conformance.dormant_position_models import Concept, Prototype, Wor
 from parallax.conformance.edit_models import Note
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.models import load_domain_models
+from parallax.conformance.rate_sheet_document_models import RateSheet as DocumentRateSheet
 from parallax.conformance.read_models import Animal as AnimalRoot
 from parallax.conformance.read_models import (
     Cat,
@@ -102,6 +103,11 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
         RateSheet.where(RateSheet.all)
         .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(RateSheet.ranked_rates)
+    ),
+    "m-read-planning-030": lambda: (
+        DocumentRateSheet.where(DocumentRateSheet.all)
+        .as_of(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), tx_time=LATEST)
+        .include(DocumentRateSheet.ranked_rates)
     ),
     "m-navigate-013": lambda: (
         Policy.where(Policy.all)

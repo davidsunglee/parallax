@@ -44,7 +44,6 @@ then:
             id: 5
             maker: Volvo
             dealerId: 40
-            gears: null
             seats: 4
             familyVariant: Car
             dealer: { id: 40, name: Nordic }
@@ -58,7 +57,6 @@ then:
             maker: Trek
             dealerId: 41
             gears: 21
-            seats: null
             familyVariant: Bike
             dealer: { id: 41, name: Velo }
       - id: 52
@@ -73,7 +71,6 @@ then:
             id: 7
             maker: Saab
             dealerId: null
-            gears: null
             seats: null
             familyVariant: Car
             dealer: null

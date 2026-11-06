@@ -31,6 +31,8 @@ from parallax.conformance.graph_stories import (
     a_finite_transaction_time_pinned_view_is_read_only,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
+from parallax.conformance.rate_sheet_document_models import SheetDeposit as DocumentSheetDeposit
+from parallax.conformance.rate_sheet_document_models import SheetLoan as DocumentSheetLoan
 from parallax.conformance.read_models import (
     Animal,
     Bike,
@@ -81,10 +83,6 @@ from tests._support.corpus import (
     instance_row,
 )
 from tests._support.db_port import ConnectsAsItself
-from tests._support.graph_residuals import (
-    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
-    classify_child_graph_shape_residuals,
-)
 from tests._support.root_ownership import own_root
 
 
@@ -331,21 +329,17 @@ def test_a_three_hop_include_loads_every_level_in_four_calls(profile_run: Any) -
     then = case_document(case)["then"]
     roots = snapshot.wire().checked().results()
     observed = {"Ticket": [envelope.graph_root(root) for root in roots]}
-    residuals = classify_child_graph_shape_residuals(
-        observed, then["graph"], CollectionKinds(engine.load_case_metamodel(case))
-    )
-    assert residuals == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[story.case_id]
+    compare_graph(observed, then["graph"], CollectionKinds(engine.load_case_metamodel(case)))
     assert db.database_calls == [then["databaseCalls"]]
 
 
 def _grade_union_level(story_id: str, snapshot: Any, db: Any) -> None:
     then = case_document(corpus_case(story_id))["then"]
-    residuals = classify_child_graph_shape_residuals(
+    compare_graph(
         {"RateSheet": [envelope.graph_root(root) for root in snapshot.wire().checked().results()]},
         then["graph"],
         CollectionKinds(engine.load_case_metamodel(corpus_case(story_id))),
     )
-    assert residuals == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[story_id]
     assert db.database_calls == [then["databaseCalls"]]
 
 
@@ -384,6 +378,24 @@ def test_an_ordered_union_level_sorts_across_its_branches(profile_run: Any) -> N
         SheetDeposit,
         SheetLoan,
         SheetDeposit,
+    ]
+    assert [rate.id for rate in sheets[100].ranked_rates] == [2, 1, 4, 3]
+    assert [rate.id for rate in sheets[101].ranked_rates] == [6, 5]
+    _grade_union_level(story.case_id, snapshot, db)
+
+
+def test_an_ordered_union_level_sorts_by_members_of_its_document(profile_run: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-read-planning-030"]
+    meta = _reset_for(story.case_id, profile_run)
+    db = _counting_connect(profile_run.port, meta)
+    snapshot = story.run(db)
+    sheets = {sheet.id: sheet for sheet in snapshot.results()}
+
+    assert [type(rate) for rate in sheets[100].ranked_rates] == [
+        DocumentSheetLoan,
+        DocumentSheetDeposit,
+        DocumentSheetLoan,
+        DocumentSheetDeposit,
     ]
     assert [rate.id for rate in sheets[100].ranked_rates] == [2, 1, 4, 3]
     assert [rate.id for rate in sheets[101].ranked_rates] == [6, 5]

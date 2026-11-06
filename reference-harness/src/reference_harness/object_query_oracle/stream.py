@@ -80,9 +80,8 @@ def _stream_page(
         for published, raw_row in zip(root_rows, raw[:keep], strict=True)
     ]
     if not includes.query_has_includes(query):
-        narrowed = materialize.narrow_to_variant_columns(case, root_rows)
         kept: list[dict[str, Any] | None] = [
-            graph.graph_node(case, root_entity, row) for row in narrowed
+            graph.graph_node(case, root_entity, row) for row in root_rows
         ]
         return _StreamPage(
             root_rows=root_rows,

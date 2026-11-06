@@ -310,12 +310,11 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
                 f"  golden:    {root_rows!r}"
             )
 
-    narrowed = materialize.narrow_to_variant_columns(case, root_rows)
     graph.assert_milestone_partition(
         case,
         root_entity,
         root_rows,
-        [graph.graph_node(case, root_entity, row) for row in narrowed],
+        [graph.graph_node(case, root_entity, row) for row in root_rows],
         graph_specs,
     )
     graph.assert_family_tag_issues(case, graph.root_issues(root_rows))
@@ -335,7 +334,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
       value objects.
     * **An abstract-target inheritance read** (m-inheritance): additionally
       materializes ``familyVariant`` through the same oracle the flat path
-      uses, and then narrows each node to its own concrete variant's declared
+      uses, and each node narrows to its own concrete variant's declared
       columns — the per-variant node shape, distinct from ``then.rows``'s
       unnarrowed superset. A no-op for a concrete-target read.
 
@@ -355,8 +354,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
     rows = materialize.materialize_read(
         case, execute.query_rows(case, reader, golden, case.statement_binds(0, dialect))
     )
-    narrowed = materialize.narrow_to_variant_columns(case, rows)
-    assembled = {entity.name: [graph.graph_node(case, entity, row) for row in narrowed]}
+    assembled = {entity.name: [graph.graph_node(case, entity, row) for row in rows]}
 
     expected = case.expected_graph or {}
     if not graph.graphs_equal(assembled, expected, case.model):

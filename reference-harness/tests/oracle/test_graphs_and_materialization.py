@@ -426,29 +426,21 @@ def _pet_level_rows(*ids: int) -> list[dict[str, Any]]:
     ]
 
 
-def _pet_node(identifier: int, variant: str) -> dict[str, Any]:
+_OWN_MEMBERS: dict[str, dict[str, str]] = {
+    "Dog": {"licenseId": "license_id", "barkVolume": "bark_volume"},
+    "Cat": {"licenseId": "license_id", "indoor": "indoor"},
+    "WildBoar": {"tuskLength": "tusk_length"},
+}
+
+
+def _animal_node(identifier: int, variant: str, **views: Any) -> dict[str, Any]:
+    """The per-variant node one Animal publishes, at whichever level reached it."""
     row = _ANIMAL_BY_ID[identifier]
     return {
         "id": row["id"],
         "name": row["name"],
         "ownerId": row["owner_id"],
-        "licenseId": row["license_id"],
-        "indoor": row["indoor"],
-        "barkVolume": row["bark_volume"],
-        "familyVariant": variant,
-    }
-
-
-def _root_node(identifier: int, variant: str, **views: Any) -> dict[str, Any]:
-    row = _ANIMAL_BY_ID[identifier]
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "ownerId": row["owner_id"],
-        "licenseId": row["license_id"],
-        "indoor": row["indoor"],
-        "barkVolume": row["bark_volume"],
-        "tuskLength": row["tusk_length"],
+        **{member: row[column] for member, column in _OWN_MEMBERS[variant].items()},
         "familyVariant": variant,
         **views,
     }
@@ -487,23 +479,25 @@ def _both_guarded_branches_continue(case: Case) -> Case:
     case.then["databaseCalls"] = 5
     case.then["graph"] = {
         "Animal": [
-            _root_node(
+            _animal_node(
                 1,
                 "Dog",
                 owner={
                     "id": 10,
                     "name": "Alice",
-                    "pets": [_pet_node(1, "Dog"), _pet_node(3, "Cat")],
+                    "pets": [_animal_node(1, "Dog"), _animal_node(3, "Cat")],
                 },
             ),
-            _root_node(2, "Dog", owner={"id": 11, "name": "Bob", "pets": [_pet_node(2, "Dog")]}),
-            _root_node(3, "Cat"),
-            _root_node(
+            _animal_node(
+                2, "Dog", owner={"id": 11, "name": "Bob", "pets": [_animal_node(2, "Dog")]}
+            ),
+            _animal_node(3, "Cat"),
+            _animal_node(
                 4,
                 "WildBoar",
-                owner={"id": 12, "name": "Carol", "pets": [_pet_node(5, "Cat")]},
+                owner={"id": 12, "name": "Carol", "pets": [_animal_node(5, "Cat")]},
             ),
-            _root_node(5, "Cat"),
+            _animal_node(5, "Cat"),
         ]
     }
     return case
@@ -542,6 +536,33 @@ def test_two_parent_branches_reaching_one_relationship_are_two_levels(
         ([10, 11],),
         ([10, 11], "cat", "dog"),
     ]
+
+
+@pytest.mark.parametrize(
+    "padded",
+    [
+        pytest.param(lambda graph: graph["Animal"][0], id="root"),
+        pytest.param(lambda graph: graph["Animal"][0]["owner"]["pets"][0], id="child"),
+    ],
+)
+def test_a_node_padded_with_a_sibling_member_fails(
+    padded: Callable[[dict[str, Any]], dict[str, Any]], damaged_case: CaseLoader
+) -> None:
+    """A `Dog` has no `indoor` key to be null, whichever level reached it."""
+    case = _both_guarded_branches_continue(damaged_case(_GUARDED_BRANCHES))
+    padded(case.then["graph"])["indoor"] = None
+    reads = ScriptedReads(
+        results=[
+            _ROOT_ANIMALS,
+            [{"id": 12, "name": "Carol"}],
+            _pet_level_rows(5),
+            [{"id": 10, "name": "Alice"}, {"id": 11, "name": "Bob"}],
+            _pet_level_rows(1, 2, 3),
+        ]
+    )
+
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
+        assert_case_read(case, reads)
 
 
 def test_an_unknown_child_tag_makes_the_root_reaching_it_unavailable(
