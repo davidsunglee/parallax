@@ -1675,11 +1675,11 @@ metadata map (`tagValue` -> concrete subtype **variant spelling**) at row constr
 same independent, metadata-derived recomputation as the as-of and PK-allocation
 oracles. The variant spelling is the bare local name when family-unique and the
 canonical qualified Entity spelling when duplicate local concrete names make the
-bare spelling ambiguous (`m-inheritance`). It appears only in the compatibility
-rows/graphs (`m-case-format`). A
-**concrete-target** read needs no tag in its projection (the caller already knows
-the variant) and carries no `familyVariant`: it projects the concrete instance's
-own columns and injects `t0.kind = ?`.
+bare spelling ambiguous (`m-inheritance`). It is a Wire result key
+(`m-inheritance`), never a statement column. A **concrete-target** read needs no tag
+in its projection, because its target already names the concrete Entity the
+result's `familyVariant` comes from: it projects the concrete instance's own columns
+and injects `t0.kind = ?`.
 
 The independent `then.referenceSql` oracle for a tag-filtered read spells the
 value inline (`where kind = 'card'`); for an abstract-root read it is the plain
@@ -1699,8 +1699,8 @@ Storage Layout.
 A read whose queried position resolves to a **single** concrete subtype is an
 **ordinary single-table read** of that subtype's table — no tag predicate, no
 `union all`. The subtype is selected by *which* table is queried. The projection is
-the applicable slots from its Entity Layout view, and it carries **no
-`familyVariant`** (the caller queried a known variant):
+the applicable slots from its Entity Layout view, and it projects **no
+`familyVariant` literal**, because the queried concrete Entity supplies the result's:
 
 ```yaml
 # target: Invoice — ordinary single-table read of the concrete table:
@@ -1771,9 +1771,8 @@ literal directly:
 The equivalent authored spellings of a narrowing collapse to the same lowering: a
 `narrowTo` naming an abstract subtype and one naming that subtype's explicit concrete
 list produce the same effective set and therefore the same branches, in canonical
-alphabetical order, regardless of the authored order. `familyVariant` appears only in the
-compatibility rows/graphs (`m-case-format`); the projected `family_variant` literal
-is the on-the-wire carrier the harness renames to `familyVariant`.
+alphabetical order, regardless of the authored order. The projected `family_variant`
+literal is the statement's carrier for the result's `familyVariant`.
 
 #### Ordered or limited abstract read
 

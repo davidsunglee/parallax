@@ -52,6 +52,6 @@ when:
             postgres: select t0.id, t0.name, t0.version, t0.doors from vehicle t0 where t0.id = ? and t0.kind = ?
           binds: [1, car]
       expectRows:
-        - { id: 1, name: Coupe, version: 6, doors: 4 }
+        - { id: 1, name: Coupe, version: 6, doors: 4, familyVariant: Car }
 then:
   databaseCalls: 3

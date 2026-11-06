@@ -52,7 +52,9 @@ def flat_rows(
     ``familyVariant`` the node itself publishes (`m-case-format` *Read
     targeting*). Rendering the branch's members alone would DROP what the read
     published; rendering the raw tag column would report a storage value no node
-    carries, which is exactly why the format names the variant instead.
+    carries, which is exactly why the format names the variant instead. A concrete
+    position states its own members, and that same key where a family participant
+    published it.
     """
     columns, family = _read_projection(model, query, value_objects=value_objects)
     superset = (
@@ -92,7 +94,9 @@ def _projected_row(
     ``superset`` holds an abstract position's superset columns, each ``null``
     until the node fills it, and is ``None`` for a concrete read. A sibling's
     column reusing a member name renders nothing here: the node's own member
-    stands at that name, and it is a Value Object the row leaves out.
+    stands at that name, and it is a Value Object the row leaves out. A key no
+    member claims is the synthetic variant, since a family reserves that spelling
+    and a standalone Entity declaring it renders it as the member it is.
     """
     variant = node.get(inheritance.FAMILY_VARIANT_KEY)
     selected = _variant_members(model, node) if superset is not None and node else None
@@ -114,9 +118,13 @@ def _projected_row(
             published[column] = projection.published_scalar(member, value)
         else:
             published[column] = projection.published_value_object(member, value)
-    if superset is None or not node:
+    if not node:
         return published
-    return {**superset, **published, inheritance.FAMILY_VARIANT_KEY: variant}
+    if superset is not None:
+        return {**superset, **published, inheritance.FAMILY_VARIANT_KEY: variant}
+    if variant is not None and inheritance.FAMILY_VARIANT_KEY not in columns:
+        published[inheritance.FAMILY_VARIANT_KEY] = variant
+    return published
 
 
 def _variant_members(

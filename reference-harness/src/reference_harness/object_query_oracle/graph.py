@@ -79,11 +79,9 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     concrete Entity where the row states one: an abstract-root read narrows each
     node to its variant's declared columns, two concrete siblings may spell one
     column name for two different members, and an occurrence a single concrete
-    declares is invisible from the abstract position the read targeted. A
-    polymorphic level that projects no variant is read at an abstract position
-    that declares none of its descendants' own members, so the model's remaining
-    declarations fill what that position cannot name — never overriding what it
-    can.
+    declares is invisible from the abstract position the read targeted. The
+    model's remaining declarations fill what a node's own Entity cannot name —
+    never overriding what it can.
     """
     if materialize.is_unavailable(row):
         return None

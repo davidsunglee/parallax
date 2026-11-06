@@ -239,8 +239,7 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
     the API-suite's own observation of polymorphism (`queries-and-results.md`: "every
     materialized node is an instance of its concrete entity class, so the
     corpus's `familyVariant` is observable as `type(node)`"), needed only when
-    grading a case whose oracle projects the raw tag column for an
-    abstract-root read.
+    grading a case whose rows state that key.
     """
     from parallax.core.entity._declaration import wire_names_of
 

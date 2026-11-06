@@ -142,10 +142,8 @@ that target is `narrow-outside-relationship-target` (`m-inheritance`).
 So `Person.pets` narrowed to `[Pet]` (or, equivalently, `[Cat, Dog]`) both derive
 `pets[Cat,Dog]`. A narrowed include populates that view **only**; it does **not**
 mark the broad relationship loaded, and a **broad** hop keeps the ordinary
-relationship key. The polymorphic view's child objects additionally carry
-`familyVariant` (the concrete subtype name), materialized from the tag map exactly
-as an abstract-target flat read (`m-case-format`); a single-concrete narrowed view
-carries none (the caller fetched a known variant).
+relationship key. A view's child objects carry `familyVariant` as every inheritance
+participant's nodes do (`m-inheritance`), a single-concrete narrowed view's included.
 
 A back-reference level fills a narrowed view without a read, under either
 inheritance strategy: the narrow selects among the already-fetched objects by

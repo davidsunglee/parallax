@@ -35,6 +35,7 @@ then:
         "keeper[Ranger]":
           id: 1
           name: Rae
+          familyVariant: Ranger
           charges:
             - id: 11
               keeperId: 1

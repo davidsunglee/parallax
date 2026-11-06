@@ -64,9 +64,8 @@ from tests.compatibility._float_zero_support import (
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling
-# branch's null padding, `familyVariant` present or absent by the VIEW that
-# reached the node, and one logical row rendered twice with different values when
-# two views reach it. Production materializes one MERGED, per-variant-narrowed
+# branch's null padding, and one logical row rendered twice with different values
+# when two views reach it. Production materializes one MERGED, per-variant-narrowed
 # node per logical row, which is what `then.graph` now grades through, so these
 # cases disagree with it structurally rather than by any defect on either side.
 #

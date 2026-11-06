@@ -138,7 +138,7 @@ MATERIALIZATION_KEY_COLLISION: Final[IssueCode] = "inheritance-materialization-k
 
 Scalar fields render by physical column, Value Objects and relationships by
 canonical member name, narrowed relationships under a derived bracketed key,
-and polymorphic family results under the synthetic ``familyVariant`` key.
+and inheritance participants under the synthetic ``familyVariant`` key.
 """
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(

@@ -265,7 +265,14 @@ materialized Entity node has four provenance-bearing contributor categories:
    when their document storage columns differ;
 3. loaded relationships render under their canonical local relationship names,
    or under a narrowed-view key; and
-4. a polymorphic result renders the synthetic `familyVariant` key.
+4. an inheritance participant renders the synthetic `familyVariant` key.
+
+`familyVariant` says what a node is, not how it was read. Wire has no class to
+answer that, so every Wire node of an inheritance participant carries it, whatever
+read reached the node: abstract or concrete target, broad or narrowed view, root or
+included level, eager or streamed. Its value is the variant spelling of the node's
+concrete Entity (*Abstract-position reads*), so a concrete read projects no tag
+column for it. A Typed result has no such key, because its class already answers.
 
 Those categories stay distinct in the rendered node. In
 particular, a Value Object document column whose physical name equals a

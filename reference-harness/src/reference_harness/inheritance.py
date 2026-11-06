@@ -541,9 +541,9 @@ def query_position(query: Any, entity_defs: list[dict[str, Any]]) -> QueryPositi
     One classifier for every consumer whose behavior turns on the distinction,
     because they all ask the same question of the same field. An ABSTRACT position
     resolves over more than one concrete subtype, so its SQL partitions per branch
-    and its result carries a variant tag (`m-sql`); a CONCRETE-target read — and any
-    read of a non-inheritance entity — carries neither, having already named the one
-    variant it returns. What differs between consumers is only the storage
+    and its statement carries a variant tag (`m-sql`); a CONCRETE-target read — and
+    any read of a non-inheritance entity — does neither, having already named the
+    one variant it returns. What differs between consumers is only the storage
     *strategy* they then project that behavior from.
 
     Abstractness is read off the definition's inheritance role, which only a family
@@ -559,6 +559,22 @@ def query_position(query: Any, entity_defs: list[dict[str, Any]]) -> QueryPositi
     if not is_abstract(family.defs[target]):
         return None
     return QueryPosition(family, target, family.strategy_of(target))
+
+
+def concrete_target_variant(query: Any, entity_defs: list[dict[str, Any]]) -> str | None:
+    """The ``familyVariant`` every row of a concrete-target *query* carries, or
+    ``None`` where its target is abstract or participates in no family.
+
+    The model alone answers it: such a read's statement projects no carrier, so
+    nothing it returned is consulted (`m-inheritance` *Materialized field keys*).
+    """
+    target = query.get("target") if isinstance(query, dict) else None
+    if not isinstance(target, str):
+        return None
+    family = Family(entity_defs)
+    if target not in family.defs or role_of(family.defs[target]) != ROLE_CONCRETE:
+        return None
+    return family.variant_spelling(target)
 
 
 def reads_no_concrete(query: Any, entity_defs: list[dict[str, Any]]) -> bool:

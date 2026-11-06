@@ -16,5 +16,5 @@ then:
       binds: ["120.00"]
   referenceSql: select id, title, folder_id, currency, paid_amount from receipt where paid_amount >= 120.00
   rows:
-    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, paid_amount: "120.00" }
+    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, paid_amount: "120.00", familyVariant: Receipt }
   databaseCalls: 1

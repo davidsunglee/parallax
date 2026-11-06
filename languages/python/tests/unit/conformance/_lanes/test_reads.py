@@ -159,13 +159,14 @@ def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column(
     assert "family_variant" not in rows[0]
 
 
-def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
+def test_run_read_case_concrete_target_read_carries_its_family_variant() -> None:
     # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
-    # projects a tag/literal column, so the row passes through wire rendering alone.
+    # projects a tag/literal column, so the variant is the node's concrete Entity.
     port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
     _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-001"), port)
-    assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
-    assert "familyVariant" not in rows[0]
+    assert rows == [
+        {"id": 1, "amount": "100.00", "card_network": "Visa", "familyVariant": "CardPayment"}
+    ]
 
 
 def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> None:

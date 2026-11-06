@@ -715,18 +715,10 @@ same declaration as reference identity: accessing a retained view after an edit
 or write still reaches the objects its original read populated. No check
 promises interning across separate reads.
 
-An **abstract-target read** — an abstract query `target`, or an abstract position
-still abstract after the query's `narrowTo` (`m-object-query`) — materializes complete concrete
-instances, so each observed row (and each `graph` leaf) additionally carries a
-**`familyVariant`** key: the concrete subtype's family variant spelling (`Dog`,
-`Cat`, …; a canonical qualified Entity spelling when duplicate local concrete
-names make the bare spelling ambiguous). `familyVariant` is a materialized observation, **never projected as SQL** —
-under `table-per-hierarchy` the emitted SQL projects the raw tag column and the
-implementation materializes `familyVariant` from the tag metadata map, and under
-`table-per-concrete-subtype` it is a per-branch subtype-name literal
-(`m-inheritance` / `m-sql`). It rides inside the already-open `rows` / `graph`
-observation objects, so the adapter output gains no field for it. A
-concrete-target read carries no `familyVariant`.
+Each observed row and each `graph` node of an inheritance participant additionally
+carries the **`familyVariant`** key (`m-inheritance` *Materialized field keys*),
+concrete-target reads included. It rides inside the already-open `rows` / `graph`
+observation objects, so the adapter output gains no field for it.
 
 ## Comparison Rules
 

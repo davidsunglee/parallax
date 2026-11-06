@@ -294,8 +294,8 @@ class ReadResultContract:
     has one: a tag map, a union's variant literal, or an identity fixed when the
     read was compiled. A fixed identity — a standalone read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose position
-    resolved to a single concrete — has no carrier and no `familyVariant` to
-    materialize. The document entries are the projection's decision alone: a
+    resolved to a single concrete — has no carrier to materialize `familyVariant`
+    from. The document entries are the projection's decision alone: a
     read fills them when it projected a document, however its rows are named.
 
     ``entity_sources`` covers every Entity this read's rows can name: the
@@ -704,8 +704,8 @@ class SingleTableReadPlan:
     instead keyed to whether the queried table-per-hierarchy `target` itself is
     abstract — independent of the narrow's resolved cardinality
     (`m-inheritance-012`: `Animal` narrowed to the single concrete `Dog` still
-    projects `t0.kind` and still carries `familyVariant`, because the caller
-    queried the polymorphic `Animal` position). These are deliberately two
+    projects `t0.kind`, because the caller queried the polymorphic `Animal`
+    position). These are deliberately two
     different conditions: a bare abstract root projects the tag it does not
     guard on, and a concrete target guards on the tag it does not project.
 
@@ -992,7 +992,7 @@ def _plan_tpcs_union_read(
 ) -> TpcsUnionReadPlan:
     """Table-per-concrete-subtype over several concretes (m-sql "Inheritance —
     table-per-concrete-subtype lowering"). Unlike table-per-hierarchy, the
-    single-vs-several split is the ONLY thing that decides `familyVariant` here —
+    single-vs-several split is the ONLY thing that decides the `familyVariant` literal here —
     there is no table-per-concrete-subtype analogue of the abstract-`target`
     slot-2 rule, because a resolved single concrete has no shared table to
     discriminate and no sibling branch to distinguish it from (m-sql, explicit).
