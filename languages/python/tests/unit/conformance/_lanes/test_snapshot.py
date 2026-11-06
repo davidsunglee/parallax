@@ -360,12 +360,13 @@ def test_edited_copy_refuses_a_variant_naming_no_concrete_subtype() -> None:
 
 
 def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> None:
-    # A CONCRETE-target read carries no `familyVariant` at all (`m-case-format`):
-    # the caller already knows the variant, so a node states no provenance to
-    # resolve and the target it was published under is the Entity it is.
+    # A CONCRETE-target read's node states the variant its target already names, so
+    # the provenance it carries and the target it was published under agree.
     dog = model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
     step = {"action": "mutate", "on": 0, "set": {"barkVolume": 9}}
-    source = _scenario_result({"id": 1, "name": "Rex", "barkVolume": 7}, identity=dog)
+    source = _scenario_result(
+        {"id": 1, "name": "Rex", "barkVolume": 7, "familyVariant": "Dog"}, identity=dog
+    )
     copy = snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source
     )

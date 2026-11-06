@@ -75,7 +75,7 @@ def _attached_to_a_concrete_root(
     concrete: str, narrow_to: list[str] | None, case: Case
 ) -> dict[Any, list[materialize.PublishedRow]]:
     """What the back-reference closing `Keeper.charges`, `Charge.keeper` attaches when
-    the root is read at *concrete*, whose rows publish no `familyVariant`."""
+    the root is read at *concrete*, whose statement projects no carrier."""
     closing = {"rel": _rel("Charge.keeper")}
     if narrow_to is not None:
         closing["narrowTo"] = narrow_to
