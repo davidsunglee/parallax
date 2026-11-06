@@ -16,6 +16,7 @@ and runs in the ``dbfree`` class.
 from __future__ import annotations
 
 import json
+import tracemalloc
 from dataclasses import replace
 from importlib.resources import files
 
@@ -586,3 +587,15 @@ def test_a_physical_index_name_is_a_nonempty_identifier() -> None:
     assert PhysicalIndexName("widget_pkey").value == "widget_pkey"
     with pytest.raises(ValueError, match="nonempty identifier"):
         PhysicalIndexName("")
+
+
+def test_decoding_a_large_bytes_cell_retains_no_more_than_a_copy_of_it() -> None:
+    cell = "ab" * (1 << 20)
+    tracemalloc.start()
+    try:
+        decoded = decode_bytes_cell(cell)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert decoded == b"\xab" * (1 << 20)
+    assert peak < len(cell)
