@@ -111,7 +111,7 @@ possibly containing a non-object element. SQL projects the column's adjacent
 presence/value pair, and the database port returns one provider-neutral `m-core`
 `DocumentRead`. The codec classifies the top-level occurrence's declared
 nullability and multiplicity first, and only a conforming `One` object or `Many`
-array of objects opens the occurrence root. This is the same operation used when
+array of objects opens the occurrence root. The same classification applies when
 Relational Document Layout locates the occurrence inside its shared Entity document.
 
 ## Inherited temporality

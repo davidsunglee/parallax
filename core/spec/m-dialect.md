@@ -610,17 +610,16 @@ SQL discriminator is false and MUST NOT attempt document parsing. When it is tru
 it returns `StructuredDocument` containing the parsed `DocumentValue`, without
 requiring an object or array kind. In particular, a driver null sentinel in the
 true arm is JSON null, even when the same sentinel in the false arm denotes SQL
-`NULL`. Materialization passes the tag to `m-document-codec`'s located-member
-classifier. The adapter boundary does not pre-classify JSON null, an object, a
+`NULL`. Materialization passes the tag to `m-document-codec`'s classified
+decoding. The adapter boundary does not pre-classify JSON null, an object, a
 scalar, an array, or an array containing a non-object element.
 
 The initial contract adds no generated deep `CHECK` constraint over document
 contents on either dialect. The structured-document type therefore admits JSON
 null, arrays, and scalars as well as objects. If external state contains one of
-those non-object Entity carriers, read materialization passes it to
-`m-document-codec`'s `locateEntityMember` operation and then its shared
-located-member classifier; the adapter boundary neither rejects the row nor invents
-a provider-specific corruption result.
+those non-object Entity carriers, each requested member of it reads as absent
+(`m-document-codec`); the adapter boundary neither rejects the row nor invents a
+provider-specific corruption result.
 
 ### Schema DDL primitives (`m-schema-delta`)
 

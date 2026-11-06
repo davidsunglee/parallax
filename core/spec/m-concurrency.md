@@ -16,9 +16,9 @@ construct.
 
 ## Model-formation contribution
 
-The module's Rule Set and Model Compiler consume `m-metamodel`, the Inheritance
-Facet, and the Temporal Facet through `m-model-formation`. The Rule Set owns
-exactly two Issue Codes:
+The module's Rule Set judges the Candidate Metamodel, and its Model Compiler
+consumes the Inheritance Facet and the Temporal Facet through
+`m-model-formation`. The Rule Set owns exactly two Issue Codes:
 
 - `concurrency-multiple-version-attributes` — a declaring position names more
   than one explicit version Attribute (`optimisticLocking: true`, `m-descriptor`);
@@ -27,49 +27,28 @@ exactly two Issue Codes:
 
 A version Attribute declared below its family root is refused by
 `m-inheritance` (`inheritance-optimistic-locking-not-root-owned`), so a family
-is versioned together or not at all. The Model Compiler produces the immutable
-Concurrency Facet without copying Attribute Metadata.
+is versioned together or not at all.
 
-## The Concurrency Facet
+## Per-Entity concurrency facts
 
-The Facet is installed under `FacetKey(m-concurrency)`; typed access is this
-module's `view(model) -> ConcurrencyFacet`. It answers four questions, each
-precomputed once per Entity and uniform across an inheritance family, whose root
-decides it:
-
-```text
-ConcurrencyFacet
-  effective_strategy(EntityIdentity, ConcurrencyPreference) -> ConcurrencyStrategy
-  version_attribute(EntityIdentity) -> AttributeIdentity | absent
-  settles_against(EntityIdentity) -> EvidenceKind
-  version_source(EntityIdentity) -> VersionSource | absent
-
-ConcurrencyStrategy   = locking | optimistic
-ConcurrencyPreference = locking | optimistic
-EvidenceKind          = observation | object
-VersionSource         = Unversioned
-                      | ExplicitVersion(attribute: AttributeIdentity)
-                      | TransactionTimeVersion(start_attribute: AttributeIdentity)
-```
-
-For an identity outside the accepted Metamodel each question answers the way that
-is safe for what it is used for: the strategy is Locking, because a shared lock
-is always safe; the version Attribute and version source are absent, because
-there is nothing to project or compare; and `settles_against` refuses, because
-reading the miss as an object would let an unrecognized Entity's write claim an
-object on the strength of what was missing.
+The accepted model's Concurrency Facet answers, for each Entity, its Effective
+Concurrency Strategy under a Concurrency Preference, its version source, and what
+its existing-row writes settle against. Each answer is uniform across an
+inheritance family, whose root decides it. A Concurrency Preference and an
+Effective Concurrency Strategy are each `locking` or `optimistic`.
 
 ### Version sources
 
-- `ExplicitVersion` names the family root's `optimisticLocking: true` Attribute
-  — the root's identity on every descendant, preserved rather than copied.
-  `version_attribute` answers it.
-- `TransactionTimeVersion` applies to every Entity whose Temporal Shape declares
-  Transaction Time and names that axis's start Attribute: the observed `txStart`
-  (physical `in_z`) of a milestone is its version, and a fresh milestone's start
-  is the advance. `version_attribute` answers absent, because no column holds a
-  version number.
-- `Unversioned` is the remaining case: a Non-Temporal family with no version
+A family has exactly one version source: **explicit version**,
+**Transaction-Time version**, or **Unversioned**.
+
+- **Explicit version** names the family root's `optimisticLocking: true`
+  Attribute, and every descendant reports the root's identity.
+- **Transaction-Time version** applies to every Entity whose Temporal Shape
+  declares Transaction Time and names that axis's start Attribute: the observed
+  `txStart` (physical `in_z`) of a milestone is its version, and a fresh
+  milestone's start is the advance. No column holds a version number.
+- **Unversioned** is the remaining case: a Non-Temporal family with no version
   Attribute.
 
 The two versioned variants are mutually exclusive, because a Transaction-Time
@@ -87,9 +66,9 @@ Concurrency Strategy.
 | Concurrency Preference | Version source | Effective Concurrency Strategy |
 |---|---|---|
 | `locking` | any | **Locking** |
-| `optimistic` | `ExplicitVersion` | **Optimistic** — gates on the observed version |
-| `optimistic` | `TransactionTimeVersion` | **Optimistic** — gates on the observed `txStart` |
-| `optimistic` | `Unversioned` | **Locking** — the fallback |
+| `optimistic` | explicit version | **Optimistic** — gates on the observed version |
+| `optimistic` | Transaction-Time version | **Optimistic** — gates on the observed `txStart` |
+| `optimistic` | Unversioned | **Locking** — the fallback |
 
 `optimistic` therefore means **use optimistic concurrency wherever the model
 supplies a version, with a locking fallback where it does not**. It never means
@@ -149,13 +128,13 @@ DELETE*); the gate shapes are `m-write-plan`'s
 
 ## What a write settles against
 
-`settles_against` names what an existing-row write of a family settles against,
-and therefore claims (`m-unit-work` *Observed-State Coalescing*):
+An existing-row write of a family settles against, and therefore claims
+(`m-unit-work` *Observed-State Coalescing*):
 
 - a versioned or temporal family's write settles against the state its source
   **observed**, because two writes of one key that observed two different states
   are two independent intents;
-- an `Unversioned` family's write settles against its **object**: the shared row
+- an Unversioned family's write settles against its **object**: the shared row
   lock its evidence is held on the object and covers every state the row can be
   in, so two such writes can never have observed two different states.
 

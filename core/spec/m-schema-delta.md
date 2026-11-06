@@ -9,9 +9,7 @@ query, and prescribes no rollout procedure.
 
 It consumes a Unilateral Evolution and nothing else. A Coordinated Evolution is
 an equally complete description whose application needs authoring, data, or
-rollout coordination, so it is not an input to schema generation at all — an
-implementation states that in the accepted argument type rather than as a runtime
-refusal.
+rollout coordination, so it is not an input to schema generation at all.
 
 It depends on `m-model-evolution` for the description it lowers, on `m-metamodel`
 for the declarations an operation names, on `m-inheritance` for the position each
@@ -40,8 +38,8 @@ CreatedIndex
 ```
 
 A Schema Delta is an immutable value. Statements have **no** wrapper and no
-per-statement causal metadata: the physical-operation algebra below is private,
-and an application applying a delta already holds the Evolution and observes the
+per-statement causal metadata: the physical-operation algebra below is private
+except for the refusal record (*Errors*), and an application applying a delta already holds the Evolution and observes the
 statement that failed. Created-Index provenance is the sole exception, because
 only a physical name lets a host correlate a later uniqueness violation with the
 rollout that created the Index.
@@ -72,8 +70,8 @@ the later edition is not published.
 ## The private physical-operation algebra
 
 Between the model-altitude description and the dialect statements sits one
-private algebra. It is the closed choice below and it never crosses the module's
-boundary in either direction.
+private algebra. It is the closed choice below and, except for the refusal record
+(*Errors*), it never crosses the module's boundary in either direction.
 
 ```text
 CreateExtension      one database-wide prerequisite, named by the provider
@@ -119,9 +117,9 @@ Structured Column of its own (`m-storage-layout`), whatever element type it
 declares, because its declared Neutral Type names its elements rather than its
 Column.
 
-Each physical operation carries its **causal Evolution Operations** — all and
-only the operations whose changed facts asked for it, in canonical operation
-order. One rule decides that, and it is asked of each operation separately rather
+Each physical operation a Dialect can refuse reports its **causal Evolution
+Operations** — all and only the operations whose changed facts asked for it, in
+canonical operation order. One rule decides that, and it is asked of each operation separately rather
 than of a category: an Evolution Operation is causal exactly when a fact **it**
 moved is one of the facts the physical difference is made of. Both edges follow
 from that single test. A difference several operations were each needed for names
@@ -129,33 +127,7 @@ every one of them — a Column is in a Table because its declaration exists **an
 because the Table materializes the position that declares it, so a member added on
 an ancestor and the inheritance alteration that first carried that ancestor's
 position into a Table are named together, while a Table already materializing that
-position names the addition alone. Whether a Table already materializes a position
-is asked of the **Table** and never of the Entity that moved: a Table holding any
-other shape under that ancestor — a sibling left where it was, or an abstract
-position composing no concrete subtype — was going to materialize the new Column
-however the reparent went, so the reparent moved no fact that addition is made of.
-Which ancestry a reparent carried is read from the edge **it** changed and never
-from the two endpoints' ancestries, because one evolution moves as many positions
-as it likes and an ancestry carries every move beneath it: reading the endpoints
-names an Entity whose own ancestor moved for a position it carried nowhere
-itself, and clears an Entity that did carry one, because the position it left has
-since moved out from under the declaring owner. Each alteration answers instead
-for what its Entity would stand under had that alteration not happened — its own
-position, which no move takes from it, together with whatever stands over the
-position it left, measured against the **later** model, since staying there means
-being carried wherever that position went. That counterfactual ancestry is walked
-one parent edge at a time from the vacated position, never read as that
-position's later ancestry, because two alterations can exchange a pair of edges:
-the vacated position then stands under the moved Entity itself in the later
-model, and restoring the edge closes a loop instead of naming an ancestry. The
-walk halts at that loop with nothing above the Entity, which is the answer the
-question deserves — a world that cannot be a model is a world where the Entity
-stands under nothing, so an alteration the later model cannot be well-founded
-without is a cause of every position it now stands under. So a reparent is never
-why a Table materializes the moved Entity's own declarations, an alteration that
-left a position still standing under the declaring owner carried nothing, the
-alteration that moved that position is named alone, and both halves of a rotation
-are named together.
+position names the addition alone.
 And an operation that moved only facts the database does not hold — a write flag,
 a declaration order, an optimistic-locking marker — is a cause of nothing, even
 where it alters the very declaration a widened Column materializes: a stored
@@ -167,20 +139,12 @@ for the members it contains, so the Columns and authored Indices of an added
 Entity are read off the later model rather than arriving as operations of their
 own; every addition that contributes a Column to a Table, or owns rows in it, is a
 cause of that Table's creation, and an Index created as part of creating its Table
-carries the same causes as the Table. A created Table is all of its Columns at
-once, so an inheritance alteration that placed it under a declaring position is a
-cause of it, and of the Indices created with it, by the very rule that makes it a
-cause of a Column added to a Table that survived — not by a second rule beside
-it. Creation needs no separate statement because one clause of that rule simply
-falls away: a Table that did not exist before materialized nothing before, so it
-cannot already have held the position, and what the alteration would have left
-undone decides alone. An inheritance alteration is therefore a cause of a created
-Table exactly when the Table materializes the moved Entity's declarations and the
-move placed that Entity under a declaring owner it would **not** stand under had
-it stayed where it was. A move within that owner's subtree — between two abstract
-positions that BOTH still hang under it in the later model — leaves the created
-Table under every declaring position it would have held anyway, so the addition
-that brought the Table is its only cause.
+carries the same causes as the Table. An inheritance alteration is a cause of a
+created Table exactly when the Table materializes the moved Entity's declarations
+and the move placed that Entity under a declaring owner it would not stand under
+had that alteration alone not happened, judged against the later model. An
+alteration the later model cannot be well-founded without is a cause of every
+position it now stands under.
 
 A schema-neutral unilateral operation lowers to no physical operation at all.
 
@@ -333,32 +297,13 @@ the dialect-independent Unilateral Evolution as coordinated: renderer support is
 deployment capability, not a model-semantic fact.
 
 **Physical Index Name collision.** If two distinct physical Index definitions the
-database would hold **at once** derive one name, generation refuses rather than
+database would hold at once derive one name, generation refuses rather than
 silently renaming either. The census spans every Index of both endpoints, not only
-the ones this delta creates or drops: an Index the delta never mentions is still
-an object in the database while a new one is created beside it. Within that
-census, two definitions coexist unless one is dropped before the other is created
-— which is decided over the definitions and the statement-order rule above, and
-never over the emitted statements. A plan is built by telling definitions apart
-**by their derived names**, so under a collision the two are already
-indistinguishable there and the create and the drop that would have bounded their
-lifetimes are exactly the statements it fails to emit. Comparing the definitions
-is what establishes their lifetimes without resting on the assumption the check
-exists to falsify: a definition one endpoint alone holds is the one this delta
-creates or drops, one both endpoints hold is present throughout, and one whose
-Table the later endpoint no longer holds is never dropped and so is present
-throughout too. Because statements run Table by Table and a Table creates before
-it drops, a definition dropped from an earlier Table in that order frees its name
-before a later Table takes it, and only then. The error carries the Dialect
-Identity and every collision group in Physical Index Name order; each group
-carries the shared name and at least two colliding definitions: authored Indices
-in canonical logical-identity order, each naming its physical Table, logical
-Index Identity, ordered components, and uniqueness, then temporal constraints in
-Table and kind order, each naming its physical Table, its kind — primary key or
-exclusion — and its Columns; every definition names whether it occurs in the
-earlier endpoint, the later endpoint, or both. This is a defensive backstop
-for an unexpected 128-bit fingerprint collision, not an ordinary control path and
-not a dialect-capability error.
+the ones this delta creates or drops. The error carries the Dialect Identity and
+every collision group in Physical Index Name order, each naming the shared name and
+its colliding definitions. This is a defensive backstop for an unexpected 128-bit
+fingerprint collision, not an ordinary control path and not a dialect-capability
+error.
 
 ## Rule Set boundary
 

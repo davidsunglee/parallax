@@ -46,8 +46,8 @@ idiomatic developer experience while still guaranteeing parity.
   normalization, except where a module says the order or count of a flush's
   statements is the implementation's), deep-fetch Database Call counts, temporal
   semantics, transaction / optimistic-lock rules.
-- **Protocol seams** — the metamodel (introspection **and** serde), the
-  Predicate algebra (**and** its serde), the canonical model-descriptor schema,
+- **Protocol seams** — the metamodel (introspection **and** serde, not owner
+  facets), the Predicate algebra (**and** its serde), the canonical model-descriptor schema,
   and the database-dialect decision catalog, judged by the output each dialect's
   answers produce. The database port is a behavior contract each language spells
   in its own public port.

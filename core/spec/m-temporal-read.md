@@ -9,8 +9,7 @@ belong to `m-temporal-write`.
 The supported temporal Entity shapes are **Transaction-Time-Only** and
 **Bitemporal**. Valid-Time-Only is not supported. The module's Model Compiler
 produces the immutable Temporal Facet ("The Temporal Facet", below), which
-derives each Entity's applicable root-owned As-Of Axes without copying axis or
-Attribute Metadata.
+derives each Entity's applicable root-owned As-Of Axes.
 
 ## Canonical terminology
 
@@ -61,17 +60,14 @@ Facet.
 ## The Temporal Facet
 
 The Model Compiler consumes the Inheritance Facet and produces the immutable
-`TemporalFacet` under `FacetKey(m-temporal-read)`; typed access is this
-module's `view(model) -> TemporalFacet` function. The module contributes no
-Rule Set or Issue Codes — malformed axes are rejected by `m-metamodel`'s
-foundational rules and axis root ownership by `m-inheritance` before any
-compiler runs.
+`TemporalFacet`. The module contributes no Rule Set or Issue Codes — malformed
+axes are rejected by `m-metamodel`'s foundational rules and axis root ownership
+by `m-inheritance` before any compiler runs.
+
+The facet answers an Entity's **Temporal Shape** and its axis for one Temporal
+Dimension:
 
 ```text
-TemporalFacet
-  shape(EntityIdentity) -> TemporalShape | absent
-  axis(EntityIdentity, TemporalDimension) -> AsOfAxisMetadata | absent
-
 TemporalShape =
     NonTemporal
   | TransactionTimeOnly(transaction_time: AsOfAxisMetadata)
@@ -79,19 +75,17 @@ TemporalShape =
                transaction_time: AsOfAxisMetadata)
 ```
 
-Both lookups are total, nonthrowing, and expected amortized O(1). `shape`
-covers **every** accepted Entity and returns absent only for an identity
-outside the accepted Metamodel: an Entity's shape derives from its family
-root's declared axes (the Inheritance Facet supplies the root), and a
-standalone Entity is its own root. `axis` returns absent for an unknown
-identity or a dimension the Entity's shape does not declare. The closed
-`TemporalShape` algebra makes the unsupported Valid-Time-Only formation
-unrepresentable: no variant declares Valid Time without Transaction Time.
+Both lookups are total and nonthrowing. The shape covers **every** accepted
+Entity and is absent only for an identity outside the accepted Metamodel: an
+Entity's shape derives from its family root's declared axes (the Inheritance
+Facet supplies the root), and a standalone Entity is its own root. The axis is
+absent for an unknown identity or a dimension the Entity's shape does not
+declare. The closed `TemporalShape` algebra makes the unsupported Valid-Time-Only
+formation unrepresentable: no variant declares Valid Time without Transaction
+Time.
 
-Each `AsOfAxisMetadata` value is the declaring root's accepted value by
-reference — its start and end Attribute Identities keep the root Entity —
-never a copied axis or Attribute Metadata. Every position in one family
-returns the same values as its root.
+Each axis keeps the declaring root's Attribute Identities, so every position in
+one family returns the same values as its root.
 
 ## Latest and Now
 

@@ -1,5 +1,5 @@
 # Changing a Relationship's DEPENDENCY (m-model-evolution): unilateral in either
-# direction, with delete propagation changing behind the preserved surface.
+# direction, with dependency metadata changing behind the preserved surface.
 tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

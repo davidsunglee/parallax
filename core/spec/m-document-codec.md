@@ -35,15 +35,6 @@ kinds cannot drift apart and no consumer needs to know which kind it holds.
 ```text
 Document                                  # a portable JSON value
 
-LogicalJudgingRoot
-  position: EntityIdentity | top-level ValueObjectIdentity
-  members: immutable sequence<MemberDefinition>
-
-LogicalJudgingCursor
-  root: LogicalJudgingRoot
-  prefix: sequence<MemberName>
-  members: immutable sequence<MemberDefinition>
-
 Presence =
     Present(value: MemberValue)
   | ExplicitNull
@@ -64,21 +55,14 @@ the document being encoded or decoded. It carries no physical fact: no Column,
 dialect, or path string. `MemberName` is the canonical declared name, the same
 spelling a materialized result uses.
 
-A `LogicalJudgingRoot` is also derived from accepted Metadata, but it defines a
-read-validity boundary rather than a physical document shape. Every Entity
-supplies one root over its applicable top-level members, and every top-level
-Value Object occurrence supplies one root over its direct members. These roots
-and their member trees are identical under `Columns` and `Document`; a Structured
-Column root, a Column, and a `DocumentPath` are physical locations and cannot
-create or remove one.
-
-A `LogicalJudgingCursor` is an on-demand position within one root. The root cursor
-has an empty prefix. Materialization advances it only through an occurrence on a
-requested path, after that occurrence's carrier has been classified. A nested
-occurrence therefore supplies no independent root: its cursor retains the
-top-level root and records the logical prefix used for findings. A `One` has one
-cursor over its object; a `Many` has one cursor over each visited element object.
-Creating a cursor neither inspects nor judges any sibling member.
+Every Entity is a **Logical Judging Root** over its applicable top-level members,
+and every top-level Value Object occurrence is one over its direct members. The
+roots are identical under `Columns` and `Document`; a Column, a Structured Column,
+and a `DocumentPath` cannot create or remove one. A nested occurrence supplies no
+root: a position inside it is a **Logical Judging Cursor** within its top-level
+root, and its findings are located by logical path (`m-read-delivery` *Evidence a
+public issue carries*). A `One` has one such position, a `Many` one per visited
+element object, and reaching one judges no sibling.
 
 A scalar collection is a `ScalarDefinition` with `Many` multiplicity, never a
 synthetic occurrence: its stored form is one JSON array whose elements are, in
@@ -97,11 +81,8 @@ The raw Entity document read from a Relational Document Layout Structured Column
 is a physical carrier, not itself a logical member. Its database type guarantees
 only a non-SQL-null `Document`, so JSON null, an array, or a scalar can reach read
 materialization even though every codec-produced Entity document is an object.
-Such a value cannot create a root cursor. `locateEntityMember` accepts the raw
-carrier instead: for an object it locates the requested direct Entity member as
-`StructuredDocument` or `Missing`, and for a non-object it locates that member as
-`Missing`. `decodeLocatedMemberClassified` then applies the member's existing
-rules to that located input. A required member produces its existing absent
+Each requested document-resident member of such a carrier reads as absent and
+takes that member's existing rules. A required member produces its existing absent
 finding, a nullable member remains missing, and a `Many` uses its accepted
 absent-to-empty collapse. There is no separate root-carrier finding. This is a
 demand-driven codec projection onto requested logical member positions, not a
@@ -122,73 +103,9 @@ every depth still passes through `m-wire.encodeWire` against its declaration.
 
 ## Operations
 
-```text
-encode(shape: MemberShape,
-       values: Mapping<MemberName, Presence>)        -> Document
-
-encodeMany(shape: MemberShape,
-           elements: ordered sequence<
-                       Mapping<MemberName, Presence>>) -> Document
-
-decode(shape: MemberShape,
-       document: Document,
-       path: nonempty sequence<MemberName>)          -> Presence
-
-locateEntityMember(root: LogicalJudgingRoot,
-                   document: Document,
-                   member: MemberName)                -> LocatedMemberInput
-
-decodeLocatedMemberClassified(root: LogicalJudgingRoot,
-                              input: LocatedMemberInput,
-                              member: MemberName)      -> DecodedMember
-
-decodeClassified(cursor: LogicalJudgingCursor,
-                 document: Document,
-                 member: MemberName)                  -> DecodedMember
-
-LocatedMemberInput =
-    SqlNull
-  | Missing
-  | StructuredDocument(document: Document)
-
-DecodedMember
-  presence: Presence | Unavailable
-  findings: immutable sequence<StoredShapeFinding>
-
-StoredShapeFinding =
-    RequiredMemberAbsent
-  | RequiredMemberNull
-  | OneWrongKind
-  | ManyWrongKind
-  | LeafUndecodable
-
-comparisonText(type: NeutralType,
-               value: NeutralValue)                  -> string
-
-encodeCandidate(shape: MemberShape,
-                constraints: nonempty Mapping<
-                    nonempty sequence<MemberName>, NeutralValue>) -> Document
-
-preparePatches(shape: MemberShape,
-               patches: nonempty ordered sequence<DocumentPatch>)
-                                                     -> PreparedPatches
-
-applyPreparedPatches(document: Document,
-                     prepared: PreparedPatches)       -> Document
-
-persistedDocumentEqual(left: Document,
-                       right: Document)               -> boolean
-
-DocumentPatch =
-    SetScalar(path: nonempty sequence<MemberName>,
-              value: Presence)
-  | SetValueObject(path: nonempty sequence<MemberName>,
-                   document: Document | Null)
-
-PreparedPatches: nonempty ordered sequence of
-    (path, encoded value or JSON null,
-     single leaf type | composite (occurrence or scalar collection), removes)
-```
+The operations named below identify what this module answers. Their parameter
+lists, result carriers, and spellings are not a binding contract; the documents,
+presence states, findings, and patch effects they produce are.
 
 `encode` builds one complete document from a shape and one presence-classified
 value per applicable member. Its result is the whole bind a consumer stores: an
@@ -197,10 +114,7 @@ here. Members are emitted in the shape's own order, so one set of values always
 produces one document. An `OccurrenceDefinition` member's value is written in
 place as the occurrence's own document, which `encode` (for a `One`) or
 `encodeMany` (for a `Many`) produced from that occurrence's shape, so one complete
-document is composed from the leaves up. `encode`, `encodeMany`, and
-`encodeCandidate` return recursively immutable owned containers. They compose
-recognized owned children by reference and establish ownership of any untrusted
-composite leaf without constructing a second complete mutable output tree.
+document is composed from the leaves up.
 
 `encodeMany` builds the one document a `Many` occurrence stores: the ordered JSON
 array whose elements are, in the sequence's own order, the `encode` of each
@@ -232,53 +146,32 @@ in order, by passing an element back to `decode` with the occurrence's shape. Th
 is what makes a `many` traversable without an element index — a `path` stays a
 sequence of member names and never addresses an array position.
 
-`locateEntityMember` is the only operation that accepts a raw Entity document
-carrier. `root` MUST be the Entity's Logical Judging Root and `member` MUST name
-one direct document-resident member of it. When `document` is an object, the
-operation returns `StructuredDocument` with that key's raw value or `Missing` when
-the key is absent. When it is JSON null, an array, or a scalar, the operation
-also returns `Missing`. It creates no cursor for the non-object carrier and
-inspects no other member. An Entity root not derived from accepted Metadata or
-an unknown member is a caller error; every `Document` carrier kind is stored
-input, not a caller error.
+A requested document-valued Entity member reads as SQL null, absent, or a present
+document. SQL null has an absent key's presence; JSON null stays explicit and every
+other document kind is preserved for classification. The distinction between SQL
+null and JSON null is established at the database boundary, never inferred from a
+payload. When a raw Entity document is not an object, each requested
+document-resident member of it is absent, and the raw document creates no finding.
+Classification applies the member's declared nullability, multiplicity, and type
+exactly once, gives equal logical inputs equal results under either placement, and
+inspects no sibling.
 
-`decodeLocatedMemberClassified` is the Entity-root form of classified decoding.
-It accepts the carrier-independent input for one located document-valued Entity
-member. For a direct Structured Column, `SqlNull` and `StructuredDocument` are the
-two arms of the `m-core` `DocumentRead` already formed at the database boundary;
-the materializer MUST NOT infer either arm from its payload. `Missing` arises
-after codec-owned Entity-document location found no member. A
-`StructuredDocument` from either placement arm carries the raw parsed document
-value. `member` MUST name that
-direct member in the Entity root. `SqlNull` has the same member presence as an
-absent key; `StructuredDocument` preserves JSON null and every other document kind
-for classification. The operation applies the member's declared nullability,
-multiplicity, and type exactly once. In particular, a direct `One` may classify
-as absent, explicit null, present object, or `OneWrongKind`, and a direct `Many`
-may classify as empty, a present array of objects, or `ManyWrongKind`, including
-for an array containing a non-object element. It creates the same `DecodedMember`
-for equal logical inputs under either placement and inspects no sibling.
-
-`decodeClassified` is the cursor-facing form of classified decoding. `member`
-MUST name one direct member of `cursor`, and `document` MUST be that cursor's
-carrier object. An unknown member, a cursor not derived from accepted Metadata,
-or a non-object supplied as an occurrence cursor's carrier is a caller error.
-Stored state on a requested branch is not a caller error: the classified
+Classified decoding at a cursor names one direct member of it, over that cursor's
+carrier object. Stored state on a requested branch is not a caller error: the classified
 operations return findings as values for every shape contradiction they
 encounter and never raise for one. A conforming member has the same `Presence`
 as `decode` and no finding.
 Stored data that contradicts the member's declared shape produces one or more
 `StoredShapeFinding` values and is therefore the third semantic answer beside
 *present* and *not present*. Where the ordinary read collapse can produce a value
-without invention, `presence` carries that collapsed value: an absent or
+without invention, the member's presence is that collapsed value: an absent or
 JSON-null required non-`Many` member retains its absence, a non-null wrong-kind
 `One` is absent, and a wrong-kind `Many` is the empty array. A non-null
 undecodable leaf carries `Unavailable`, because no value of its declared Neutral
 Type can be produced.
 
-When a requested path continues through an occurrence,
-`decodeLocatedMemberClassified` at the Entity root or `decodeClassified` at a
-cursor first classifies that occurrence. A conforming `One` object advances to
+When a requested path continues through an occurrence, classified decoding first
+classifies that occurrence. A conforming `One` object advances to
 one cursor and a conforming `Many` array advances to one cursor per element, in
 stored order. A `Many` is conforming only when every element is an object
 document. A non-array value or an array containing a non-object element is one
@@ -286,17 +179,6 @@ document. A non-array value or an array containing a non-object element is one
 the empty array and creates no element cursor. A wrong-kind `One` likewise
 creates no cursor. The requested descendant therefore never reaches strict
 `decode` after a malformed ancestor.
-
-Materialization obtains a requested top-level occurrence carrier before using its
-root. Under `Columns`, the occurrence's Structured Column supplies the port's
-`DocumentRead` as `SqlNull` or `StructuredDocument` without the materializer
-interpreting the document value. Under `Document`,
-`locateEntityMember` supplies `Missing` or `StructuredDocument` from the raw Entity
-document. Both arms pass that input to `decodeLocatedMemberClassified` before
-entering the occurrence root. The materializer then classifies only the requested
-branch, advancing a cursor after each conforming occurrence. Thus `address.city`
-and `address.geo.lat` are judged from the `address` root under both layouts even
-though their physical paths differ.
 
 Classified decoding hands a consumer each requested position already judged. What
 a consumer constructs from it chooses only the final carrier: it classifies no raw
@@ -385,7 +267,7 @@ engine does (`m-dialect` *Document mutation-expression form*).
 operation here takes one. A `SetScalar` carries managed scalar content — one
 `NeutralValue` or a scalar collection's sequence of them — so writing it needs
 that leaf's declared Neutral Type and multiplicity; without the shape the caller would have
-to spell the encoding itself, which the consumer contract below forbids. The
+to spell the encoding itself. The
 shape is also what makes a path the model does not declare a caller error rather
 than a new key, so patching can never introduce one. `comparisonText` is the one
 operation that takes an explicit `NeutralType` instead, because it is given a
@@ -393,13 +275,6 @@ value rather than a position in a document.
 
 Every operation is a pure function of its arguments. None mutates its input
 document, and a returned document shares no mutable state with one passed in.
-`applyPreparedPatches` returns a recursively immutable owned document. It may share untouched
-owned subtrees with its input, but it owns mutable input and replacement
-containers before sharing them. Its changed root and surviving changed
-ancestors are each constructed once as final writable storage and adopted only
-after their descendants are safe; ordered nested or overlapping patches reuse
-that storage while it survives. The immutable result contract replaces the
-former mutable-result contract; there is no parallel mutable patch operation.
 
 ## Portable leaf encodings
 
@@ -514,13 +389,9 @@ never a member value or a result field.
 
 Patching is two operations. `preparePatches` resolves each patch's path against
 the shape and encodes it once: a `SetScalar`'s value by its declared leaf type,
-and a `SetValueObject`'s document retained as immutable content. The preparation is
-independent of any document, so one prepared sequence applies to every document
-of that shape and supplies the very same encoded values to a path-patching
-statement (`m-write-payload`); nothing encodes them again. It is not a second
-authored-payload validator. `applyPreparedPatches` applies a prepared sequence
-to one document without resolving or encoding anything, and the result holds the
-prepared values themselves.
+and a `SetValueObject`'s document retained as immutable content. Preparing a patch
+is independent of any document, and its encoded values are the ones a path-patching
+statement binds (`m-write-payload`); nothing encodes them again.
 
 Preparation refuses a path the shape does not declare, and refuses a patch whose
 kind contradicts the member it names. The pairing is exclusive both ways and
@@ -599,54 +470,34 @@ between them.
 A temporal successor is built by patching the retained raw predecessor document
 at its executed assignments' paths alone rather than by re-encoding decoded
 members, so keys the running application does not declare survive the
-close-and-insert outside every occurrence the mutation assigned (`m-write-plan`). The predecessor is
-retained under `m-core`'s recursive ownership contract once. A successor with no
-document changes reuses that exact owned document; a changed successor shallowly
-constructs one final root and shares untouched owned subtrees.
+close-and-insert outside every occurrence the mutation assigned (`m-write-plan`).
 
 ## Authored managed document preparation
 
-The codec owns the one structural traversal that turns an authored document into
-managed state. The traversal takes a `MemberShape`, a source-access capability,
-and a scalar conversion. Mapping-backed Wire input and borrowed language-frontend
-values differ only in those supplied operations: occurrence recursion, required
-nested members, `many` normalization, canonical member order, immutable output,
-and structural finding paths are one implementation.
-
-Preparation writes successful output directly into a recursively owned
-positional representation in `MemberShape` order. A complete document's stated
-top-level members are packed in that order beside a presence mask with one bit
-per stated member, an explicit null included, so an omitted member occupies no
-position. Each nested occurrence takes the same form a read's accepted Entity
-State gives it: a full-width positional tuple in its own shape's order holding
-the absence marker for an omitted member, and a `many` occurrence a tuple of
-those. It performs no preliminary recursive render and no later deep-freeze
-pass. Already-owned leaves and subtrees are retained by identity; mutable input
-containers are detached once at the boundary.
+An authored document becomes managed state under the same rules whatever frontend
+supplied it: occurrence recursion, required nested members, `many` normalization,
+canonical member order, and finding paths do not vary by source. An explicit null
+is a stated member; an omitted member is not. Managed state shares no mutable
+container with its authored source, so changing that source afterwards changes
+nothing prepared from it. Write composition judges Typed and Wire authored
+documents by these rules before buffering them.
 
 A complete document is judged in `MemberShape` order: a missing required member
 and an inadmissible value are found in the one pass, and the first one met is
 the document's finding. A partial document — only the top-level members its
 author states — is judged in the order they are stated, and its stated members
-are packed in `MemberShape` order all the same. Root computed markers are
+take `MemberShape` order all the same. Root computed markers are
 admitted only when the resolved top-level Attribute role allows them, at that
 member's judgment point, and are never interpreted inside an occurrence.
 
-The same traversal has a validation-only mode. That mode walks and normalizes the
-same source under the same shape but constructs no output. Its evidence is the
-member's first finding, carrying its path relative to the member it validates.
+Validating a member reports its first finding, carrying its path relative to that
+member.
 
-A scalar collection is authored through the same traversal from the frontend's
-sequence carrier. The leaf normalizer runs once per element against the
-collection's own `Many` leaf, never against a synthetic single leaf, and producing
-mode builds the ordered managed sequence once, normalization-created duplicates
-included; validation-only mode builds none. A non-sequence carrier fails at the
-collection, and an element the normalizer refuses — a null element included —
-fails at its index. A null collection is never a stated collection, so a row
-stating one is refused there, and an omitted one is filled with the empty
-collection wherever an omitted `many` occurrence is. Assignment judgement and row
-validation consume this evidence and MUST NOT recursively interpret the authored
-document again.
+A scalar collection's non-sequence carrier fails at the collection, and an element
+refused as a leaf — a null element included — fails at its index. A null
+collection is never a stated collection, so a row stating one is refused there, and
+an omitted one is filled with the empty collection wherever an omitted `many`
+occurrence is.
 
 ## Managed documents and the effective change set
 
@@ -654,20 +505,6 @@ A **managed document** is one whose leaves are already the host carriers of thei
 declared Neutral Types rather than the portable encodings above: what an
 assignment states and what a classified decode answers. Two operations read one,
 and neither decodes a leaf and neither refuses.
-
-```text
-canonicalManagedDocument(shape: MemberShape,
-                         document: ManagedDocument | Null) -> ManagedDocument | Null
-
-classifyEffectiveChange(shape: MemberShape,
-                        authored:  Mapping<MemberName, ManagedValue | Null>,
-                        originals: Mapping<MemberName, ManagedValue | Null>)
-                                                           -> EffectiveChangeSet
-
-EffectiveChangeSet
-  effective: set<MemberName>
-  restored:  set<MemberName>
-```
 
 `canonicalManagedDocument` answers the one form the shape gives a managed
 document's logical value. Only declared members contribute and an unknown key is
@@ -684,7 +521,7 @@ declared-member reduction's managed counterpart.
 changes anything, and every consumer that asks that question asks it here. It
 takes the members an assignment explicitly states and, under those same names,
 the values a read observed. A member no assignment names is not compared and is
-never filled: what is not in `authored` takes no part. A key the shape does not
+never filled: what the assignment does not state takes no part. A key the shape does not
 declare takes no part either, on either side.
 
 The classification is total: it decodes nothing, judges nothing, and refuses
@@ -705,8 +542,8 @@ assignment states.
 
 The rules the comparison applies are the ones above with one addition at the top
 level, and that addition is the whole of the absent-versus-null collapse `Presence`
-defers to here. An original `originals` does not carry is the same observed null
-as one it carries as null, for a member of any kind, because a stored NULL Column
+defers to here. An original the read did not carry is the same observed null
+as one it carried as null, for a member of any kind, because a stored NULL Column
 and an absent Document Path are two spellings of one observed value and a write
 may not see a difference between them. Below that top level presence is the
 shape's: an omitted declared leaf or `one` inside an assigned occurrence differs
@@ -714,9 +551,9 @@ from an explicit null and can therefore be an effective change, because the
 assignment states a complete value and removing a member is a change like any
 other.
 
-The answer names members and carries no payload. `effective` and `restored` are
-disjoint and together name exactly the declared members `authored` states, so a
-consumer selects its own already-prepared values by those names; nothing here
+The answer names members and carries no payload. Its two disjoint member sets,
+`effective` and `restored`, together name exactly the declared members the
+assignment states, so a consumer selects its own already-prepared values by those names; nothing here
 rewrites what will be stored, and no consumer learns a second spelling of a value
 from asking.
 
@@ -757,7 +594,8 @@ apart.
 ## Invalid stored data
 
 A stored document whose content contradicts its shape is **invalid stored data**.
-At a judged member position, the verdict is closed:
+At a judged member position, the verdict is closed over the five
+`StoredShapeFinding` values:
 
 | Stored state | Verdict | Read hydration |
 |---|---|---|
@@ -779,8 +617,7 @@ is no implementation-selected middle category.
 
 A non-object raw Entity document is outside this member-position table because
 the shared Structured Column is a physical carrier rather than a declared
-member. `locateEntityMember` maps it to `Missing` member by member, and
-`decodeLocatedMemberClassified` applies the existing row: each requested
+member. It reads as `Missing` member by member, and the existing row applies: each requested
 document-resident Entity member's nullability and multiplicity determine whether
 an existing finding and collapse apply. The carrier creates neither a sixth
 local finding nor an unrequested-member scan.
@@ -801,46 +638,3 @@ undecodable leaf because substituting a null, zero, empty string, or any other
 value would invent domain state. Predicate extraction retains `m-predicate`'s
 own absence-collapse truth table and may still surface a database cast failure;
 neither outcome changes this shape-aware verdict.
-
-## Consumer contract
-
-- SQL lowering takes a predicate or ordering literal from this module — the type's
-  `comparisonText` — where the comparison compares the extraction as text, and
-  binds the managed value in its declared Neutral Type, through the dialect's typed
-  bind normalization, where the comparison casts the extraction (`m-dialect`). So a
-  comparison against a document-resident member compares the spelling the writer
-  stored, in the form the extraction actually yields, and never routes an exact
-  `decimal` through a JSON number to get there.
-- SQL lowering takes a **containment candidate** from this module — `encodeCandidate`
-  — where a dialect expresses a to-many equality as document containment rather than
-  as an extraction (`m-dialect`, `m-sql`). That candidate carries each constrained
-  leaf's **document encoding**, which is neither of the two forms above, so the
-  three together close the lowering: text where it compares text, the managed value
-  where it casts, the encoding where it contains. It binds as the `Document` it is —
-  the dialect adapts it to its structured-document type at bind time, exactly as it
-  adapts a written document — so no lowering and no golden ever holds its rendered
-  text.
-- Write composition encodes an insert's complete document here and derives each
-  update's patches here, then lowers them through `m-dialect`. It also asks here
-  whether an assignment changes anything — `classifyEffectiveChange` — and
-  prepares Typed and Wire authored documents through the one structural traversal
-  above before buffering them.
-- Read materialization obtains `LocatedMemberInput` from the direct Structured
-  Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
-  either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`
-  after entering a conforming occurrence. The classified operations decode by
-  declared Neutral Type and drop unknown keys. Materialization never
-  inspects an Entity carrier's JSON shape, projects `Missing` itself, interprets a direct
-  document carrier, or falls back to strict decoding for requested stored state
-  below a logical root.
-- Temporal observation retains the raw predecessor document unchanged and patches
-  it here to build a successor. Retention establishes recursive immutable
-  ownership once; an unchanged successor reuses that document by identity.
-- Fixture provisioning and conformance table read-back build and compare
-  documents here rather than each spelling a leaf themselves.
-
-No consumer may hand a raw host-language value to a JSON serializer, spell a leaf
-encoding of its own, assemble a `Many` occurrence's array or a containment
-candidate itself, decode by inspecting a JSON value's shape, expose a raw
-document as an Entity member or result field, compare an assigned member with the
-value it revises by a rule of its own, or fill a `Many`'s zero state by hand.
