@@ -280,10 +280,10 @@ def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRo
     that variant names.
 
     Per-variant COLUMN narrowing is deliberately NOT part of this
-    (:func:`narrow_to_variant_columns`): a whole read's ``then.graph`` states the
-    per-variant node shape, while a Scenario step publishes the positional
-    superset, and a caller comparing the matched row SET against ``referenceSql``
-    needs the unnarrowed rows either way.
+    (:func:`narrow_to_variant_columns`): a graph node states the per-variant
+    shape, while a Scenario step publishes the positional superset, and a caller
+    comparing the matched row SET against ``referenceSql`` needs the unnarrowed
+    rows either way.
     """
     _refuse_a_case_the_sequence_cannot_read(read)
     materialized = _carrying_value_object_columns(
@@ -783,10 +783,9 @@ def level_order_binds(
     return tpcs.level_order_binds(case, position.view, position.branch_variants, order_by, dialect)
 
 
-def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
-    """Narrow each row of an INSTANCE-FORM abstract-target read to its own concrete
-    variant's declared columns (m-case-format "Read targeting", the instance-form
-    per-variant node shape).
+def narrow_to_variant_columns(case: Case, row: PublishedRow) -> PublishedRow:
+    """Narrow *row* to its own concrete variant's declared columns (m-case-format
+    "Read targeting", the per-variant node shape).
 
     A materialized instance carries only its own branch's members — its inherited
     chain plus its own declared attributes — never a sibling branch's null-padded
@@ -798,36 +797,26 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
     own branch's columns).
 
     Narrowing projects what a read published rather than publishing anything, so
-    each row arrives with that provenance and leaves carrying it forward.
+    a row arrives with that provenance and leaves carrying it forward.
     """
+    _refuse_an_unpublished_row(case, "per-variant column narrowing", row)
+    variant = row.get("familyVariant")
+    if not isinstance(variant, str):
+        return row
     family = Family(case.model.entity_defs)
-    narrowed: list[PublishedRow] = []
-    for row in rows:
-        _refuse_an_unpublished_row(case, "per-variant column narrowing", row)
-        variant = row.get("familyVariant")
-        if not isinstance(variant, str):
-            narrowed.append(row)
-            continue
-        own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
-        own_columns.update(
-            member.column
-            for member in case.model.storage_layout.document(
-                case.model.entity(variant).canonical_name
-            ).members
-        )
-        narrowed.append(
-            PublishedRow(
-                {
-                    key: value
-                    for key, value in row.items()
-                    if key == "familyVariant" or key in own_columns
-                },
-                _SEAM,
-                value_object_columns=dict(row.value_object_columns),
-                consumed_value_object_columns=set(row.consumed_value_object_columns),
-            )
-        )
-    return narrowed
+    own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
+    own_columns.update(
+        member.column
+        for member in case.model.storage_layout.document(
+            case.model.entity(variant).canonical_name
+        ).members
+    )
+    return PublishedRow(
+        {key: value for key, value in row.items() if key == "familyVariant" or key in own_columns},
+        _SEAM,
+        value_object_columns=dict(row.value_object_columns),
+        consumed_value_object_columns=set(row.consumed_value_object_columns),
+    )
 
 
 def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:

@@ -19,10 +19,6 @@ import pytest
 from parallax.conformance import engine
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import CollectionKinds, case_document, compare_graph, compare_rows
-from tests._support.graph_residuals import (
-    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
-    classify_child_graph_shape_residuals,
-)
 
 
 def _authored_graph(case_id: str) -> tuple[dict[str, Any], CollectionKinds]:
@@ -110,53 +106,6 @@ def test_a_step_graph_rejects_a_missing_node() -> None:
         compare_graph(observed, expected, kinds)
 
 
-def _snapshot_residual_graphs() -> tuple[dict[str, Any], dict[str, Any], CollectionKinds]:
-    expected, kinds = _authored_graph("m-snapshot-read-012")
-    observed = copy.deepcopy(expected)
-    person = cast("dict[str, Any]", observed["Person"][0])
-    for animal in cast("list[dict[str, Any]]", person["animals"]):
-        sibling_fields = (
-            ("indoor", "tuskLength")
-            if animal["familyVariant"] == "Dog"
-            else ("barkVolume", "tuskLength")
-        )
-        for field in sibling_fields:
-            animal.pop(field)
-    return observed, expected, kinds
-
-
-def test_recorded_child_graph_residuals_have_one_exact_explanation() -> None:
-    observed, expected, kinds = _snapshot_residual_graphs()
-    assert (
-        classify_child_graph_shape_residuals(observed, expected, kinds)
-        == (CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS["m-snapshot-read-012"])
-    )
-
-
-def test_child_graph_residuals_do_not_hide_an_applicable_null_member() -> None:
-    observed, expected, kinds = _snapshot_residual_graphs()
-    observed_dog = cast("dict[str, Any]", observed["Person"][0]["animals"][0])
-    expected_dog = cast("dict[str, Any]", expected["Person"][0]["animals"][0])
-    observed_dog.pop("licenseId")
-    expected_dog["licenseId"] = None
-    with pytest.raises(AssertionError, match="not uniquely explained"):
-        classify_child_graph_shape_residuals(observed, expected, kinds)
-
-
-def test_child_graph_residuals_do_not_hide_a_broad_view_variant() -> None:
-    observed, expected, kinds = _snapshot_residual_graphs()
-    cast("dict[str, Any]", observed["Person"][0]["animals"][0]).pop("familyVariant")
-    with pytest.raises(AssertionError, match="not uniquely explained"):
-        classify_child_graph_shape_residuals(observed, expected, kinds)
-
-
-def test_child_graph_residuals_do_not_hide_a_narrowed_view_variant() -> None:
-    observed, expected, kinds = _snapshot_residual_graphs()
-    cast("dict[str, Any]", observed["Person"][0]["pets[Dog]"][0]).pop("familyVariant")
-    with pytest.raises(AssertionError, match="not uniquely explained"):
-        classify_child_graph_shape_residuals(observed, expected, kinds)
-
-
 def test_a_narrowed_view_node_losing_its_variant_fails_the_graph_grade() -> None:
     expected, kinds = _authored_graph("m-inheritance-065")
     observed = copy.deepcopy(expected)
@@ -173,3 +122,26 @@ def test_a_concrete_read_row_losing_its_variant_fails_the_row_grade() -> None:
     observed[0].pop("familyVariant")
     with pytest.raises(AssertionError):
         compare_rows(observed, expected)
+
+
+def test_a_child_node_padded_with_a_sibling_member_fails_the_graph_grade() -> None:
+    # A `Dog` has no `indoor` key to be null, at a child level as at a root.
+    expected, kinds = _authored_graph("m-snapshot-read-012")
+    observed = copy.deepcopy(expected)
+    cast("dict[str, Any]", observed["Person"][0]["animals"][0])["indoor"] = None
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)
+
+
+def test_a_root_beside_includes_padded_with_a_sibling_member_fails_the_graph_grade() -> None:
+    expected, kinds = _authored_graph("m-inheritance-076")
+    observed = copy.deepcopy(expected)
+    cast("dict[str, Any]", observed["Animal"][0])["indoor"] = None
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)
+
+
+def test_a_root_collection_compares_as_a_multiset() -> None:
+    expected, kinds = _authored_graph("m-inheritance-076")
+    observed = {"Animal": list(reversed(cast("list[Any]", expected["Animal"])))}
+    compare_graph(observed, expected, kinds)

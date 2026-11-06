@@ -68,6 +68,10 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     *Invalid stored data*); `then.graph` carries ``null`` there and the diagnosis
     rides `then.storedDataIssues`.
 
+    Every node is per-variant, at every level (`m-case-format` *Read targeting*),
+    so a row aligned to its position's superset is narrowed to its own concrete
+    here, the one place a node is built.
+
     A graph leaf is keyed by the DECLARED member name (`m-case-format` *Graph
     keys*), while a read row arrives keyed by its physical column, so the
     attribute half is renamed here. Value Object occurrences and relationship
@@ -88,7 +92,9 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     model = case.model
     concrete = materialize.variant_entity(model, entity, row)
     try:
-        node = materialize.materialize_variant_owner_node(case, entity, row)
+        node = materialize.materialize_variant_owner_node(
+            case, entity, materialize.narrow_to_variant_columns(case, row)
+        )
     except DocumentEncodingError:
         # A stored scalar no value of its declared type spells — a collection
         # element included — leaves the position unhydratable.

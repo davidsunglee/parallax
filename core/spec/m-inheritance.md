@@ -359,12 +359,12 @@ bare local Entity name when that name is unique among the family's concrete
 subtypes; when two concrete subtypes in one family share a local name across
 namespaces, each such subtype uses its canonical qualified Entity spelling. Thus
 existing families retain `Dog`, while duplicate local names render, for example,
-`catalog.SharedVariant` and `archive.SharedVariant`. Beyond that tag, a top-level
-leaf of a read naming no Includes is a **complete concrete instance** in the
+`catalog.SharedVariant` and `archive.SharedVariant`. Beyond that tag, every node
+of the read, at every level, is a **complete concrete instance** in the
 ordinary sense — only its own branch's inherited-plus-own members, never a
 sibling's null-padded column. Inheritance resolves one effective concrete set and
-branch applicability for the read, and `m-sql` owns its projection. Every other
-node shape, and how a case asserts that read, the flat row included, are
+branch applicability for the read, and `m-sql` owns its projection. How a case
+asserts that read, the flat row included, is
 `m-case-format`'s (*Read result form*). This is the read-side counterpart of *Concrete-
 subtype writes*, below: a discriminated union at both boundaries, with family
 semantics retained here and result projection retained by SQL.

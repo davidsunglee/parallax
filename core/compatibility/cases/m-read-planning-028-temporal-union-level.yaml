@@ -39,10 +39,10 @@ then:
         txStart: "2024-01-01T00:00:00.000000Z"
         txEnd: infinity
         rates:
-          - { id: 1, sheetId: 100, priority: 5, tier: null, grade: B, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-02-01T00:00:00.000000Z", familyVariant: SheetDeposit }
-          - { id: 2, sheetId: 100, priority: 20, tier: 1, grade: null, spread: 125, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
-          - { id: 3, sheetId: 100, priority: null, tier: 2, grade: C, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetDeposit }
-          - { id: 4, sheetId: 100, priority: 10, tier: null, grade: null, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
+          - { id: 1, sheetId: 100, priority: 5, tier: null, grade: B, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-02-01T00:00:00.000000Z", familyVariant: SheetDeposit }
+          - { id: 2, sheetId: 100, priority: 20, tier: 1, spread: 125, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
+          - { id: 3, sheetId: 100, priority: null, tier: 2, grade: C, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetDeposit }
+          - { id: 4, sheetId: 100, priority: 10, tier: null, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
       - id: 101
         name: Business
         validStart: "2024-01-01T00:00:00.000000Z"
@@ -50,6 +50,6 @@ then:
         txStart: "2024-01-01T00:00:00.000000Z"
         txEnd: infinity
         rates:
-          - { id: 5, sheetId: 101, priority: null, tier: 1, grade: null, spread: 300, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
-          - { id: 6, sheetId: 101, priority: 10, tier: 1, grade: null, spread: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetDeposit }
+          - { id: 5, sheetId: 101, priority: null, tier: 1, spread: 300, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetLoan }
+          - { id: 6, sheetId: 101, priority: 10, tier: 1, grade: null, validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity, familyVariant: SheetDeposit }
   databaseCalls: 2

@@ -15,6 +15,7 @@ from parallax.conformance.identifier_models import (
     IDENTIFIER_TPH_DOCUMENT,
     IDENTIFIER_TYPES,
 )
+from parallax.conformance.rate_sheet_document_models import RATE_SHEET_DOCUMENT_MODEL
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
     DOCUMENT_MODEL,
@@ -72,6 +73,7 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "predicate-traversal": PREDICATE_TRAVERSAL_MODEL,
         "rate": RATE_MODEL,
         "rate-sheet": RATE_SHEET_MODEL,
+        "rate-sheet-document": RATE_SHEET_DOCUMENT_MODEL,
         "read-only-inheritance": READ_ONLY_INHERITANCE_MODEL,
         "scalars": SCALARS_MODEL,
         "shipment": SHIPMENT_MODEL,

@@ -512,8 +512,8 @@ member** (*Read result form*, below), so what ELSE a leaf carries beyond
   order, with root-first ancestry, local declaration order, and canonical concrete
   order stable only within a tier. Non-applicable subtype contributors are `null`,
   the fixed superset every row of the position occupies (`m-sql` *Read projection*).
-- **`then.graph`**, at a **top-level read case's own leaves**
-  (a `shape: read` case whose query names no Includes), is the
+- **`then.graph`**, at **every level** — a root or an included level, of a read
+  or of a scenario step's `expectGraph` — is the
   **per-variant node shape**: each node carries **only its own branch's
   members** — its inherited chain plus its own declared attributes — and
   **omits every sibling branch's column entirely**, with **no null sibling
@@ -527,14 +527,6 @@ member** (*Read result form*, below), so what ELSE a leaf carries beyond
   `m-inheritance-003`/`-013`/`-015`/`-052` (`then.rows`) and their `then.graph`
   siblings `m-inheritance-106`/`-107`/`-108`/`-109` are this divergence's own
   pair: one read, stated both ways.
-
-This per-variant node shape is scoped, for now, to a read case's own top-level
-`then.graph` leaves — the shape a `scope.find` on an abstract multi-concrete
-position returns. A **deep-fetch or snapshot CHILD level**'s graph node shape
-(`m-snapshot-read-012`'s narrowed-vs-broad diamond, for example) is a distinct,
-already-established convention this decision does not touch; reconciling the
-two — whether a child level's polymorphic relationship set should narrow the
-same way — is left open for a follow-up.
 
 A **deep-fetch `then.graph`** keys each eager-fetched related set under the
 **relationship name** — or, for a **narrowed polymorphic hop** (`m-read-planning`,
