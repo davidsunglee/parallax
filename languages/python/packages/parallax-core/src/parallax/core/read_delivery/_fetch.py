@@ -137,9 +137,9 @@ def attach_back_reference(
 ) -> None:
     """Record an ancestor-revisit level for root-local identity resolution.
 
-    A back-reference issues no SQL: m-case-format's "Back-reference cycles"
-    guarantees the ancestor is already converted, so the parent's own correlation
-    member names logical rows this builder has already merged. The Root
+    A back-reference level issues no SQL (m-read-planning): the ancestor is already
+    converted, so the parent's own correlation member names logical rows this
+    builder has already merged. The Root
     View selects only its own reachable canonical logical row among the targets the
     view schema records for the slot.
     """

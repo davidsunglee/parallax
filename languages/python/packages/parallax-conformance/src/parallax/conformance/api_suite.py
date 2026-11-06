@@ -1899,6 +1899,20 @@ _RELATIONSHIP_QUANTIFIER_SIBLING_REASON: Final[str] = (
     "another relationship — no distinct developer-facing shape to add"
 )
 
+# A back-reference level's refusal and its narrowed views: the ordinary include
+# spelling, whose count and selection the run sweep grades.
+_BACK_REFERENCE_PATH_REFUSAL_REASON: Final[str] = (
+    "the rejected lane's `deep-fetch-past-back-reference`: the developer spelling is the "
+    "ordinary include path the exercised orders stories show, and the refusal is graded by "
+    "the rejected sweep and proven through every read in the unit suite"
+)
+_NARROWED_BACK_REFERENCE_REASON: Final[str] = (
+    "a narrowed back-reference level: the developer spelling is the ordinary segment narrow "
+    "the exercised stories show, and what this case pins is a Database Call count and a "
+    "selection among fetched objects, which the run sweep grades. models/keeper.yaml has no "
+    "classes in this package, so no story can be written against it here"
+)
+
 # Temporal deep-fetch GRAPH siblings of the executed m-navigate-013 story (the
 # ONE representative proof that a root as-of pin propagates per-hop into a
 # deep-fetch child level): every other axis/cardinality/model permutation of
@@ -2513,6 +2527,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-unit-work-050",
             "m-unit-work-059",
             "m-unit-work-060",
+            "m-unit-work-071",
+            "m-unit-work-072",
             "m-temporal-write-044",
             "m-temporal-write-045",
             "m-temporal-write-046",
@@ -2782,6 +2798,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-navigate: relationship quantifier siblings -------------------------- #
     "m-navigate-001": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
     "m-navigate-005": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
+    "m-navigate-029": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
     # -- m-navigate / m-snapshot-read: temporal deep-fetch graph siblings ---- #
     "m-navigate-012": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     "m-navigate-014": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
@@ -2797,6 +2814,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-navigate-025": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
     "m-read-planning-024": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
     "m-read-planning-030": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
+    # -- m-read-planning: back-reference levels ---------------------------------- #
+    "m-read-planning-031": _ORDERS_GRAPH_SIBLING_REASON,
+    "m-read-planning-032": _BACK_REFERENCE_PATH_REFUSAL_REASON,
+    "m-read-planning-033": _NARROWED_BACK_REFERENCE_REASON,
+    "m-read-planning-034": _NARROWED_BACK_REFERENCE_REASON,
     "m-snapshot-read-002": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     # -- m-snapshot-read: orders-family graph siblings ----------------------- #
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,

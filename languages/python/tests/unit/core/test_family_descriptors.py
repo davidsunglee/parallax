@@ -85,6 +85,7 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "identifier-tpcs-document",
     "identifier-tph-document",
     "instrument",
+    "keeper",
     "materialization-key-compatibility",
     "materialization-stress-columns",
     "materialization-stress-document",

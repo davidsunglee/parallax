@@ -217,6 +217,9 @@ predicate, no Sort Keys, no limit, no pagination, and no nested Object Query;
 child ordering comes from Relationship Metadata (`m-read-planning`). Filtered,
 sorted, or paginated relationship views are a separate future feature.
 
+A path ends at a back-reference level (`m-read-planning`): a segment continuing
+past one is rejected with `deep-fetch-past-back-reference`.
+
 ### The two selection positions narrow opposite things
 
 A path MAY carry an `appliesTo` Subtype Selection beside `segments`. It **guards

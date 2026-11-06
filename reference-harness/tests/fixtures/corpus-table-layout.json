@@ -9495,6 +9495,206 @@
       ]
     }
   },
+  "models/keeper.yaml": {
+    "crew": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cook",
+            "parallax.compatibility.Medic",
+            "parallax.compatibility.Pilot"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Crew.id",
+          "declaringOwner": "parallax.compatibility.Crew",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cook",
+            "parallax.compatibility.Medic",
+            "parallax.compatibility.Pilot"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Crew",
+          "declaringOwner": "parallax.compatibility.Crew",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Cook",
+            "parallax.compatibility.Medic",
+            "parallax.compatibility.Pilot"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Crew.name",
+          "declaringOwner": "parallax.compatibility.Crew",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "crew_task": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Task"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Task.id",
+          "declaringOwner": "parallax.compatibility.Task",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Task"
+          ],
+          "column": "crew_id",
+          "contributor": "attribute:parallax.compatibility.Task.crewId",
+          "declaringOwner": "parallax.compatibility.Task",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Task"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Task.label",
+          "declaringOwner": "parallax.compatibility.Task",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "keeper_charge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charge"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Charge.id",
+          "declaringOwner": "parallax.compatibility.Charge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charge"
+          ],
+          "column": "keeper_id",
+          "contributor": "attribute:parallax.compatibility.Charge.keeperId",
+          "declaringOwner": "parallax.compatibility.Charge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charge"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Charge.label",
+          "declaringOwner": "parallax.compatibility.Charge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "keeper_ranger": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ranger"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Keeper.id",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ranger"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Keeper.name",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "keeper_vet": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Vet"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Keeper.id",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Vet"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Keeper.name",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "keeper_warden": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Warden"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Keeper.id",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Warden"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Keeper.name",
+          "declaringOwner": "parallax.compatibility.Keeper",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/lease.yaml": {
     "lease": {
       "columns": [

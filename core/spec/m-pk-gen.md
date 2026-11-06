@@ -35,14 +35,3 @@ Sequence defaults are resolved there as well (`batchSize`, `initialValue`,
 and `incrementSize` default to `1`, fixed by the schema).
 `m-pk-gen` therefore contributes no Model Formation Rule Set, Issue Code, or
 facet.
-
-## What the suite pins down
-
-`max` and `sequence` are exercised by `writeSequence` cases
-(`m-pk-gen-001`–`m-pk-gen-013`). `max` is self-describing — its
-`coalesce(max(...),0)+1` golden SQL (`m-sql`) needs no oracle. For a
-`sequence`-strategy insert the harness derives an independent **PK-generation
-oracle** (`m-case-format`): it re-derives the allocated primary keys and the
-registry counter from the declared `initialValue` / `incrementSize` / `batchSize`
-and asserts both against the post-write database state, proving block reservation,
-gap-on-unused, and stride follow the declared strategy.

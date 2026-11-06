@@ -80,10 +80,11 @@ as-of predicate: **latest** lowers to the single equality `to = infinity`; an
 **as-of instant** lowers to the half-open containment `from <= ? and to > ?`. Each
 axis propagates and lowers independently. A temporal query root already carries
 one canonical selection per declared axis. When a reached target declares an axis
-the source does not carry, that unmatched target axis selects **latest**.
+the query root does not carry, that unmatched target axis selects **latest**.
 
-A **non-temporal** entity in the path carries **no** as-of term. A **temporal**
-entity reached from a **non-temporal** one defaults every axis to latest. Because
+A **non-temporal** entity in the path carries **no** as-of term and does not
+interrupt propagation past it. A **temporal** entity reached from a non-temporal
+root defaults every axis to latest. Because
 each entity reconstructs the milestone whose interval *contains* the propagated
 date, a deep fetch as of an instant yields a **point-in-time-consistent object
 graph** — every entity as it stood at that instant, including now-superseded
@@ -93,7 +94,7 @@ binds, Valid Time first and Transaction Time second).
 
 The rule extends from the query algebra to **object graphs**: every included
 relationship inside a snapshot graph (`m-snapshot-read`) resolves the target
-timeline **at the source object's own pinned coordinates**, matched by axis.
+timeline **at the graph's pinned coordinates**, matched by axis.
 A graph's pointers cannot silently cross temporal contexts, and a view
 materialized from a `history` read (standing at its milestone pin,
 `m-temporal-read`) dereferences at its own edge.

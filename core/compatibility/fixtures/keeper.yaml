@@ -1,0 +1,20 @@
+parallax.compatibility.Ranger:
+  - {id: 1, name: Rae}
+parallax.compatibility.Vet:
+  - {id: 2, name: Vera}
+parallax.compatibility.Warden:
+  - {id: 3, name: Wes}
+parallax.compatibility.Charge:
+  - {id: 11, keeperId: 1, label: north}
+  - {id: 12, keeperId: 2, label: clinic}
+  - {id: 13, keeperId: 3, label: gate}
+parallax.compatibility.Cook:
+  - {id: 1, name: Cal}
+parallax.compatibility.Medic:
+  - {id: 2, name: Mia}
+parallax.compatibility.Pilot:
+  - {id: 3, name: Pat}
+parallax.compatibility.Task:
+  - {id: 21, crewId: 1, label: galley}
+  - {id: 22, crewId: 2, label: triage}
+  - {id: 23, crewId: 3, label: approach}

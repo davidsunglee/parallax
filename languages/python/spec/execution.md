@@ -88,20 +88,9 @@ bounds a true least-recently-used cache by entry count. Concurrent cold requests
 for the same key share one build and its success or failure; failures are not
 cached, while unrelated keys can build concurrently.
 
-Cache identity includes the exact model edition, cataloged model and dialect,
-the resolved query's structure, result form, and concurrency preference. A
-predicate operand or finite temporal bound contributes its exact type and a
-Decimal's exponent, a membership whether it is empty and the distinct exact types
-and exponents of its elements but not their number, an affix match whether its
-literal needs escaping, and a temporal selection its kind and axis. Operands of
-distinct exact types, and Decimals of distinct exponents, remain distinct.
-The first stream page and each continuation-coordinate pattern of NULL, finite,
-and open-bound (`INFINITY`) carriers use distinct entries; predicate operands,
-finite temporal bounds, finite coordinate values, and page limits are execution
-values rendered into their cached templates, not cache identity, while an
-unpaged read's authored limit is part of its structure. Plans retain immutable
-planning and conversion data, not runtimes, connections, rows, pages, origins, or
-results.
+Reuse is unobservable in results, statements, and binds: a read served from a
+retained plan behaves as one planned for it alone. Plans retain immutable planning and
+conversion data, not runtimes, connections, rows, pages, origins, or results.
 The cache has the `Database` lifetime; closing the root does not promise to clear
 plans while the closed root is still referenced, and eviction or release makes
 otherwise unreferenced plans and retained query values collectible.

@@ -39,9 +39,12 @@ consumes that canonical set and owns its level planning. The normative guarantee
 
 > The number of SQL statements is **at most `1 + L`**, where `L` is the number
 > of **distinct relationship hops** across all declared paths. A level whose
-> parent-key set is empty, or whose target position has no concrete subtype,
-> issues **no** child SQL. Every other level issues **one** child statement —
-> **never** one query per parent row.
+> parent-key set is empty or whose target position has no concrete subtype
+> issues **no** child SQL. Neither does a **back-reference level**, a to-one
+> level that is the reverse direction of the hop it arrived on: its target is
+> the already-fetched object that hop started from, attached without a read.
+> Every other level issues **one** child statement — **never** one query per
+> parent row.
 
 Concretely, for each relationship level:
 
@@ -55,7 +58,9 @@ Concretely, for each relationship level:
    empty parent set. The two causes are distinct — an empty target attaches
    empty however many keys its parents carry — but load the view the same way:
    a to-many view is loaded empty and a to-one view loaded null, never left
-   unloaded.
+   unloaded. A back-reference level issues **no** child query either, and
+   attaches to each admitted parent the already-fetched object its arriving hop
+   started from.
 3. Otherwise, issue **one** query against the child entity constrained by
    `fk in (…)` over those distinct keys.
 4. Fan the returned child rows back to their parents **in memory**, attaching
@@ -68,6 +73,10 @@ OrderItem.statuses }] }` fetches both `items` and `statuses`; separately spellin
 the exact `Order.items` prefix changes neither the canonical include set nor the
 plan. Paths whose retained branches share a segment prefix fetch that shared hop
 **once** — the hop is de-duplicated, so it counts as a single level.
+
+A back-reference level ends its path. A path continuing past one, such as
+`Order.items`, `OrderItem.order`, `Order.items`, **MUST** be rejected before any
+SQL with `deep-fetch-past-back-reference` (`m-case-format`).
 
 ### A level names its correlation members, not only their columns
 
@@ -170,6 +179,10 @@ relationship key. The polymorphic view's child objects additionally carry
 as an abstract-target flat read (`m-case-format`); a single-concrete narrowed view
 carries none (the caller fetched a known variant).
 
+A back-reference level fills a narrowed view without a read, under either
+inheritance strategy: the narrow selects among the already-fetched objects by
+concrete type.
+
 **Dedup identity is the triple `(relationship hop, whether a narrow was
 authored, effective concrete set)`**, not the relationship alone. Deduplication
 of equivalent spellings applies **between two narrowed hops**: two paths whose
@@ -256,22 +269,6 @@ alphabetical order — share the **same** parent-id `IN` list, so the hop stays 
 **not** permitted — it would make the statement count strategy- and
 narrowing-dependent and weaken every `databaseCalls` assertion.
 
-## Simplified `IN` vs. temp-table threshold
-
-The per-level child query uses a **simplified `IN (…)` list** of the gathered
-parent keys. This is correct and optimal for the parent-set sizes the round-1
-suite exercises. Reladomo switches to a **temp-table join** once the parent set
-exceeds a threshold (`MAX_SIMPLIFIED_IN`), because a multi-thousand-element `IN`
-list (and per-dialect `IN`-clause limits) degrades.
-
-> **Temp-table deep fetch is declared here but deferred to a fast-follow.** The
-> contract is: when the gathered parent-key count exceeds the dialect's
-> threshold, the implementation **MAY** materialize the keys into a session
-> temp table and **join** against it instead of inlining an `IN` list — while
-> preserving the **same one-statement-per-level Database Call count** and the same
-> assembled graph. The threshold value and the temp-table DDL are `m-dialect`
-> concerns. Round 1 specifies and tests only the simplified `IN` form.
-
 ## As-of propagation
 
 A deep fetch as of an instant yields a **point-in-time-consistent object graph**.
@@ -307,8 +304,8 @@ For each deep-fetch case the compatibility harness (`m-case-format`) asserts, in
 addition to the standard layers: the golden SQL statement count equals the
 declared `then.databaseCalls`; each non-empty child level executes keyed by the parents
 gathered from the previous level (with the authored `IN` binds matching the
-gathered keys); empty parent-key levels, and levels whose target position has no
-concrete subtype, execute no child SQL; and the
+gathered keys); empty parent-key levels, levels whose target position has no
+concrete subtype, and back-reference levels execute no child SQL; and the
 in-memory-assembled object graph equals the case's `then.graph`. Additionally,
 for each to-many level whose relationship declares `orderBy`, the harness derives
 the expected child order from the declared keys/directions (an independent oracle)

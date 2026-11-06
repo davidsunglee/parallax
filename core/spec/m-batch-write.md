@@ -69,34 +69,8 @@ Delete whose Key Target holds several key tuples.
   its keys; a dialect without them binds one placeholder per key value (`m-sql`
   *Batched insert / update*).
 
-The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
-
-```yaml
-# m-batch-write-001 (set-based flush) then.statements:
-- sql:
-    postgres: insert into wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
-# m-batch-write-001 (uniform update collapse) then.statements:
-- sql:
-    postgres: update wallet set balance = ? where id = any(cast(? as bigint[]))
-# m-batch-write-002 (update per key, one grouped effect) then.statements:
-- sql:
-    postgres: update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord
-# m-batch-write-003 (batch DELETE collapse) then.statements:
-- sql:
-    postgres: delete from wallet where id = any(cast(? as bigint[]))
-# m-batch-write-004 (versioned delete keeps one step per key, one grouped effect, locking mode) then.statements:
-- sql:
-    postgres: delete from account t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) where t.id = v.c1 returning v.ord
-```
-
-The suite proves the batched forms against real data by **applying** the golden
-DML and asserting the resulting table state — the write-sequence machinery
-(`m-case-format`), reused for the non-temporal batched case (cases
-`m-batch-write-001` / `m-batch-write-002` for the insert/update collapse and the
-per-key updates, with `m-batch-write-064` for MariaDB's one statement per key,
-`m-batch-write-003` for the DELETE collapse, `m-batch-write-004` for the versioned
-per-key deletes, with `m-batch-write-065` for MariaDB's one statement per key). So "buffered writes flush as set-based SQL" is verified by the
-rows it leaves behind, not merely asserted.
+The suite proves the batched forms against real data by applying the golden DML
+and asserting the resulting table state (`m-case-format`).
 
 ## A predicate-selected write is readless, or refused
 
@@ -122,9 +96,6 @@ not doomed. An implementation's refusal **SHOULD** name the writes that reach
 such a target: reading its objects and writing each one by key, or a
 target write stating the revision the caller holds — and, for a
 temporal target, a termination rather than a deletion.
-
-`m-batch-write-047`, `-048`, and `-049` witness the refusal for a versioned, a
-Transaction-Time-Only, and a Bitemporal target.
 
 ## Predicate-selected readless forms
 
@@ -193,10 +164,6 @@ completed null is JSON null at the member's own path, never the removal of its
 key, so a document key no member declares survives the replacement as it
 survives any amendment.
 
-`m-batch-write-005` pins readless predicate delete and
-`m-batch-write-006` pins the update's layout-order SQL and bind determinism.
-`m-batch-write-051`–`-055` pin the replacement.
-
 A readless statement that **matches zero rows succeeds with zero affected rows —
 never an error** — and its verb returns `0`. Ordinary SQL set semantics already make `update … where
 <predicate>` and `delete … where <predicate>` no-ops when nothing matches; a
@@ -214,7 +181,7 @@ the refusal above, its predicate, and its inheritance family, and the attempt's
 lifetime — and its verb then returns `0`: it emits no statement, makes no
 database call, opens no Flush, and leaves every buffered write pending. A keyed
 amendment expressing no member is empty in the same way (`m-unit-work`).
-`m-batch-write-050` witnesses it. A `replace` of an Entity whose only writable
+A `replace` of an Entity whose only writable
 member is its key writes nothing either, since the key is never written, and
 returns `0` the same way. An amendment assigning a member the value it already
 stores is not empty.
@@ -260,33 +227,6 @@ the Flush without dooming the attempt or returning the completed writes to the
 buffer, while a failure lowering, executing, or enforcing it dooms the attempt
 (`m-unit-work` *Abort*). A statement error therefore surfaces at the verb; a
 constraint the database defers still fails at commit.
-
-## What the suite pins down
-
-The existing `m-batch-write-001`–`-004` cases prove only **buffered tracked-row
-batching**: multi-row insert, uniform-key update, non-versioned collapsed
-delete, and versioned per-key delete. The predicate-write witnesses prove a distinct target:
-
-| Case | Target | Predicate-write witness |
-|---|---|---|
-| `m-batch-write-005` | non-versioned `Wallet` delete | one readless `delete … where <predicate>` |
-| `m-batch-write-006` | non-versioned `Wallet` update | one readless update; reversed authored assignments still emit Entity Layout order and assignment-before-predicate binds |
-| `m-batch-write-009` | unversioned, non-temporal document-mapped `Traveler` update | one readless update replacing a top-level document-resident `many` whole at its path, every other key kept |
-| `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
-| `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
-| `m-batch-write-056`–`-061` | unversioned, non-temporal `LayoutTwinItem` amendment, replacement, and delete under each layout, selected by `true` | one readless statement with no `where` clause, counting every row |
-| `m-batch-write-050` | non-versioned `Wallet` update assigning nothing | judged, then returns `0`: no statement and no database call |
-| `m-batch-write-051` | non-versioned `Wallet` replacement | one readless update; a reversed authored row still emits Table Layout order and assignment-before-predicate binds |
-| `m-batch-write-052` | non-versioned `Wallet` replacement stating a key | the key is accepted and never written |
-| `m-batch-write-053` | unversioned, non-temporal `OrderItem` replacement through a shared to-one join | the key-selecting form; the omitted nullable `shippedOn` written null |
-| `m-batch-write-054` | unversioned, non-temporal document-mapped `Traveler` replacement | omitted members completed as JSON null and the empty array at their paths; an undeclared document key survives |
-| `m-batch-write-055` | non-versioned `Wallet` replacement omitting `balance` | refused: `write-required-attribute-missing` |
-| `m-batch-write-062`/`-063` | non-versioned `Wallet` and `Shipment` amendments assigning an undecodable member and Value Object leaf | refused: `neutral-literal-type-mismatch`, as a replacement stating either is |
-| `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
-| `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
-| `m-batch-write-049` | Bitemporal `Position` replacement | refused: `set-based-write-target-unsupported` |
-| `m-batch-write-011` | unversioned, non-temporal `OrderItem` update after a buffered delete and before buffered inserts | runs at its call after the delete; the inserts follow at commit |
-| `m-execution-lifecycle-011` | non-versioned `Wallet` updates and deletes after a buffered insert | each nonempty write is one `predicate-write` Flush returning its count, an unchanged match and a match of nothing included; the empty one opens none |
 
 The two families share SQL terminology but not an observation contract: a key
 membership can collapse an already tracked set, whereas a predicate write starts from an

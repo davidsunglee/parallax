@@ -957,22 +957,18 @@ def test_a_relationship_hop_past_the_first_erases_and_binding_refuses_it() -> No
 
 
 def test_an_authored_chain_continues_past_the_second_hop() -> None:
-    # The first hop's own declaration names `Keeper.beasts`; each hop past it is
+    # The first hop's own declaration names `Beast.keeper`; each hop past it is
     # spelled by the class the previous one reached, however many there are.
     document = canonical_document(
-        accepted_read_query(
-            Keeper.where(Keeper.all).include(Keeper.beasts.keeper.beasts.keeper.badge), _BESTIARY
-        ),
+        accepted_read_query(Beast.where(Beast.all).include(Beast.keeper.beasts.keeper), _BESTIARY),
         _BESTIARY,
     )
     assert document["includes"] == [
         {
             "segments": [
-                {"rel": f"{_NS}.Keeper.beasts"},
                 {"rel": f"{_NS}.Beast.keeper"},
                 {"rel": f"{_NS}.Keeper.beasts"},
                 {"rel": f"{_NS}.Beast.keeper"},
-                {"rel": f"{_NS}.Keeper.badge"},
             ]
         }
     ]

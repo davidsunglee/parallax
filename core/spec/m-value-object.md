@@ -288,10 +288,9 @@ rather than left true by omission:
    `Document` slot (`m-sql`, *Read projection*): it is selected on every
    **instance-form read** — every read a developer or a case makes. Because
    materialization requires the document, an instance-form read of a
-   value-object-bearing entity always projects it. The internal row-form lane
-   projects it only where its consumer needs the document — a write's
-   row-acquisition read, whose observation on a temporal target retains the whole
-   predecessor row (`m-write-plan`).
+   value-object-bearing entity always projects it. A write's row acquisition
+   projects it only where it needs the document: its observation on a temporal
+   target retains the whole predecessor row (`m-write-plan`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
 4. **Not a navigation or deep-fetch target.** An Include Path (`m-read-planning`)

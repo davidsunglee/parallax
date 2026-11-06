@@ -688,8 +688,8 @@ statement is not connection-free execution.
 
 Delivery is `m-read-planning`'s contract observed through the Page: **at most
 `1 + L` statements** for `L` distinct relationship hops, one statement per
-non-empty level, empty parent-key levels and levels at a position with no
-concrete subtype issuing no child SQL. A read whose root position has no concrete
+non-empty level, empty parent-key levels, levels at a position with no concrete
+subtype, and back-reference levels issuing no child SQL. A read whose root position has no concrete
 subtype issues none at all and delivers a Page with no roots. Constructing the
 query is side-effect-free; the single explicit execution is the only moment the
 database is touched.

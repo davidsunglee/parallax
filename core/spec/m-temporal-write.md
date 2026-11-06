@@ -109,13 +109,6 @@ makes a view pinned at a finite Transaction-Time instant **read-only** rather
 than merely inadvisable: mutating one raises the neutral
 `transaction-time-pin-read-only` error and emits no DML.
 
-The append is what the suite grades, so the cases grading it discharge the
-invariant. `m-temporal-write-002` and `-005` assert the resulting milestone rows —
-`-005` chains onto persisted history and carries the superseded prior through
-`then.tableState` unchanged; `m-temporal-write-003` asserts that a `terminate`
-leaves no current row while deleting nothing; `m-temporal-write-092` and
-`m-temporal-write-032` assert the refusal at the mutation surface.
-
 A current row the **same attempt** opened is not yet part of that past: no
 committed state records it, and closing it at the attempt's one instant would
 leave an empty `[txInstant, txInstant)` milestone whose physical key collides
@@ -969,30 +962,3 @@ the normal close-and-chain), `purge` (physically delete a milestone chain), and
 `inactivateForArchiving` — are RFC-2119 **MAY**: an implementation **MAY** provide
 them, and the suite **MAY** carry optional fixtures for them, but they are **not**
 part of the required parity surface, and they are excluded from the coverage gate.
-
-## How the harness verifies (`m-case-format`)
-
-Write-sequence cases carry a `when.writeSequence` (ordered `insert` / `amend` /
-`terminate`) and `then.tableState`. The harness **applies** the ordered DML
-golden SQL (`then.statements`) to a freshly-provisioned (empty) table, then asserts
-the resulting milestone rows equal `then.tableState` — including the
-`out_z = infinity` current-row state. The DML statement count must equal the sum of
-the steps' declared statement counts and the case's `then.databaseCalls`. Rather than
-introspecting
-an implementation, the suite proves the *documented golden SQL itself* produces
-the correct milestones.
-
-On a two-axis entity the sequence carries the `insertUntil` / `amendUntil` /
-`terminateUntil` trio beside the plain unbounded `insert` / `amend` /
-`terminate`, and the harness asserts the resulting rows — the inactivated original (`out_z`
-finite) plus the `head` / `middle` / `tail` rectangles current on Transaction Time
-(`out_z = infinity`); a plain `amend` asserts the inactivated original plus a
-`head` and a new `tail`; a plain `terminate` asserts the inactivated original plus a
-lone `head`, with `[V, infinity)` covered by no current-on-Transaction-Time row; a plain
-`insert` asserts a single fully-current rectangle (`thru_z = out_z = infinity`) with
-no inactivation. The DML statement count must equal the sum of the steps' declared
-statement counts and the case's `then.databaseCalls` (a plain `insert` step is 1
-statement; a plain `terminate` step is 2 statements — inactivate + `head`; a plain
-`amend` step is 2 — inactivate + one `insert` of `head` and new `tail`). The
-standalone witnesses are `m-temporal-write-025-plain-insert`, `m-temporal-write-022-plain-update-split`, and
-`m-temporal-write-023-plain-terminate`.

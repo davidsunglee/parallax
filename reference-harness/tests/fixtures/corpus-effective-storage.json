@@ -3480,6 +3480,72 @@
       "valueObject": {}
     }
   },
+  "models/keeper.yaml": {
+    "parallax.compatibility.Charge": {
+      "attribute": {
+        "id": "id",
+        "keeperId": "keeper_id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Cook": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Crew": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Keeper": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Medic": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pilot": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Ranger": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Task": {
+      "attribute": {
+        "crewId": "crew_id",
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Vet": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Warden": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/lease.yaml": {
     "parallax.compatibility.Lease": {
       "attribute": {

@@ -97,6 +97,7 @@ __all__ = [
     "check_attribute_reference",
     "check_receiver",
     "effective_set",
+    "relationship_direction",
     "relationship_target",
     "require_single_scalar",
     "resolve_narrow",
@@ -1066,6 +1067,12 @@ def _check_attribute_position(
         f"{entity.identity.canonical} shares no inheritance family with the active position "
         f"{sorted(scope.effective)}, so no narrow makes its attributes addressable here",
     )
+
+
+def relationship_direction(
+    model: Metamodel, identity: RelationshipIdentity
+) -> RelationshipMetadata | None:
+    return relationship.view(model).relationship(identity)
 
 
 def relationship_target(

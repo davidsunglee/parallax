@@ -41,6 +41,7 @@ from parallax.core.predicate import (
     canonical_interpretation,
     check_attribute_reference,
     effective_set,
+    relationship_direction,
     relationship_target,
     require_single_scalar,
     resolve_subtype_selection,
@@ -116,8 +117,9 @@ def validate_include_path(
     """Resolve ``path`` relative to the model's active queried position.
 
     The source guard is constrained by ``queried`` and each segment is resolved
-    from the preceding relationship target. Narrowing and wrong-kind violations
-    raise :class:`ModelRejectedError` with their shared rule code. A relationship
+    from the preceding relationship target. Narrowing, wrong-kind, and
+    past-back-reference violations raise :class:`ModelRejectedError` with their
+    shared rule code. A relationship
     direction that is unresolved, undeclared, or disconnected from the preceding
     target raises ``ValueError`` because accepted metadata supplies no direction
     to return from that position.
@@ -128,6 +130,8 @@ def validate_include_path(
     source = _scope_identities(model, source_scope)
     segments: list[ResolvedIncludeSegment] = []
     active_scope = source_scope
+    arrival = None
+    at_back_reference = False
     for segment in path.segments:
         target = relationship_target(
             segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
@@ -141,7 +145,15 @@ def validate_include_path(
                 f"{segment.rel!r} does not resolve from the active Include Path position "
                 f"{sorted(active_scope.effective)}"
             )
+        if at_back_reference:
+            raise ModelRejectedError(
+                "deep-fetch-past-back-reference",
+                f"{segment.rel!r} continues past a back-reference level, which ends its path",
+            )
         direction = RelationshipIdentity(declaring.identity, member_name)
+        metadata = relationship_direction(model, direction)
+        at_back_reference = metadata is not None and metadata.is_back_reference_from(arrival)
+        arrival = metadata
         target_scope = PositionScope(effective=effective_set(model, target))
         if segment.narrow_to:
             resolved = resolve_subtype_selection(segment.narrow_to, model)

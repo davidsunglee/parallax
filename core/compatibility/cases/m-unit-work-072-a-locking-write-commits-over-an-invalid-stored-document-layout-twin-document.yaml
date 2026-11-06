@@ -1,0 +1,32 @@
+model: models/buffered-sequence-layout-twin-document.yaml
+tags: [m-unit-work, m-concurrency, m-storage-layout, scenario, target-write, invalid-stored-data, layout-twin, document, slice-snapshot-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "state-graded over a given.apply stored document no authored member can produce (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+  apply:
+    - sql: update sequence_account set payload = ? where id = ?
+      binds:
+        - { balance: 10, memo: { note: 7 } }
+        - 1
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: written
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceAccount
+          row: { id: 1, balance: 20, memo: { note: replaced } }
+          ifVersion: 1
+      note: "the acquisition establishes the row's presence and revision, and judges no Value Object occurrence"
+then:
+  units:
+    written: { outcome: committed }
+  tableState:
+    sequence_account:
+      - { id: 1, version: 2, payload: { balance: 20, memo: { note: replaced } } }
