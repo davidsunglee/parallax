@@ -13,8 +13,11 @@ import time
 
 root = Path(__file__).parent
 lane = sys.argv[1]
-if lane == "summary":
+if lane == "coverage":
     assert all((root / f"{name}.done").exists() for name in ("dbfree", "db"))
+    (root / "coverage").touch()
+elif lane == "summary":
+    assert (root / "coverage").exists()
     (root / "summary").touch()
 else:
     (root / f"{lane}.started").touch()
@@ -46,6 +49,9 @@ check-dbfree:
 check-db:
     @{command} db {"fail" if fail else ""}
 
+python-coverage-diff:
+    @{command} coverage
+
 report-check-summary:
     @{command} summary
 """
@@ -61,6 +67,7 @@ def test_parallel_verification_lanes_report_success_only_after_both_finish(
 ) -> None:
     result = _run_gate(repo_root, tmp_path, fail=fail)
     assert all((tmp_path / f"{lane}.done").exists() for lane in ("dbfree", "db")), result.stderr
+    assert (tmp_path / "coverage").exists() is not fail
     assert (tmp_path / "summary").exists() is not fail
     if fail:
         assert result.returncode != 0

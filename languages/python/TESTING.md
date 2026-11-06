@@ -18,6 +18,13 @@ explains placement and fixtures without duplicating those inventories.
 | Provider | `tests/provider_contract/` | Database provider contract and shipped adapter |
 | Distribution | `tests/distribution/` | Built wheels and clean installation |
 
+The changed-line gate reads the `db` and `dbfree` classes together, so a line a
+database test reaches needs no second test. A `dbfree` test earns its place by
+covering tricky logic with a large input space, a failure a real database cannot
+provoke, or a check worth having very fast. Grading and comparison logic in
+`parallax-conformance` keeps focused tests although the gate does not measure
+that package, because a bug there makes a check silently stop checking.
+
 The test root holds those surfaces, `_support/`, `__init__.py`, and
 `conftest.py`. The unit surface mirrors the source path:
 `parallax/<pkg>/<sub>/<module>.py` maps to

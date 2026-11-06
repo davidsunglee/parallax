@@ -309,6 +309,10 @@ A language scope MUST additionally expose `<scope>-check`, a dependency-only
 aggregate over its scheduling-class aggregates, providing one complete
 verification command for the implementation. Any other scope MAY expose one.
 
+A `coverage` command reading more than one class's test output belongs to no
+class. It composes none of their test commands, and `<scope>-check` and `check`
+compose it after the aggregates it reads.
+
 A scope that declares no scheduling class exposes `<scope>-check` as a
 dependency-only aggregate over its execution commands directly.
 

@@ -218,13 +218,13 @@
 - name: runtime-class-faster-than-its-prerequisite
   file: justfile
   old: |-
-    [metadata("runtime:slow")]
-    [doc("Every changed line is covered by database-free proof.")]
+    [metadata("runtime:medium")]
+    [doc("Every changed infrastructure line is covered.")]
   new: |-
     [metadata("runtime:fast")]
-    [doc("Every changed line is covered by database-free proof.")]
+    [doc("Every changed infrastructure line is covered.")]
   code: understated-runtime-class
-  message: "`python-coverage-diff` declares fast but its closure is `slow`"
+  message: "`infra-coverage-diff` declares fast but its closure is `medium`"
 
 - name: surface-without-a-focused-command
   file: justfile

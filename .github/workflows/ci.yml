@@ -258,7 +258,7 @@ jobs:
       - name: just python-check-static
         run: just python-check-static
 
-  python-check-coverage:
+  python-test-dbfree:
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
@@ -268,11 +268,15 @@ jobs:
     env:
       UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
+      # Python 3.14 proves runtime compatibility without the slower branch
+      # tracer; the latest interpreter owns coverage, here and in python-check-db.
+      PYTEST_ADDOPTS: ${{ matrix.python-version != '3.15.2' && '--no-cov' || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # python-coverage-diff compares changed lines against origin/main.
-          fetch-depth: 0
+          # The tree python-check-db tests: python-coverage-diff merges their line
+          # numbers.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
@@ -280,17 +284,16 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: just python-check-coverage
-        if: matrix.python-version == '3.15.2'
-        run: just python-check-coverage
-
-      # Python 3.14 proves runtime compatibility without the slower branch
-      # tracer; the latest interpreter owns both coverage verdicts above.
       - name: just python-test-dbfree
-        if: matrix.python-version != '3.15.2'
-        env:
-          PYTEST_ADDOPTS: "--no-cov"
         run: just python-test-dbfree
+      - name: Retain coverage data
+        if: matrix.python-version == '3.15.2'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-coverage-dbfree-${{ github.run_attempt }}
+          path: languages/python/reports/coverage/dbfree/
+          if-no-files-found: error
+          retention-days: 7
 
   postgres-versions:
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
@@ -340,7 +343,7 @@ jobs:
       UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
       PARALLAX_REQUIRE_DB: "1"
-      PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/db-tests.xml --timing-report=reports/db-timings"
+      PYTEST_ADDOPTS: "--durations=0 --junitxml=reports/db-tests.xml --timing-report=reports/db-timings ${{ matrix.python-version != '3.15.2' && '--no-cov' || '' }}"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -368,6 +371,45 @@ jobs:
             languages/python/reports/db-timings/
             languages/python/reports/postgres-versions/
           retention-days: 90
+      - name: Retain coverage data
+        if: matrix.python-version == '3.15.2'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-coverage-db-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: languages/python/reports/coverage/db/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The changed-line gate over what the dbfree cell and every database cell of the
+  # latest interpreter measured, shards and PostgreSQL versions alike. Each
+  # artifact lands in a directory of its own, the layout the classes leave locally.
+  python-coverage-diff:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    needs: [python-test-dbfree, python-check-db]
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+      UV_PYTHON: "3.15.2"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # python-coverage-diff compares changed lines against origin/main.
+          fetch-depth: 0
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.15.2"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: Fetch coverage data
+        uses: actions/download-artifact@v8
+        with:
+          pattern: python-coverage-*
+          path: languages/python/reports/coverage
+      - name: just python-coverage-diff
+        run: just python-coverage-diff
 
   # Every Python test needing an interpreter no other test shares, or the
   # committed cost evidence: the memory instruments read the whole process, so
