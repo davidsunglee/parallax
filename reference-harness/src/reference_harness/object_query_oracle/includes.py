@@ -599,9 +599,30 @@ def refuse_unused_levels(
         )
 
 
-def _within_narrow(step: FetchStep, row: materialize.PublishedRow) -> bool:
-    """Whether an already-fetched *row* is of a concrete type *step*'s narrow selects."""
-    return not step.is_narrowed or row.get("familyVariant") in (step.effective_set or ())
+def _fetched_objects_in_view(
+    step: FetchStep,
+    fetched: Sequence[materialize.PublishedRow],
+    level_concretes: Sequence[str] | None,
+) -> list[materialize.PublishedRow]:
+    """The already-fetched rows back-reference *step* selects, as its view publishes them.
+
+    A level reading one concrete publishes no ``familyVariant``, so *level_concretes*
+    supplies the concrete type its rows leave unstated, both for the narrow to select
+    by and for a polymorphic view to carry.
+    """
+    view_concretes = step.effective_set or []
+    sole_concrete = level_concretes[0] if level_concretes and len(level_concretes) == 1 else None
+    selected = [
+        row
+        for row in fetched
+        if not step.is_narrowed or row.get("familyVariant", sole_concrete) in view_concretes
+    ]
+    if sole_concrete is None or len(view_concretes) < 2:
+        return selected
+    return [
+        materialize.edited(row, {"familyVariant": row.get("familyVariant", sole_concrete)})
+        for row in selected
+    ]
 
 
 def _branch_bind_groups(label: str, step: FetchStep, authored: Sequence[Any]) -> list[list[Any]]:
@@ -730,6 +751,10 @@ def execute_fetch_levels(
     """
     dialect = reader.dialect
     root_pins = execute.root_asof_pins(query)
+    concretes_by_level: dict[HopKey | None, Sequence[str] | None] = {
+        None: Family(case.model.entity_defs).effective_concrete_set(query["target"]),
+        **{step.hop_key: step.effective_set for step in steps},
+    }
 
     # rows_by_hop[hop key] -> the result-rows that hop PUBLISHED.
     rows_by_hop: dict[HopKey, list[materialize.PublishedRow]] = {}
@@ -761,7 +786,9 @@ def execute_fetch_levels(
             arrival = step.parent_hop
             assert arrival is not None  # a hop leaving the root reverses nothing
             started_from = root_rows if arrival.parent is None else rows_by_hop[arrival.parent]
-            reached = [row for row in started_from if _within_narrow(step, row)]
+            reached = _fetched_objects_in_view(
+                step, started_from, concretes_by_level[arrival.parent]
+            )
             rows_by_hop[step.hop_key] = reached
             target_col = column_of(step.child_entity, step.child_attr)
             children_by_step[step.hop_key] = {
