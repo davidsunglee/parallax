@@ -98,14 +98,15 @@ markers = [
 ]
 
 # ---------------------------------------------------------------------------
-# Coverage — branch mode; targets the shipped `parallax.*` distributions
-# (product code plus the dev-only conformance CLI). Build/CI tooling
-# under `tools/` is exercised by the Phase 1 canary unit tests but is not
-# product code, so it is not part of the product-coverage gate.
+# Coverage — branch mode; targets the shipped `parallax.*` product distributions.
+# Build/CI tooling under `tools/` is exercised by the Phase 1 canary unit tests
+# and the dev-only conformance package by the suites it drives, but neither is
+# product code, so neither is part of the product-coverage gate.
 # ---------------------------------------------------------------------------
 [tool.coverage.run]
 branch = true
 source_pkgs = ["parallax"]
+omit = ["*/packages/parallax-conformance/*"]
 
 [tool.coverage.report]
 show_missing = true
