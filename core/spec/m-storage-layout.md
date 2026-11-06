@@ -210,25 +210,26 @@ of those forms are independent owners even when they name equal Table values.
 
 During validation, Storage Layout obtains one owner group per unambiguous
 standalone mapping, TPH family, or TPCS concrete mapping from Inheritance's
-pure, total projection. Each group exposes its structural Table, mapping owner,
-row owners, and complete declaration sequence. The mapping provenance is the
+table-group projection (`m-inheritance`). Each group exposes its structural
+Table, mapping owner, row owners, and complete declaration sequence. The mapping
+provenance is the
 `EntityLocation` of the standalone Entity, TPH root, or TPCS concrete Entity
 whose declaration supplies the Table. Descendant TPH participants have no
 separate Table mapping provenance.
 
-The projection preserves declaration provenance and emits no Issue. It returns
-only groups whose family, strategy, ancestry, and intended Table are
-unambiguous. The Inheritance Rule Set reports malformed topology or Table
+The projection preserves declaration provenance, emits no Issue, and depends on
+no other Rule Set's outcome. It returns only groups whose family, strategy,
+ancestry, and intended Table are unambiguous. The Inheritance Rule Set reports malformed topology or Table
 ownership; Storage Layout neither duplicates those issues nor guesses a group.
 Rule Sets therefore remain independent of invocation order and no validation-
 time facet exists. After validation the compiler reads each family's complete
 declaration sequence from the real `InheritanceFacet` instead.
 
-Relationship exposes a second projection of the same shape — pure, total, and
-issue-free — returning the locally-resolvable join endpoint Attributes of
-defining Relationship declarations (`m-relationship`). Storage Layout consumes
-it during validation to know which Attributes hold direct role 2 before any
-facet exists, which is what lets the Rule Set decide whether an Index component
+Relationship's join-endpoint projection likewise emits no Issue and depends on no
+other Rule Set's outcome, answering the locally-resolvable join endpoint
+Attributes of defining Relationship declarations (`m-relationship`). Storage
+Layout consumes it during validation to know which Attributes hold direct role 2
+before any facet exists, which is what lets the Rule Set decide whether an Index component
 is document-resident. After validation the compiler consumes the real
 `RelationshipFacet` instead.
 

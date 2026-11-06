@@ -13,7 +13,7 @@ The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, and
 - **Actor Identity** — the provider-neutral identity projection carried into planning: either a Subject Identity or a Database Login Identity.
 - **Execution Actor** — the immutable authority captured by an Execution Scope: either a Subject Identity paired with Database Authorization or a Database Login Identity using the runtime login's existing authority.
 - **Execution Scope** — the explicit, runtime-affine capability through which work is invoked. It captures exactly one Execution Actor for its lifetime.
-- **Capture** — copying the invoking Execution Scope's immutable Execution Actor into transaction state after begin succeeds.
+- **Capture** — fixing the invoking Execution Scope's immutable Execution Actor as the transaction's actor.
 
 ## Principal contract
 
@@ -62,7 +62,7 @@ Closing a Database runtime invalidates its scopes according to the database life
 
 ## Transaction capture
 
-On each outer unit-of-work attempt, the runtime MUST establish the selected authorization before beginning application work. Once transaction begin succeeds, the transaction captures the invoking scope's Execution Actor.
+On each outer unit-of-work attempt, the runtime MUST establish the selected authorization before beginning application work. A transaction whose begin succeeded runs as the invoking scope's Execution Actor.
 
 The captured actor is immutable for the transaction's lifetime, including retries. Each retry attempt re-establishes the same captured actor on its newly acquired connection. A retry MUST NOT re-read ambient or caller-mutated identity state.
 
@@ -104,8 +104,6 @@ Cleanup has exactly the portable terminal results defined by `m-db-port`:
 - **release-unconfirmed** — release was attempted but at least one cleanup condition prevented the runtime from confirming return or invalidation.
 
 An authorization-revocation failure MUST prevent an ordinary return. The provider SHOULD invalidate the connection; if invalidation also cannot be confirmed, the result is release-unconfirmed. Cleanup failure does not rewrite an already settled application outcome, but it is observable through lifecycle diagnostics.
-
-The verbs **release** and **released** name the operation and lifecycle observation.
 
 ## Diagnostics and confidentiality
 

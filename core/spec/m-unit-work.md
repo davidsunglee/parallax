@@ -369,11 +369,10 @@ or a read-only transaction published is a stored value of its source exactly as
 one a writable attempt's read published.
 
 **Read Evidence** is the opaque record a read of a **writable transaction
-attempt** attaches beside that provenance. It records the concrete Entity, Object
-Key, source Pin, read participation, and retained observation when one exists.
-Read Evidence is an implementation-private selector for evidence; it is not
-itself a State Observation, a lock, a database gate, or write authority, and a
-value carrying it must still satisfy the Effective Concurrency Strategy's
+attempt** attaches beside that provenance, by which a later write finds what that
+read observed. Read Evidence is an implementation-private selector for evidence;
+it is not itself a State Observation, a lock, a database gate, or write authority,
+and a value carrying it must still satisfy the Effective Concurrency Strategy's
 evidence rule. A standalone read and a read-only transaction attach none: they
 collect no observation, participation, predecessor row, or raw document for a
 write *Current-attempt source admission* would refuse anyway, and a value they
@@ -383,7 +382,7 @@ Publication of diagnostic data is not source admission. A hydratable node
 exposed inside a classified result root (`m-snapshot-read`) is treated as
 **NotStored** by keyed amendment and replacement verbs: no valid managed read
 source produced it for writing. This applies to every node in the classified
-root's graph, including a node whose page-owned Entity State is also reached by
+root's graph, including a node whose Entity State is also reached by
 a separate valid root. The separate root-local node is a stored value and may
 carry its own Read Evidence; the classified root's node may borrow neither.
 
@@ -734,7 +733,10 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   milestone's own Valid-Time start; a pending write of the object over exactly
   the same window, which admission required to start from the same state,
   always stands in, while one over a disjoint window starts elsewhere and does
-  not.
+  not. A live read is a stand-in an implementation **MAY** use and need not:
+  where none stands in, whether its values are gone or the implementation
+  acquires regardless, the acquisition runs, so a Locking target write's Database
+  Call count can vary with whether a source is still live.
 
   The acquisition's cardinality is decided before any row it returned is
   judged. Once its read has executed and its rows are assembled, more than one
@@ -804,7 +806,7 @@ implements it (`m-execution` *Row acquisition*):
 
 | Request | What it reads | When |
 |---|---|---|
-| **Target** | the one row a Locking target write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
+| **Target** | the one row a Locking target write addresses, at `validFrom` for a Bitemporal target, when no pending write proves it and no live read stands in; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
 | **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred settled write, inside that flush; within an acquisition span, between the span's first write's turn and each write's own (*Shared coverage acquisition*) |
 | **Completion** | nothing: the retained rows of a deferred settled write that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that write, or the first write of its acquisition span, before any of the span's coverage is read |
 
@@ -1132,24 +1134,17 @@ settles, and owns how long that evidence stays eligible.
 ### Observation ownership and lifetime
 
 A retained observation belongs to the **source values that observed it**, not to
-the transaction that ran the read. An implementation **MUST** make the evidence
-reachable from the source value and **MUST NOT** make eligibility depend on a
-transaction-scoped store. A transaction retains only a **weak index** of the
-states its own reads have seen, a **weak registration** of each Non-Temporal
-source its reads published, the **participation** those reads license, and what
-its own completed writes established about the states they produced — for a
-temporal source still reaching them, the current rows those writes left. Only a
-value a read of the writing attempt produced is eligible at all
-(*Current-attempt source admission*); among those, eligibility follows the rules
-below.
+the transaction that ran the read. Only a value a read of the writing attempt
+produced is eligible at all (*Current-attempt source admission*); among those,
+eligibility follows the rules below.
 
 These rules follow, and an implementation **MUST** exhibit all of them:
 
-- **Eligibility is liveness.** An observation stays eligible while at least one
-  live source value or one buffered write reaches it, and becomes unavailable
-  when none does. Liveness means strong reachability; a language runtime MAY
-  discover unreachable values on its own collection schedule rather than at a
-  source-code boundary.
+- **Eligibility follows the value.** An observation stays eligible while a live
+  source value or a buffered write reaches it. Evidence no such value reaches is
+  reclaimable before the attempt ends, on the runtime's own schedule rather than
+  at a source-code boundary, so an attempt's retained evidence follows what its
+  caller still holds.
 - **States coexist.** Several observed states of one object are distinct
   retained observations reached from distinct values, so rereading a row never
   upgrades or overwrites the evidence an older live value carries. Two reads that
@@ -1670,8 +1665,9 @@ Conflict Error is a recoverable conflict the bounded retry loop replays
 (`m-auto-retry`), while a Missing Target Error, a Stale Write Error, a
 Cardinality Corruption Error, and a Write Precondition Error are **never**
 retriable. A Temporal Conflict Error (*Closes the instant cannot follow*) is
-raised by temporal expansion rather than by enforcement, and is recoverable. A
-statement a flush executes that the exclusion of the table it writes refuses
+owned by `m-temporal-write`, raised by temporal expansion rather than by
+enforcement, exposed here beside the Write Effect Error family, and recoverable.
+A statement a flush executes that the exclusion of the table it writes refuses
 surfaces as the original database error; execution recognizes it as a
 recoverable conflict (`m-auto-retry`), and it dooms the attempt like any other
 flush failure.

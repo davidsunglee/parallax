@@ -151,9 +151,8 @@ ParentRef = RootRef | LevelRef
 class CorrelationMember:
     """One owner-side endpoint of a level's correlation.
 
-    A level correlates on an Attribute (`m-read-planning` "A level names its
-    correlation members, not only their columns"). ``identity`` is the modeled
-    member addressed at the parent position and ``column`` is its physical column.
+    A level correlates on an Attribute. ``identity`` is the modeled member
+    addressed at the parent position and ``column`` is its physical column.
     """
 
     identity: AttributeIdentity

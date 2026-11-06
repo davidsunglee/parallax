@@ -1136,8 +1136,7 @@ def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Correlation members beside correlation columns (m-read-planning "A level names  #
-# its correlation members, not only their columns").                          #
+# Correlation members beside correlation columns.                             #
 # --------------------------------------------------------------------------- #
 def test_a_queried_level_carries_both_correlation_members_beside_their_columns() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))

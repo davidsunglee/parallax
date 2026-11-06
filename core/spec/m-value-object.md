@@ -109,13 +109,10 @@ valid occurrence root. SQL `NULL` and every parsed document kind can reach
 materialization: JSON null, an object, an array, or a scalar, with an array
 possibly containing a non-object element. SQL projects the column's adjacent
 presence/value pair, and the database port returns one provider-neutral `m-core`
-`DocumentRead`. The materializer supplies that already-tagged value as an
-`m-document-codec` `LocatedMemberInput`; it does
-not create a root cursor or interpret the document itself. The codec classifies
-the top-level occurrence's declared nullability and multiplicity first, and only
-a conforming `One` object or `Many` array of objects opens the occurrence root.
-This is the same operation used when Relational Document Layout locates the
-occurrence inside its shared Entity document.
+`DocumentRead`. The codec classifies the top-level occurrence's declared
+nullability and multiplicity first, and only a conforming `One` object or `Many`
+array of objects opens the occurrence root. This is the same operation used when
+Relational Document Layout locates the occurrence inside its shared Entity document.
 
 ## Inherited temporality
 
@@ -189,17 +186,14 @@ inner leaf is spelled inside that one document — and how presence, an empty
 which owns the same question for a Relational Document Layout Entity document so
 the two representations cannot diverge. This module keeps the column count, the
 bind count, and the whole-document replace semantics; the codec keeps the bytes.
-A write path MUST build the document through the codec rather than handing a
-host-language value graph to a JSON serializer, which is what leaves a
-`decimal`, `bytes`, `date`, `time`, `timestamp`, or `uuid` leaf with no defined
-storage form.
+Every leaf of a written document carries the storage form `m-document-codec`
+defines, whatever builds it; a host-language JSON serializer defines no such form
+for a `decimal`, `bytes`, `date`, `time`, `timestamp`, or `uuid` leaf.
 
-Typed and serialized ingress use `m-document-codec`'s same authored-document
-interpreter. A typed frontend lends the live Value Object and its nested
-occurrences to that interpreter; it does not recursively render an intermediate
-document first. Serialized ingress supplies mapping access instead. Both paths
-therefore apply one containment walk, one required-member rule, one `many`
-normalization, and one immutable ownership boundary.
+Typed and serialized ingress are one rule: the same authored document meets the
+same containment, required-member, and `many` normalization rules, stores the same
+document, and reports a structural finding at the same path. Only scalar conversion
+differs by surface (`m-core`).
 
 A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
 whole column is null, not a document of nulls. A `nullable: false` `one`
@@ -285,12 +279,9 @@ rather than left true by omission:
    MUST NOT take a lock or emit **any** statement —
    there is no per-value-object fetch, and `m-read-planning` never applies. This
    whole-document projection is the owner's applicable Storage Layout
-   `Document` slot (`m-sql`, *Read projection*): it is selected on every
-   **instance-form read** — every read a developer or a case makes. Because
-   materialization requires the document, an instance-form read of a
-   value-object-bearing entity always projects it. A write's row acquisition
-   projects it only where it needs the document: its observation on a temporal
-   target retains the whole predecessor row (`m-write-plan`).
+   `Document` slot (`m-sql`, *Read projection*): it is selected on every read a
+   developer or a case makes, because materialization requires the document
+   (`m-sql` *Result form*).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
 4. **Not a navigation or deep-fetch target.** An Include Path (`m-read-planning`)

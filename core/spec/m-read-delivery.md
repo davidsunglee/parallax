@@ -3,10 +3,10 @@
 `m-read-delivery` turns a validated, adopted read into a judged, identity-first
 **Page** of Entity States and delivers it — whole, or streamed one bounded Page
 at a time — to the lifecycle **Publication** that turns Page states into that
-lifecycle's values. It owns preparation and caching of reusable execution plans,
-each level's shared-lock decision, statement execution and Page assembly, stored-data
-judgement, and whole-result and streamed delivery. Per the dependency graph it
-depends on `m-read-planning` for pure flat-read and include planning, `m-sql` for the statements it
+lifecycle's values. It owns each level's shared-lock decision, statement execution
+and Page assembly, stored-data judgement, and whole-result and streamed delivery.
+Per the dependency graph it depends on `m-read-planning` for pure flat-read and
+include planning, `m-sql` for the statements it
 executes, `m-document-codec` for stored-document judgement, `m-db-port` for the
 calls it makes, `m-temporal-read` for the pins a fetch propagates,
 `m-concurrency` for the lock each fetch takes, and `m-execution-lifecycle` for
@@ -23,21 +23,14 @@ included.
 ## Publication
 
 A **Publication** is the lifecycle behavior delivery invokes to turn a Page's
-judged states into published values. It is delivery-scoped: an eager read uses
-one Publication once, while a stream reuses one across every Page it reads and
-releases it when the delivery ends, on exhaustion, failure, or early close
-alike. Delivery invokes it inside the enclosing Read or Stream activity and never
-returns a Page for a lifecycle to publish later. A Publication states the
-representation its read reports (`m-execution-lifecycle` *Read, flush, and
-database-call events*) and the
-Model Edition the read adopted, publishes one root's values on request, and
-composes an eager result from a whole Page by publishing its roots. Origins an
-execution retains for a Page's fetched rows travel to the Publication by
-reference; delivery neither interprets nor rebuilds them. Only a writable
-transaction attempt's read retains any: a standalone delivery and a read-only
-transaction's delivery, eager or streamed, retain no write evidence, and their
-values keep only the publication provenance `m-unit-work` *Write value
-provenance* names.
+judged states into published values. An eager read uses one Publication once, and
+a stream reuses one across every Page it reads until the delivery ends, on
+exhaustion, failure, or early close alike. Publication runs inside the enclosing
+Read or Stream activity, and no Page outlives that activity. Only a writable
+transaction attempt's read retains state observations for a Page's fetched rows
+(`m-execution`): a standalone delivery and a read-only transaction's delivery,
+eager or streamed, retain no write evidence, and their values keep only the
+publication provenance `m-unit-work` *Write value provenance* names.
 
 ## Invalid stored data
 
@@ -61,12 +54,11 @@ stored-data-primary-key-undecodable
 
 A raw non-object Entity document under Relational Document Layout does not add a
 tenth issue code. The Structured Column is a physical carrier with no logical
-member identity, so `m-document-codec`'s `locateEntityMember` accepts it and
-returns `Missing` independently for each requested document-resident Entity
-member. `decodeLocatedMemberClassified` then applies that member's existing
-classification. Translation uses the existing member code, if any; nullable
-missing members and accepted absent `Many` values remain conforming. An
-unrequested member never acquires an issue merely because it shared that carrier.
+member identity, so each requested document-resident Entity member reads as
+missing and takes that member's existing classification (`m-document-codec`).
+Translation uses the existing member code, if any; nullable missing members and
+accepted absent `Many` values remain conforming. An unrequested member never
+acquires an issue merely because it shared that carrier.
 
 The hydration rule is equally closed:
 
@@ -91,19 +83,14 @@ normalized it. Its installed SQL type and constraints are the admission boundary
 the host neither decodes it through the Neutral Wire Codec nor re-judges its type,
 nullability, range, precision, or key status. A value that could exist only after
 those database guarantees were bypassed is outside this read contract rather than
-a source of a host-side stored-data issue. Entity Graph Construction consumes the
-resulting already-judged Entity State and performs no second scalar judgment.
+a source of a host-side stored-data issue.
 
 A **host-checked position** is one whose installed SQL type and constraints do not
 by themselves establish the managed value. The set comprises an unconstrained
 inheritance discriminator, a refinement not expressed by the installed SQL type
 or constraint, a temporal end whose native infinity is admitted only as an open
 upper bound, an encoded Column whose selected cell is canonical Wire, and every
-document occurrence. Discriminators are checked while resolving the concrete
-Entity. Encoded Columns and temporal ends are checked at their prepared Attribute
-positions. Document-resident Entity members and Value Object occurrences are
-located and classified by `m-document-codec`; no later scalar pass repeats that
-classification.
+document occurrence.
 
 Consequently, physical layouts need not classify a physically impossible carrier
 the same way. For a non-nullable top-level Entity Attribute, an absent or JSON-null
@@ -112,37 +99,28 @@ Entity-document member under `Document` translates to
 required-member finding remains evidence for that route; public translation is
 fixed by the logical Entity member. Under `Columns`, the database constraint owns
 the same invariant and a provider-returned cell is trusted. For a non-object
-Entity document, the member-local input returned by
-`locateEntityMember` and classified by `decodeLocatedMemberClassified` follows
-this same translation and hydration rule: a requested non-nullable Entity
-Attribute makes hydration unavailable as `stored-data-attribute-null`, while
-requested occurrences and nullable members retain their existing absence
-behavior. The carrier itself is never substituted into the result graph.
+Entity document, each requested member follows this same translation and
+hydration rule: a requested non-nullable Entity Attribute makes hydration
+unavailable as `stored-data-attribute-null`, while requested occurrences and
+nullable members retain their existing absence behavior. The carrier itself is
+never substituted into the result graph.
 
-Detection is demand-driven over `m-document-codec` Logical Judging Roots. The
-Entity and each top-level Value Object occurrence supply the same roots under
-both layouts. Member Placement locates each requested Entity member, but the
-Entity-root classifier accepts either the direct column's already-tagged `m-core`
-`DocumentRead` or `locateEntityMember`'s result over the raw Entity document. A
-direct `SqlNull` remains distinct from `StructuredDocument(document: JSON null)`;
-delivery does not inspect a driver or host null sentinel. Both
-occurrence placement arms pass that `LocatedMemberInput` to
-`decodeLocatedMemberClassified` and emit one logical verdict before entering the
-occurrence root. A requested occurrence descendant advances a Logical Judging
-Cursor only after its carrier is classified; deeper wrong-kind or undecodable
-stored state therefore returns a finding rather than escaping through strict
-decoding. No cursor judges an unrequested sibling or descendant. Layout parity
-fixes *where* the same requested logical member is judged without turning
+Detection is demand-driven over `m-document-codec` Logical Judging Roots, which
+are the same under both layouts. A direct `SqlNull` remains distinct from
+`StructuredDocument(document: JSON null)`. Each requested occurrence yields one
+logical verdict, a requested descendant is judged only after its carrier conforms,
+and deeper wrong-kind or undecodable stored state returns a finding rather than a
+strict-decoding failure. Nothing judges an unrequested sibling or descendant, so
+layout parity fixes *where* a requested logical member is judged without turning
 classification into whole-subtree validation.
 
-Judgment is once per requested logical structured value, not once per fetched
-row that happened to carry it. A Publication first establishes the logical rows
-a root reaches in one Page and compares the stored values of every fetched row
-of one logical row (`m-snapshot-read` *Root View*); only then are the selected
-stored values judged and decoded. Equal stored values share that one judgment
-and its frozen evidence. Value construction and Wire publication trust the
-resulting judged Entity State and never invoke a second codec or
-scalar-admission pass over it.
+Fetched rows of one logical row that a root reaches are compared before any of
+their payload is judged, so a root that conflicts (`m-snapshot-read` *Root View*)
+refuses as that conflict and reports no stored-data issue. One requested logical
+structured value yields one set of findings however many fetched rows carried it.
+Equal stored values share that one judgment and its retained evidence (*Evidence a
+public issue carries*). Value construction and Wire publication add no stored-data
+finding and reject no value judgment accepted.
 
 A write's acquisition can read a row whole while deferring its occurrences
 (`m-unit-work` *Retained starting rows*). It judges the row's Attributes as a
@@ -151,16 +129,6 @@ read projecting no occurrence judges them, and locates and tags each occurrence
 content. Judging those inputs later, from the retained row alone, applies exactly
 the classification, construction, findings, and paths an ordinary read gives the
 same stored occurrences; only their findings follow the Attributes' in time.
-
-For each requested Value Object occurrence, that one codec traversal constructs
-the final positional member row directly in canonical `MemberShape` order. Nested
-`One` outputs are member rows and nested `Many` outputs are ordered tuples of
-member rows as soon as their children have been interpreted. Conversion
-translates codec absence and unavailability to the positional absence marker
-while consuming the traversal; it does not first retain a reduced
-mapping/list tree, detach a raw occurrence subtree, or walk decoded members a
-second time. Dictionary consumers select a mapping/list construction over the same
-classification rules and finding paths rather than a second decoder.
 
 ### Evidence a public issue carries
 
@@ -214,33 +182,23 @@ storage capability, and passing it to an ordinary write is an ordinary validated
 write. The lower wire-codec rejection reason stays unpublished: the
 issue codes above remain the whole public classification.
 
-A rejected value is retained deliberately, so exactly one frozen copy of it
-survives: it is frozen where it is judged and shared by reference from that seam
-to every seam that reports it. The count is over the copies a delivery retains
-rather than over how many times the freezing walk runs; what makes a translation
-per seam, or a copy per report, a defect rather than an implementation choice
-(*What a delivery costs*) is that each leaves a further copy alive for as long as
-the diagnosis is. A copy that exists only inside the conversion of the row that
-judged it, and is gone when that conversion returns, retains nothing and is
-bounded by that page's own converted result. Repeated reach to one occurrence is
-one such report: a read that reaches it again retains the value it already froze
-rather than an equal second one.
+A rejected value is retained for as long as the diagnosis is. Every report of one
+judged occurrence, across the roots that reach it and the seams that report it,
+shares one retained value.
 
 ## Entity State and the Page
 
-An **Entity State** is the page-owned, judged positional member row for one
-logical Entity at one lowered coordinate, together with the findings produced by
-that one judgment. It is independent of any result root and of any published
-representation. Every root a Publication publishes that reaches the same logical
-state in one Page reads that same Entity State by reference. Relationship
-loadedness is not Entity State: it belongs to whatever publishes a root, because
-two roots may have reached the same row through different requested paths. A
-published value retains only the member state and private write-origin state its
-lifecycle requires; it retains no Page, raw provider row, unused stored values,
-or other root's relationship view.
+An **Entity State** is the judged state of one logical Entity at one lowered
+coordinate, together with the findings that judgment produced. It is independent
+of any result root and of any published representation. Relationship loadedness
+is not Entity State: it belongs to whatever publishes a root, because two roots
+may have reached the same row through different requested paths. A published value
+retains only the member state and private write-origin state its lifecycle
+requires; it retains no Page, Root View, raw provider row, unused stored values, or
+other root's relationship view.
 
 Each **fetched row** — one database row as one statement returned it, at one
-level — first records its **row identity**: its resolved concrete Entity, its
+level — has a **row identity**: its resolved concrete Entity, its
 family-normalized row key, and the level and row ordinal where it was fetched.
 The **row key** is **(entity family, primary key, lowered as-of coordinate per
 declared axis)**, degrading to (family, primary key) for a non-temporal entity.
@@ -252,39 +210,25 @@ database type and constraint boundary.
 
 The remainder of the fetched row is its exact **stored values**: the resolved
 concrete Entity plus the provider-normalized values selected for the Entity's
-positional member row, before judgment. Stored-values equality is exact
-positional structural equality, including stored-document structure and
-presence. It is independent of arrival order and Include Path order.
+members, before judgment. Stored-values equality is exact structural equality,
+member by member, including stored-document structure and presence. It is
+independent of arrival order and Include Path order.
 
-A Publication judging one root compares only the fetched rows that root
-reaches (`m-snapshot-read` *Root View*). The Page keeps exact stored values
-beside each row key, so an already-judged, exactly equal state may be borrowed
-by another root without extending either root's reachability: one root-local
-set of stored values establishes one Entity State and is decoded and judged
-once; equal stored values establish the same Entity State and reuse that one
-decode and its findings, and a later root with the same stored values may
-borrow it. Unequal stored values reached only by separate roots coexist in the
-Page.
+A Publication judging one root compares only the fetched rows that root reaches
+(`m-snapshot-read` *Root View*), so one root's reach never extends another's:
+unequal stored values reached only by separate roots coexist in the Page. Equal
+stored values on a Page establish one Entity State wherever they are reached, and
+its findings classify only the roots that reach it.
 
-A logical row whose Page can hold only one fetched row has no comparison to
-precede its judgment, so its stored values may be judged as the row is
-recorded. Its findings still classify only the roots that reach it, and it is
-judged once however many roots read its Entity State.
-
-A **Page** is the bounded, page-owned fetched-row table produced by one eager
-read or one streamed batch: row identities and stored values, root ordinals,
-root-local relationship rows, the paging verdict, and the Entity States judged
-so far. Eager delivery uses one Page for its whole database-ordered result. A
-stream drops each Page before it reads the next. Payload judgement is
-demand-driven: identity and correlation are judged as a row is recorded, and a
-member's payload is judged when a Publication first asks for the state that
-holds it, or as the row is recorded where its logical row can hold no other
-fetched row.
+A **Page** is the bounded result of one eager read or one streamed batch. Eager
+delivery uses one Page for its whole database-ordered result. A stream drops each
+Page before it reads the next. Identity and correlation are judged for every
+fetched row; every other member's payload is judged only where a root requests it.
 
 ## The shared-lock decision
 
-Delivery decides whether the root and each fetch level take the shared row lock,
-once while it prepares the read's execution plan, and hands `m-sql` that request.
+Delivery decides whether the root and each fetch level take the shared row lock
+before it executes the read's first statement, and hands `m-sql` that request.
 A level takes the lock exactly when its read carries a Concurrency Preference and
 that level's Entity resolves to Locking (`m-concurrency`), so one read may lock an
 unversioned level beside a versioned one. A read no writable unit of work owns
@@ -293,12 +237,11 @@ carries no preference and takes no lock (`m-execution`).
 ## Whole-result delivery
 
 An eager read has one whole-result publication boundary. It reads and prepares
-every result root before any published value, classified root, or
-`root_published` observation crosses that boundary. A failure while judging or
-publishing any later root — including a Publication's own refusal, such as a
-Snapshot Fetched Row Conflict (`m-snapshot-read`), or a lifecycle-state
-construction failure — therefore publishes no root and emits no
-root-publication event for the read. Successfully classified `InvalidData` is a
+every result root before any published value or classified root crosses that
+boundary. A failure while judging or publishing any later root — including a
+Publication's own refusal, such as a Snapshot Fetched Row Conflict
+(`m-snapshot-read`), or a lifecycle-state construction failure — therefore
+publishes no root. Successfully classified `InvalidData` is a
 result root rather than such a failure: a checked eager result contains every
 valid and invalid root in result order, and a default accessor reports every
 invalid root from that same fully prepared sequence.
@@ -594,21 +537,12 @@ Writing `B` for the page size, `P_B` for one page's own converted result, `G_max
 for the largest single root's published graph, and `N` for the whole result, the
 bound is `O(P_B + G_max)` and contains no term in `N`.
 
-Three layers, each separately bounded and each released at a stated point:
-
-| Layer | Holds | Bound | Released |
-|---|---|---|---|
-| the page's converted result | every fetched row for one page's roots and their relationship fan-out | `O(P_B)` | after that page's last root is published |
-| the current root's publication judgment and classification | the nodes and issues reachable from that root | `O(G_max)` | when that root is published |
-| the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
-
-Two page-scoped terms sit inside the first layer rather than beside it. The page
-decision holds one evaluated coordinate per root POSITION it kept — `O(B x T)` for
-`T` Continuation Order terms, and nothing per node below a root — while it chooses
-the continuation boundary. It releases those coordinates before graph assembly,
-retaining only the boundary the delivery carries between two pages. And the
-lookahead root a page read and did not keep is released at the page decision, before
-anything below it is fetched, so it costs one root's raw result and nothing converted.
+The bound covers a page's fetched rows and their relationship fan-out, and the
+current root's judgment, classification, and published graph with its cycle and
+aliasing closure. What a delivery holds for a page does not survive that page, and
+what it holds for a root does not survive the delivery's advance past it. Of a
+page's evaluated coordinates, only the boundary the next page seeks from outlives
+it.
 
 The bound is deliberately **not** `O(B)`. `P_B` is a page's whole converted
 result rather than its root count, so a page of roots each carrying a large
@@ -640,10 +574,10 @@ than about the implementation:
   `O(N)`; what stops that is the paging itself — each page is a separate bounded
   query — rather than anything this section can state about the driver.
 
-Nothing here fixes an absolute figure. Like `m-perf-bench`'s numeric targets, the
-constants are per-language; what is portable is that the three layers are bounded
-as above, that the three exclusions are the only ones, and that a language target
-can demonstrate the independence from `N` rather than assert it.
+Nothing here fixes an absolute figure. The constants are per-language
+(`m-perf-bench` *Measurement ownership*); what is portable is that the bound holds,
+that the three exclusions are the only ones, and that a language target can
+demonstrate the independence from `N` rather than assert it.
 
 ### The connection a delivery holds
 

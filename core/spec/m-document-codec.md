@@ -298,18 +298,10 @@ branch, advancing a cursor after each conforming occurrence. Thus `address.city`
 and `address.geo.lat` are judged from the `address` root under both layouts even
 though their physical paths differ.
 
-Classified occurrence decoding constructs the requesting consumer's output during
-that same recursive traversal. The consumer supplies exactly two synchronous
-construction operations: one consumes the interpreted direct members of an
-object in `MemberShape` order, and one consumes the interpreted elements of a
-`Many` in stored order. A construction operation chooses only the final carrier;
-it receives completed child outputs and existing presence or unavailable states,
-and neither classifies raw content nor creates findings. A dictionary consumer
-uses mapping and list construction, while positional materialization uses member
-rows and tuples and translates `Missing` and `Unavailable` into its own absent
-position. Exactly one construction pair runs for a decode. The traversal MUST NOT
-first build a reduced document tree for a positional consumer, detach a requested
-occurrence subtree, or decode a child again during construction.
+Classified decoding hands a consumer each requested position already judged. What
+a consumer constructs from it chooses only the final carrier: it classifies no raw
+content, creates no finding, and causes no position to be classified again, so
+verdicts, collapses, and finding paths do not vary with what the consumer builds.
 
 Judgement remains demand-driven rather than a scan of an opaque subtree. One
 classified invocation judges one requested direct member of one Entity root or
@@ -837,9 +829,7 @@ neither outcome changes this shape-aware verdict.
   Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
   either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`
   after entering a conforming occurrence. The classified operations decode by
-  declared Neutral Type and drop unknown keys. Their caller-selected construction
-  operations build final positional member rows during that traversal; no reduced
-  mapping tree survives for a later structuring pass. Materialization never
+  declared Neutral Type and drop unknown keys. Materialization never
   inspects an Entity carrier's JSON shape, projects `Missing` itself, interprets a direct
   document carrier, or falls back to strict decoding for requested stored state
   below a logical root.

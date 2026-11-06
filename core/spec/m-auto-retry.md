@@ -97,13 +97,12 @@ attempt already delivered.
 
 ## One verdict per attempt
 
-The boundary classifies an attempt's failure **once**, after the attempt's
-rollback completed, and that one verdict is both what the attempt reports
-(`m-execution-lifecycle` `retryEligible`) and what decides a re-execution. It
-does not consider the remaining bound. A recoverable conflict is re-executed only
-once the failed attempt has rolled back, released its connection, and finished
-reporting, and only if nothing after the classification failed: a rollback that
-did not complete, or a failure raised while releasing the connection or
+The boundary classifies an attempt's failure **once**, and that one verdict is
+both what the attempt reports (`m-execution-lifecycle` `retryEligible`) and what
+decides a re-execution. It does not consider the remaining bound. A recoverable
+conflict is re-executed only once the failed attempt has rolled back, released
+its connection, and finished reporting, and only if none of those failed: a
+rollback that did not complete, or a failure raised while releasing the connection or
 finishing the attempt, ends the invocation instead, whatever the verdict was. A
 lifecycle handler's own failure, which `m-execution-lifecycle` quarantines,
 changes nothing. The error a caller receives after exhaustion, or after any
@@ -153,9 +152,8 @@ scale  = min(8, 0.25 * 2^d)
 window = min(maxDelay, max(fixed, scale * duration))
 ```
 
-The rule holds for every attempt ordinal and every valid policy, so an
-implementation **MUST** reach it without an intermediate value overflowing or
-growth stopping early. The doubling, the duration multiplier, and the full-jitter
+The rule holds for every attempt ordinal and every valid policy, whatever
+arithmetic computes it. The doubling, the duration multiplier, and the full-jitter
 draw are fixed policy, chosen from contention evidence rather than offered as
 options.
 
@@ -172,22 +170,7 @@ still becoming visible. That is a limit of a small budget rather than a case the
 wait treats specially: a deployment that meets it raises `maxRetries` or
 `baseDelay`.
 
-## Recognizing the conflict
-
-The Write Effect Error family, the Optimistic Lock Conflict Error included, is
-owned by **`m-unit-work`** — the module that owns the affected-row enforcer that
-raises it. This module therefore recognizes the canonical conflict **directly**,
-over its existing `m-auto-retry --> m-unit-work` edge.
-
-Retry therefore needs no injected conflict type and names no `m-concurrency`
-type: an implementation **MUST NOT** require the composition root to inject the
-conflict type into the retry classifier.
-
-The Temporal Conflict Error is owned by **`m-temporal-write`**, whose expansion
-raises it, and `m-unit-work` exposes it beside the Write Effect Error family.
-This module recognizes it directly, as it does the Optimistic Lock Conflict
-Error, through `m-unit-work`'s own edge to `m-temporal-write`; nothing injects
-it into the classifier.
+## Failures a retry cannot resolve
 
 The Write Precondition Error a target write raises (`m-unit-work`) is
 never in the retriable set, and neither is a doom it caused: a retry re-states

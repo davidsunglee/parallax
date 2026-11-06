@@ -50,8 +50,8 @@ Any finding suppresses write authority for the complete classified root. A
 hydratable root may still publish its collapsed diagnostic data, but neither that
 root nor any node reached only through it is a stored value of the source or
 carries Read Evidence. Entity State sharing does not share this authority
-decision: when a valid root and an invalid root reach one page-owned Entity
-State, their root-local node graphs are distinct; the valid root's node is a
+decision: when a valid root and an invalid root reach one Entity State, their
+root-local node graphs are distinct; the valid root's node is a
 stored value and may carry its ordinary Read Evidence, and the invalid root's
 corresponding node is neither. A diagnostic value is never a route around the
 classification that produced it.
@@ -65,9 +65,7 @@ them, in this specification or in any surface built over it, is a consequence of
 what is stated here rather than an independent rule.
 
 Each value is built from a judged Entity State (`m-read-delivery` *Entity State
-and the Page*). A published Typed or Wire value retains only the member state
-and private write-origin state its lifecycle requires; it retains no Page, Root
-View, raw provider row, unused stored values, or other root's relationship view.
+and the Page*), and retains what that section allows.
 
 For a **conforming** member, a materialized Value Object occurrence carries what
 the stored document held: a member the document omits is absent from the
@@ -122,9 +120,9 @@ neither turns a stored absence into a stored null the other leaves absent.
 
 ## Root View
 
-A **Root View** is one root's
-borrowed reachability and relationship-view union over a Page; it owns no payload
-copy and does not outlive publication of that root.
+A **Root View** is the fetched rows one root reaches on a Page and the union of
+the relationship views its paths loaded. It does not outlive publication of that
+root.
 
 Within a Root View, unequal stored values of one logical row are refused rather
 than chosen between:
@@ -164,7 +162,7 @@ Within **one Root View**, one row key is **one node**:
   true in-memory cycle, which is legal — JSON-safety is the job of serialization
   shapes producing **Domain Snapshots**, never a constraint on the graph.
 - Resolution is **root-local**. Two result roots always publish distinct node
-  objects even when they borrow the same page-owned Entity State. No node is
+  objects even when they reach the same Entity State. No node is
   interned beyond its Root View, and eager and streamed delivery therefore make
   the same identity promise. A caller that needs to know two roots reached one
   logical row compares their identities.

@@ -524,7 +524,8 @@ exhausted, failed or stopped early.
 | Levels and `1 + L` | [`m-read-planning`](../../../../core/spec/m-read-planning.md) |
 | Statements, seeks, locks | [`m-sql`](../../../../core/spec/m-sql.md), [`m-concurrency`](../../../../core/spec/m-concurrency.md) |
 | Storage layout | [`m-storage-layout`](../../../../core/spec/m-storage-layout.md#storage-layout-transparency) |
-| Plan cache, Page, delivery, streams | [`m-read-delivery`](../../../../core/spec/m-read-delivery.md) |
+| Plan cache | [Python execution binding](../../spec/execution.md) |
+| Page, delivery, streams | [`m-read-delivery`](../../../../core/spec/m-read-delivery.md) |
 | Root Views, classification, Snapshot values | [`m-snapshot-read`](../../../../core/spec/m-snapshot-read.md), [Python queries and results](../../spec/queries-and-results.md) |
 | Read Evidence and write admission | [`m-unit-work`](../../../../core/spec/m-unit-work.md#current-attempt-source-admission) |
 | Typed and Wire as peers | [ADR 0057](../../../../docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md) |

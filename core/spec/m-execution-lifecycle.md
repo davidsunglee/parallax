@@ -10,9 +10,8 @@ transactions retain no lifecycle record.
 The module depends on `m-sql` for the Lowered Statement a database call executes,
 `m-db-port` for call and transaction outcomes, `m-db-error` for neutral database
 failure facts, `m-unit-work` for transaction and flush semantics, and
-`m-auto-retry` for retry policy and classification. A composition root threads
-the lifecycle publisher down to the observed modules. None of those modules
-discovers a provider or records history for this module.
+`m-auto-retry` for retry policy and classification. None of the observed modules
+discovers a Provider or records history for this module.
 
 ## Root execution and opening
 
@@ -76,10 +75,8 @@ Every event carries this correlation envelope:
 | `activityId` | positive, contiguous, one-based ID assigned by Started and reused by its Finished peer |
 | `parentActivityId` | absent only for the root activity; otherwise an earlier-started activity in the same root |
 
-Concurrent roots have independent sequences and imply no global order. The
-sequence is assigned immediately before delivery. Fan-out children receive the
-same event object with the same sequence; delivery does not clone an event per
-child.
+Concurrent roots have independent sequences and imply no global order. Every
+Fan-out child receives the event at the same sequence.
 
 The event algebra is the closed union of these eighteen concrete transitions:
 
@@ -115,13 +112,11 @@ Truncation preserves code-point boundaries. Extracting or formatting a field
 MUST NOT replace the original execution error, even when that extraction raises
 a control-flow or fatal exception. The diagnostic retains no exception,
 traceback graph, cause object, local, transaction state, statement, or bind.
-Because the projection is detached and immutable, a failure reports a
-diagnostic already rendered for its own value rather than copying its bounded
-strings: the one the activity's attribution carries, or — for an activity
-holding no attribution for that value — the one its parent holds for it when
-that attribution names a child with a HIGHER Activity ID, which is exactly a
-child that started inside this activity and unwound out through it. An activity
-with neither renders its own.
+A failure reports one diagnostic down the activities it unwinds through: while
+the attribution for its value is held (*Holding*), an activity reports the
+diagnostic already rendered for that value inside it rather than rendering it
+again. An activity with no such diagnostic renders its own, and the activities
+enclosing it report that one.
 
 An **Activity Failure** is exactly one of:
 
@@ -705,8 +700,7 @@ events already completed, retry count, stream length, result cardinality,
 materialized graph size, and the number of statements one ordered transport
 invocation presents: observing one keeps no activity, outcome, or event per
 call, and an unobserved invocation is opened without allocating, inspecting its
-statements, or reading a clock. Core constructs one transient event per
-transition and shares it across fan-out. Built-in non-recording handlers retain only bounded
+statements, or reading a clock. Built-in non-recording handlers retain only bounded
 per-root state; asynchronous exporters use application-owned bounded queues.
 Delivery work is `O(events × active providers)`. A custom Handler that retains
 borrowed events or uses unbounded state violates the Handler contract.

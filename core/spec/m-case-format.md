@@ -1194,7 +1194,11 @@ state:
   under Locking, already read rows covering that window (`m-unit-work`
   *Retained starting rows*): a Transaction-Time-Only object's always do, and a
   Bitemporal one's do where the rectangles the case's own history leaves current
-  at each `validFrom` cover it.
+  at each `validFrom` cover it. A live read may stand in for an acquisition, and
+  whether one does can vary with what the caller still holds (`m-unit-work`
+  *Target writes*), so these counts are derivable only for an object its unit did
+  not read first. A case that reads one before a Locking target write is a
+  state-graded scenario, whose count is not graded (*State-graded scenarios*).
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
