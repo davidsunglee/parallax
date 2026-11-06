@@ -49,7 +49,7 @@ check-dbfree:
 check-db:
     @{command} db {"fail" if fail else ""}
 
-python-coverage-diff:
+python-check-coverage:
     @{command} coverage
 
 report-check-summary:
