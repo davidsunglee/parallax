@@ -9,7 +9,7 @@ from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
 from parallax.conformance.dormant_position_document_models import DORMANT_POSITION_DOCUMENT
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.edit_models import NOTE_MODEL
-from parallax.conformance.graph_models import POLICY_MODEL
+from parallax.conformance.graph_models import INVOICE_MODEL, POLICY_MODEL
 from parallax.conformance.identifier_models import (
     IDENTIFIER_TPCS_DOCUMENT,
     IDENTIFIER_TPH_DOCUMENT,
@@ -64,6 +64,7 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "identifier-types": IDENTIFIER_TYPES,
         "identifier-tph-document": IDENTIFIER_TPH_DOCUMENT,
         "identifier-tpcs-document": IDENTIFIER_TPCS_DOCUMENT,
+        "invoice": INVOICE_MODEL,
         "note": NOTE_MODEL,
         "orders": ORDERS_MODEL,
         "payment": PAYMENT_MODEL,

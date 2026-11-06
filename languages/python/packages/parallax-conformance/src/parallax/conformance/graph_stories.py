@@ -18,7 +18,7 @@ from parallax.conformance.dormant_position_document_models import (
     Workbench as DocumentWorkbench,
 )
 from parallax.conformance.dormant_position_models import Prototype, Workbench
-from parallax.conformance.graph_models import Coverage, Policy
+from parallax.conformance.graph_models import Coverage, Invoice, InvoiceLine, Policy
 from parallax.conformance.identifier_models import (
     Int32Parent,
     Int64Parent,
@@ -205,6 +205,25 @@ def a_delete_keeps_a_loaded_relationship_view(
     committed = db.transact(destroy)
     reread = db.find(OrderItem.where(OrderItem.order_id == 1))  # where the delete IS observable
     return snapshot, loaded_items, committed, reread
+
+
+def a_termination_keeps_a_loaded_relationship_view(
+    db: ScopedDatabase,
+) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
+    snapshot = db.find(
+        Invoice.where(Invoice.id == 100).as_of(tx_time=LATEST).include(Invoice.lines)
+    )
+    loaded_lines = snapshot.result().lines
+
+    def close(tx: TxnContext) -> None:
+        observed = tx.find(InvoiceLine.where(InvoiceLine.id == 1001).as_of(tx_time=LATEST)).result()
+        tx.terminate(observed)
+
+    committed = db.transact(close)
+    reread = db.find(  # where the close IS observable
+        InvoiceLine.where(InvoiceLine.invoice_id == 100).as_of(tx_time=LATEST)
+    )
+    return snapshot, loaded_lines, committed, reread
 
 
 def an_edit_chain_keeps_a_loaded_relationship_view(
@@ -499,6 +518,12 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     return db.find(Customer.where(Customer.all).include(Customer.locations))
 
 
+def _snapshot_read_021_clock() -> Clock:
+    """`m-snapshot-read-021`'s own authored Transaction Instant: the `at:` its
+    terminate declares, which the close binds as the milestone's end."""
+    return ScriptedClock([dt.datetime(2024, 8, 1, tzinfo=dt.UTC)])
+
+
 def _snapshot_read_025_clock() -> Clock:
     """`m-snapshot-read-025`'s own authored Transaction Instant.
 
@@ -754,6 +779,13 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "A committed DELETE leaves the destroyed row's own node in the view that held it",
         "orders",
         a_delete_keeps_a_loaded_relationship_view,
+    ),
+    GraphStory(
+        "m-snapshot-read-021",
+        "A termination leaves the closed milestone open in the view that held it",
+        "invoice",
+        a_termination_keeps_a_loaded_relationship_view,
+        clock=_snapshot_read_021_clock,
     ),
     GraphStory(
         "m-snapshot-read-022",

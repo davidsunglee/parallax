@@ -205,23 +205,6 @@
       "type": "array",
       "items": { "$ref": "#/$defs/row" }
     },
-    "identityCheck": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["left", "right", "same"],
-      "properties": {
-        "left": {
-          "$ref": "#/$defs/jsonPointer"
-        },
-        "right": {
-          "$ref": "#/$defs/jsonPointer"
-        },
-        "same": {
-          "type": "boolean"
-        },
-        "identity": {}
-      }
-    },
     "errorObservation": {
       "description": "A raised-application-error observation (m-conformance-adapter): the verb at case position `at` — a scenario step, or one submission of a buffered write step (`/scenario/<n>/write/<k>`) — raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-temporal-write / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
       "type": "object",
@@ -1293,10 +1276,6 @@
         "databaseCalls": {
           "type": "integer",
           "minimum": 0
-        },
-        "identityChecks": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/identityCheck" }
         },
         "storedDataIssues": {
           "description": "The stored-data diagnoses a read published for the result positions whose stored state contradicted the declared model (m-snapshot-read), compared against the case's `then.storedDataIssues`. Reported by an eager and a STREAMED graph-form read alike: a delivery classifies the same positions at the same ordinals its eager peer does, so the observation is the delivery's own rather than a second eager read's. Optional and additive — a conforming read publishes none and omits it, and existing run outputs stay valid.",

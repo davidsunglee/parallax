@@ -16,7 +16,7 @@ history run-through.
 
 Most graph stories read only, and their canned port refuses DML outright so a
 story that quietly acquired a write is caught here. The composition stories
-(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-023`/`-024`/`-025`) and the
+(`m-snapshot-read-017`/`-018`/`-019`/`-020`/`-021`/`-023`/`-024`/`-025`) and the
 read-your-own-writes story (`m-unit-work-029`) are the exception by
 construction: what they demonstrate is a materialized view standing across a
 COMMITTED write, or a find inside the write's own unit of work, so they need a
@@ -204,6 +204,21 @@ _COVERAGE_20_ROW: MappingRow = {
     "out_z": INFINITY,
 }
 
+_INVOICE_ROW: MappingRow = {
+    "id": 100,
+    "name": "INV-100",
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
+
+_INVOICE_LINE_ROW: MappingRow = {
+    "id": 1001,
+    "invoice_id": 100,
+    "amount": Decimal("25.00"),
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
+
 # Balance 1's SUPERSEDED milestone — the row a finite Transaction-Time pin at
 # 2024-03-01 selects, closed at 2024-06-01 by the milestone that replaced it.
 _BALANCE_MILESTONE_ROW: MappingRow = {
@@ -383,7 +398,7 @@ class _ReplayPort(_TransactingCannedPort):
 
 
 # The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`/`-020`/
-# `-023`/`-024`/`-025` and `m-unit-work-029`): the composition case, where what is
+# `-021`/`-023`/`-024`/`-025` and `m-unit-work-029`): the composition case, where what is
 # demonstrated is the materialized view standing across a persisting write — and,
 # for the read-your-own-writes story, a dependent find inside the write's own unit
 # of work.
@@ -393,6 +408,7 @@ _WRITING_STORIES: frozenset[Callable[..., Any]] = frozenset(
         graph_stories.a_write_keeps_a_loaded_empty_relationship_view,
         graph_stories.a_write_keeps_an_unloaded_relationship_absent,
         graph_stories.a_delete_keeps_a_loaded_relationship_view,
+        graph_stories.a_termination_keeps_a_loaded_relationship_view,
         graph_stories.a_write_keeps_a_loaded_value_object_document,
         graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows,
         graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view,
@@ -493,6 +509,12 @@ _CANNED_READS: Mapping[Callable[[ScopedDatabase], Any], tuple[Sequence[MappingRo
         [_ORDER_ITEM_ROW],
         [],
     ),
+    graph_stories.a_termination_keeps_a_loaded_relationship_view: (
+        [_INVOICE_ROW],
+        [_INVOICE_LINE_ROW],
+        [_INVOICE_LINE_ROW],
+        [],
+    ),
     graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view: (
         [_POLICY_2_ROW],
         [_COVERAGE_20_ROW],
@@ -526,8 +548,8 @@ def _responses_for(run: Callable[[ScopedDatabase], Any]) -> list[list[MappingRow
     loaded and EMPTY rather than short-circuited — and its unloaded sibling once,
     declaring no include at all.
 
-    The destructive and rectangle-split stories read four times each: their own
-    root and include levels, the transaction's observing find, and the read-back
+    The destructive, terminating and rectangle-split stories read four times each:
+    their own root and include levels, the transaction's observing find, and the read-back
     — which answers nothing, because the canned port is a stub rather than a
     store and only the real-database driver can say what the write left behind.
 
@@ -620,6 +642,18 @@ def test_the_destructive_composition_story_keeps_the_destroyed_row_in_its_view()
     _assert_wire_binds(story.case_id, port)
     assert [item.id for item in loaded_items] == [11]
     assert snapshot.result().items[0] is loaded_items[0]
+
+
+def test_the_termination_story_keeps_the_closed_milestone_open_in_its_view() -> None:
+    # The in-memory half of `m-snapshot-read-021`: the close reaches the wire as
+    # the case's own golden binds, which the story's scripted clock makes reachable,
+    # and the `lines` view still answers the milestone its read selected, by identity.
+    story = _STORIES_BY_RUN[graph_stories.a_termination_keeps_a_loaded_relationship_view]
+    port = _WritingCannedPort(_responses_for(story.run))
+    snapshot, loaded_lines, _committed, _reread = story.run(_connect(story, port))
+    _assert_wire_binds(story.case_id, port)
+    assert [line.id for line in loaded_lines] == [1001]
+    assert snapshot.result().lines[0] is loaded_lines[0]
 
 
 def test_the_rectangle_split_story_keeps_the_pinned_rectangle_in_its_view() -> None:
@@ -992,6 +1026,7 @@ _SCENARIO_FIND_STORIES = (
     "m-snapshot-read-018",
     "m-snapshot-read-019",
     "m-snapshot-read-020",
+    "m-snapshot-read-021",
     "m-snapshot-read-022",
     "m-snapshot-read-023",
     "m-snapshot-read-024",

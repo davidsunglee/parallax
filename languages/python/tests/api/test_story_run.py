@@ -691,6 +691,25 @@ def test_a_rectangle_split_keeps_a_loaded_relationship_view(profile_run: Any) ->
     _assert_composition_units(story.case_id, db)
 
 
+def test_a_termination_keeps_a_loaded_relationship_view(profile_run: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-021"]
+    meta = _reset_for(story.case_id, profile_run)
+    # The case's own `at:` instant, so the close binds what the case says it does.
+    clock = story.clock() if story.clock is not None else None
+    db = _counting_connect(profile_run.port, meta, clock=clock)
+    snapshot, loaded_lines, _committed, reread = story.run(db)
+    _assert_find_step_rows(story.case_id, 0, snapshot)
+    _assert_surviving_view(story.case_id, "InvoiceLine", _wire_path(snapshot, "lines"))
+    assert sorted(line.id for line in loaded_lines) == [1000, 1001]
+    # What only this lane can show: each is the SAME object. An equal-valued rebuild
+    # would satisfy the case's `expectGraph` and fail here.
+    for retained, loaded in zip(snapshot.result().lines, loaded_lines, strict=True):
+        assert retained is loaded
+    # The terminate is load-bearing: the same relationship at Latest holds 1000 alone.
+    _assert_find_step_rows(story.case_id, 1, reread)
+    _assert_composition_units(story.case_id, db)
+
+
 def test_an_edit_chain_keeps_a_loaded_relationship_view(profile_run: Any) -> None:
     story = _GRAPH_STORIES_BY_ID["m-snapshot-read-022"]
     meta = _reset_for(story.case_id, profile_run)
