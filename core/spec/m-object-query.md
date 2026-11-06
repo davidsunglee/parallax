@@ -50,9 +50,9 @@ occurs at most once, which is a property of a JSON object rather than a rule a
 validator restates.
 
 An Object Query carries **no result form**: it always requests full objects.
-There is no `distinct`, and no `offset` or pagination. Selected-field results and
-aggregate values belong to future Projection / Aggregate Query work, and internal
-SQL row projections stay implementation details of object hydration.
+There is no `distinct`, and no `offset` or pagination. It selects no fields and
+computes no aggregate values, and internal SQL row projections stay implementation
+details of object hydration.
 
 ## `target` — the queried position
 

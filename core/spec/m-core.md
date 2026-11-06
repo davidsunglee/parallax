@@ -62,9 +62,9 @@ host-language sentinel.
 it inside a `DocumentRead`, and a structured-document bind (`m-db-port`) carries
 its document in the same value, because a driver cannot type a document from its
 value alone. A bind states SQL `NULL` as a bare null rather than `SqlNull`, so
-`StructuredDocument(document: JSON null)` is how a bind spells the JSON null
-document. `StructuredDocument` and `DocumentRead` are transport values rather than
-`NeutralValue`s; the no-wrapper rule below applies only where a declaration has
+`StructuredDocument(document: JSON null)` is how a structured-document bind
+spells the JSON null document. `StructuredDocument` and `DocumentRead` are
+transport values rather than `NeutralValue`s; the no-wrapper rule below applies only where a declaration has
 already fixed one neutral value space.
 
 ## The `NeutralType` algebra
@@ -95,7 +95,7 @@ no behavioral module parses a type string.
 
 An implementation **MUST** support the full variant set and **MUST** map each
 variant to an equivalent concrete column type through the dialect seam
-(`m-dialect`). The column mapping below is informative round-1 dialect prose
+(`m-dialect`). The column mapping below is informative dialect prose
 (Postgres shown), not part of the algebra:
 
 | Variant | Description | Postgres type | Notes |

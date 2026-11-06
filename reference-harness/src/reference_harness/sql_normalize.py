@@ -12,7 +12,7 @@ The normative rules (m-sql, ``core/spec/m-sql.md``):
 3. Whitespace collapsed to single spaces; trimmed.
 4. Literal parameters rendered as ``?`` bind placeholders.
 5. Deterministic clause order
-   (``select … from … where … group by … having … order by … limit …``).
+   (``select … from … where … order by … limit … offset …``).
 
 The golden SQL stored in a case **must already be a fixed point**:
 ``normalize(sql) == sql`` for each statement's dialect text. The m-case-format

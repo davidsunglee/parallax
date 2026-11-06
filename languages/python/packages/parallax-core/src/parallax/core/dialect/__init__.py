@@ -307,8 +307,7 @@ class Dialect:
     # :meth:`array_parameter` (`m-dialect` "Array parameter cast form").
     binds_arrays: bool = False
     # The native codes reporting an exclusion constraint's violation, one kind
-    # of the `constraintViolation` category (`m-dialect` "Exclusion
-    # violations").
+    # of the `constraintViolation` category (`m-db-error`).
     exclusion_violation_codes: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:

@@ -310,7 +310,9 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         pytest.param([{"uow": "g", "write": _PREDICATE_WRITE}], id="a-direct-predicate-write"),
         pytest.param([{"uow": "g", "write": "amend"}], id="a-write-label"),
-        pytest.param([_STATE_FIND, {"action": "flush"}], id="an-action-step"),
+        pytest.param(
+            [_STATE_FIND, {"action": "mutate", "on": 0, "set": {"sku": "B"}}], id="an-action-step"
+        ),
         pytest.param([_STATE_GRAPH_FIND], id="a-graph-observable"),
         pytest.param([_STATE_FIND, {**_STATE_FIND, "sameObjectAs": 0}], id="an-identity-claim"),
         pytest.param(

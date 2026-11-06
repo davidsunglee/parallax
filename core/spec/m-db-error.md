@@ -16,7 +16,7 @@ retriable), `lockWaitTimeout` (blocked past the lock-wait budget), plus
 `connectionDead` (reserved).
 
 A failure to ACQUIRE a connection is outside this closed set entirely. Nothing
-was classified because no modeled statement ran: `m-db-port` states the four
+was classified because no modeled statement ran: `m-db-port` states the
 acquisition reasons and the readiness phases separately, and no predicate here
 answers for them. An implementation MUST NOT map one into a category, and the
 retry loop MUST NOT read one.

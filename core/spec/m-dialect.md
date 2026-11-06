@@ -59,7 +59,7 @@ decision-point catalog covers every construct currently emitted. Two dialects le
 choices at each point; both are normative for their dialect (`m-sql`). The catalog
 (derived from the research matrix, research §11):
 
-| Decision point | Postgres (round-1 concrete) | MariaDB (second concrete) |
+| Decision point | Postgres (first concrete) | MariaDB (second concrete) |
 |---|---|---|
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
@@ -84,7 +84,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **bind parameter limit** | 65535 | 65535 |
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
-| error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `23514`/`23P01` constraint, `40P01`/`40001` deadlock, `55P03` lock timeout; `23P01` is the exclusion-violation kind | errno: `1062`/`1022`/`1169`/`1859` duplicate, `4025` constraint, `1213`/`1020` deadlock, `1205` lock timeout; no exclusion-violation kind |
+| error-code classification | SQLSTATE (`m-db-error`) | errno (`m-db-error`) |
 | **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | yes — every connection negotiates `CLIENT_FOUND_ROWS`, so an `UPDATE`'s count includes every row it matched (see below) |
 
 The read-lock application and infinity representation are the original two
@@ -945,19 +945,11 @@ placement-free spelling `m-read-planning-012` already witnesses).
 
 ## Two concrete dialects prove the seam, and it stays open
 
-- **Postgres** is the round-1 concrete dialect; **MariaDB** is the second,
+- **Postgres** is the first concrete dialect; **MariaDB** is the second,
   proving the seam beyond Postgres. Each dialect's golden SQL is normative for
   that dialect (`m-sql`); the harness boots real Postgres **and** real MariaDB via
   Testcontainers (`m-case-format`), and the compatibility-matrix report
   (implementations × databases) shows reference × {postgres, mariadb} green.
-- **Localization, proven.** Adding MariaDB required changes **only** inside the
-  dialect seam — the normalizer's dialect mapping + read-lock rendering, the
-  `m-core` type table's MariaDB column, and the MariaDB provider's infinity /
-  instant adapters. **No spec prose outside this file and no fixture was
-  MariaDB-specific** beyond the additive per-dialect `mariadb` keys in the
-  affected cases' `then.statements` entries (which are the seam's output, not a
-  leak). This is the "equivalent SQL per database, optimized per dialect" promise
-  made good.
 - **The matrix.** A golden statement's `sql` is **keyed by dialect from day one**
   (a `postgres` key, a `mariadb` key), and the database-provider seam in
   the harness selects a provider per dialect — so a third database is a new
@@ -965,7 +957,7 @@ placement-free spelling `m-read-planning-012` already witnesses).
   redesign.
 - **Not a one-way door (DQ9).** The seam **MUST** stay open enough that
   per-source / per-tenant connection routing could be added later without
-  re-plumbing. Source-attribute sharding is out of scope for round 1, but
+  re-plumbing. Source-attribute sharding is out of scope, but
   nothing here may *preclude* it: the dialect/connection seam is the natural
   future home for a routing hook, and binding the dialect to the port that holds
   the connection is what reduces such a hook to one decision — choose a port per

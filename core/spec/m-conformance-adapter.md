@@ -226,8 +226,8 @@ the implementation would execute for the requested dialect. It MUST NOT execute
 SQL.
 
 The command is valid for any case shape whose behavior can be represented as
-SQL emissions. Cache-hit scenario steps that perform no database work simply
-produce no emission for that step and still contribute `0` Database Calls.
+SQL emissions. A scenario step that performs no database work produces no
+emission and contributes `0` Database Calls.
 For a predicate-selected scenario write, the adapter consumes the structured
 `/scenario/<n>/write` instruction as the requested operation; it MUST NOT treat
 authored DML text as its only write input or reverse-engineer the operation from
@@ -628,9 +628,9 @@ A scenario has no single whole-read result, so a step's rows cannot ride the
 `rows` key: they are one observation **per step**. `stepRows` is the optional
 `observations` array carrying them — one `{ at, rows }` entry per scenario read
 step, plus one per `mutate` step declaring `expectRows`; `at` is the JSON Pointer
-naming the step and `rows` are the values that step published, in the same
-physically-keyed shape a whole-read `rows` observation carries and a step's
-`expectRows` is authored in (`m-case-format` *Row and table-state style*).
+naming the step and `rows` are the values that step published, in the
+physically-keyed shape its `expectRows` is authored in (`m-case-format` *Row and
+table-state style*).
 Entries appear in step order.
 
 What is reported is what the step **published** — the roots the read handed over

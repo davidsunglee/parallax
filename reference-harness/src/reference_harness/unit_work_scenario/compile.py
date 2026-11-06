@@ -318,10 +318,7 @@ def _assert_on_sources(case: Case, index: int, step: Mapping[str, Any]) -> None:
     targets, or the find a settling
     write was handed a value by. So the bound is one rule over every kind of step,
     decided once here rather than by each owner mid-execution, and every reader
-    downstream may address the step it names. ``on`` is OPTIONAL on the boundary
-    verbs, which target the unit of work rather than a prior object; a boundary
-    step that DOES carry one — a ``flush`` documenting its buffered write — owes
-    the same bound.
+    downstream may address the step it names.
 
     Only the bound. Whether the named step published anything is a property of the
     run rather than of the document — a step that fails its own observable

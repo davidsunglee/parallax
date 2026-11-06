@@ -754,7 +754,7 @@ def _step_position(
     read (:data:`_RELATIONSHIP_NAVIGATIONS`).
 
     ``None`` means the position is undecidable here rather than absent. A write
-    step or a boundary verb holds no queried node; an out-of-range or missing
+    step holds no queried node; an out-of-range or missing
     ``on`` is :mod:`~reference_harness.unit_work_scenario`'s to report, where
     compiling a Scenario refuses an ``on`` that names no earlier step, rather than
     this check's to restate; and a step reachable from itself resolves

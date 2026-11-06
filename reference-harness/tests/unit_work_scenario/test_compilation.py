@@ -241,7 +241,7 @@ def test_an_action_that_publishes_no_rows_cannot_declare_a_row_observable(
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     source = case.scenario[0]
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
-    mutate["action"] = "flush"
+    mutate["action"] = "amend"
     mutate["expectRows"] = list(source["expectRows"])
     with pytest.raises(CaseFailure, match="only the actions that always publish rows"):
         assert_unit_work_scenario(case, RefusingProvider())

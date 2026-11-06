@@ -5,7 +5,7 @@
 1. **buffered tracked-row batching** at an `m-unit-work` boundary, where the unit
    of work already holds an enumerated set of objects; and
 2. **predicate-selected writes** over a bare `m-predicate` predicate, whose
-   canonical instruction is supplied by `m-case-format`.
+   canonical instruction is `write-instruction.schema.json`'s (`m-unit-work`).
 
 It owns only the set-based/readless vocabulary for the second family, including
 which targets that family can write at all, when its statement runs, and the count

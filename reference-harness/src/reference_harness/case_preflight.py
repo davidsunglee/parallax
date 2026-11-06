@@ -477,8 +477,7 @@ def _expected_step(case: Case, step: Mapping[str, object], where: str) -> None:
     query = step.get("objectQuery")
     if isinstance(query, Mapping) and isinstance(query.get("target"), str):
         entity = case.model.entity(query["target"])
-        for rows_name in ("expectRows", "observeRows"):
-            _expected_rows(case, entity, step.get(rows_name), f"{where}.{rows_name}")
+        _expected_rows(case, entity, step.get("expectRows"), f"{where}.expectRows")
     expected = step.get("expectGraph")
     if expected is not None:
         _expected_graph(case, expected, f"{where}.expectGraph")

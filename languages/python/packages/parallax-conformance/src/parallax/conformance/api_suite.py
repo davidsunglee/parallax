@@ -1777,8 +1777,7 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
 # units of work, exactly as `_OPT_LOCK_INTERLEAVED_RACE_REASON` records for the
 # optimistic-lock race. What differs between them is which OTHER lane grades them:
 # the run sweep's interleaved-group runner drives `-032` and `-034`, and names why
-# it drives neither `-031` nor `-033`
-# (`test_run_sweep._INTERLEAVED_RUNNER_CASES`).
+# it does not drive `-031` (`test_run_sweep._INTERLEAVED_RUNNER_CASES`).
 _ISOLATION_SCENARIO_REASON: Final[str] = (
     "the guarantee a portable Isolation Level makes to a READING unit of work while a "
     "concurrent one writes: two units of work held open at once, which has no "

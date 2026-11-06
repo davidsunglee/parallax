@@ -682,53 +682,6 @@ def _rejected_keyed_write_nesting_a_row_member() -> dict[str, Any]:
     return doc
 
 
-def _action_boundary_no_on_case() -> dict[str, Any]:
-    """A scenario whose BOUNDARY action verbs (`flush` / `commit`) omit `on`.
-
-    The boundary / unit-of-work verbs operate on the whole unit of work, not a
-    specific prior object, so `on` is inapplicable and MAY be omitted — the per-verb
-    conditional makes `on` required ONLY for the object-targeting verbs. This fixture
-    pins that a boundary step without `on` still validates.
-    """
-    return {
-        "model": "models/orders.yaml",
-        "tags": ["m-read-planning", "m-unit-work"],
-        "shape": "scenario",
-        "when": {
-            "scenario": [
-                {
-                    "objectQuery": {
-                        "target": "Order",
-                        "predicate": {"eq": {"path": "Order.id", "value": 1}},
-                    },
-                    "databaseCalls": 1,
-                    "statements": [
-                        {
-                            "sql": {"postgres": "select t0.id from orders t0 where t0.id = ?"},
-                            "binds": [1],
-                        }
-                    ],
-                    "expectRows": [{"id": 1}],
-                },
-                {
-                    "action": "flush",
-                    "databaseCalls": 1,
-                    "statements": [
-                        {
-                            "sql": {
-                                "postgres": "insert into order_item(id, order_id) values (?, ?)"
-                            },
-                            "binds": [13, 1],
-                        }
-                    ],
-                },
-                {"action": "commit", "databaseCalls": 0},
-            ]
-        },
-        "then": {"databaseCalls": 2},
-    }
-
-
 def _graphs_read_case() -> dict[str, Any]:
     """A read case carrying per-milestone `then.graphs`.
 
@@ -867,7 +820,6 @@ VALID_CASES = {
     "scenario-action-expect-graph": _action_expect_graph_case,
     "scenario-read-expect-graph": _read_expect_graph_case,
     "scenario-action-identity-error": _action_identity_error_case,
-    "scenario-action-boundary-no-on": _action_boundary_no_on_case,
     "scenario-keyed-write-value": _write_value_scenario_case,
     "conflict": _conflict_case,
     "conflict-retry": _conflict_retry_case,

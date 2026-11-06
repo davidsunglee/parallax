@@ -166,7 +166,7 @@ For every supported adapter, the smoke suite covers:
   transaction, and a read-only transaction at a level the standby cannot begin
   is refused natively. While the standby's replay is paused, a change the
   writer committed is visible to a writer read and absent from reader and
-  preferred reads — eager, row, and streamed, in every representation and
+  preferred reads — eager and streamed, in every representation and
   Storage Layout — and appears once replay passes the writer's log position. A
   standalone stream over a lagging reader can exhaust without the lagging rows,
   and its later pages can observe a later replay position than its first; a

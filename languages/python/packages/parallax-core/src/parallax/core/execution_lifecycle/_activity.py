@@ -1246,7 +1246,7 @@ class _LiveConnectionOwner(_LiveActivity):
     """An observed scope that owns one operation's connection.
 
     The two openers are written once here because a standalone Read, a
-    Transaction Attempt, and a standalone Stream answer them
+    Transaction Attempt, and a Stream Batch of a standalone Stream answer them
     identically: an acquisition and a release are the owner's own children
     whichever of the three is asking, and the difference between the three is
     the shape of the operation between them rather than either end of it.
@@ -2131,11 +2131,10 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
 
         Attributed through :meth:`_propagated` rather than rendered directly,
         because the attempt may hold a child for this very failure: an
-        Acquisition that could not produce a connection reports to the attempt
-        under its own Activity ID, so the attempt names it. A boundary that
-        refused to open on a connection this attempt did acquire is the
-        attempt's own direct failure. Either way the invocation above names
-        this attempt, under the ordinary chaining rule.
+        Acquisition that could not produce a connection, or whose boundary
+        refused to open, reports to the attempt under its own Activity ID, so
+        the attempt names it. The invocation above names this attempt, under
+        the ordinary chaining rule.
 
         It is still not an Attempt Failure: there is no phase inside an attempt
         that never opened its boundary to locate, and no classifier verdict to

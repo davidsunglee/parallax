@@ -812,13 +812,11 @@ def _check_refusal(owner: _Activity, acquisitions: list[_Activity], problems: li
 def _check_begin_attribution(
     owner: _Activity, acquisitions: list[_Activity], problems: list[str]
 ) -> None:
-    """A `beginFailed` attempt is `caused` exactly by a refused Acquisition.
+    """A `beginFailed` attempt is `caused` exactly by its failed Acquisition.
 
-    An attempt whose boundary refused to open on a connection it DID acquire has
-    no child holding that failure, so it is `direct`. `caused` therefore names
-    the one child a begin failure can have — the Acquisition that granted
-    nothing — and naming any other child claims an attribution no begin failure
-    can reach.
+    A boundary that never opened is the failure of the attempt's Acquisition, so
+    `caused` names that Acquisition, and naming any other child claims an
+    attribution no begin failure can reach.
     """
     payload = owner.finished_payload
     if owner.started != "transactionAttemptStarted" or payload.get("outcome") != "beginFailed":
@@ -830,8 +828,7 @@ def _check_begin_attribution(
         problems.append(
             f"activity {owner.activity} finishes `beginFailed` caused by activity "
             f"{payload.get('cause')}; a begin failure is caused only by an Acquisition of its "
-            f"own that granted no connection, and every other one is the attempt's own direct "
-            f"refusal"
+            f"own that failed, because a boundary that never opened is that Acquisition's failure"
         )
 
 
