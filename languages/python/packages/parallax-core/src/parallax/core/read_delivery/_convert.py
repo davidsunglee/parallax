@@ -7,12 +7,15 @@ from typing import Final, cast
 
 from parallax.core.base import (
     SQL_NULL,
+    Bytes,
     DocumentValue,
+    NeutralType,
     SqlNull,
     StructuredDocument,
     UnknownFamilyTag,
     check_stored_scalar,
 )
+from parallax.core.dialect import decode_bytes_cell
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DecodeOutput,
@@ -74,7 +77,7 @@ class EntityReadMapping:
     is read from, its prepared document classifier, and its member name in the
     row's unwrapped shared document. A member with neither a cell nor a
     document location is not carried. ``encoded_positions`` marks, one bit per
-    position, the Attributes whose cell arrives in its canonical Wire spelling.
+    position, the Attributes whose cell arrives as text :func:`_decoded_cell` decodes.
 
     Only encoded result cells and temporal ends are host-checked: their storage
     contract does not itself establish the managed value. Native scalar Columns
@@ -426,10 +429,7 @@ def judge_positions(  # noqa: C901
         else:
             value = raw
             if raw is not None and encoded >> position & 1:
-                try:
-                    value = decode_canonical_wire(attribute.type, cast("WireValue", raw))
-                except WireDecodingError:
-                    value = raw
+                value = _decoded_cell(attribute.type, raw)
             verdict = check_stored_scalar(
                 value,
                 attribute.type,
@@ -448,6 +448,16 @@ def judge_positions(  # noqa: C901
                 members = list(values)
             members[position] = value
     return members, issues
+
+
+def _decoded_cell(neutral_type: NeutralType, cell: object) -> object:
+    """The managed value an encoded ``cell`` spells, or ``cell`` itself where it spells none."""
+    if isinstance(neutral_type, Bytes):
+        return decode_bytes_cell(cell)
+    try:
+        return decode_canonical_wire(neutral_type, cast("WireValue", cell))
+    except WireDecodingError:
+        return cell
 
 
 def _attribute_issue(

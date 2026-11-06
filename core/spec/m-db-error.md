@@ -7,7 +7,7 @@ boundary) and `m-dialect` (the per-dialect native code source). This is the
 **only** place native error codes are interpreted; everything above the seam
 reasons in categories.
 
-## Neutral categories and call-site predicates
+## Neutral categories
 
 The categories are a closed set: `uniqueViolation` (duplicate key / unique-index
 violation), `constraintViolation` (a row refused by a check or exclusion
@@ -17,19 +17,16 @@ retriable), `lockWaitTimeout` (blocked past the lock-wait budget), plus
 
 A failure to ACQUIRE a connection is outside this closed set entirely. Nothing
 was classified because no modeled statement ran: `m-db-port` states the
-acquisition reasons and the readiness phases separately, and no predicate here
+acquisition reasons and the readiness phases separately, and no category here
 answers for them. An implementation MUST NOT map one into a category, and the
 retry loop MUST NOT read one.
 
-Classification is interrogated at **distinct call sites**, so the seam exposes it
-as predicates defined as category membership — not one stringly-typed method:
+Code above the seam reacts to categories, never to native codes: `deadlock` is the
+database failure the retry loop treats as transient (`m-auto-retry` owns the whole
+retriable set), the insert path recognizes `uniqueViolation`, and the lock path
+recognizes `lockWaitTimeout`.
 
-- the transaction retry loop asks `isRetriable` (`category = deadlock`);
-- the insert path asks `violatesUniqueIndex`
-  (`category = uniqueViolation`);
-- the lock path asks `isTimedOut` (`category = lockWaitTimeout`).
-
-`constraintViolation` answers none of them: the category is not retriable, and a
+`constraintViolation` is none of those: the category is not retriable, and a
 database recognizing one of these codes says nothing about which constraint
 refused the row or why. Such a failure stays the original error; this module
 translates no constraint into a semantic outcome. Execution may still recognize
@@ -103,7 +100,7 @@ it is the message template MariaDB formats a named-index duplicate with while
 still reporting errno `1062`, so no client ever receives it as a code. So are
 `1761`/`1762`, which report a duplicate a foreign-key action would cause in
 another table — a different failure from the writing statement colliding on its
-own index, and not what `violatesUniqueIndex` answers for.
+own index, and not what `uniqueViolation` answers for.
 
 MariaDB's `1020` (`ER_CHECKREAD`) is the write/write conflict InnoDB raises under
 `innodb_snapshot_isolation` when a transaction tries to lock a row that changed
@@ -113,20 +110,14 @@ counterpart of the Postgres `40001` a snapshot conflict raises. Its neighbour
 `1205` stays out of the category for the same reason `1020` is in it: the server
 discards the whole transaction for a snapshot conflict, while a lock-wait timeout
 by default ends only the blocked statement, which is not the retriable failure
-`isRetriable` names.
-
-Because the code source is a dialect decision, the table is not one shared
-lookup: each dialect strategy carries its own engine's codes — in the
-compatibility harness, each provider carries them — and classifies through them
-into the shared neutral vocabulary above.
+`deadlock` names.
 
 ## What the suite pins down
 
 The compatibility suite exercises `uniqueViolation`, `deadlock`, and
 `lockWaitTimeout` on both dialects (cases
 `m-db-error-001`–`m-db-error-011`): a case triggers a real error and asserts the
-neutral category, the per-dialect native code, and the call-site predicate
-partition. `uniqueViolation` cases trigger single-connection (a duplicate insert /
+neutral category and the per-dialect native code. `uniqueViolation` cases trigger single-connection (a duplicate insert /
 colliding update whose final statement raises); `deadlock` and `lockWaitTimeout`
 cases trigger two-connection (a `concurrency` choreography of barrier-separated
 rounds). `m-db-error-011` is where `1020` is reached: a choreography declaring
@@ -138,8 +129,3 @@ and need none: every duplicate the corpus authors is detected on the path that
 raises `1062`, so listing the others changes nothing a case observes — it changes
 only what the seam answers if a deployment ever meets one, which is the violation
 rather than an unclassified error.
-
-The classifier is a thin extraction and per-dialect lookup answering in
-the shared, DB-free category vocabulary + call-site predicates, so the harness
-exercises the interface the language implementations build, not a harness-only
-shortcut (`m-case-format`).

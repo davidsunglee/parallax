@@ -15,7 +15,7 @@ from parallax.core.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.corpus import case_document, wire_value_deep
 
-_SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-descriptor-001"})
+_SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-core-011", "m-descriptor-001"})
 _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 48, 49, 54, 55)
 )

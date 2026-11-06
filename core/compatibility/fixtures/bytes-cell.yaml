@@ -1,0 +1,3 @@
+parallax.compatibility.BytesCell:
+  - id: 1
+    payload: "0a1b"

@@ -2,7 +2,7 @@
 
 A native Column is accepted exactly as its provider normalized it, so a Page
 suite that needs a stored-data issue converts rows of these models instead.
-Every Bytes Column is projected as canonical wire under its ``_hex`` result key,
+Every Bytes Column is projected as hexadecimal text under its ``_hex`` result key,
 which conversion decodes and admits: a malformed spelling is an undecodable
 stored value, and SQL null in a required one is a null stored value. ``address``
 is a document Column the document codec classifies.

@@ -58,13 +58,11 @@ column was not `NULL` and preserves every parsed document kind, including
 required even when a driver represents SQL `NULL` and JSON null with the same
 host-language sentinel.
 
-`StructuredDocument` crosses the database seam in both directions. A read produces
-it inside a `DocumentRead`, and a structured-document bind (`m-db-port`) carries
-its document in the same value, because a driver cannot type a document from its
-value alone. A bind states SQL `NULL` as a bare null rather than `SqlNull`, so
-`StructuredDocument(document: JSON null)` is how a structured-document bind
-spells the JSON null document. `StructuredDocument` and `DocumentRead` are
-transport values rather than `NeutralValue`s; the no-wrapper rule below applies only where a declaration has
+A read produces `StructuredDocument` inside a `DocumentRead`. A structured-document
+bind (`m-db-port`) is marked as one rather than left to its value, because a driver
+cannot type a document from its value alone, and it keeps SQL `NULL` and the JSON
+null document apart; how a language carries one is that language's.
+`StructuredDocument` and `DocumentRead` are transport values rather than `NeutralValue`s; the no-wrapper rule below applies only where a declaration has
 already fixed one neutral value space.
 
 ## The `NeutralType` algebra

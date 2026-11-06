@@ -53,6 +53,7 @@ from parallax.core.dialect import (
     RenderedScalarCell,
     ScalarResult,
     Unsupported,
+    decode_bytes_cell,
     scalar_result,
 )
 from tests._support.repo import REPO_ROOT
@@ -157,6 +158,19 @@ def test_bytes_projection_shape(dialect: Dialect) -> None:
     assert plain == RenderedScalarCell(
         "t0.name", "t0.name", (), "name", ScalarResult("name", False)
     )
+
+
+@pytest.mark.parametrize(
+    ("cell", "octets"),
+    [("", b""), ("0a1b", b"\x0a\x1b"), ("0A1B", b"\x0a\x1b"), ("0a1B", b"\x0a\x1b")],
+)
+def test_a_bytes_cell_decodes_in_either_case(cell: str, octets: bytes) -> None:
+    assert decode_bytes_cell(cell) == octets
+
+
+@pytest.mark.parametrize("cell", ["0a 1b", "0a1", "0a1g", "\u0660\u0661", b"\x0a\x1b", 7])
+def test_a_cell_spelling_no_octets_comes_back_as_it_arrived(cell: object) -> None:
+    assert decode_bytes_cell(cell) is cell
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

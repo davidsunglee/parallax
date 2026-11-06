@@ -33,6 +33,7 @@ _TPCS_NO_DOCUMENT_SLOT = "m-inheritance-052-tpcs-narrow-to-abstract-subtype.yaml
 _TPH_DOCUMENT_UNION = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
 _PARTIAL_TPH_ROOT = "m-inheritance-147-partial-tph-root-read-unknown-tag.yaml"
 _LOCKED_TPH_DOCUMENT = "m-concurrency-054-document-layout-tph-partitioned.yaml"
+_BYTES_CELL = "m-core-011-bytes-cell-spelling-hex-letters.yaml"
 
 _BEASTS: list[dict[str, Any]] = [
     {"id": 1, "kind": "wolf", "name": "Akela", "keeper_id": 10, "howl": "aroo"},
@@ -228,6 +229,30 @@ def test_a_declared_tolerance_admits_an_inexact_numeric(damaged_case: CaseLoader
     reads = ScriptedReads(results=[drifted, drifted])
 
     assert_case_read(case, reads)
+
+
+@pytest.mark.parametrize("cell", ["0a1b", "0A1B", "0a1B"])
+def test_a_bytes_cell_grades_in_either_case(corpus_case: CaseLoader, cell: str) -> None:
+    case = corpus_case(_BYTES_CELL)
+
+    assert_case_read(case, ScriptedReads("mariadb", [[{"id": 1, "payload_hex": cell}]]))
+
+
+def test_a_bytes_cell_spelling_other_octets_fails(corpus_case: CaseLoader) -> None:
+    case = corpus_case(_BYTES_CELL)
+    reads = ScriptedReads("mariadb", [[{"id": 1, "payload_hex": "0A1C"}]])
+
+    with pytest.raises(CaseFailure, match="then.statements .mariadb. rows != then.rows"):
+        assert_case_read(case, reads)
+
+
+def test_a_bytes_cell_a_case_authors_uppercase_fails(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_BYTES_CELL)
+    case.then["rows"] = [{"id": 1, "payload_hex": "0A1B"}]
+    reads = ScriptedReads("mariadb", [[{"id": 1, "payload_hex": "0A1B"}]])
+
+    with pytest.raises(CaseFailure, match="then.statements .mariadb. rows != then.rows"):
+        assert_case_read(case, reads)
 
 
 def test_an_abstract_target_read_materializes_family_variant_from_the_raw_tag(

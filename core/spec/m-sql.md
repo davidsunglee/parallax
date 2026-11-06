@@ -16,60 +16,33 @@ Model-aware rejection is complete before SQL generation begins (`m-object-query`
 generation adds no portable rejection beyond the refusals this module and `m-dialect`
 name. What a write stores is assembled by `m-write-payload` (`m-write-plan` *Write
 payloads*); SQL generation places, renders, and binds it and assembles nothing. No
-public surface offers a raw-SQL escape hatch around SQL generation. Driver parameter
-adaptation is a carrier-to-driver operation after semantic conversion; it cannot
-repair or reinterpret a managed value.
+public surface offers a raw-SQL escape hatch around SQL generation.
 
-## Driver binds and canonical Wire projection
+## Binds and their canonical report
 
-A lowered statement retains driver-ready binds as one plain ordered tuple. SQL
-chooses the physical representation of each typed value: a direct typed column or
-typed document cast binds the managed carrier, while document text extraction
-binds canonical comparison text supplied by `m-document-codec`. No per-bind
-wrapper carries a scalar's value, type, and form together. Only `m-core`'s
-`StructuredDocument` and `m-dialect`'s array carrier wrap a bind, because a driver
-cannot type either from its value; an array carrier names its element type itself,
-one wrapper per array rather than per element.
+A statement's binds follow its placeholders (rule 4). SQL chooses each value's
+physical form: a direct typed column or typed document cast binds the managed value,
+and document text extraction binds the canonical comparison text `m-document-codec`
+supplies. Driver adaptation happens below this module, after semantic conversion: it
+cannot repair or reinterpret a managed value, and cannot alter what a statement
+reports.
 
-Where canonical compatibility projection needs declared-type information, the
-statement carries compact private metadata over that tuple:
+A statement reports its binds in canonical Wire (`m-conformance-adapter`), and never
+infers a `NeutralType` from a runtime carrier:
 
-```text
-BindForm = MANAGED | COMPARISON_TEXT
+- a managed value reports as `encodeWire` under the declared type of the member it
+  compares or stores;
+- comparison text reports as the canonical string it already is;
+- a document reports as that document;
+- an array bind reports as a JSON array of each element's report under the carrier's
+  element type, in order, with a null element as `null` and the open upper bound as
+  its canonical literal;
+- a framework bind whose driver form differs from its Wire form, such as a
+  dialect-specific temporal sentinel, reports its canonical Wire literal;
+- a structural bind with no declared type — a path segment, a discriminator tag, a
+  row cap — that is already an ordinary Wire Value reports as itself.
 
-TypedBindSpan(start, stop, declaredType, form)
-RepeatedTypedBindSpan(start, width, stride, repetitions, declaredType, form)
-WireBindOverride(index, canonicalWireValue)
-```
-
-`start` is inclusive and `stop` is exclusive. An ordinary span covers one
-contiguous run of typed-literal binds with equal declared type and form; equal
-adjacent runs coalesce across Predicate origins. A structural, path,
-discriminator, guard, document, or framework bind creates a gap. A type or form
-change starts another span even when the adjacent Python carriers compare equal.
-
-A fixed heterogeneous bulk-row shape records one repeated descriptor per maximal
-equal type/form run in one row. Increasing row count increases binds but not the
-number of descriptors. Repeated descriptors are never expanded while fragments
-are appended; fragment composition offsets and validates their ranges and keeps
-ordinary-span coalescing linear in descriptor count.
-
-Sparse overrides cover framework binds whose driver form and canonical Wire form
-differ, such as a dialect-specific temporal sentinel. Ordinary structural Wire
-values require no override. The database adapter ignores all span and override
-metadata.
-
-The statement's canonical bind-projection operation walks the compact metadata,
-calls `encodeWire` only for `MANAGED` spans, emits `COMPARISON_TEXT` values as
-the already-canonical Wire strings they represent, applies sparse overrides, and
-unwraps document values. Span metadata covers scalar binds only. An array
-carrier projects as a JSON array of each element's `encodeWire` under the
-carrier's own element type, in order, with a null element as `null` and the open
-upper bound as its canonical literal. It never infers a `NeutralType` from a
-runtime carrier.
-An unannotated bind in a publicly constructible statement may pass through only
-when it is already an ordinary Wire Value, a `StructuredDocument`, or an array
-carrier; any other carrier is a SQL-generation error rather than a guessed
+A carrier with no such report is a SQL-generation error rather than a guessed
 encoding.
 
 The core does **not** mandate *how* an implementation produces SQL (a language
@@ -126,9 +99,10 @@ makes the comparison deterministic and language-neutral. The rules:
    [offset …]`. The optimizer-fence form is the only read that emits `offset`:
    its dialect-owned fenced branch ends in the literal clause `offset 0`.
 
-The normative implementation of these rules is
-`reference-harness/src/reference_harness/sql_normalize.py` (sqlglot-based). A
-golden statement's `sql` text is valid only if `normalize(sql) == sql` — i.e. the
+These rules are normative;
+`reference-harness/src/reference_harness/sql_normalize.py` is the comparator every
+runner applies, and where its behavior and these rules disagree the disagreement is
+resolved explicitly. A golden statement's `sql` text is valid only if `normalize(sql) == sql` — i.e. the
 stored form is already a fixed point of normalization. The harness asserts this
 per case (`m-case-format`, layer 3).
 
@@ -200,11 +174,8 @@ a proper subset of the derived list. The `orderBy` and `limit` clauses never
 change the list.
 
 Inheritance first resolves the target and every narrowing to one canonical
-effective concrete-Entity sequence. `StorageLayoutFacet.position(...)` then
-supplies one logical contributor sequence and one slot-or-absence mapping per
-physical Table. A concrete or standalone read may use the corresponding Entity
-view directly. SQL never walks ancestry, merges a whole shared Table, or orders
-physical declarations itself.
+effective concrete-Entity sequence, which fixes one logical contributor order and,
+for each physical Table, the contributors that Table supplies (`m-storage-layout`).
 
 For each physical branch, SQL selects from the layout values as follows:
 
@@ -239,16 +210,11 @@ For each physical branch, SQL selects from the layout values as follows:
    retains the raw document (`m-write-plan`), and an owner declaring no
    document-resident member still holds whatever keys a newer application version
    wrote. The
-   Structured Column is never a result field: the row transform unwraps a
-   `StructuredDocument` and passes its document to `m-document-codec`'s
-   Entity-member locator, then fans the classified
-   inputs out into the requested logical members — none, where the read requested
-   none — and the raw value is not among them. The fan-out references the
-   concrete Entity's complete storage-owned resident shape and separately retains
-   only the selected result-key-to-path pairs plus family padding; it never builds
-   a selected-only shape. A document-resident top-level Value
-   Object and the direct slot in step 3 therefore reach the same located-member
-   classifier before either can create its occurrence cursor.
+   Structured Column is never a result field: a row's requested logical members —
+   none, where the read requested none — are classified from its document through
+   `m-document-codec`'s Entity-member locator, and the raw value is not among them.
+   A document-resident top-level Value Object and the direct slot in step 3 receive
+   the same located-member classification.
 
 Within one Table, selected physical slots retain `TableLayout.columns` order:
 `Identity`, `Discriminator`, `Domain`, `Temporal`, `Audit`, then `Document`, with
@@ -257,8 +223,8 @@ table-per-concrete-subtype union uses the Position Layout's one logical
 contributor sequence and aligns each branch through its slot-or-absence map.
 Duplicate removal is by structural contributor identity, never by a Column or
 result-key spelling. Per-type rendering seams — the `bytes`
-`encode(t0.payload, ?) payload_hex` form or reserved-word quoting
-`t0."order"` — render a selected slot without changing its position.
+`encode(t0.payload, ?) payload_hex` form (`m-dialect` *Bytes cell*) or reserved-word
+quoting `t0."order"` — render a selected slot without changing its position.
 
 ### Document read pair
 
@@ -276,19 +242,17 @@ null` spelling is the canonical normalizer form of `is not null` on both current
 dialects. Repeating the slot expression is required: no driver-decoded value may
 stand in for the SQL-level discriminator.
 
-The compiled read records each pair as adjacent zero-based projection ordinals
-`(presence, document)` in slot order. Those ordinals are execution metadata, not
-result aliases or observable result fields. A branch that has no applicable
-Document contributor projects `false` at the presence ordinal and the existing
-typed `NULL` placeholder at the document ordinal. The pair occupies the
-Document contributor's one position in layout ordering; the presence cell does
-not become a second logical contributor.
+Pairs appear in slot order. The presence cell is execution metadata, not a result
+alias or an observable result field. A branch that has no applicable Document
+contributor projects `false` as its presence cell and the existing typed `NULL`
+placeholder as its document cell. The pair occupies the Document contributor's one
+position in layout ordering; the presence cell does not become a second logical
+contributor.
 
-The database port consumes those ordinal pairs and replaces each pair with one
-`m-core` `DocumentRead` under the document cell's ordinary result key, removing
-the discriminator cell. Consequently no row transform sees a provider value for
-a document slot, and neither SQL `NULL` nor JSON null is inferred from a
-host-language null sentinel. The row transform receives `SqlNull` or
+Each pair crosses the port as one `m-core` `DocumentRead` under the document cell's
+ordinary result key, with the presence cell gone (`m-db-port`). Consequently no row
+transform sees a provider value for a document slot, and neither SQL `NULL` nor JSON
+null is inferred from a host-language null sentinel. The row transform receives `SqlNull` or
 `StructuredDocument(document)`, retains the latter's document unchanged when it is
 an observation carrier, and sends the same tagged input to classified
 materialization when the slot is a logical occurrence carrier.
@@ -319,24 +283,17 @@ Temporal slots and are projected automatically.
 
 ## Physical DML ordering
 
-Physical DML obtains its target Table and complete slot order from the concrete
-Entity's `EntityLayoutView`. An `INSERT` filters that table-ordered sequence to
-the caller-present and framework-derived cells. An `UPDATE` filters it to the
-present assignable cells after excluding semantic keys and gates from the `set`
-clause. Batch grouping compares those resulting ordered slot selections; it
-does not reconstruct order from the payload mapping.
+An `INSERT` lists the caller-present and framework-derived cells, and an `UPDATE`
+the present assignable cells after excluding semantic keys and gates from the `set`
+clause, each in the concrete Entity's complete Table slot order (`m-storage-layout`).
 
-Accepted Storage Layout ownership guarantees that this view belongs to exactly
-one standalone mapping, one complete TPH family, or one TPCS concrete mapping.
+Accepted Storage Layout ownership guarantees that a concrete Entity's Table belongs
+to exactly one standalone mapping, one complete TPH family, or one TPCS concrete mapping.
 Its physical primary key therefore contains only that owner's model-key and
 temporal-end slots: DML never targets a layout whose key combines independent
 Entity mappings that can supply only disjoint subsets.
 
-The layout supplies physical lookup, not operation semantics. Model primary-key
-Attributes, a TPH discriminator assignment, an optimistic observation, and
-temporal start/end Attributes are selected for their operation-specific roles by
-their owning modules, then mapped through layout contributor lookups. The
-predicate order and bind order specified by each DML template below remain
+The predicate order and bind order specified by each DML template below remain
 normative even when they differ from complete table order. `familyVariant`, SQL
 aliases, and typed `NULL` expressions never become DML slots.
 
@@ -448,9 +405,8 @@ placeholder and bind per value. A list is never empty (`m-predicate`); no dialec
 one, since `not t0.col = any(…)` over an empty array is true even for a null
 subject, which `notIn` excludes.
 
-A framework-generated child-level membership carries a **deferred key set**
-rather than an authored list. Its statement is compiled once with one template
-hole and rendered when the distinct parent keys are known. Postgres renders
+A framework-generated child-level membership binds the distinct parent keys the
+level gathered, its **deferred key set**. Postgres renders
 `t0.col = any(cast(? as <type>[]))` and binds the complete key set as one array
 carrier of the key's declared type; its SQL text and bind arity are therefore
 constant across pages. The cast names the key's own type through the
@@ -463,8 +419,8 @@ membership list.
 
 ### Normalization notes (the surprising fixed points)
 
-The `m-sql` normalizer is the arbiter of canonical form, and three of its outputs
-are worth calling out because the golden SQL must match them exactly:
+Three of the `m-sql` normalizer's outputs are worth calling out because the golden
+SQL must match them exactly:
 
 1. **`is not null` → `not t0.col is null`.** The negation normalizes to a leading
    `not`; golden SQL for `isNotNull` is stored in that form.
@@ -496,19 +452,17 @@ over a **non-nullable** attribute lowers to the plain `t0.col [asc|desc]` term
 under either Null Placement — the placements denote the same order there, so
 neither dialect compensates. A key over a **nullable** attribute delegates its
 whole term to the `m-dialect` Null Placement seam, which owns both the suffix form
-and the leading-rank-term form; the emitter joins the returned terms and never
-composes the placement itself. The canonical Postgres terms are `t0.col asc`,
+and the leading-rank-term form. The canonical Postgres terms are `t0.col asc`,
 `t0.col asc nulls first`, `t0.col desc nulls last`, and `t0.col desc` for
 `asc`/`last`, `asc`/`first`, `desc`/`last`, and `desc`/`first` respectively;
 `m-dialect`'s table is normative for every dialect.
 
 ### Continuation coordinates — capture, seek, rebind
 
-A read carrying a **paging state** (`m-object-query`) is one page of a streamed
-delivery, and lowers three things from ONE resolution RULE for each Continuation
-Order term: the `order by` term itself, a hidden result cell capturing what that
-term evaluated to, and — where the paging state carries a seek — the comparisons
-the next page admits roots through. All three MUST resolve the term the same way,
+A page of a streamed delivery (`m-read-delivery`) lowers three things from ONE
+resolution RULE for each Continuation Order term: the `order by` term itself, a
+hidden result cell capturing what that term evaluated to, and — on a continuing page
+— the comparisons the next page admits roots through. All three MUST resolve the term the same way,
 which for a document-resident member means the same expression emitted again with
 its own path binds rather than one expression reused. Deriving them independently
 makes their agreement a coincidence of construction, and a coordinate that differs
@@ -544,14 +498,12 @@ whose branches already rendered it into that alias is named and compared as the
 alias carries it, a `bytes` member being the hex-encoded TEXT the branches
 projected rather than the `bytea` column no branch yields.
 
-A cell's value crosses the port as an ordinary scalar result under the name the
-compiler chose. Nothing decodes it, admits it as a managed value, or lets it reach
-a result form: the materializing consumer lifts it off the row by name, exactly as
-the inheritance discriminator is lifted, and carries it as the read's
-`ContinuationCoordinate`. Byte-like carriers are copied at capture, so a coordinate
-never holds a buffer the provider still owns.
+A capture cell is not a result member. It is not decoded, admitted as a managed
+value, or published in any result form, so a coordinate holds exactly what the
+ordering expression evaluated to, and it remains usable after the page's connection
+is released (`m-read-delivery`).
 
-**Seek.** A paging state's `ResolvedSeek` lowers to the lexicographic branch tree,
+**Seek.** A continuing page's seek lowers to the lexicographic branch tree,
 conjoined after the caller's own predicate:
 
 ```text
@@ -638,7 +590,7 @@ literal — the form a written temporal row already binds it in.
 
 **A coordinate bind's reported form is that same split, and it is total over every
 carrier a delivery can reach.** A statement reports its binds in canonical Wire
-(*Driver binds and canonical Wire projection*), and a carrier is reportable
+(*Binds and their canonical report*), and a carrier is reportable
 exactly where the form it was bound in already answers one: a comparison-text
 bind reports the extracted text as it stands, and a managed bind reports the canonical Wire rendering of a value the
 declared type admits. Both hold for storage the model contradicts, which is the
@@ -1393,16 +1345,12 @@ statement, after any `where`):
   binds: [<pk>]
 ```
 
-> **The lock-clause keywords are lowercased like any other keyword.** sqlglot
-> tokenizes `SHARE` and `OF` as value tokens (not keyword tokens) and its
-> generator emits them uppercase, but the `m-sql` normalizer lowercases them
-> (rule 2), so the canonical golden SQL is `… for share of t0`. Golden SQL is
-> stored in that fully-lowercase form and passes the layer-3 idempotence check.
+> Lock-clause keywords are lowercased like any other keyword (rule 2), so the
+> canonical golden SQL is `… for share of t0`.
 
 For **MariaDB** the same in-transaction read appends `lock in share mode` instead
 (MariaDB has no `for share`; `m-dialect`). It is the canonical fixed point for the
-MariaDB dialect — the normalizer renders it through the seam, not through
-sqlglot's MySQL generator (which would rewrite it to `for share`):
+MariaDB dialect:
 
 ```yaml
 - sql:
@@ -2483,9 +2431,8 @@ form.
 interchangeable.** A text comparison binds the type's **comparison text**
 (`m-document-codec`) — the characters the extraction itself returns, which for
 those six spellings is the stored text unquoted. A cast comparison binds the
-**managed value in its declared Neutral Type**, through the dialect's typed bind
-normalization (`m-dialect`), because the cast has already moved the comparison into
-the engine's own type system. Neither side may substitute the member's document
+**managed value in its declared Neutral Type**, because the cast has already moved
+the comparison into the engine's own type system. Neither side may substitute the member's document
 encoding for the other's answer:
 
 - a `decimal(p, s)` member encodes as an exact digit string, so there is no
@@ -2560,14 +2507,6 @@ warning rather than an error under every `SQL_MODE`, so the same query returns a
 **silently coerced** value instead of raising. One engine's hard error and the
 other's wrong answer are not a portable contract, which is why the guard is a
 statement-shape rule rather than an expression-shape rule.
-
-This reuses machinery that already exists. A subtype-declared member can never be
-referenced without a compatible narrowing scope (the query's `narrowTo`,
-`m-object-query`, or a Predicate-scoped `narrow`, `m-predicate`), so every legal
-subtype-specific predicate already carries a resolved variant position and a tag
-fragment; table-per-concrete-subtype reads are already a per-branch `union all`
-with a fresh context per branch. Partitioning applies that same fan-out at a
-finer granularity.
 
 A **broad polymorphic read** resolves the variant tag first and decodes only that
 variant's applicable document shape, so projection needs no partitioning: the

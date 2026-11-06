@@ -39,6 +39,9 @@ paths are class-derived `IncludePath` values with no authored depth limit, and a
 relationship's `.narrow(...)` returns an `IncludePath` that authors no
 predicate. Sorting uses attribute expressions and direction/null-placement
 modifiers. `limit` requires a positive exact built-in integer, excluding `bool`.
+`limit`, `narrow`, and a selection for one Temporal Dimension are single-shot: a
+second assignment is refused rather than replacing the first. `order_by` and
+`include` accumulate.
 
 A member's class access answers the expression of its kind and multiplicity.
 Scalar collections, `many` Value Objects, and to-many relationships offer

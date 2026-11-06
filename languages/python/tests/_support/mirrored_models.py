@@ -718,6 +718,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "`account` already proves"
         ),
         "buffered-sequence-layout-twin-columns": _BUFFERED_SEQUENCE_TWIN,
+        "bytes-cell": (
+            "no mirror authored; its one `bytes` Attribute is the mapping the mirrored "
+            "`scalars` family already declares, and what it adds is a stored value that "
+            "spells hexadecimal letters"
+        ),
         "composed-beast-document-provisioning": _PROVISIONING_ONLY,
         "composed-beast-provisioning": _PROVISIONING_ONLY,
         "buffered-sequence-layout-twin-document": _BUFFERED_SEQUENCE_TWIN,

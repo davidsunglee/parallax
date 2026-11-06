@@ -1,6 +1,8 @@
-"""sqlglot-based implementation of the m-sql canonical SQL normalization rules.
+"""The comparator every runner applies for the m-sql canonical SQL normalization rules.
 
-The normative rules (m-sql, ``core/spec/m-sql.md``):
+The rules are normative and this sqlglot-based code is the shared comparator, so
+where its behavior and the rules disagree the disagreement is resolved explicitly.
+The rules (m-sql, ``core/spec/m-sql.md``):
 
 1. Table-alias scheme ``t0, t1, …`` assigned in **source order** (the left-to-right
    textual order table sources first appear, reading the statement as written —

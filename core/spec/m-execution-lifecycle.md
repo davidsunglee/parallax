@@ -412,17 +412,9 @@ native chaining mechanism. Rollback failure never retries and requires the
 uncertain connection to be discarded, even when the triggering failure was
 retry-eligible.
 
-The database port reports one closed ephemeral transaction-boundary outcome:
-
-```text
-Committed(value)
-BeginFailed(error)
-RolledBack(CallbackRaised(error) | CommitFailed(error))
-RollbackFailed(CallbackRaised(error) | CommitFailed(error), rollbackError)
-```
-
-Composition consumes this outcome immediately to drive lifecycle events and
-public control flow. It is neither a public transaction return value nor
+The database port reports one closed ephemeral transaction-boundary outcome
+(`m-db-port`). Composition consumes this outcome immediately to drive lifecycle
+events and public control flow. It is neither a public transaction return value nor
 retained provenance. A transaction invocation returns the callback's value
 directly only after outer commit; a joined invocation returns the nested
 callback's value inside the still-active outer transaction.

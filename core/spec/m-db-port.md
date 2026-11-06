@@ -9,15 +9,20 @@ and on `m-dialect`, whose value it exposes. It is the one **contract-covered** m
 maps to it; the port is proven by each language's
 [database-provider test contract](database-provider-test-contract.md).
 
+The operations and outcome values below name behaviors and the distinctions an
+adapter must preserve. A language spells them in its own public port; parameter
+lists, whether an outcome is returned or raised, and how a compiled statement is
+passed are that language's decisions.
+
 ## The port contract
 
 The port names a
 `dialect` /
-`execute(sql, binds, documentReads, readOnly?) → rows` /
-`executePipeline(statements, readOnly?) → row batches` /
-`executeWrite(sql, binds) → affected-row count` /
-optional `orderedWriteTransport(statements) → ordered write result` /
-`transaction(body, isolation?, accessMode?)` contract and nothing more. `execute` and
+`execute` → rows /
+`executePipeline` → row batches /
+`executeWrite` → affected-row count /
+optional `orderedWriteTransport` → ordered write result /
+`transaction` contract. `execute` and
 `executePipeline` are row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
@@ -29,20 +34,22 @@ it returns a read's. The distinction is the result's shape, not the statement's
 verb: the rows are the statement's answer, never its affected-row count, and
 interpreting them is the caller's (`m-unit-work`). An adapter closes the result
 before returning and translates a failing statement as it translates any other.
-`documentReads` is the compiled read's ordered sequence of adjacent zero-based
-projection ordinal pairs `(presence, document)`; it is empty for a result with no
-selected Structured Column. It carries no model, member, layout, or driver type.
+A selected structured document crosses as one managed `DocumentRead`, decided by the
+SQL presence cell `m-sql` projects and never by a driver's null sentinel; the
+presence cell is not a result cell, and no consumer reconstructs the tag from a raw
+document value. A presence cell that is not that SQL boolean is an
+implementation-contract violation, not stored-data classification.
 
 Every returned row is **positional**, with one managed cell in the statement's
-select-list order after each `documentReads` pair has been folded. Column names
+select-list order after each document pair has been folded. Column names
 and driver row mappings do not cross the port. The compiled statement owns the
 corresponding result keys; a name-keyed consumer MAY expose a Mapping view over
 those keys and the positional row, but MUST NOT construct a dictionary per row.
 
-A structured-document bind crosses the port as `m-core`'s `StructuredDocument`,
-holding an already portable codec document, including the recognized recursively
-immutable object and array carriers `m-core` admits. A concrete adapter serializes
-that document directly through its driver's structured-document binding mechanism.
+A structured-document bind holds an already portable codec document, including the
+recognized recursively immutable object and array carriers `m-core` admits. A
+concrete adapter serializes that document directly through its driver's
+structured-document binding mechanism.
 It MUST NOT first thaw or recursively copy an immutable document into mutable
 containers, and it MUST NOT interpret model shape or leaf meaning. Its JSON text is
 `m-wire`'s `dumpDocument` of the document, so every number is stored with the exact meaning
@@ -62,7 +69,7 @@ text spellings for the cast to type on the server. Ownership of the element
 sequence passes to the statement; the caller does not mutate it afterwards.
 
 `executePipeline` takes an ordered sequence of independent row-returning
-statements, each carrying its own SQL, binds, and `documentReads`, and returns
+statements, each carrying its own SQL, binds, and document pairs, and returns
 one row batch per statement in the same order. A conforming implementation sends
 the sequence in one transport round trip. The statements share no result state:
 each is fetched through its own cursor/result handle, and one statement's rows
@@ -99,10 +106,12 @@ types its contract names, and the driver-free `m-dialect` value it exposes) — 
 driver, no concrete database, no harness — so any layer may hold the port without
 acquiring a database dependency. It carries the
 **normalize-at-boundary contract**: an adapter behind it returns rows whose cells
-are already **managed values** (produced by the `m-dialect` layer's parse
-functions), never raw driver representations. Nothing above the seam ever sees a
-driver's `Date`, a binary-float `numeric`, a raw byte buffer, or a raw
-structured-document value. `executeWrite`
+are already **managed values**, never raw driver representations. Nothing above the
+seam ever sees a driver's `Date`, a binary-float `numeric`, a raw byte buffer, or a
+raw structured-document value. A `bytes` cell is the one exception: the port carries
+no per-cell type, so an adapter cannot tell it from a string, and it crosses as the
+projected hexadecimal text (`m-dialect` *Bytes cell*) that code above the port
+decodes. A caller always receives decoded bytes. `executeWrite`
 returns the concrete driver's native affected-row count and no rows; whether that
 count includes rows an `UPDATE` matched and left unchanged is the dialect's
 declared fact (`m-dialect` *Unchanged-row count*), and an adapter reports counts
@@ -111,8 +120,8 @@ mode for that meaning, every connection the adapter opens establishes it, and th
 count is the configured driver's own result: an adapter never adjusts, recovers,
 or recomputes it.
 
-`transaction(body)` returns one closed, ephemeral boundary outcome rather than
-raising away which boundary failed:
+`transaction` reports one closed, ephemeral boundary outcome, so which boundary
+failed is never lost:
 
 ```text
 Committed(value)
@@ -270,14 +279,6 @@ resource-free context source; it performs no I/O and acquires nothing. A
 provider-invalid authorization is refused at binding. Each context the source
 creates is fresh and carries that binding through exactly one acquisition.
 
-```text
-runtime.routes                                   → Route -> RouteCapabilities
-runtime.loginSource()                            → ConnectionContextSource
-runtime.principalSource(authorization)           → ConnectionContextSource | InvalidAuthorization
-source.newContext(policy)                        → ConnectionContext
-context.selection                                → RouteSelection(route, fallback?) | absent
-```
-
 The runtime has no direct context-producing operation. Selection of login or
 principal authority is therefore explicit before any context can be created.
 
@@ -306,18 +307,19 @@ acquisition*, below), so the selection is stable once the lease's setup has
 ended — at entry for every other lease, and once the outer boundary has opened
 or failed for a transaction attempt's. Nothing modeled runs before then.
 
-**A preferred acquisition tries the reader within half its budget.** Every
+**A preferred acquisition tries the reader within a share of its budget.** Every
 acquisition has ONE absolute budget. A `reader-only` or `writer-only` one spends
-all of it on its route. A `reader-preferred` one gives the reader at most half,
-measured from the acquisition's start, and the writer whatever remains of the
-whole: every reader setup phase — checkout, admission, a pending reader's proof,
+all of it on its route. A `reader-preferred` one gives the reader a share its
+language states, never the whole and never so much that the writer is left no real
+part of the budget to serve the fallback, measured from the acquisition's start,
+and the writer whatever remains of the whole: every reader setup phase — checkout, admission, a pending reader's proof,
 authorization setup, and the outer boundary's opening — spends that same
 budget, and nothing earns a fresh allowance. It moves to the writer for exactly
 two reasons, both before any callback or modeled statement runs:
 
 - **unavailable** — the reader could not be reached: its checkout failed as
   *unavailable* (below), or the reader is already known to be unreachable and
-  another acquisition is the one probing it;
+  this acquisition is not the one trying it;
 - **connection-lost** — the connection the reader handed over was lost at the
   lease's first submission while that submission was setup — a pending reader's
   proof, authorization setup, or the outer boundary — and the replacement rule
@@ -326,7 +328,7 @@ two reasons, both before any callback or modeled statement runs:
   connection is disposed of first; a disposal that was not established ends the
   acquisition rather than licensing the move.
 
-Nothing else moves it: a spent half with no failure on record, a full queue, a
+Nothing else moves it: a spent share with no failure on record, a full queue, a
 closed runtime, a credential, authentication, or authorization refusal, a
 reader `refused` at verification, any other preparation failure, and a loss
 after the lease's first submission each end the acquisition on the reader. A
@@ -337,16 +339,14 @@ setup there is no longer the lease's first submission, so it earns no
 replacement of its own.
 
 A reader known to be unreachable — its latest establishment outcome is that it
-could not be reached, and it holds no idle connection that could serve
-regardless — is tried again only on demand: one preferred acquisition at a time
-holds its **probe slot** and checks out within its half, and every other
-preferred acquisition moves to the writer at once without waiting on the
-reader. The holder's own spent half is *unavailable* only under the same
-evidence rule as any wait's; outage known before the wait does not explain it.
-Any connection the route hands over ends that knowledge. No route is skipped for
-good and nothing probes in the background, so a `reader-only` acquisition
-always waits on the reader for its whole budget and recovers as soon as the
-reader does.
+could not be reached (*Acquisition and readiness failures*), and it holds no idle
+connection that could serve regardless — delays at most one preferred acquisition
+at a time: that one tries it within its share of the budget, and every other moves
+to the writer at once without waiting on the reader. The share it spends is
+*unavailable* only under the same evidence rule as any wait's; outage known before
+the wait does not explain it. Any connection the route hands over ends that
+knowledge. No route is skipped for good, and a `reader-only` acquisition always
+waits on the reader for its whole budget and recovers as soon as the reader does.
 
 **A runtime is ready or it is not.** Opening returns only a runtime that has
 proved it can execute: waiting for retained capacity, where a mode retains any,
@@ -639,18 +639,7 @@ fixes the mode (`m-execution` *Read-only transactions*), so every attempt asks
 for `read-only` or `read-write` explicitly, and a writable transaction cannot
 inherit a read-only default.
 
-For each `documentReads` pair, the adapter reads both cells before building the
-managed row. The presence ordinal MUST immediately precede the document ordinal
-and MUST hold the SQL boolean projected by `m-sql`; malformed or overlapping
-pairs are an implementation-contract violation, not stored-data classification.
-The adapter passes the pair to its dialect's document-read parser, omits the
-presence cell from the managed row, and places the resulting provider-neutral
-`m-core` `DocumentRead` at the document cell's position in the folded result. Thus one
-managed row value is either `SqlNull` or `StructuredDocument(document)`, and SQL
-`NULL` remains distinct from `StructuredDocument(document: JSON null)` even when the
-driver used one host sentinel for both raw values. No consumer may reconstruct
-the tag from the raw document cell after the adapter boundary. A freshly parsed
-document transfers to the read consumer as owned input; the adapter does not
+A freshly parsed document transfers to the read consumer as owned input; the adapter does not
 freeze every ordinary read. A predecessor or evidence owner MAY retain the
 transferred document by reference while no public path reaches it, and makes it
 recursively immutable before it crosses the port again as a bind.
@@ -721,27 +710,22 @@ opposite values of it. Repeatable Read forbids the lost update only with it on.
 Read Committed needs it off: with it on, a write that waited on a row another
 transaction changed is refused with `1020` against the statement's read view
 instead of proceeding against that row's committed version, a snapshot conflict
-the level does not call for. For those two levels that is four obligations per
-**physical attempt**:
+the level does not call for.
 
-1. read and save the session's current `innodb_snapshot_isolation`;
-2. set it before the attempt — `ON` for Repeatable Read, `OFF` for Read
-   Committed — whatever the server defaults to, and never for Serializable, whose
-   shared locking reads and range protection forbid the lost update without it;
-3. restore the saved value after the attempt commits or rolls back;
-4. repeat both for every retry attempt.
-
-An access mode set as session state rather than for the transaction alone is
-owned the same way: saved before the attempt, applied, and restored after it
-commits or rolls back.
+For those two levels the session holds `ON` for Repeatable Read and `OFF` for Read
+Committed for the whole of every **physical attempt**, whatever the server defaults
+to, and Serializable, whose shared locking reads and range protection forbid the lost
+update without it, never sets it. Session state a mapping changes, for the level or
+for an access mode, does not outlive the attempt: whatever next uses the connection
+observes the state it would have observed had the attempt not run.
 
 Session setup that fails before the callback — for the level or for the access
 mode — **fails the boundary**: the callback does not run, and the outcome is a
-boundary that never opened. Restoration that
-fails after commit or rollback **preserves the outcome already reached** — the
-work committed or did not, and a failed restore does not change that — and
-**discards the connection** rather than returning it, since what it would run
-next would run under session state nothing states.
+boundary that never opened. Restoration, where an adapter performs one, that fails
+after commit or rollback **preserves the outcome already reached** — the work
+committed or did not, and a failed restore does not change that — and **discards
+the connection** rather than returning it, since what it would run next would run
+under session state nothing states.
 
 ### Adapter profile — nonportable, per engine
 
@@ -826,9 +810,9 @@ object and comparing the collected errors by identity.
 Each adapter implements the port over exactly one driver. Its only Parallax
 dependencies are the port and the pure dialect layer (`m-dialect`), and its only
 database-specific external runtime dependency is that driver. It owns driver
-setup and registration (which type codes to read as raw text, connection/pool
-acquisition) and delegates every parse decision to the dialect layer, so parse
-logic is never duplicated across adapters. Adding a database type is a **new
+setup, connection and pool acquisition, and the conversion of driver results into
+managed values under the `m-dialect` rules for that database. Adding a database
+type is a **new
 independently deployable adapter artifact and source enforcement scope**, not a
 new behavioral-module node or a change to the port, dialect layer, or anything
 above the seam. Which production manifests may declare that driver is fixed by
@@ -855,7 +839,8 @@ The normalize-at-boundary contract fixes **where** a raw database value becomes 
 first-class typed value: at the adapter boundary, **once**. An adapter returns
 positional rows of **managed** scalars — the language's exact-decimal type, big-integer type,
 UTC-instant type, byte-array type — so every consumer above the seam reasons in
-managed types and none re-parses driver text.
+managed types and none re-parses driver text. A `bytes` cell alone is decoded above
+the seam, as *The port contract* states.
 
 The compatibility harness (`m-case-format`) grades in a **different** domain and
 must not be conflated with the runtime path. Its result envelope holds canonical Wire
@@ -894,8 +879,8 @@ depend on any adapter; an engine-specific surface of it MAY depend on that one
 concrete adapter, because what such a surface produces is that adapter's
 configuration rather than a runtime layer above the seam.
 
-A **concrete dialect strategy** — one database's pure SQL strings and parse
-functions — is a **different thing** from a **concrete adapter** — that database's
+A **concrete dialect strategy** — one database's pure SQL strings and rules — is a
+**different thing** from a **concrete adapter** — that database's
 driver-bound port implementation — even though both are per-database. Only the
 adapter carries a driver. The concrete dialect strategies MAY ship as a single
 catalog or be split one pure module per database; either way they stay

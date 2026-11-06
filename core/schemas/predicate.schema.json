@@ -6,7 +6,7 @@
   "$ref": "#/$defs/predicate",
   "$defs": {
     "literal": {
-      "description": "A non-null serialized typed literal. After the subject resolves, model-aware elaboration decodes it exactly once with m-wire against the resolved NeutralType; null tests use dedicated predicate nodes. The schema intentionally does not duplicate per-type literal grammar.",
+      "description": "A non-null serialized typed literal. After the subject resolves, model-aware elaboration decodes it with m-wire against the resolved NeutralType; null tests use dedicated predicate nodes. The schema intentionally does not duplicate per-type literal grammar.",
       "type": [
         "string",
         "number",

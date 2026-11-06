@@ -300,6 +300,26 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
     assert invalid.member(payload.identity) is ABSENT
 
 
+@pytest.mark.parametrize("cell", ["0A1B", "0a1B"])
+def test_a_bytes_cell_decodes_in_either_case(cell: str) -> None:
+    # The cell is a dialect's spelling, not Wire text: MariaDB's `hex()` answers
+    # uppercase, which Wire refuses as noncanonical.
+    identity = identity_of(SCALARS, "ScalarThing")
+    entity = SCALARS.entity(identity)
+    assert entity is not None
+    payload = entity.attribute("payload")
+    assert payload is not None
+    node = _converted(SCALARS, "ScalarThing", {**_SCALAR_THING, "payload_hex": cell})
+    assert node.issues == ()
+    assert node.member(payload.identity) == b"\x0a\x1b"
+
+
+@pytest.mark.parametrize("cell", ["0a 1b", "0a1", "0a1g"])
+def test_a_bytes_cell_spelling_no_octets_is_undecodable(cell: str) -> None:
+    invalid = _converted(SCALARS, "ScalarThing", {**_SCALAR_THING, "payload_hex": cell})
+    assert [issue.code for issue in invalid.issues] == ["stored-data-leaf-undecodable"]
+
+
 def test_a_sibling_column_and_the_family_tag_contribute_nothing() -> None:
     # A table-per-hierarchy row arrives null-padded with every sibling's own
     # columns, and its tag names the resolved concrete rather than a member.

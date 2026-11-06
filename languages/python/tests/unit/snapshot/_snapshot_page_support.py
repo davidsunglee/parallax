@@ -37,6 +37,7 @@ from parallax.core.base import (
     StructuredDocument,
     check_stored_scalar,
 )
+from parallax.core.dialect import decode_bytes_cell
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
@@ -155,7 +156,7 @@ class ConversionCalls:
 
 @contextmanager
 def recorded_conversion_dependencies() -> Generator[ConversionCalls]:
-    """Record every wire decode and scalar admission conversion reaches, each
+    """Record every cell decode and scalar admission conversion reaches, each
     delegating to the original, patched only where the conversion module looks
     them up — document classification's own use of the wire codec is untouched."""
     calls = ConversionCalls()
@@ -163,6 +164,10 @@ def recorded_conversion_dependencies() -> Generator[ConversionCalls]:
     def decoding(declared: NeutralType, raw: WireValue) -> object:
         calls.decoded.append(raw)
         return decode_canonical_wire(declared, raw)
+
+    def decoding_bytes(cell: object) -> object:
+        calls.decoded.append(cell)
+        return decode_bytes_cell(cell)
 
     def admitting(
         value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
@@ -172,6 +177,7 @@ def recorded_conversion_dependencies() -> Generator[ConversionCalls]:
 
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(_convert, "decode_canonical_wire", decoding)
+        patched.setattr(_convert, "decode_bytes_cell", decoding_bytes)
         patched.setattr(_convert, "check_stored_scalar", admitting)
         yield calls
 

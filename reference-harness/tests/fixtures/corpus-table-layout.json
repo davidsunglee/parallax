@@ -720,6 +720,35 @@
       ]
     }
   },
+  "models/bytes-cell.yaml": {
+    "bytes_cell": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.BytesCell"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.BytesCell.id",
+          "declaringOwner": "parallax.compatibility.BytesCell",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.BytesCell"
+          ],
+          "column": "payload",
+          "contributor": "attribute:parallax.compatibility.BytesCell.payload",
+          "declaringOwner": "parallax.compatibility.BytesCell",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/classification-transparency-layout-twin-columns.yaml": {
     "classification_twin": {
       "columns": [

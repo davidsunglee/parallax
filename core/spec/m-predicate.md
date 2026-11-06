@@ -43,15 +43,13 @@ decision behind the `m-sql` seam, not a core mandate.
 
 A Predicate is a tree of **nodes** with a **format-agnostic canonical
 serialization**. This serialized form is the suite's normative encoding — one
-source of truth so every implementation tests the same Predicate. Concrete
-encodings exist in at least **JSON and YAML** (a format-agnostic core plus
-pluggable writers); the format set is consistent with metamodel serde
-(`m-descriptor`).
+source of truth so every implementation tests the same Predicate. JSON and YAML
+are two spellings of that one document, and which text formats an implementation
+reads or writes itself is its own decision.
 
 Every implementation **MUST** provide Predicate serialization/deserialization
 behavior, with **round-trip** tests:
-`serialize(deserialize(op)) == op`. The reference harness asserts this per case,
-in both JSON and YAML. This behavior executes no predicate; its source
+`serialize(deserialize(op)) == op`. This behavior executes no predicate; its source
 ownership, enforcement scope, and deployable-artifact placement are
 language-owned under the topology rules in [`modules.md`](modules.md). Idiomatic
 per-language re-expressions of a query (fluent builders, etc.) are **illustrative
@@ -218,9 +216,8 @@ then compare the two managed values. A conversion failure therefore wins over
 `between-bounds-inverted`. Only a **strictly** greater lower bound is rejected;
 equal bounds name the single-value range and are legal.
 
-After resolving the subject, a resolver **MUST** call
-`m-wire.decodeWire(member.neutralType, literal)` exactly once per typed literal and
-retain only the managed result. Wire failures map to
+After resolving the subject, a resolver decodes each typed literal with
+`m-wire.decodeWire(member.neutralType, literal)`. Wire failures map to
 `neutral-literal-type-mismatch`, `neutral-literal-noncanonical`, or
 `neutral-literal-out-of-space`, with the canonical resolved member and literal
 location.
@@ -650,71 +647,20 @@ is fixed by `m-sql`.
 
 ## Semantic elaboration boundary
 
-Public Wire predicate nodes are untrusted serialized syntax. Predicate
-elaboration consumes that syntax plus the accepted model and returns one private
-immutable `ResolvedPredicate`: a closed union of Boolean constants and
-composition, scalar operations, subtype narrowing, quantifiers, and presence
-tests. It is the sole execution representation of a predicate,
-not a second public AST, and has no serialization contract. Construction is
-restricted to this module so illegal subject/operator/literal combinations are
-not representable downstream.
+Public Wire predicate nodes are untrusted serialized syntax. Elaboration against the
+accepted model happens before SQL generation (`m-object-query`). For each operation
+it resolves the subject and operator first and decodes a typed literal only then, so
+a subject or operator failure wins over a literal failure. It adds no existential
+scope a node did not author, and resolves a node at each semantic position it
+occupies. A `narrow` whose operand is the constant `true` is a bare subtype test.
 
-Each variant retains only its resolved facts, never its authored node. A scalar
-operation retains its operator, the exact resolved member it reads — an
-Attribute, or a Value Object leaf — the **position** it reads it at (the current
-object, a related object reached through to-one relationships, or the bound
-scalar element), and its complete managed operand shape: one value for
-comparison, two ordered bounds for `between`, or one managed tuple for membership
-rather than one wrapper per element. A string match retains its pattern text and
-whether it folds case, and a null check its member alone. A related position
-retains each resolved relationship direction, its target, both join endpoints,
-and, once `m-navigate` closes the predicate, the temporal perspective its
-candidates are visible under. Recursive variants retain
-resolved children, and no variant carries storage placement or precomputed SQL
-text. Reusing one authored node at
-two semantic positions creates two resolved occurrences; repeating one resolved
-occurrence across physical SQL branches reuses that occurrence.
-
-A quantifier retains its kind, the collection it ranges over — a scalar
-collection, a value-object occurrence, or a resolved relationship — the position
-that collection is read at, and its `where` resolved in the scope of the element
-it binds. A presence test retains its polarity, its single value-object occurrence
-or resolved relationship, its position, and for a relationship match its `where`
-resolved in the scope of the related Entity. A narrowing retains its accepted
-selection, the position it tests — the current object or a reached target — and
-its operand resolved there, or no operand for subtype membership alone; the
-constant `true` operand elaborates to that same absent operand. Elaboration never
-manufactures an existential scope a node did not author.
-
-Elaboration dispatches exhaustively over the closed authored union. For each
-typed literal it resolves the subject and operator first, calls
-`m-wire.decodeWire` exactly once, and stores the managed result. It never mutates
-the authored node. A new authored variant therefore requires both an elaboration
-arm and a lowering arm rather than falling through a default.
-
-This module also owns private generated-term operations. A generated scalar term
-receives an exact resolved Attribute and managed value, checks managed
-membership, and adopts the value directly in a resolved comparison; a framework
-sentinel such as the `m-core` infinity bound is adopted as a framework operand
-instead. Generated membership adopts one already-owned managed tuple, or a
-deferred key set bound after compilation. Neither operation encodes or decodes a
-literal. Consumers compose and rewrite only already-resolved occurrences; none
-resolves a member or admits an operand again.
-
-`m-object-query` stores this elaborated product. `m-sql` and `m-read-planning`
-compile it without resolving paths, inferring types, decoding literals, or
-repeating validation. Programmatic fluent predicates instead use
-`m-core.coerceNeutralInput` followed by managed membership and retain their
-language-owned type mismatch behavior; they do not expose Wire failure names.
-
-A language frontend may hand elaboration its own authored predicate rather than
-a canonical node. An adapter for that input resolves each subject to its
-canonical spelling and supplies managed operands, and elaboration applies the
-same subject, operator, quantifier, and narrowing rules to it at the same stage,
-so both inputs converge on one `ResolvedPredicate`. An operand the frontend
-already prepared under a declared neutral type is adopted only where the resolved
-member declares that identical type, Decimal precision and scale and float width
-included; it is never normalized again for another type.
+A language frontend may hand elaboration its own authored predicate rather than a
+canonical node. The same subject, operator, quantifier, and narrowing rules apply at
+the same stage. An operand the frontend prepared under a declared neutral type is
+adopted only where the resolved member declares that identical type, Decimal
+precision and scale and float width included, and is never normalized for another
+type. Programmatic predicates keep their language-owned type mismatch behavior and
+expose no Wire failure names.
 
 ## Forward map of the rest of the algebra
 
