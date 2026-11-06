@@ -662,17 +662,18 @@ def _origin_variant_columns(case: Case, origin: _SettledOn) -> tuple[str, ...]:
     physical column its own spelling, so `family_variant` beside `familyVariant` is
     the model's own column beside the read's answer.
 
-    A **concrete-target** read carries no variant tag whatsoever (`m-sql`: the caller
-    already queried a known variant), so neither spelling means anything there. Both
-    are legal physical spellings a model may author — the compatibility corpus maps
-    `catalog.Record.variantMarker` to the column ``family_variant`` and
-    `compatibility.overlap.VariantRecord`'s value-object document to the column
-    ``familyVariant`` — and reading one of those as a discriminator would refuse a
-    settled write whose find observed exactly the row it names.
+    A **concrete-target** read is not discriminated: every row it returns is the
+    queried subtype's, so its variant separates nothing and neither spelling needs
+    reading there. Both are legal physical spellings a model may author — the
+    compatibility corpus maps `catalog.Record.variantMarker` to the column
+    ``family_variant`` and `compatibility.overlap.VariantRecord`'s value-object
+    document to the column ``familyVariant`` — and reading one of those as a
+    discriminator would refuse a settled write whose find observed exactly the row
+    it names.
 
     Which position is abstract is asked of the same classifier materialization asks
     (:func:`~reference_harness.inheritance.query_position`), so one rule in this
-    harness decides whether a read's rows carry a variant — of *origin*'s own query,
+    harness decides whether a read is discriminated — of *origin*'s own query,
     because that is the read whose rows are being interrogated.
     """
     position = query_position(origin.object_query, case.model.entity_defs)

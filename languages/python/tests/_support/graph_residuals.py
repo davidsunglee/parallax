@@ -9,27 +9,21 @@ from parallax.core.metamodel import entity_by_name
 from tests._support.corpus import CollectionKinds, compare_graph
 
 SIBLING_NULL_PADDING: Final = "sibling-null-padding"
-NARROWED_CHILD_FAMILY_VARIANT: Final = "narrowed-child-family-variant"
-_RESIDUAL_KINDS: Final = (SIBLING_NULL_PADDING, NARROWED_CHILD_FAMILY_VARIANT)
+_RESIDUAL_KINDS: Final = (SIBLING_NULL_PADDING,)
 
 CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS: Final[dict[str, frozenset[str]]] = {
-    "m-inheritance-065": frozenset({NARROWED_CHILD_FAMILY_VARIANT}),
     "m-inheritance-066": frozenset({SIBLING_NULL_PADDING}),
-    "m-inheritance-067": frozenset({NARROWED_CHILD_FAMILY_VARIANT}),
     "m-inheritance-068": frozenset({SIBLING_NULL_PADDING}),
     "m-inheritance-073": frozenset({SIBLING_NULL_PADDING}),
     "m-inheritance-074": frozenset({SIBLING_NULL_PADDING}),
     "m-inheritance-075": frozenset({SIBLING_NULL_PADDING}),
-    "m-inheritance-076": frozenset({SIBLING_NULL_PADDING, NARROWED_CHILD_FAMILY_VARIANT}),
+    "m-inheritance-076": frozenset({SIBLING_NULL_PADDING}),
     "m-inheritance-077": frozenset({SIBLING_NULL_PADDING}),
     "m-inheritance-078": frozenset({SIBLING_NULL_PADDING}),
-    "m-inheritance-149": frozenset({NARROWED_CHILD_FAMILY_VARIANT}),
     "m-read-planning-028": frozenset({SIBLING_NULL_PADDING}),
     "m-read-planning-029": frozenset({SIBLING_NULL_PADDING}),
     "m-read-planning-030": frozenset({SIBLING_NULL_PADDING}),
-    "m-read-planning-035": frozenset({NARROWED_CHILD_FAMILY_VARIANT}),
-    "m-read-planning-036": frozenset({NARROWED_CHILD_FAMILY_VARIANT}),
-    "m-snapshot-read-012": frozenset({SIBLING_NULL_PADDING, NARROWED_CHILD_FAMILY_VARIANT}),
+    "m-snapshot-read-012": frozenset({SIBLING_NULL_PADDING}),
     "m-snapshot-read-051": frozenset({SIBLING_NULL_PADDING}),
 }
 
@@ -38,8 +32,6 @@ CHILD_SHAPE_CASES_WITHOUT_STORIES: Final = frozenset(
         "m-inheritance-073",
         "m-inheritance-077",
         "m-read-planning-030",
-        "m-read-planning-035",
-        "m-read-planning-036",
     }
 )
 CHILD_SHAPE_GRAPH_STORY_RESIDUALS: Final = (
@@ -71,29 +63,10 @@ def _sibling_only_attributes(
     )
 
 
-def _single_concrete_narrowed_view(key: str) -> bool:
-    _prefix, separator, suffix = key.partition("[")
-    return bool(separator and suffix.endswith("]") and "," not in suffix)
-
-
-def _normalized(
-    value: object,
-    residuals: frozenset[str],
-    kinds: CollectionKinds,
-    *,
-    narrowed_child: bool = False,
-) -> object:
+def _normalized(value: object, residuals: frozenset[str], kinds: CollectionKinds) -> object:
     if isinstance(value, list):
         items = cast("list[object]", value)
-        return [
-            _normalized(
-                item,
-                residuals,
-                kinds,
-                narrowed_child=narrowed_child,
-            )
-            for item in items
-        ]
+        return [_normalized(item, residuals, kinds) for item in items]
     if not isinstance(value, Mapping):
         return value
 
@@ -107,14 +80,7 @@ def _normalized(
     for key, item in mapping.items():
         if key in sibling_only and item is None:
             continue
-        if narrowed_child and NARROWED_CHILD_FAMILY_VARIANT in residuals and key == "familyVariant":
-            continue
-        normalized[key] = _normalized(
-            item,
-            residuals,
-            kinds,
-            narrowed_child=_single_concrete_narrowed_view(key),
-        )
+        normalized[key] = _normalized(item, residuals, kinds)
     return normalized
 
 

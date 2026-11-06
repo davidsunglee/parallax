@@ -18,7 +18,7 @@ import pytest
 
 from parallax.conformance import engine
 from tests._support.case_corpus import case as corpus_case
-from tests._support.corpus import CollectionKinds, case_document, compare_graph
+from tests._support.corpus import CollectionKinds, case_document, compare_graph, compare_rows
 from tests._support.graph_residuals import (
     CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
     classify_child_graph_shape_residuals,
@@ -122,7 +122,6 @@ def _snapshot_residual_graphs() -> tuple[dict[str, Any], dict[str, Any], Collect
         )
         for field in sibling_fields:
             animal.pop(field)
-    cast("dict[str, Any]", person["pets[Dog]"][0])["familyVariant"] = "Dog"
     return observed, expected, kinds
 
 
@@ -149,3 +148,28 @@ def test_child_graph_residuals_do_not_hide_a_broad_view_variant() -> None:
     cast("dict[str, Any]", observed["Person"][0]["animals"][0]).pop("familyVariant")
     with pytest.raises(AssertionError, match="not uniquely explained"):
         classify_child_graph_shape_residuals(observed, expected, kinds)
+
+
+def test_child_graph_residuals_do_not_hide_a_narrowed_view_variant() -> None:
+    observed, expected, kinds = _snapshot_residual_graphs()
+    cast("dict[str, Any]", observed["Person"][0]["pets[Dog]"][0]).pop("familyVariant")
+    with pytest.raises(AssertionError, match="not uniquely explained"):
+        classify_child_graph_shape_residuals(observed, expected, kinds)
+
+
+def test_a_narrowed_view_node_losing_its_variant_fails_the_graph_grade() -> None:
+    expected, kinds = _authored_graph("m-inheritance-065")
+    observed = copy.deepcopy(expected)
+    cast("dict[str, Any]", observed["Person"][0]["pets[Dog]"][0]).pop("familyVariant")
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)
+
+
+def test_a_concrete_read_row_losing_its_variant_fails_the_row_grade() -> None:
+    expected = cast(
+        "list[dict[str, Any]]", case_document(corpus_case("m-inheritance-001"))["then"]["rows"]
+    )
+    observed = copy.deepcopy(expected)
+    observed[0].pop("familyVariant")
+    with pytest.raises(AssertionError):
+        compare_rows(observed, expected)

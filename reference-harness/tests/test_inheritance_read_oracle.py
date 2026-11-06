@@ -874,9 +874,25 @@ def test_materialize_replaces_tag_with_family_variant() -> None:
     assert_case_read(case, _Reads([_dog_row()]))
 
 
-def test_materialize_is_noop_for_concrete_target() -> None:
-    rows = [{"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}]
-    assert_case_read(_read_case("Dog", rows=rows), _Reads(rows))
+def test_a_concrete_target_read_takes_its_variant_from_the_model() -> None:
+    # A concrete read projects no tag column, so nothing the database returned
+    # can have named the variant the row carries.
+    stored = {"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}
+    case = _read_case("Dog", rows=[stored | {"familyVariant": "Dog"}])
+    assert_case_read(case, _Reads([stored]))
+
+
+def test_a_concrete_target_golden_omitting_its_variant_fails() -> None:
+    stored = {"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}
+    with pytest.raises(CaseFailure, match="rows != then.rows"):
+        assert_case_read(_read_case("Dog", rows=[stored]), _Reads([stored]))
+
+
+def test_a_concrete_target_golden_naming_another_variant_fails() -> None:
+    stored = {"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}
+    case = _read_case("Dog", rows=[stored | {"familyVariant": "Cat"}])
+    with pytest.raises(CaseFailure, match="rows != then.rows"):
+        assert_case_read(case, _Reads([stored]))
 
 
 def test_materialize_fails_when_superset_column_missing() -> None:
@@ -1269,12 +1285,16 @@ def test_tpcs_wrong_variant_literal_is_rejected() -> None:
         assert_case_read(case, _Reads([]))
 
 
-def test_tpcs_concrete_target_is_a_noop() -> None:
+def test_tpcs_concrete_target_takes_its_variant_from_the_model() -> None:
     # A concrete-target TPCS read (Invoice) is an ordinary single-table read with no
-    # familyVariant and no union — the oracle leaves it untouched.
-    rows = [{"id": 1, "amount_due": 120}]
-    case = _document_case("Invoice", "select t0.id, t0.amount_due from invoice t0", rows=rows)
-    assert_case_read(case, _Reads(rows))
+    # per-branch literal and no union, so the model alone names the variant.
+    stored = {"id": 1, "amount_due": 120}
+    case = _document_case(
+        "Invoice",
+        "select t0.id, t0.amount_due from invoice t0",
+        rows=[stored | {"familyVariant": "Invoice"}],
+    )
+    assert_case_read(case, _Reads([stored]))
 
 
 def test_tpcs_narrow_to_multiple_concretes_shape() -> None:

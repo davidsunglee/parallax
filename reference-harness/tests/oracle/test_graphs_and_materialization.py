@@ -96,7 +96,7 @@ _PEOPLE: list[dict[str, Any]] = [
 ]
 
 # The narrowed `pets[Dog]` level reads one concrete, so its shared-table read
-# projects no tag column and its rows carry no variant.
+# projects no tag column and the hop itself names the variant.
 _DOGS: list[dict[str, Any]] = [
     {"id": 1, "name": "Rex", "owner_id": 10, "license_id": "L-100", "bark_volume": 7},
     {"id": 2, "name": "Fido", "owner_id": 11, "license_id": "L-101", "bark_volume": 3},
@@ -1087,15 +1087,50 @@ def test_a_hop_child_row_still_carrying_the_shared_tag_column_is_refused(
 
     `pets[Dog]` narrows to one concrete, so its level reads the shared table under a
     tag equality and projects no tag column of its own. A level that projected one
-    anyway would carry the discriminator into the graph as if it were a member, which
-    is refused at the last step of the materialization sequence rather than compared.
+    anyway would carry the discriminator into the graph as if it were a member, and
+    no authored node states that key.
     """
     case = corpus_case(_NARROWED_PETS)
     tagged = [row | {"kind": "dog"} for row in _DOGS]
     reads = ScriptedReads(results=[_PEOPLE, tagged])
 
-    with pytest.raises(CaseFailure, match="still carries its branch carrier 'kind' and no derived"):
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
         assert_case_read(case, reads)
+
+
+def test_a_narrowed_view_golden_omitting_its_variant_fails(damaged_case: CaseLoader) -> None:
+    """A single-concrete view's node carries the tag its level never projected."""
+    case = damaged_case(_NARROWED_PETS)
+    del case.then["graph"]["Person"][0]["pets[Dog]"][0]["familyVariant"]
+
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
+        assert_case_read(case, ScriptedReads(results=[_PEOPLE, _DOGS]))
+
+
+def test_a_value_object_stored_under_the_variant_column_survives_a_concrete_read(
+    damaged_case: CaseLoader,
+) -> None:
+    """A concrete read's synthetic tag and the document stored at its spelling stay apart."""
+    case = damaged_case("m-inheritance-119-value-object-family-variant-overlap-graph.yaml")
+    case.when["objectQuery"]["target"] = "compatibility.overlap.VariantNote"
+    case.then["statements"] = [
+        {
+            "sql": {
+                "postgres": 'select t0.id, not t0."familyVariant" is null, t0."familyVariant" '
+                "from variant_record t0 where t0.kind = ?"
+            },
+            "binds": ["note"],
+        }
+    ]
+    del case.then["referenceSql"]
+    case.then["graph"] = {
+        "VariantNote": [
+            {"id": 2, "profile": {"label": "variant-profile"}, "familyVariant": "VariantNote"}
+        ]
+    }
+    stored = {"id": 2, "familyVariant": json.dumps({"label": "variant-profile"})}
+
+    assert_case_read(case, ScriptedReads(results=[[stored]]))
 
 
 def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(

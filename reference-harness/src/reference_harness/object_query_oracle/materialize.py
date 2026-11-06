@@ -46,6 +46,7 @@ from ..inheritance import (
     STRATEGY_TPH,
     Family,
     QueryPosition,
+    concrete_target_variant,
     query_position,
     tag_value_to_subtype,
 )
@@ -304,6 +305,7 @@ def materialize_hop_level(
     tag_column: str | None,
     variant_map: Mapping[Any, str],
     union: tpcs.LevelUnion | None,
+    sole_variant: str | None,
 ) -> list[PublishedRow]:
     """The rows one level of a deep fetch publishes.
 
@@ -314,7 +316,8 @@ def materialize_hop_level(
     polymorphic table-per-hierarchy hop projects, stated beside the family's
     *variant_map* rather than re-derived here, and *union* is the one statement a
     multi-concrete table-per-concrete-subtype hop reads. A hop naming neither
-    targets one concrete or a non-inheritance entity. A row whose tag the reader
+    targets one concrete or a non-inheritance entity, and *sole_variant* is that
+    concrete's spelling, which its statement never projects. A row whose tag the reader
     composes no concrete for keeps its place carrying an :class:`UnknownFamilyTag`
     and is decoded at no variant. The hop states those facts because they are the
     level's own; the derivation over them is this module's, which is why the level
@@ -334,7 +337,9 @@ def materialize_hop_level(
     elif tag_column is None:
         return [
             _published(_with_direct_collections_decoded(case.model, entity, row))
-            for row in _materialize_document_layout(case, entity, rows)
+            for row in _carrying_variant(
+                sole_variant, _materialize_document_layout(case, entity, rows)
+            )
         ]
     else:
         family_root = _family_root(case, entity.canonical_name)
@@ -586,10 +591,11 @@ def _materialize_target_tph_document_layout(
 
 
 def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Materialize ``familyVariant`` for an abstract-target table-per-hierarchy read.
+    """Materialize ``familyVariant`` for any read of an inheritance participant.
 
-    A non-inheritance / concrete-target read (or a non-TPH strategy) returns *rows*
-    unchanged. For an abstract target the golden SQL projects the raw tag column and
+    A non-inheritance read returns *rows* unchanged, and a concrete-target read
+    takes the spelling its target names, since its statement projects no carrier.
+    For an abstract target the golden SQL projects the raw tag column and
     the full concrete superset; this asserts that projection shape, then replaces the
     tag column with the derived ``familyVariant`` (``tagValue`` -> concrete subtype
     name) so the materialized rows can be compared to ``then.rows``.
@@ -602,7 +608,9 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     """
     position = query_position(case.object_query, case.model.entity_defs)
     if position is None:
-        return rows  # concrete-target (or non-inheritance) read carries no familyVariant
+        return _carrying_variant(
+            concrete_target_variant(case.object_query, case.model.entity_defs), rows
+        )
     family, target_name = position.family, position.target
     if position.strategy == STRATEGY_TPCS:
         return _materialize_tpcs_family_variant(case, rows, family, target_name)
@@ -640,6 +648,20 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
         )
 
     return _materialize_tph_family_variant(case, family, target_name, rows)
+
+
+def _carrying_variant(variant: str | None, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*rows* of one known concrete, each carrying its *variant* spelling."""
+    if variant is None:
+        return rows
+    return [_tagged(_materialized_row(row), variant) for row in rows]
+
+
+def _tagged(row: _MaterializedRow, variant: str) -> dict[str, Any]:
+    if "familyVariant" in row:
+        row.consumed_value_object_columns.add("familyVariant")
+    row["familyVariant"] = variant
+    return row
 
 
 def _materialize_tph_family_variant(
@@ -771,8 +793,9 @@ def narrow_to_variant_columns(case: Case, rows: list[PublishedRow]) -> list[Publ
     column: a `Dog` node has no `indoor` key to be null. A `then.rows` assertion
     keeps the full concrete-superset row instead (:func:`scalar_columns`); this
     ADDITIONAL narrowing applies only where a row already carries a
-    materialized ``familyVariant`` (a no-op for a concrete-target read, or a
-    non-inheritance entity, whose rows carry none).
+    materialized ``familyVariant`` (a no-op for a non-inheritance entity, whose
+    rows carry none, and for a concrete-target read, whose rows hold only their
+    own branch's columns).
 
     Narrowing projects what a read published rather than publishing anything, so
     each row arrives with that provenance and leaves carrying it forward.
@@ -988,7 +1011,7 @@ def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Enti
 
     *entity* is the position a read TARGETED, which for an abstract-target read
     declares none of its concretes' own members. A row carrying no variant — a
-    concrete target, or a non-inheritance entity — stands at its position.
+    non-inheritance entity — stands at its position.
     """
     variant = row.get("familyVariant")
     if not isinstance(variant, str):

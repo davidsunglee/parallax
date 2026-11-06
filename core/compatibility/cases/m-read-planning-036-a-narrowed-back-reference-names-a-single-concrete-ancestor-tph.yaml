@@ -35,6 +35,7 @@ then:
         "crew[Cook]":
           id: 1
           name: Cal
+          familyVariant: Cook
           tasks:
             - id: 21
               crewId: 1

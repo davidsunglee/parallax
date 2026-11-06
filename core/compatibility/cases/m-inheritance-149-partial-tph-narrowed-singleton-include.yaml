@@ -35,8 +35,8 @@ then:
       - id: 10
         name: Mowgli
         "beasts[Wolf]":
-          - { id: 1, name: Akela, keeperId: 10, howl: aroo }
-          - { id: 3, name: Raksha, keeperId: 10, howl: yip }
+          - { id: 1, name: Akela, keeperId: 10, howl: aroo, familyVariant: Wolf }
+          - { id: 3, name: Raksha, keeperId: 10, howl: yip, familyVariant: Wolf }
       - id: 11
         name: Bagheera
         "beasts[Wolf]": []

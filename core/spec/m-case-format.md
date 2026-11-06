@@ -490,16 +490,15 @@ not: a `rejected` case is the shape that pins the refusal.
 
 An abstract-target read (an abstract `target`, or an abstract position constrained
 by the query's `narrowTo` clause) materializes complete concrete
-instances. Every leaf — a `then.rows` entry or a `then.graph` node — carries a
-**`familyVariant`** key — the concrete subtype's **family variant spelling**
-(`Dog`, `Cat`, …; the canonical qualified Entity spelling when duplicate local
-concrete names make a bare spelling ambiguous). `familyVariant` is **not projected as SQL**: under
-`table-per-hierarchy` the golden SQL projects the **raw tag column** (`m-sql`,
-resolved Q6) and the harness materializes `familyVariant` from the tag metadata
-map (`tagValue` -> subtype name) — an independent, metadata-derived
-recomputation like the as-of and PK-allocation oracles. A **concrete-target**
-read carries no `familyVariant` (the caller already knows the variant) and
-projects only that concrete instance's columns. Every Subtype
+instances. Every leaf stating an inheritance participant, whatever its target — a
+`then.rows` entry, an `expectRows` entry, or a graph node — carries the
+**`familyVariant`** key (`m-inheritance` *Materialized field keys*). It is **not
+projected as SQL**: under `table-per-hierarchy` an abstract target's golden SQL
+projects the **raw tag column** (`m-sql`, resolved Q6) and the harness materializes
+`familyVariant` from the tag metadata map (`tagValue` -> subtype name) — an
+independent, metadata-derived recomputation like the as-of and PK-allocation
+oracles. A **concrete-target** read projects only that concrete instance's columns,
+and the harness derives its `familyVariant` from the target Entity. Every Subtype
 Selection a query carries is validated pre-SQL against the family's effective
 concrete-subtype set (`m-inheritance`); an invalid selection is a `rejected` case
 (see the narrow rules in *Rejected cases*).
@@ -543,9 +542,7 @@ A **deep-fetch `then.graph`** keys each eager-fetched related set under the
 <Concrete>]` (the local relationship name, the effective concrete-subtype set in
 canonical alphabetical order by entity name, no spaces). Equivalent authored
 narrowings (`narrowTo: [Pet]` vs `[Cat, Dog]`) key the same view; a broad and a narrowed hop over one relationship
-key **different** views. A polymorphic narrowed view's child objects carry
-`familyVariant` just as a flat abstract read's rows do (a single-concrete narrowed
-view carries none). A segment `narrowTo` escaping the relationship target's effective set is a
+key **different** views. A segment `narrowTo` escaping the relationship target's effective set is a
 `rejected` case (`narrow-outside-relationship-target`).
 
 Graph comparison distinguishes collection kinds. Root result sets and

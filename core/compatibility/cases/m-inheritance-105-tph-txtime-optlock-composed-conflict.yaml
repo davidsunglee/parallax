@@ -37,7 +37,7 @@ when:
             mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
           binds: [1, infinity, meter]
       expectRows:
-        - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity, familyVariant: MeterReading }
     - uow: concurrent
       objectQuery:
         target: parallax.compatibility.MeterReading
@@ -56,7 +56,7 @@ when:
             mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
           binds: [1, infinity, meter]
       expectRows:
-        - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity, familyVariant: MeterReading }
     - uow: concurrent
       write:
         - mutation: amend

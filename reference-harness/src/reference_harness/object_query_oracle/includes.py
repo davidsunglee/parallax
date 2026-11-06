@@ -307,6 +307,13 @@ class FetchStep:
         return self.cardinality == "one-to-many"
 
     @property
+    def sole_variant(self) -> str | None:
+        """The spelling of the one concrete a family hop reads without a carrier."""
+        if self.effective_set is None or self.polymorphic or self.union_set is not None:
+            return None
+        return self.effective_set[0]
+
+    @property
     def branch_count(self) -> int:
         """How many times the level's statement repeats its bind group."""
         return len(self.union_set) if self.union_set else 1
@@ -457,9 +464,8 @@ def guarded_parents(
     A root guard changes no statement of its own and populates no view of its own:
     it selects which already-fetched ROOT objects the hop starts from, so the hop's
     child statement is keyed by exactly those objects' gathered keys. Selection is
-    by the root row's own concrete subtype, which an abstract-target read carries as
-    ``familyVariant`` — a guard can only ever be a proper subset of a POLYMORPHIC
-    position, so a root read that projects no variant cannot be guarded at all.
+    by the root row's own concrete subtype, which every family participant carries
+    as ``familyVariant``, so a root read carrying no variant cannot be guarded at all.
     """
     if step.root_guard is None:
         return list(parents)
@@ -469,7 +475,7 @@ def guarded_parents(
             raise CaseFailure(
                 f"{case.path.name}: the path-root guard {list(step.root_guard)!r} on "
                 f"{step.rel_ref} cannot select root objects — the root read carries no "
-                f"`familyVariant`, so its own position is not polymorphic "
+                f"`familyVariant`, so it reads no inheritance family "
                 f"(m-inheritance / m-read-planning)."
             )
     return [row for row in parents if row["familyVariant"] in admitted]
@@ -600,28 +606,12 @@ def refuse_unused_levels(
 
 
 def _fetched_objects_in_view(
-    step: FetchStep,
-    fetched: Sequence[materialize.PublishedRow],
-    level_concretes: Sequence[str] | None,
+    step: FetchStep, fetched: Sequence[materialize.PublishedRow]
 ) -> list[materialize.PublishedRow]:
-    """The already-fetched rows back-reference *step* selects, as its view publishes them.
-
-    A level reading one concrete publishes no ``familyVariant``, so *level_concretes*
-    supplies the concrete type its rows leave unstated, both for the narrow to select
-    by and for a polymorphic view to carry.
-    """
+    """The already-fetched rows back-reference *step* selects, by their own variant."""
     view_concretes = step.effective_set or []
-    sole_concrete = level_concretes[0] if level_concretes and len(level_concretes) == 1 else None
-    selected = [
-        row
-        for row in fetched
-        if not step.is_narrowed or row.get("familyVariant", sole_concrete) in view_concretes
-    ]
-    if sole_concrete is None or len(view_concretes) < 2:
-        return selected
     return [
-        materialize.edited(row, {"familyVariant": row.get("familyVariant", sole_concrete)})
-        for row in selected
+        row for row in fetched if not step.is_narrowed or row.get("familyVariant") in view_concretes
     ]
 
 
@@ -751,10 +741,6 @@ def execute_fetch_levels(
     """
     dialect = reader.dialect
     root_pins = execute.root_asof_pins(query)
-    concretes_by_level: dict[HopKey | None, Sequence[str] | None] = {
-        None: Family(case.model.entity_defs).effective_concrete_set(query["target"]),
-        **{step.hop_key: step.effective_set for step in steps},
-    }
 
     # rows_by_hop[hop key] -> the result-rows that hop PUBLISHED.
     rows_by_hop: dict[HopKey, list[materialize.PublishedRow]] = {}
@@ -786,9 +772,7 @@ def execute_fetch_levels(
             arrival = step.parent_hop
             assert arrival is not None  # a hop leaving the root reverses nothing
             started_from = root_rows if arrival.parent is None else rows_by_hop[arrival.parent]
-            reached = _fetched_objects_in_view(
-                step, started_from, concretes_by_level[arrival.parent]
-            )
+            reached = _fetched_objects_in_view(step, started_from)
             rows_by_hop[step.hop_key] = reached
             target_col = column_of(step.child_entity, step.child_attr)
             children_by_step[step.hop_key] = {
@@ -845,13 +829,15 @@ def execute_fetch_levels(
         # polymorphic (abstract-target, table-per-hierarchy) hop projects and the
         # family's tag map, or the `union all` a multi-concrete
         # table-per-concrete-subtype hop reads. Every other hop names neither — it
-        # is narrowed to one concrete, or targets a concrete or no family.
+        # is narrowed to one concrete, or targets a concrete or no family — and a
+        # family hop among them states the one variant its rows are.
         published = materialize.materialize_hop_level(
             case,
             step.child_entity,
             child_rows,
             view_key=step.view_key,
             tag_column=step.tag_column if step.polymorphic else None,
+            sole_variant=step.sole_variant,
             variant_map=step.variant_map,
             union=None
             if step.union_set is None
