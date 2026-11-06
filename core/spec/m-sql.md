@@ -10,65 +10,15 @@ It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from
 `m-storage-layout`, and compiled relationship directions from `m-relationship`.
 
-The read compiler accepts one `PlannedEntityQuery`: the exact target Entity
-Identity, a resolved predicate whose temporal visibility `m-navigate` has
-already closed, optional query-wide narrowing, ordered result keys, resolved projection, and an optional
-row cap. Compilation lowers those already-resolved fields; it does not discover
-them by peeling query-wide clauses out of a public query and does not receive an
-accepted model to perform another resolution pass.
+## Compilation boundary
 
-## Private compiler inputs
-
-SQL compilation is private behind two closed entry points:
-
-```text
-compilePlannedRead(PlannedEntityQuery, Dialect) -> CompiledRead
-compilePlannedStep(PlannedStep, StepPayload, Dialect) -> LoweredStatement
-
-StepPayload = InsertPayload(RowSlots, [cells]) | AssignmentPayload | none
-```
-
-Neither entry point accepts a public Object Query, Predicate, Write Instruction,
-authored member name, or raw serialized literal, and the read entry point accepts
-no predicate whose temporal visibility is unclosed. A `PlannedEntityQuery`
-carries exact target/member identities, an elaborated predicate of managed values
-with its relationships' temporal perspectives and its injected as-of terms
-(`m-navigate`), resolved ordering, and compact result metadata sufficient for
-row decoding and deep-fetch key gathering. A `PlannedStep` carries the closed
-`m-write-plan` variant, exact member identities, managed values or generated-value
-expressions, target, concurrency decision, and affected-row policy. Its
-`StepPayload` is what the statement stores, prepared by `m-write-payload`
-(`m-write-plan` *Write payloads*): each Write Row's cells in entry order under
-the one Row Slots their shared presence selects, the Assignment Payload a
-revising step writes, and nothing for a step that stores no represented value.
-
-The write compiler places, renders, and binds prepared values; it never
-assembles, encodes, or patches a payload itself. A missing payload, or one
-prepared from other inputs than the step's own — another Write Row's row,
-origin, or executed members, another assignment set, or misaligned entries — is
-a broken caller contract that the
-compiler refuses rather than a request to prepare one. Every caller lowers
-through one shared prepare-then-compile path, which prepares only the statement
-it is about to lower.
-
-`CompiledRead` carries one metadata-bearing `LoweredStatement` plus the compact
-result contract required for row materialization. `LoweredStatement` is the
-single statement value described below, including its plain binds, typed spans,
-repeated descriptors, and sparse Wire overrides. A multi-step write plan invokes
-the write compiler once per `PlannedStep`; no generic metadata-free `Statement`
-result bypasses these products.
-
-The compiler is a one-way consumer. It MUST NOT resolve a model reference, infer
-a neutral type, invoke developer coercion, decode a Wire literal, or expose a
-public raw-SQL escape hatch around these products. Driver parameter adaptation is
-a carrier-to-driver operation after semantic conversion; it cannot repair or
-reinterpret a managed value.
-
-Read result metadata is compact and semantic: selected slots identify exact
-modeled members and document judging roots, correlation slots identify exact
-deep-fetch keys, and variant/temporal slots carry only the information required
-by materialization. It is not a second model snapshot and contains no name-to-
-member lookup table.
+Model-aware rejection is complete before SQL generation begins (`m-object-query`), so
+generation adds no portable rejection beyond the refusals this module and `m-dialect`
+name. What a write stores is assembled by `m-write-payload` (`m-write-plan` *Write
+payloads*); SQL generation places, renders, and binds it and assembles nothing. No
+public surface offers a raw-SQL escape hatch around SQL generation. Driver parameter
+adaptation is a carrier-to-driver operation after semantic conversion; it cannot
+repair or reinterpret a managed value.
 
 ## Driver binds and canonical Wire projection
 
