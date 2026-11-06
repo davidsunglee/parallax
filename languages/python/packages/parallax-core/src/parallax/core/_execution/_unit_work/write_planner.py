@@ -415,13 +415,13 @@ def _without_noop_rows(
     """``item``, or ``None`` where it is known no-op work.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
-    row rather than assigns to it, so such a row is known no-op work and stage 2
-    removes it (`m-unit-work` "eliminate known cancellation and no-op work"),
-    ahead of batching and of the Transaction Instant, where the normative stage
-    order puts it. An admitted write is single-row by construction, so it is
-    either eliminated whole or passed through untouched, and is never rebuilt
-    around a narrower instruction. A temporal composition is eliminated where
-    every write it composed was such an amendment.
+    row rather than assigns to it, so such a row is known no-op work, removed
+    ahead of the Transaction Instant (`m-unit-work` *The planning pipeline*) and
+    of batching, which would carry it as an update with no member to write. An
+    admitted write is single-row by construction, so it is either eliminated
+    whole or passed through untouched, and is never rebuilt around a narrower
+    instruction. A temporal composition is eliminated where every write it
+    composed was such an amendment.
     """
     if isinstance(item, ComposedTemporalWrite):
         return None if _amends_nothing(item.transform) else item

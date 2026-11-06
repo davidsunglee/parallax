@@ -383,7 +383,7 @@ def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(
 ) -> None:
     # Audit decoration is a wired port with nothing behind it, and this is the
     # wiring half: the planner a write path plans through holds the neutral
-    # strategy, so no step reaching stage 8 meets one that could decorate. The
+    # strategy, so no step reaching audit meets one that could decorate. The
     # other half — that the neutral strategy hands back the step it was given —
     # is a property of the strategy itself and lives with the rest of the
     # algebra's behavior in `test_planned_algebra.py`.
