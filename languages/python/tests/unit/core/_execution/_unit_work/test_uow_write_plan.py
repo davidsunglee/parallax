@@ -25,7 +25,6 @@ import pytest
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, attr, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
@@ -35,11 +34,9 @@ from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
-    CoverageTerm,
     RowConsumer,
     RowRequest,
     TargetReadRequest,
-    consume_coverage,
 )
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -58,7 +55,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
@@ -117,6 +114,7 @@ from tests.unit.core._execution._shared_coverage_support import (
 from tests.unit.core._execution._shared_coverage_support import rectangle as shared_rectangle
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
+from tests.unit.core._execution._unit_work._stored_positions_support import StoredPositions
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     POSITION as TARGET_POSITION,
 )
@@ -621,32 +619,13 @@ def test_a_retained_row_still_current_at_its_writes_turn_is_completed_without_a_
 # Simulated rows change as each group executes; ownership as each write       #
 # completes.                                                                   #
 # --------------------------------------------------------------------------- #
-def _stored(
-    store: SimulatedTemporalStore, meta: Metamodel, entity: EntityMetadata, key: int
-) -> list[tuple[object, ...]]:
-    """Every row ``store`` holds current for ``entity`` ``key``, as
-    ``(validStart, validEnd, txStart, acctNum, value)``, by Valid-Time start."""
-    covered = store.acquisition(meta)(
-        CoverageReadRequest(
-            entity=entity,
-            key_attribute=AttributeIdentity(entity.identity, "id"),
-            terms=(CoverageTerm(key, ()),),
-            shared_lock=False,
-        ),
-        consume_coverage,
-    )
-    if covered is None:
-        return []
-    members = [
-        PredecessorRow.over_row(
-            covered.selection, covered.rows[index], covered.document(index), covered.absent
-        ).members
-        for index in range(len(covered))
-    ]
+def _stored(positions: StoredPositions) -> list[tuple[object, ...]]:
+    """Every row ``positions`` holds, as ``(validStart, validEnd, txStart,
+    acctNum, value)``, by Valid-Time start."""
     return sorted(
         (
             (row["validStart"], row["validEnd"], row["txStart"], row["acctNum"], row["value"])
-            for row in members
+            for row in positions.rows
         ),
         key=lambda stored: cast("dt.datetime", stored[0]),
     )
@@ -684,33 +663,24 @@ def _tag_predicate_write() -> PreparedPredicateInstruction:
 
 
 def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_left() -> None:
-    store = SimulatedTemporalStore()
-    store.seed_fixtures(
-        _PREDICATED,
-        _PREDICATED_POSITION,
-        [
-            {
-                "id": 1,
-                "acctNum": "A",
-                "value": Decimal("100.00"),
-                "validStart": _JAN,
-                "validEnd": INFINITY,
-                "txStart": _T0,
-                "txEnd": INFINITY,
-            }
-        ],
-    )
-    observation = store.predecessor_for(_PREDICATED, _PREDICATED_POSITION, {"id": 1})
-    assert observation is not None
-    simulated = SimulatedWriteSteps(
-        build_write_planner(_PREDICATED).payloads, _PREDICATED, POSTGRES, store=store
-    )
+    row: dict[str, object] = {
+        "id": 1,
+        "acctNum": "A",
+        "value": Decimal("100.00"),
+        "validStart": _JAN,
+        "validEnd": INFINITY,
+        "txStart": _T0,
+        "txEnd": INFINITY,
+    }
+    observation = TemporalObservation(predecessor=PredecessorRow(members=row))
+    positions = StoredPositions(_PREDICATED, [row])
+    simulated = positions.simulated
     seen: list[RowRequest] = []
 
     uow = _uow(
         _PREDICATED,
-        simulated,
-        rows=_Watched(store.acquisition(_PREDICATED), seen.append),
+        positions,
+        rows=_Watched(positions.acquire, seen.append),
         counted=simulated.counted,
     )
     amendment = prepare_wire_write(
@@ -738,21 +708,20 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
     observed = uow.source_authority.retain(
         retained_observation(amendment, _PREDICATED, observation)
     )
-    with store.transaction(rollback=False):
-        uow.buffer(admitted_write(amendment, observed, observed.key.object))
-        # The predicate write executes the earlier amendment in its own flush.
-        uow.execute_predicate(_tag_predicate_write())
-        executed = len(simulated.statements)
-        # A later write of the same source continues through what the earlier
-        # write left of the state they observed.
-        uow.buffer(admitted_write(later, observed, observed.key.object))
-        uow.flush(trigger="pre_commit")
+    uow.buffer(admitted_write(amendment, observed, observed.key.object))
+    # The predicate write executes the earlier amendment in its own flush.
+    uow.execute_predicate(_tag_predicate_write())
+    executed = len(simulated.statements)
+    # A later write of the same source continues through what the earlier
+    # write left of the state they observed.
+    uow.buffer(admitted_write(later, observed, observed.key.object))
+    uow.flush(trigger="pre_commit")
     hundred, changed = Decimal("100.00"), Decimal("175.00")
     # The later write reads nothing: the attempt holds the row the earlier
     # write opened, and revises it rather than closing it.
     assert seen == []
     assert "close" not in statement_kinds(simulated.statements[executed:])
-    assert _stored(store, _PREDICATED, _PREDICATED_POSITION, 1) == [
+    assert _stored(positions) == [
         (_JAN, _FEB, _FIXED, "A", hundred),
         (_FEB, _APR, _FIXED, "O", hundred),
         (_APR, _JUN, _FIXED, "A", hundred),

@@ -190,12 +190,7 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-concurrency-026",
         "m-concurrency-027",
         "m-concurrency-028",
-        "m-concurrency-029",
-        "m-execution-lifecycle-015",
         "m-concurrency-039",
-        "m-concurrency-040",
-        "m-unit-work-043",
-        "m-unit-work-044",
         "m-inheritance-007",
         "m-inheritance-008",
         "m-inheritance-009",
@@ -223,7 +218,6 @@ _STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-storage-layout-006",
         "m-storage-layout-007",
         "m-storage-layout-008",
-        "m-storage-layout-011",
     }
 )
 _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
@@ -243,8 +237,7 @@ _SCALAR_COLLECTION_LIFECYCLE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     | {"m-inheritance-143", "m-inheritance-144"}
 )
 _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
-    {f"m-storage-layout-{n:03d}" for n in (*range(29, 35), 37, 38)}
-    | {"m-temporal-write-013", "m-temporal-write-014"}
+    f"m-storage-layout-{n:03d}" for n in (*range(29, 35), 37, 38)
 )
 _FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
@@ -270,36 +263,9 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-temporal-write-001",
-        "m-temporal-write-002",
-        "m-temporal-write-003",
-        "m-temporal-write-004",
-        "m-temporal-write-005",
-        "m-temporal-write-015",
-        "m-temporal-write-017",
-        "m-temporal-write-018",
         "m-temporal-write-019",
-        "m-temporal-write-022",
-        "m-temporal-write-023",
-        "m-temporal-write-024",
         "m-temporal-write-025",
-        "m-inheritance-090",
-        "m-inheritance-091",
-        "m-inheritance-094",
-        "m-inheritance-095",
-        "m-inheritance-096",
-        "m-inheritance-097",
-        "m-value-object-032",
-        "m-value-object-033",
-        "m-temporal-write-010",
-        "m-temporal-write-035",
-        "m-temporal-write-016",
-        "m-temporal-write-042",
-        "m-temporal-write-043",
-        "m-temporal-write-069",
-        "m-temporal-write-084",
         "m-temporal-write-085",
-        "m-temporal-write-090",
-        "m-temporal-write-091",
     }
 )
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(

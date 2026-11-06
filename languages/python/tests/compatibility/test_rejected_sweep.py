@@ -8,8 +8,7 @@ cases"): grading its `run` envelope needs no provisioning, so — unlike
 `when.model` / `when.write` inputs are all exercised end-to-end: the classified
 `rejectedRule` observation is compared against the case's own
 `then.rejectedRule`, and a :class:`_RefusingPort` proves the "no database"
-contract structurally, the same way the compile lane's refusing port proves
-query-result-independence.
+contract structurally.
 
 Pure, Docker-free, in-process behaviour, so it classifies `dbfree` and
 contributes to the database-free branch-coverage gate even though the rest of

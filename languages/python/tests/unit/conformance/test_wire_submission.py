@@ -10,6 +10,7 @@ import pytest
 from parallax.conformance import _case_ingress, models
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance._mechanism.transaction_control import transact, write_adapter
+from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance._wire_submission import (
     Buffered,
     Executed,
@@ -19,7 +20,6 @@ from parallax.conformance._wire_submission import (
     read_submissions,
 )
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core.base import INFINITY
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.execution import KeyedWriteValueError, RetryPolicy, ServingModel, prepare_model
@@ -629,7 +629,7 @@ def test_ordinary_submissions_never_prepare_or_simulate_a_peer_write(
     def refuse(*args: object, **kwargs: object) -> Any:
         raise AssertionError("Wire submission entered compile machinery")
 
-    monkeypatch.setattr(SimulatedTemporalStore, "__init__", refuse)
+    monkeypatch.setattr(SimulatedWriteSteps, "__init__", refuse)
     monkeypatch.setattr(_case_ingress, "prepare_case_write", refuse)
     port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
     assert _run(

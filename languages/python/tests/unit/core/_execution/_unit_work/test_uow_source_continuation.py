@@ -25,7 +25,6 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -511,13 +510,9 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     # the stored row past it, so the plan defers its range to execution, after
     # the buffer has drained.
     rows = _position_rows()
-    store = SimulatedTemporalStore()
     entity = _entity(_POSITION, "WherePosition")
-    store.seed_fixtures(_POSITION, entity, rows)
     failure = RuntimeError("the deferred group failed")
-    simulated = SimulatedWriteSteps(
-        build_write_planner(_POSITION).payloads, _POSITION, POSTGRES, store=store
-    )
+    simulated = SimulatedWriteSteps(build_write_planner(_POSITION).payloads, _POSITION, POSTGRES)
     held: list[weakref.ref[ReadEvidence]] = []
     alive: list[bool] = []
 
@@ -532,7 +527,9 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         meta=_POSITION,
         execute_write_steps=ObservedSteps(simulated, observe=observe, failing=0, failure=failure),
         execute_counted_step=NO_COUNTED_STEPS,
-        acquire_rows=store.acquisition(_POSITION),
+        acquire_rows=HeldRows(
+            _POSITION, [PredecessorRow(members=row) for row in rows], overlapping=True
+        ),
         planner=build_write_planner(_POSITION),
         actor_identity=TEST_ACTOR_IDENTITY,
     )
@@ -558,7 +555,7 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     write = admitted_write(prepared, resolved, key, source=source)
     uow.buffer(write)
     del source, observation, resolved
-    with store.transaction(rollback=False), pytest.raises(RuntimeError) as raised:
+    with pytest.raises(RuntimeError) as raised:
         _flush(uow)
     assert raised.value is failure
     assert alive == [True]

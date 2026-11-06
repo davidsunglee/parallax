@@ -19,7 +19,7 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance import _case_ingress, case_format, models
+from parallax.conformance import _case_ingress, _simulated_write_steps, case_format, models
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_observation import (
@@ -28,10 +28,7 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.conformance.simulated_temporal_store import (
-    SimulatedStoreError,
-    SimulatedTemporalStore,
-)
+from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.instructions import (
@@ -69,6 +66,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     AdmittedWrite,
@@ -649,24 +647,19 @@ def test_run_scenario_case_rereads_the_original_milestone_after_an_ungrouped_abo
     assert successor.binds[1] == "B"
 
 
-def test_scenario_compile_lane_closes_the_fixture_milestone_the_run_lane_closes() -> None:
+def test_only_the_run_lane_closes_a_fixture_milestone() -> None:
     # A keyed unit-of-work scenario whose only temporal write settles against
     # PERSISTED history: the milestone it closes was declared by the model's
-    # fixtures, never opened by a step of this case. Both lanes owe the same DML
-    # for the same case, so the compile lane starts from the same fixture-declared
-    # history the run lane's database is provisioned with — otherwise the close
-    # has no Temporal Observation to address and the case is refused at compile
-    # while the run lane executes it.
+    # fixtures, never opened by a step of this case. Compile reads no stored
+    # row, so the close has no Temporal Observation to address.
     case = _synthetic_ledger_scenario([_ledger_update("300.00", "2024-05-01T00:00:00+00:00")])
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
 
-    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
+    with pytest.raises(EngineError, match="insertion's authority"):
+        scenario.compile_scenario_case(case, "postgres")
     run = scenario.run_scenario_case(case, port)
 
-    assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
-        (e.case_pointer, e.sql, e.binds) for e in run.emissions
-    ]
-    close, successor = compiled
+    close, successor = run.emissions
     assert close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
     assert successor.binds[:3] == (2, "B", decimal.Decimal("300.00"))
 
@@ -692,65 +685,6 @@ def _ledger_chain_update(
     step = _ledger_update(value, at, uow=uow, rollback=rollback)
     cast("list[dict[str, object]]", step["write"])[0]["rows"] = [{"id": 9, "value": value}]
     return step
-
-
-def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state() -> None:
-    # The compile lane owes the SAME DML the run lane executes for a
-    # compile-eligible case, and `m-case-format`'s abort contract is not
-    # declared run-only: after a rolled-back temporal update, the next keyed
-    # write closes the milestone the database KEPT (the insert's own
-    # 2025-01-01 Transaction-Time start), never the aborted successor's
-    # 2026-01-01, which no transaction ever stored.
-    case = _synthetic_ledger_scenario(
-        [
-            _ledger_insert("2025-01-01T00:00:00+00:00"),
-            _ledger_chain_update("300.00", "2026-01-01T00:00:00+00:00", rollback=True),
-            _ledger_chain_update("400.00", "2026-02-01T00:00:00+00:00"),
-        ]
-    )
-    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
-    _insert, aborted_close, _aborted_successor, close, successor = compiled
-    assert aborted_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
-    assert close.case_pointer == "/scenario/2/write"
-    assert close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
-    assert successor.binds[2] == decimal.Decimal("400.00")
-    # Each update step is its own transaction, so each owes a resolving read of
-    # the milestone the insert left current — the value its keyed verb is
-    # addressed by.
-    port = FakeWritePort(
-        find_rows=[_ledger_row(9, "100.00", in_z="2025-01-01T00:00:00+00:00", acct_num="D")]
-    )
-    run = scenario.run_scenario_case(case, port)
-    assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
-        (e.case_pointer, e.sql, e.binds) for e in run.emissions
-    ]
-
-
-def test_scenario_compile_lane_runs_a_doomed_uow_group_as_one_transaction_it_restores() -> None:
-    # The doomed group's two updates of key 9 share one transaction, so both
-    # settle against the milestone the insert left (2025-01-01) and COALESCE,
-    # as two writes settling against one observed state do through the public
-    # keyed verbs (`m-unit-work-025`): one close and one successor carrying the
-    # later value, delivered by the group's pre-commit flush under its last
-    # write step. The group then rolls back, so the ungrouped step 3 after it is
-    # back on the insert's milestone too.
-    case = _synthetic_ledger_scenario(
-        [
-            _ledger_insert("2025-01-01T00:00:00+00:00"),
-            _ledger_chain_update("999.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
-            _ledger_chain_update("888.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
-            _ledger_chain_update("300.00", "2026-02-01T00:00:00+00:00"),
-        ],
-        {"doomed": {"outcome": "rolledBack"}},
-    )
-    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
-    _insert, doomed_close, doomed_successor, close, successor = compiled
-    assert [doomed_close.case_pointer, doomed_successor.case_pointer] == ["/scenario/2/write"] * 2
-    assert doomed_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
-    assert doomed_successor.binds[2] == decimal.Decimal("888.00")
-    assert close.case_pointer == "/scenario/3/write"
-    assert close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
-    assert successor.binds[2] == decimal.Decimal("300.00")
 
 
 def _two_group_interleave_steps() -> list[dict[str, object]]:
@@ -990,8 +924,6 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
             scenario.case_wire_preparer(meta),
-            SimulatedTemporalStore(),
-            set(),
             [],
             (node,),
         )[0]
@@ -1010,8 +942,6 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
             scenario.case_wire_preparer(meta),
-            SimulatedTemporalStore(),
-            set(),
             [],
             (),
         )
@@ -1057,8 +987,6 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
             },
             meta,
             scenario.case_wire_preparer(meta),
-            SimulatedTemporalStore(),
-            set(),
             [],
             (node,),
         )[0]
@@ -1070,9 +998,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
     assert settle(historical) == historical.evidence.predecessor.members["txStart"]
 
 
-def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_names(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_names() -> None:
     # m-unit-work-015: two finds of ONE bitemporal key observe two rectangles both
     # current on Transaction Time, and the write step names the first with `on`.
     # The evidence the write settles by is the Object State Key the claim that
@@ -1082,7 +1008,6 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # runs from its source's pin through infinity, so the flush reads the
     # coverage beyond R2 and closes R3 too; R2's changed part and R3's are one
     # row, which one insert opens beside R2's head.
-    counts = _counting_case_state_reads(monkeypatch)
     r2 = {
         "pos_id": 1,
         "acct_num": "A",
@@ -1112,7 +1037,6 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # the node the named find published — never the primary key alone.
     assert close.binds[2] == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert run.emissions[3].binds[2] == "infinity"
-    assert counts == {"target": 0, "coverage": 0}
 
 
 @pytest.mark.parametrize("state_graded", [False, True])
@@ -1146,23 +1070,6 @@ def test_a_document_milestone_after_setup_uses_the_production_read() -> None:
     assert calls == 3
     assert len(emissions) == 2
     assert emissions[0].sql.endswith("and in_z = ?")
-
-
-def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> None:
-    # The refusal is scoped to Relational Document Layout, where the tracked
-    # members cannot even account for the row's SLOTS. Under `Columns` the tracker
-    # holds every column, so out-of-band state leaves the observation STALE — the
-    # very thing a conflict case authors on purpose — never unrepresentable.
-    meta = model_facts.load_case_metamodel(_load_case("m-temporal-write-002"))
-    model = meta
-    store = SimulatedTemporalStore()
-    store.note_out_of_band_write()
-    scenario._refuse_unaccounted_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-        model,
-        model_facts.case_entity(model, "parallax.compatibility.Balance"),
-        {"id": 1},
-        store,
-    )
 
 
 def test_a_document_chain_reads_the_milestone_its_prior_entry_stored() -> None:
@@ -1399,87 +1306,34 @@ def test_a_groups_writes_buffered_before_one_flush_compose_in_its_one_buffer() -
     assert {emission.case_pointer for emission in compiled} == {"/scenario/1/write"}
 
 
-def _counting_case_state_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    counts = {"target": 0, "coverage": 0}
-
-    def counted(kind: str, read: Callable[..., list[tuple[object, ...]]]) -> Any:
-        def counting(*arguments: object) -> list[tuple[object, ...]]:
-            counts[kind] += 1
-            return read(*arguments)
-
-        return counting
-
-    monkeypatch.setattr(
-        SimulatedTemporalStore,
-        "target_rows",
-        counted("target", SimulatedTemporalStore.target_rows),
-    )
-    monkeypatch.setattr(
-        SimulatedTemporalStore,
-        "coverage_rows",
-        counted("coverage", SimulatedTemporalStore.coverage_rows),
-    )
-    return counts
-
-
-@pytest.mark.parametrize(
-    ("case_id", "reads"),
-    [
-        pytest.param("m-concurrency-027", {"target": 0, "coverage": 0}, id="optimistic-version"),
-        pytest.param("m-temporal-write-042", {"target": 0, "coverage": 1}, id="optimistic-window"),
-        pytest.param("m-concurrency-029", {"target": 1, "coverage": 0}, id="locking-amend"),
-        pytest.param("m-concurrency-040", {"target": 1, "coverage": 0}, id="locking-delete"),
-        pytest.param("m-temporal-write-043", {"target": 1, "coverage": 0}, id="locking-replace"),
-    ],
-)
-def test_a_target_entry_compiles_through_target_admission(
-    case_id: str, reads: dict[str, int], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # An authored `ifVersion` or `ifTxStart` is the caller's condition, never
-    # proof of stored state: under Locking the attempt's own admission confirms
-    # it against the row the case state holds, and a temporal row it read
-    # whole is the flush's coverage, so no other read follows. Optimistic
-    # admission reads nothing.
-    counts = _counting_case_state_reads(monkeypatch)
-    case = _load_case(case_id)
+def test_an_optimistic_target_entry_compiles_reading_no_row() -> None:
+    # An authored `ifVersion` is the caller's condition, never proof of stored
+    # state, and Optimistic admission reads nothing.
+    case = _load_case("m-concurrency-027")
     compiled, _database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert [emission.sql for emission in compiled] == [
         sql for sql, _binds in write_golden_statements(case)
     ]
-    assert counts == reads
 
 
-def test_a_locking_target_entry_whose_stored_row_moved_is_refused_rather_than_compiled() -> None:
-    # The case state knows a Non-Temporal row only as its fixtures stored it, so
-    # once an earlier entry may have changed it a Locking confirmation has no
-    # row to answer with.
-    case = _synthetic_write(
-        "writeSequence",
-        {
-            "given": {"fixtures": True},
-            "when": {
-                "uow": {"concurrency": "locking"},
-                "writeSequence": [
-                    {
-                        "mutation": "amend",
-                        "entity": "parallax.compatibility.Account",
-                        "statements": 1,
-                        "row": {"id": 1, "balance": "90.00"},
-                        "ifVersion": 1,
-                    },
-                    {
-                        "mutation": "amend",
-                        "entity": "parallax.compatibility.Account",
-                        "statements": 1,
-                        "row": {"id": 1, "balance": "80.00"},
-                        "ifVersion": 2,
-                    },
-                ],
-            },
-        },
-    )
-    with pytest.raises(EngineError, match="no current account of the row"):
-        scenario.compile_write_sequence_case(case, "postgres")
+@pytest.mark.parametrize(
+    ("case_id", "refusal"),
+    [
+        pytest.param("m-temporal-write-042", "reads no stored row", id="target-range"),
+        pytest.param("m-concurrency-029", "reads no stored row", id="locking-amend"),
+        pytest.param("m-concurrency-040", "reads no stored row", id="locking-delete"),
+        pytest.param("m-temporal-write-043", "reads no stored row", id="locking-replace"),
+        pytest.param("m-temporal-write-002", "insertion's authority", id="earlier-entry"),
+        pytest.param("m-temporal-write-005", "insertion's authority", id="fixtures"),
+    ],
+)
+def test_a_write_against_stored_state_is_refused_rather_than_compiled(
+    case_id: str, refusal: str
+) -> None:
+    # Compile reads nothing, so what such a case declares run-only for is what
+    # exposes it were it declared eligible.
+    with pytest.raises(EngineError, match=refusal):
+        scenario.compile_write_sequence_case(_load_case(case_id), "postgres")
 
 
 def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error() -> None:
@@ -1513,12 +1367,12 @@ def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error(
 @pytest.mark.parametrize(
     ("raised_failure", "translated"),
     [
-        pytest.param(lambda: SimulatedStoreError("no one stored row"), True, id="store-diagnostic"),
+        pytest.param(lambda: SqlGenError("no such lowering"), True, id="lowering-diagnostic"),
         pytest.param(lambda: RuntimeError("a defect"), False, id="defect"),
         pytest.param(KeyboardInterrupt, False, id="interruption"),
     ],
 )
-def test_only_a_simulated_store_diagnostic_becomes_an_engine_error(
+def test_only_a_lowering_diagnostic_becomes_an_engine_error(
     raised_failure: Callable[[], BaseException],
     translated: bool,
     monkeypatch: pytest.MonkeyPatch,
@@ -1527,13 +1381,13 @@ def test_only_a_simulated_store_diagnostic_becomes_an_engine_error(
     # instance would keep this run's frames alive for the rest of the session.
     failure = raised_failure()
 
-    def failing(store: SimulatedTemporalStore, model: object, step: object) -> None:
+    def failing(*_arguments: object, **_keywords: object) -> None:
         raise failure
 
-    monkeypatch.setattr(SimulatedTemporalStore, "apply", failing)
-    case = _load_case("m-temporal-write-002")
+    monkeypatch.setattr(_simulated_write_steps, "stream_physical", failing)
+    case = _load_case("m-temporal-write-001")
     if translated:
-        with pytest.raises(EngineError, match="no one stored row") as engine_error:
+        with pytest.raises(EngineError, match="no such lowering") as engine_error:
             scenario.compile_write_sequence_case(case, "postgres")
         assert engine_error.value.__cause__ is failure
         return
@@ -2546,7 +2400,7 @@ def test_conflict_submissions_never_prepare_or_simulate_a_peer_write(
     def refuse(*args: object, **kwargs: object) -> Any:
         raise AssertionError("conflict submission entered compile machinery")
 
-    monkeypatch.setattr(SimulatedTemporalStore, "__init__", refuse)
+    monkeypatch.setattr(SimulatedWriteSteps, "__init__", refuse)
     monkeypatch.setattr(_case_ingress, "prepare_case_write", refuse)
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, _table_state, database_calls = scenario.run_conflict_case(
@@ -3415,15 +3269,13 @@ def _registry_advance(sequence: str) -> dict[str, object]:
 
 
 @pytest.mark.parametrize("rollback", [False, True])
-def test_marker_generation_and_execution_do_not_access_case_state(
+def test_marker_generation_and_execution_resolve_no_entries(
     monkeypatch: pytest.MonkeyPatch, rollback: bool
 ) -> None:
     def refuse(*args: object, **kwargs: object) -> Any:
-        raise AssertionError("marker lowering accessed simulated state")
+        raise AssertionError("marker lowering resolved its entries")
 
     monkeypatch.setattr(scenario, "_resolve_entries", refuse)
-    for name in ("transaction", "acquisition", "predecessor_for", "apply"):
-        monkeypatch.setattr(SimulatedTemporalStore, name, refuse)
     case = _synthetic_scenario(
         "models/pk-sequence.yaml", "m-pk-gen-998", [_pk_sequence_advance(rollback=rollback)]
     )
@@ -3438,15 +3290,13 @@ def test_marker_generation_and_execution_do_not_access_case_state(
     assert (port.commits, port.rollbacks) == ((0, 1) if rollback else (1, 0))
 
 
-def test_max_marker_compile_and_run_share_store_free_lowering(
+def test_max_marker_compile_and_run_share_one_lowering(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def refuse(*args: object, **kwargs: object) -> Any:
-        raise AssertionError("max marker accessed simulated state")
+        raise AssertionError("max marker resolved its entries")
 
     monkeypatch.setattr(scenario, "_resolve_entries", refuse)
-    for name in ("transaction", "acquisition", "predecessor_for", "apply"):
-        monkeypatch.setattr(SimulatedTemporalStore, name, refuse)
     case = _case("m-pk-gen-001")
     compiled, compile_calls = scenario.compile_write_sequence_case(case, "postgres")
     port = FakeWritePort()
@@ -3457,7 +3307,7 @@ def test_max_marker_compile_and_run_share_store_free_lowering(
     assert compile_calls == run_calls == 1
 
 
-def test_store_free_composition_refuses_actual_row_acquisition() -> None:
+def test_marker_composition_refuses_actual_row_acquisition() -> None:
     model = models.load_models()["account"]
     target = instructions.deserialize(
         {
@@ -3468,10 +3318,8 @@ def test_store_free_composition_refuses_actual_row_acquisition() -> None:
         }
     )
 
-    with pytest.raises(
-        EngineError, match="store-free framework marker lowering cannot acquire rows"
-    ):
-        scenario._lower_marker_unit(  # pyright: ignore[reportPrivateUsage] - exercise the no-store composition
+    with pytest.raises(EngineError, match="reads no stored row"):
+        scenario._lower_marker_unit(  # pyright: ignore[reportPrivateUsage] - exercise the marker composition
             target,
             model,
             scenario.case_wire_preparer(model),
@@ -3826,23 +3674,12 @@ def _compiled(case: case_format.Case) -> list[str]:
             "m-batch-write-004", [StateObservedWrite, StateObservedWrite], id="versioned-deletes"
         ),
         pytest.param("m-concurrency-026", [StateObservedWrite], id="restated-amendment"),
-        pytest.param("m-temporal-write-005", [StateObservedWrite], id="fixture-history"),
-        pytest.param(
-            "m-temporal-write-002",
-            [KeyedInsert, StateObservedWrite],
-            id="earlier-entry",
-        ),
-        pytest.param(
-            "m-temporal-write-017",
-            [KeyedInsert, StateObservedWrite],
-            id="bounded-window",
-        ),
     ],
 )
 def test_a_compiled_observed_write_settles_against_a_detached_retained_observation(
     case_id: str, write_types: list[type], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The authored or case-state observation is retained by the simulated
+    # The authored observation is retained by the simulated
     # transaction itself, with no read's participation, and composes and
     # settles as an application's retained evidence does.
     admitted = _admitted(monkeypatch)
@@ -3893,9 +3730,7 @@ def test_a_simulated_unit_writes_through_its_latest_returned_insertion_across_fl
         POSTGRES,
         "optimistic",
         "2024-06-01T00:00:00+00:00",
-        None,
         rollback=True,
-        record_statements=True,
     ) as unit:
         unit.buffer(keyed("insert", owner="N", balance="5.00"))
         unit.read(lambda: None)
@@ -4156,9 +3991,8 @@ def test_a_target_replacement_step_completes_what_its_row_omits() -> None:
     ],
 )
 def test_a_locking_target_step_acquires_its_row_before_it_writes(
-    case_id: str, written: str, monkeypatch: pytest.MonkeyPatch
+    case_id: str, written: str
 ) -> None:
-    counts = _counting_case_state_reads(monkeypatch)
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
@@ -4167,13 +4001,9 @@ def test_a_locking_target_step_acquires_its_row_before_it_writes(
     )
     assert database_calls == 2
     assert [sql for sql, _ in port.writes] == [POSTGRES.to_driver_sql(written)]
-    assert counts == {"target": 0, "coverage": 0}
 
 
-def test_a_locking_target_replacement_step_reuses_the_row_it_acquired(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    counts = _counting_case_state_reads(monkeypatch)
+def test_a_locking_target_replacement_step_reuses_the_row_it_acquired() -> None:
     jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     port = FakeWritePort(
         find_rows=[
@@ -4193,7 +4023,6 @@ def test_a_locking_target_replacement_step_reuses_the_row_it_acquired(
     )
     assert database_calls == 4
     assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", "insert"]
-    assert counts == {"target": 0, "coverage": 0}
 
 
 def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_window() -> None:
@@ -4234,7 +4063,7 @@ def test_a_replayed_contiguous_group_replaces_sources_and_reports(
     def refuse(*args: object, **kwargs: object) -> Any:
         raise AssertionError("ordinary group entered compile machinery")
 
-    monkeypatch.setattr(SimulatedTemporalStore, "__init__", refuse)
+    monkeypatch.setattr(SimulatedWriteSteps, "__init__", refuse)
     monkeypatch.setattr(_case_ingress, "prepare_case_write", refuse)
     instant = "2024-05-01T00:00:00+00:00"
     first = _ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")

@@ -4,14 +4,9 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from parallax.conformance import _case_ingress, case_format, provision
+from parallax.conformance import case_format
 from parallax.conformance._mechanism.envelope import EngineError, driver_binds
-from parallax.conformance._mechanism.model_facts import (
-    case_entity,
-    case_setup_model_ref,
-    family_declarer,
-)
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
+from parallax.conformance._mechanism.model_facts import case_entity
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import DocumentValue
 from parallax.core.db_port import DatabaseConnection, StructuredDocument
@@ -20,7 +15,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
 from parallax.core.wire import WireValue, decode_wire
 
-__all__ = ["apply_given_apply", "apply_given_corrupt", "seed_store_from_fixtures"]
+__all__ = ["apply_given_apply", "apply_given_corrupt"]
 
 
 def apply_given_corrupt(
@@ -233,38 +228,6 @@ def _corruption_key(
             "corruption can address a row by"
         )
     return placement.slot.column.name, decode_wire(declared.type, cast("WireValue", key))
-
-
-def seed_store_from_fixtures(
-    case: case_format.Case, model: AcceptedMetamodel, store: SimulatedTemporalStore
-) -> None:
-    """Seed ``store`` from the case's OWN fixture-loading rule (`m-case-format`):
-    a writeSequence starts EMPTY unless it opts in with ``given.fixtures: true``;
-    every other shape (scenario, conflict) loads the model's default fixtures —
-    mirrored from ``tests/_support/corpus.py``'s ``case_fixtures`` rule, kept independent
-    (production/adapter code never imports the test suite). Each row is decoded
-    once, at case ingress: a temporal Entity's become stored milestones, and every
-    other Entity's are the initial state ``store`` knows, an empty one included."""
-    given = case.document.get("given")
-    fixtures_flag = (
-        isinstance(given, Mapping) and cast("Mapping[str, object]", given).get("fixtures") is True
-    )
-    if case.shape == "writeSequence" and not fixtures_flag:
-        store.seed_initial_rows(model, ())
-        return
-    fixtures = provision.load_fixtures(case_setup_model_ref(case))
-    initial: list[tuple[EntityMetadata, list[Mapping[str, object]]]] = []
-    for entity_name, rows in fixtures.items():
-        entity = case_entity(model, entity_name)
-        decoded = [
-            _case_ingress.decode_case_row(row, model, entity)
-            for row in cast("list[Mapping[str, object]]", rows)
-        ]
-        if family_declarer(model, entity).declared_as_of_axes:
-            store.seed_fixtures(model, entity, decoded)
-        else:
-            initial.append((entity, decoded))
-    store.seed_initial_rows(model, initial)
 
 
 def apply_given_apply(case: case_format.Case, port: DatabaseConnection) -> None:

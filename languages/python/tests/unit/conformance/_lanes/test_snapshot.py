@@ -1197,31 +1197,26 @@ def test_run_scenario_case_refuses_a_predicate_write_on_the_snapshot_lane() -> N
     assert port.writes == []
 
 
-def test_snapshot_lane_compile_and_run_reach_the_same_temporal_dml() -> None:
-    # Compile seeds the same fixture milestones the run lane does, so a temporal
-    # close on this lane resolves the milestone persisted history holds instead of
-    # refusing for want of an observation. The two lanes must reach the SAME DML
-    # for the same case, which is the whole reason this lane has a compile path —
-    # so the run's own emissions ARE the compile oracle here, not a transcription
-    # of one.
+def test_only_the_run_lane_reaches_a_temporal_close_of_a_fixture_milestone() -> None:
+    # A temporal close on this lane settles against the milestone persisted
+    # history holds. Compile reads no stored row, so it has no observation to
+    # settle against.
     case = _ledger_write_after_find_and_mutate(_LEDGER_VALUE_UPDATE)
     # The find, then the resolving read the keyed write's own unit of work owes.
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)], [dict(_LEDGER_2_ROW)]])
 
-    compiled, _database_calls = _compile(case, "postgres")
+    with pytest.raises(EngineError, match="insertion's authority"):
+        _compile(case, "postgres")
     run = _run(case, port)
 
-    assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
-        (e.case_pointer, e.sql, e.binds) for e in run.emissions
-    ]
-    assert [e.sql for e in compiled[1:]] == [
+    assert [e.sql for e in run.emissions[1:]] == [
         "update ledger set out_z = ? where led_id = ? and out_z = ? and in_z = ?",
         "insert into ledger(led_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
     ]
-    # The close addresses the FIXTURE milestone's own edge and the successor
-    # carries its acct_num forward: both are facts only a seeded tracker holds.
-    assert compiled[1].binds[3] == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-    assert compiled[2].binds[:3] == (2, "B", decimal.Decimal("300.00"))
+    # The close addresses the fixture milestone's own edge and the successor
+    # carries its acct_num forward: both come from the row the run read.
+    assert run.emissions[1].binds[3] == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert run.emissions[2].binds[:3] == (2, "B", decimal.Decimal("300.00"))
 
 
 def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null() -> None:

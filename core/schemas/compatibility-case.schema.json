@@ -680,7 +680,7 @@
       ]
     },
     "compileEligibility": {
-      "description": "The compile-eligibility declaration (m-case-format / m-conformance-adapter). ABSENT by default: a case is compile-eligible, so an adapter's `compile` command emits its SQL statically. PRESENT only to declare a case RUN-ONLY — its emissions cannot be derived without executing SQL, so `compile` on it returns `status: run-only` with a `compile-run-only` diagnostic instead of `ok`, and only `run` grades it. Eligibility is an AUTHORED, REVIEWED intent declaration (intent is a human judgment); the harness mechanically backstops the detectable single-connection cases and each language's refusing compile port structurally enforces query-result dependence at runtime.",
+      "description": "The compile-eligibility declaration (m-case-format / m-conformance-adapter). ABSENT by default: a case is compile-eligible, so an adapter's `compile` command emits its SQL statically. PRESENT only to declare a case RUN-ONLY — its emissions cannot be derived without executing SQL, so `compile` on it returns `status: run-only` with a `compile-run-only` diagnostic instead of `ok`, and only `run` grades it. Eligibility is an AUTHORED, REVIEWED intent declaration (intent is a human judgment); the harness mechanically backstops the detectable single-connection cases, and grading `compile` against the golden exposes a mis-declared query-result dependence, short of a golden equal to what no rows would yield.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mode", "reason"],
@@ -690,7 +690,7 @@
           "const": "run-only"
         },
         "reason": {
-          "description": "Which run-only criterion applies. `single-connection` — the case intends to exercise database concurrency or locking behavior (a `conflict` / `concurrencySuccess` / `boundary` shape, a `when.concurrency` choreography, or a `given.apply` / `given.fault`), so it is run-only regardless of whether its emissions happen to be statically derivable; the harness backstop requires this declaration on every such detectable case. `query-result-dependent` — the emissions are not a pure function of `when` + `given` (deep-fetch fan-out binds, `sequence`-strategy PK allocations, framework-owned observed-version / `in_z` binds), so compiling would require executing a query; this criterion is a human judgment the harness cannot detect and each language's refusing compile port enforces structurally.",
+          "description": "Which run-only criterion applies. `single-connection` — the case intends to exercise database concurrency or locking behavior (a `conflict` / `concurrencySuccess` / `boundary` shape, a `when.concurrency` choreography, or a `given.apply` / `given.fault`), so it is run-only regardless of whether its emissions happen to be statically derivable; the harness backstop requires this declaration on every such detectable case. `query-result-dependent` — the emissions depend on a query result (deep-fetch fan-out binds, `sequence`-strategy PK allocations, framework-owned observed-version / `in_z` binds, a write against stored state whether `given` fixtures or an earlier entry left it), so compiling would require executing a query; this criterion is a human judgment the harness cannot detect, and grading `compile` against the golden exposes a mis-declaration, short of a golden equal to what no rows would yield.",
           "enum": ["single-connection", "query-result-dependent"]
         },
         "note": {

@@ -22,9 +22,7 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
@@ -32,10 +30,8 @@ from parallax.core._execution._unit_work import uow as uow_module
 from parallax.core._execution._unit_work._write_ownership import WriteOwnership
 from parallax.core._execution._unit_work.acquisition import (
     CoverageReadRequest,
-    CoverageTerm,
     RowConsumer,
     RowRequest,
-    consume_coverage,
 )
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -47,9 +43,8 @@ from parallax.core._execution._unit_work.write_runner import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, entity_by_name
+from parallax.core.metamodel import entity_by_name
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     RetainedObservation,
@@ -72,6 +67,7 @@ from tests._support.planner_probes import (
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.core._execution._reach_support import frames, reaches
+from tests.unit.core._execution._unit_work._stored_positions_support import StoredPositions
 
 _META: Final = model_of(WHERE_POSITION_META)
 _FOUND = entity_by_name(_META, "WherePosition")
@@ -105,18 +101,17 @@ _KEY: Final[ObjectKey] = object_key(_write(_JAN), _META)  # pyright: ignore[repo
 
 
 class _Session:
-    """One attempt over a store holding WherePosition 1 from January, as one
-    row or as rows ending at each of ``ends``, recording every row acquisition
-    it asks for."""
+    """One attempt over stored rows holding WherePosition 1 from January, as
+    one row or as rows ending at each of ``ends``, recording every row
+    acquisition it asks for."""
 
     def __init__(
         self,
         *,
         concurrency: ConcurrencyPreference = "optimistic",
-        execute: Callable[[SimulatedWriteSteps], Any] | None = None,
+        execute: Callable[[StoredPositions], Any] | None = None,
         ends: tuple[object, ...] = (INFINITY,),
     ) -> None:
-        self.store = SimulatedTemporalStore()
         self.seeded = [
             {
                 "id": 1,
@@ -129,17 +124,14 @@ class _Session:
             }
             for start, end in zip((_JAN, *ends[:-1]), ends, strict=True)
         ]
-        self.store.seed_fixtures(_META, _ENTITY, self.seeded)
-        self.simulated = SimulatedWriteSteps(
-            build_write_planner(_META).payloads, _META, POSTGRES, store=self.store
-        )
+        self.positions = StoredPositions(_META, self.seeded)
         self.requests: list[RowRequest] = []
         self.uow = UnitOfWork(
             settings=TransactionSettings(preference=concurrency),
             lifetime=TxnAttemptLifetime(),
             clock=FixedClock(_NOW),
             meta=_META,
-            execute_write_steps=self.simulated if execute is None else execute(self.simulated),
+            execute_write_steps=self.positions if execute is None else execute(self.positions),
             execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=self._acquire,
             planner=build_write_planner(_META),
@@ -150,7 +142,7 @@ class _Session:
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         self.requests.append(request)
-        return self.store.acquisition(_META)(request, consumer)
+        return self.positions.acquire(request, consumer)
 
     def observed(self) -> RetainedObservation:
         """A fresh retained observation of the row WherePosition 1 was seeded
@@ -163,8 +155,7 @@ class _Session:
     def flush(self, *writes: tuple[PreparedKeyedInstruction, RetainedObservation]) -> None:
         for prepared, observation in writes:
             self.uow.buffer(admitted_write(prepared, observation, observation.key.object))
-        with self.store.transaction(rollback=False):
-            self.uow.flush(trigger="read_dependency")
+        self.uow.flush(trigger="read_dependency")
 
     @property
     def ownership(self) -> WriteOwnership:
@@ -179,28 +170,8 @@ class _Session:
         )
 
     def stored(self) -> list[_Stored]:
-        covered = self.store.acquisition(_META)(
-            CoverageReadRequest(
-                entity=_ENTITY,
-                key_attribute=AttributeIdentity(_ENTITY.identity, "id"),
-                terms=(CoverageTerm(1, ()),),
-                shared_lock=False,
-            ),
-            consume_coverage,
-        )
-        assert covered is not None
         return sorted(
-            (
-                _described(
-                    PredecessorRow.over_row(
-                        covered.selection,
-                        covered.rows[index],
-                        covered.document(index),
-                        covered.absent,
-                    )
-                )
-                for index in range(len(covered))
-            ),
+            (_described(PredecessorRow(members=row)) for row in self.positions.rows),
             key=_by_start,
         )
 
@@ -303,8 +274,7 @@ def test_a_pre_commit_flush_which_no_submission_follows_records_nothing_for_cont
     session.uow.buffer(
         admitted_write(_write(_FEB, _MAR, value="150.00"), source, source.key.object)
     )
-    with session.store.transaction(rollback=False):
-        session.uow.flush(trigger="pre_commit")
+    session.uow.flush(trigger="pre_commit")
     # The pre-commit write bound to the rows the earlier flush left, reading
     # nothing, and recorded nothing new for a later write to continue from.
     assert session.requests == []
@@ -321,8 +291,7 @@ def test_a_deferred_range_records_for_continuation_only_where_a_submission_follo
     session = _Session(ends=(_SEP, INFINITY))
     source = session.observed()
     session.uow.buffer(admitted_write(_write(_FEB, acctNum="O"), source, source.key.object))
-    with session.store.transaction(rollback=False):
-        session.uow.flush(trigger=trigger)
+    session.uow.flush(trigger=trigger)
     assert [type(request) for request in session.requests] == [CoverageReadRequest]
     ownership = session.ownership
     if trigger == "pre_commit":
@@ -353,9 +322,9 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
         bound.append(bind(*arguments, **keywords))
         return bound[-1]
 
-    def failing(simulated: SimulatedWriteSteps) -> Callable[..., tuple[object, ...]]:
+    def failing(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
         def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
-            simulated(*arguments, **keywords)
+            positions(*arguments, **keywords)
             raise RuntimeError("the group failed")
 
         return execute
@@ -380,9 +349,9 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
 
 
 def test_a_group_whose_steps_fail_after_their_payloads_were_demanded_holds_nothing() -> None:
-    def failing(simulated: SimulatedWriteSteps) -> Callable[..., tuple[object, ...]]:
+    def failing(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
         def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
-            simulated(*arguments, **keywords)
+            positions(*arguments, **keywords)
             raise RuntimeError("the group failed")
 
         return execute
@@ -398,9 +367,9 @@ def test_a_group_whose_steps_fail_after_their_payloads_were_demanded_holds_nothi
 
 
 def test_a_group_answering_keys_it_did_not_allocate_holds_nothing() -> None:
-    def answering(simulated: SimulatedWriteSteps) -> Callable[..., tuple[object, ...]]:
+    def answering(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
         def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
-            return (*simulated(*arguments, **keywords), 7)
+            return (*positions(*arguments, **keywords), 7)
 
         return execute
 
@@ -443,8 +412,7 @@ def _target(
 
 
 def _flush_buffered(session: _Session) -> None:
-    with session.store.transaction(rollback=False):
-        session.uow.flush(trigger="read_dependency")
+    session.uow.flush(trigger="read_dependency")
 
 
 def test_a_caller_beside_a_continuing_source_states_the_start_of_the_row_held_there() -> None:
