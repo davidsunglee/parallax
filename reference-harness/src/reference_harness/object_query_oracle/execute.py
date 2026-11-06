@@ -384,10 +384,9 @@ def golden_projection_columns(case: Case) -> set[str]:
 
 
 def _alias_document_presence_projections(
-    sql: str, dialect: str, model: Model
+    sql: str, tree: Any, dialect: str, model: Model
 ) -> tuple[str, frozenset[str]]:
     """Give only proven physical presence cells collision-safe execution aliases."""
-    tree = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
     selects = _select_branches(tree)
     ordinals = document_presence_ordinals(selects, model, dialect)
     reserved = {
@@ -431,18 +430,20 @@ def query_rows(
 
     A `bytes` cell is the dialect's hexadecimal spelling, in either case
     (`m-dialect` *Bytes cell*), and a case states the octets it spells as canonical
-    Wire, so each is folded to that case here and the authored value stays strict.
+    Wire, so a cell the statement spells uppercase is folded to that case here and
+    the authored value stays strict.
     """
+    tree = sqlglot.parse_one(sql, read=sqlglot_dialect(reader.dialect))
+    uppercase_cells = _uppercase_hex_cell_keys(tree)
     executable, presence_keys = _alias_document_presence_projections(
-        sql, reader.dialect, case.model
+        sql, tree, reader.dialect, case.model
     )
     rows = reader.query(executable, binds) if binds else reader.query(executable)
-    bytes_cells = _bytes_cell_keys(case.model)
-    if not presence_keys and not bytes_cells:
+    if not presence_keys and not uppercase_cells:
         return rows
     return [
         {
-            key: value.lower() if key in bytes_cells and isinstance(value, str) else value
+            key: value.lower() if key in uppercase_cells and isinstance(value, str) else value
             for key, value in row.items()
             if key not in presence_keys
         }
@@ -450,13 +451,17 @@ def query_rows(
     ]
 
 
-def _bytes_cell_keys(model: Model) -> frozenset[str]:
-    """The result key each `bytes` Column of *model* projects its hexadecimal cell under."""
+def _uppercase_hex_cell_keys(tree: Any) -> frozenset[str]:
+    """The result keys *tree* projects through MariaDB's `hex`, in any branch.
+
+    A wrapped `union all` publishes its arms' cells under the alias they carry, so a
+    nested projection names the result key too. Postgres's `encode` spells the case a
+    case states already.
+    """
     return frozenset(
-        f"{attribute['column']}_hex"
-        for entity in model.entities
-        for attribute in entity.attributes
-        if attribute["type"] == "bytes"
+        projection.alias
+        for projection in tree.find_all(exp.Alias)
+        if isinstance(projection.this, exp.Hex)
     )
 
 
