@@ -574,9 +574,8 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"validate_source_pin"}
     ),
     # The unit of work's implementation leaves the case lanes build writes
-    # through: the instruction vocabulary and its prepared forms, and the
-    # row-acquisition requests a case state is read by. The facade exports
-    # none of them, so each lane names the private owner.
+    # through: the instruction vocabulary and its prepared forms. The facade
+    # exports none of them, so each lane names the private owner.
     **{
         (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
         for lane in (
@@ -601,19 +600,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
             "PreparedTargetInstruction",
             "PreparedInstruction",
             "WriteInstruction",
-        }
-    ),
-    (
-        "parallax.conformance.simulated_temporal_store",
-        "parallax.core._execution._unit_work.acquisition",
-    ): frozenset(
-        {
-            "AcquireRows",
-            "CompletionRequest",
-            "CoverageReadRequest",
-            "RowConsumer",
-            "RowRequest",
-            "TargetReadRequest",
         }
     ),
     (

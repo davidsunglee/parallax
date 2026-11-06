@@ -676,7 +676,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   ones a real write settles against; both are implementation-private, so no
   exported name reaches them. Conformance support's simulated step execution
   lowers each step sequence a unit of work hands it without a database through
-  execution's `stream_physical` when it records the statements, rather than
+  execution's `stream_physical`, rather than
   reaching the `m-sql` write-step compiler. The case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Case ingress does reach
@@ -687,9 +687,8 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `ScalarDefinition` the plan chooses a converter by is what identifies a declared
   axis end. The
   traversal stays out of `parallax.core.document_codec`'s package interface, since
-  no developer-facing surface needs it. The case lanes build instructions and
-  case-state row acquisitions through the unit of work's implementation leaves
-  under `parallax.core._execution._unit_work`, which the
+  no developer-facing surface needs it. The case lanes build instructions through the unit of work's implementation
+  leaves under `parallax.core._execution._unit_work`, which the
   `parallax.core.unit_work` facade deliberately does not export. Each remaining
   reach stays
   keyed by its exact importing module and imported names in the source inventory.
