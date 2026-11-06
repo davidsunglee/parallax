@@ -2460,13 +2460,13 @@
       "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
-      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Flush. `interface` is what the Read serves — `typed` or `wire` for a read publishing its result in that representation, or `rows` for the Read of a write's target acquisition, which publishes neither — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A Read opened over `target` for `purpose`, after public preflight and after any read-dependency Flush. `purpose` is what the Read serves — `typed` or `wire` for a read publishing its result in that representation, or `row-acquisition` for the Read of a write's target acquisition, which publishes neither — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["target", "interface"],
+      "required": ["target", "purpose"],
       "properties": {
         "target": {"$ref": "#/$defs/lifecycleTarget"},
-        "interface": {"enum": ["typed", "wire", "rows"]},
+        "purpose": {"enum": ["typed", "wire", "row-acquisition"]},
         "edition": {"type": "string", "minLength": 1}
       }
     },
@@ -2703,13 +2703,13 @@
       ]
     },
     "lifecycleStreamStarted": {
-      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `interface` is the representation the stream publishes. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size. `edition` is the Model Edition a STANDALONE stream adopted at entry — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the stream is the root activity; a participating stream carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `purpose` is the representation the stream publishes. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size. `edition` is the Model Edition a STANDALONE stream adopted at entry — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the stream is the root activity; a participating stream carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["target", "interface", "batchSize"],
+      "required": ["target", "purpose", "batchSize"],
       "properties": {
         "target": {"$ref": "#/$defs/lifecycleTarget"},
-        "interface": {"enum": ["typed", "wire"]},
+        "purpose": {"enum": ["typed", "wire"]},
         "batchSize": {"type": "integer", "minimum": 1},
         "edition": {"type": "string", "minLength": 1}
       }

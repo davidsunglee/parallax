@@ -11,7 +11,7 @@ from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._authored_resolver import include_path_node
 from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle import PublicationInterface
+from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
 from parallax.core.read_delivery import InvalidData, InvalidDataError
@@ -473,16 +473,16 @@ class SnapshotPublication:
     compositions over it, so neither is an independent conversion that could
     drift from the streamed one.
 
-    ``interface`` is the same choice named for the Read activity that
-    orchestration opens: which materializer publishes IS which read interface
-    ran, so the two are one value rather than two that could disagree.
+    ``representation`` is the same choice named for the Read activity that
+    orchestration opens: which materializer publishes IS which purpose the
+    activity reports, so the two are one value rather than two that could disagree.
     ``edition`` is the Model Edition of the selection the publication was
     built over, and every envelope it publishes is stamped with it — the one
     place the stamp is applied, so no result form can be published without
     one.
     """
 
-    interface: PublicationInterface
+    representation: ResultRepresentation
     roots_of: RootsOf[ReadEvidence]
     edition: str
     release: Callable[[], None]

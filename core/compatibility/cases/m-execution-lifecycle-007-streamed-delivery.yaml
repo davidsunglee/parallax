@@ -83,7 +83,7 @@ then:
             parent: null
             streamStarted:
               target: parallax.compatibility.Order
-              interface: wire
+              purpose: wire
               batchSize: 2
               edition: orders
           - sequence: 2

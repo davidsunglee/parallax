@@ -51,7 +51,7 @@ _TARGET: Final[ActivityTarget] = _Target()
 
 
 def _read(scope: ExecutionScope) -> None:
-    scope.begin().eager(_TARGET, "rows", lambda _activity, _inputs: None)
+    scope.begin().eager(_TARGET, "typed", lambda _activity, _inputs: None)
 
 
 def _two_pages(scope: ExecutionScope) -> None:

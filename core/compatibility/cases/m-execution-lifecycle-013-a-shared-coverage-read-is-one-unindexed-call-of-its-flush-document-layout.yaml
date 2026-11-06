@@ -88,7 +88,7 @@ then:
           - sequence: 5
             activity: 4
             parent: 2
-            readStarted: { target: parallax.compatibility.CoverageSpan, interface: wire }
+            readStarted: { target: parallax.compatibility.CoverageSpan, purpose: wire }
           - sequence: 6
             activity: 5
             parent: 4

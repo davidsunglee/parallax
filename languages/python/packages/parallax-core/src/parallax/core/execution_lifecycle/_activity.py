@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable, Sized
 from dataclasses import dataclass
 from types import TracebackType
-from typing import ClassVar, Final, Protocol, Self, runtime_checkable
+from typing import ClassVar, Final, Literal, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core import auto_retry
@@ -73,14 +73,13 @@ from parallax.core.execution_lifecycle._events import (
     OuterInvocation,
     OuterInvocationCommitted,
     OuterInvocationFailed,
-    PublicationInterface,
     ReadCompleted,
     ReadFailed,
     ReadFinished,
-    ReadInterface,
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
+    ResultRepresentation,
     RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
@@ -99,6 +98,8 @@ from parallax.core.execution_lifecycle._events import (
     TransactionInvocationStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
+
+type _ReadPurpose = ResultRepresentation | Literal["row-acquisition"]
 
 
 @runtime_checkable
@@ -698,7 +699,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         ``retry_eligible`` is the retry policy's verdict on the trigger."""
         ...
 
-    def read(self, target: ActivityTarget, interface: ReadInterface, /) -> ReadActivity:
+    def read(self, target: ActivityTarget, purpose: _ReadPurpose, /) -> ReadActivity:
         """Open a participating Read under this attempt."""
         ...
 
@@ -707,7 +708,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         ...
 
     def stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> StreamActivity:
         """Open a participating Stream under this attempt.
 
@@ -838,14 +839,14 @@ class _InertActivity:
 
     def finish_calls(self, result: OrderedWriteResult, /) -> None: ...
 
-    def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _InertActivity:
+    def read(self, target: ActivityTarget, purpose: _ReadPurpose, /) -> _InertActivity:
         return self
 
     def flush(self, trigger: FlushTrigger, /) -> _InertActivity:
         return self
 
     def stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> _InertActivity:
         return self
 
@@ -1276,21 +1277,21 @@ class _LiveRead(_LiveConnectionOwner):
     because the attempt it hangs under already did.
     """
 
-    __slots__ = ("_edition", "_interface", "_target")
+    __slots__ = ("_edition", "_purpose", "_target")
 
-    _interface: ReadInterface
+    _purpose: _ReadPurpose
 
     def __init__(
         self,
         publisher: _Publisher,
         parent: _LiveActivity | None,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: _ReadPurpose,
         edition: str | None,
     ) -> None:
         super().__init__(publisher, parent)
         self._target = target.canonical
-        self._interface = interface
+        self._purpose = purpose
         self._edition = edition
 
     def __enter__(self) -> _LiveRead:
@@ -1305,7 +1306,7 @@ class _LiveRead(_LiveConnectionOwner):
                 self._activity_id,
                 self._parent_activity_id,
                 self._target,
-                self._interface,
+                self._purpose,
                 self._edition,
             )
         )
@@ -1984,22 +1985,22 @@ class _LiveStream(_LiveActivity):
     hangs under already did.
     """
 
-    __slots__ = ("_batch_size", "_edition", "_finished", "_interface", "_target")
+    __slots__ = ("_batch_size", "_edition", "_finished", "_purpose", "_target")
 
-    _interface: PublicationInterface
+    _purpose: ResultRepresentation
 
     def __init__(
         self,
         publisher: _Publisher,
         parent: _LiveActivity | None,
         target: ActivityTarget,
-        interface: PublicationInterface,
+        purpose: ResultRepresentation,
         batch_size: int,
         edition: str | None,
     ) -> None:
         super().__init__(publisher, parent)
         self._target = target.canonical
-        self._interface = interface
+        self._purpose = purpose
         self._batch_size = batch_size
         self._edition = edition
         self._finished = False
@@ -2016,7 +2017,7 @@ class _LiveStream(_LiveActivity):
                 self._activity_id,
                 self._parent_activity_id,
                 self._target,
-                self._interface,
+                self._purpose,
                 self._batch_size,
                 self._edition,
             )
@@ -2158,16 +2159,16 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
             self._triggered(trigger, retry_eligible), diagnostic_for(rollback_error)
         )
 
-    def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _LiveRead:
-        return _LiveRead(self._publisher, self, target, interface, None)
+    def read(self, target: ActivityTarget, purpose: _ReadPurpose, /) -> _LiveRead:
+        return _LiveRead(self._publisher, self, target, purpose, None)
 
     def flush(self, trigger: FlushTrigger, /) -> _LiveFlush:
         return _LiveFlush(self._publisher, self, trigger)
 
     def stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> _LiveStream:
-        return _LiveStream(self._publisher, self, target, interface, batch_size, None)
+        return _LiveStream(self._publisher, self, target, purpose, batch_size, None)
 
     def joined_invocation(self) -> _LiveJoinedInvocation:
         return _LiveJoinedInvocation(self._publisher, self)
@@ -2343,7 +2344,7 @@ def open_read_root(
     installed: InstalledLifecycle | None,
     *,
     target: ActivityTarget,
-    interface: ReadInterface,
+    purpose: ResultRepresentation,
     edition: str,
 ) -> ReadActivity:
     """The Read root activity for one standalone read, or :data:`INERT`.
@@ -2364,14 +2365,14 @@ def open_read_root(
     handler = _opened(installed, execution)
     if handler is None:
         return INERT
-    return _LiveRead(_Publisher(execution.id, installed, handler), None, target, interface, edition)
+    return _LiveRead(_Publisher(execution.id, installed, handler), None, target, purpose, edition)
 
 
 def open_stream_root(
     installed: InstalledLifecycle | None,
     *,
     target: ActivityTarget,
-    interface: PublicationInterface,
+    purpose: ResultRepresentation,
     batch_size: int,
     edition: str,
 ) -> StreamActivity:
@@ -2393,7 +2394,7 @@ def open_stream_root(
     if handler is None:
         return INERT
     return _LiveStream(
-        _Publisher(execution.id, installed, handler), None, target, interface, batch_size, edition
+        _Publisher(execution.id, installed, handler), None, target, purpose, batch_size, edition
     )
 
 

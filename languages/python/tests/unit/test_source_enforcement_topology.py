@@ -455,7 +455,7 @@ def test_the_lifecycle_reach_inventory_names_a_new_reach_and_passes_the_public_d
                     "from parallax.core.execution_lifecycle import _pool_observation\n"
                 ),
                 "parallax.core._execution._resembling": (
-                    "from parallax.core.execution_lifecycle import ReadInterface\n"
+                    "from parallax.core.execution_lifecycle import ResultRepresentation\n"
                     "import parallax.core.execution_lifecycle\n"
                     "from parallax.core.execution_lifecycles._activity import INERT\n"
                 ),

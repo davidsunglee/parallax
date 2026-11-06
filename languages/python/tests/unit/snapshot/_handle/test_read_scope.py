@@ -49,8 +49,7 @@ from parallax.core.entity._model import class_index
 from parallax.core.execution import QueryTargetError, TxnOptions
 from parallax.core.execution_lifecycle import (
     ExecutionLifecycleReentryError,
-    PublicationInterface,
-    ReadInterface,
+    ResultRepresentation,
 )
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -192,8 +191,8 @@ class _Recording:
         self._selected = selected
         self._inputs = inputs
         self.calls: list[str] = []
-        self.eager_calls: list[tuple[ActivityTarget, ReadInterface]] = []
-        self.stream_calls: list[tuple[ActivityTarget, PublicationInterface, int]] = []
+        self.eager_calls: list[tuple[ActivityTarget, ResultRepresentation]] = []
+        self.stream_calls: list[tuple[ActivityTarget, ResultRepresentation, int]] = []
         self.advances = 0
         self.releases = 0
 
@@ -220,19 +219,19 @@ class _Recording:
     def eager[T](
         self,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: ResultRepresentation,
         body: Callable[[ReadActivity, ReadInputs], T],
         /,
     ) -> T:
         self.calls.append("eager")
-        self.eager_calls.append((target, interface))
+        self.eager_calls.append((target, purpose))
         return body(INERT, self._inputs)
 
     def open_stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> StreamActivity:
         self.calls.append("open_stream")
-        self.stream_calls.append((target, interface, batch_size))
+        self.stream_calls.append((target, purpose, batch_size))
         return INERT
 
     def paged[T](
@@ -252,8 +251,8 @@ class _Recording:
         self.releases += 1
 
     @property
-    def interfaces(self) -> list[ReadInterface]:
-        return [interface for _, interface in self.eager_calls]
+    def purposes(self) -> list[ResultRepresentation]:
+        return [purpose for _, purpose in self.eager_calls]
 
 
 class _RecordingScope(ExecutionScope):
@@ -610,7 +609,7 @@ def test_one_scope_chooses_its_publication_per_call() -> None:
     _find(scope, _typed_query()).result()
     _wire_find(scope, _wire_node()).result()
 
-    assert execution.interfaces == ["typed", "wire"]
+    assert execution.purposes == ["typed", "wire"]
 
 
 def test_the_two_graph_publications_carry_the_selections_edition() -> None:
@@ -620,8 +619,8 @@ def test_the_two_graph_publications_carry_the_selections_edition() -> None:
     typed = typed_publication_for(selected)
     wire = wire_publication_for(selected)
 
-    assert (typed.interface, typed.edition) == ("typed", "test")
-    assert (wire.interface, wire.edition) == ("wire", "test")
+    assert (typed.representation, typed.edition) == ("typed", "test")
+    assert (wire.representation, wire.edition) == ("wire", "test")
 
 
 # --------------------------------------------------------------------------- #
@@ -729,20 +728,20 @@ def test_the_wire_stream_verb_crosses_no_classless_refusal_at_entry() -> None:
 
 
 @pytest.mark.parametrize(
-    ("verb_name", "interface", "target"),
+    ("verb_name", "purpose", "target"),
     [
         ("stream", "typed", "parallax.compatibility.Account"),
         ("wire_stream", "wire", "Account"),
     ],
 )
 def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
-    verb_name: str, interface: ReadInterface, target: str
+    verb_name: str, purpose: ResultRepresentation, target: str
 ) -> None:
     # The stream's side-effect boundary is its scope rather than its
     # construction: the verb answers an inert delivery that has begun no read,
     # and the read is begun and the activity that delivery is observed through
     # is opened through THIS scope when the caller enters it. Which activity that is stays the
-    # execution policy's, so the scope passes the target, the interface, and the
+    # execution policy's, so the scope passes the target, the purpose, and the
     # page size and decides nothing.
     port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port)
@@ -760,7 +759,7 @@ def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
         opened_on, opened_as, batch_size = execution.stream_calls[0]
         assert (opened_on.canonical, opened_as, batch_size) == (
             target,
-            interface,
+            purpose,
             _VALID_BATCH_SIZE,
         )
         assert list(stream) != []

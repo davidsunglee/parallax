@@ -52,7 +52,7 @@ then:
           - sequence: 5
             activity: 4
             parent: 2
-            readStarted: { target: parallax.compatibility.Account, interface: rows }
+            readStarted: { target: parallax.compatibility.Account, purpose: row-acquisition }
           - sequence: 6
             activity: 5
             parent: 4

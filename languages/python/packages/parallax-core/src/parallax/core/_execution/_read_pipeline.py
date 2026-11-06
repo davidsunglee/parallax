@@ -16,7 +16,7 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_query_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.execution_lifecycle import PublicationInterface, ReadInterface
+from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     DatabaseCallScope,
@@ -107,7 +107,7 @@ class BegunRead(StreamRead[SelectedReadModel], Protocol):
     def eager[T](
         self,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: ResultRepresentation,
         body: Callable[[ReadActivity, ReadInputs], T],
         /,
     ) -> T:
@@ -166,7 +166,7 @@ def read_graph[Eager](
             publication,
         )
 
-    return read.eager(query.target, publication.interface, published)
+    return read.eager(query.target, publication.representation, published)
 
 
 def resolved(read: BegunRead, query: ReadQuery, /) -> ResolvedObjectQuery:
@@ -264,7 +264,7 @@ class StandaloneRead:
     def eager[T](
         self,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: ResultRepresentation,
         body: Callable[[ReadActivity, ReadInputs], T],
         /,
     ) -> T:
@@ -277,7 +277,7 @@ class StandaloneRead:
         # own Finished event sees the underlying failure before the caller sees
         # it named under this read's edition.
         root = open_read_root(
-            self.lifecycle, target=target, interface=interface, edition=self.selected.edition
+            self.lifecycle, target=target, purpose=purpose, edition=self.selected.edition
         )
 
         def inside() -> T:
@@ -307,12 +307,12 @@ class StandaloneRead:
         return self.selected.edition
 
     def open_stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> StreamActivity:
         return open_stream_root(
             self.lifecycle,
             target=target,
-            interface=interface,
+            purpose=purpose,
             batch_size=batch_size,
             edition=self.selected.edition,
         )

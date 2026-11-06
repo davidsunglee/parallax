@@ -1739,7 +1739,7 @@ def _streamed_fractional_page_size() -> dict[str, Any]:
 def _streamed_naming_a_representation() -> dict[str, Any]:
     # `when.stream` names the delivery and never a representation: a member no
     # adapter could honor is refused rather than ignored (m-case-format).
-    return _streamed_read_case(interface="typed")
+    return _streamed_read_case(purpose="typed")
 
 
 def _streamed_beside_rows() -> dict[str, Any]:
@@ -1822,7 +1822,7 @@ def _streamed_step_naming_a_representation() -> dict[str, Any]:
     # The second placement is the same closed member: it names no representation
     # there either.
     doc = _streamed_scenario_step_case()
-    doc["when"]["scenario"][0]["stream"] = {"batchSize": 2, "interface": "typed"}
+    doc["when"]["scenario"][0]["stream"] = {"batchSize": 2, "purpose": "typed"}
     return doc
 
 

@@ -48,7 +48,7 @@ then:
           - sequence: 5
             activity: 4
             parent: 2
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
+            readStarted: { target: parallax.compatibility.Account, purpose: typed }
           - sequence: 6
             activity: 5
             parent: 4
@@ -109,7 +109,7 @@ then:
           - sequence: 19
             activity: 11
             parent: 9
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
+            readStarted: { target: parallax.compatibility.Account, purpose: typed }
           - sequence: 20
             activity: 12
             parent: 11

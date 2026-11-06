@@ -4,7 +4,7 @@ from collections.abc import Callable, Generator, Iterator
 from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.core import continuation, read_planning
-from parallax.core.execution_lifecycle import PublicationInterface
+from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -60,7 +60,7 @@ class StreamRead[Selection](Protocol):
     def edition(self) -> str: ...
 
     def open_stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> StreamActivity: ...
 
     def release(self, failure: BaseException | None, /) -> None: ...
@@ -313,7 +313,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                 self._pin = resolved_query_pin(resolved.temporal)
             self._read = read
             self._activity = read.open_stream(
-                self._query.target, publication.interface, self._batch_size
+                self._query.target, publication.representation, self._batch_size
             ).__enter__()
         except BaseException:
             self._release_publication()

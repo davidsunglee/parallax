@@ -222,7 +222,7 @@ def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> No
     assert names.index("ReadStarted") < names.index("FlushStarted")
     attempt = next(event for event in events if isinstance(event, TransactionAttemptStarted))
     read = next(event for event in events if isinstance(event, ReadStarted))
-    assert (read.parent_activity_id, read.interface) == (attempt.activity_id, "rows")
+    assert (read.parent_activity_id, read.purpose) == (attempt.activity_id, "row-acquisition")
     assert [type(call) for call in port.calls][:2] == [BeginCall, ReadCall]
     assert isinstance(port.calls[-1], CommitCall)
 

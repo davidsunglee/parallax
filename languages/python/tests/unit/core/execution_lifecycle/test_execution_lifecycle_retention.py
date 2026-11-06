@@ -645,7 +645,7 @@ def _observed_read_over(result: list[dict[str, object]]) -> Seam:
 
     def run(sample: Callable[[], None]) -> None:
         with (
-            open_read_root(INSTALLED, target=TARGET, interface="typed", edition=EDITION) as read,
+            open_read_root(INSTALLED, target=TARGET, purpose="typed", edition=EDITION) as read,
             read.database_call(STATEMENT, "read", TARGET) as call,
         ):
             call.read_completed(result)
@@ -668,7 +668,7 @@ def _observed_read_owning(count: int) -> Seam:
     def run(sample: Callable[[], None]) -> None:
         result = rows(count)
         with (
-            open_read_root(INSTALLED, target=TARGET, interface="typed", edition=EDITION) as read,
+            open_read_root(INSTALLED, target=TARGET, purpose="typed", edition=EDITION) as read,
             read.database_call(STATEMENT, "read", TARGET) as call,
         ):
             call.read_completed(result)
@@ -707,7 +707,7 @@ alone it is one live chain, and every level of it is measured where it stands.
 def _read_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """A Read root and its Database Call: the shallowest shape a root has."""
     read = stack.enter_context(
-        open_read_root(installed, target=TARGET, interface="typed", edition=EDITION)
+        open_read_root(installed, target=TARGET, purpose="typed", edition=EDITION)
     )
     call = stack.enter_context(read.database_call(STATEMENT, "read", TARGET))
     call.read_completed(SMALL)
@@ -782,7 +782,7 @@ def _stream_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[obje
     """
     stream = stack.enter_context(
         open_stream_root(
-            installed, target=TARGET, interface="typed", batch_size=PAGE, edition=EDITION
+            installed, target=TARGET, purpose="typed", batch_size=PAGE, edition=EDITION
         )
     )
     batch = stack.enter_context(stream.batch())

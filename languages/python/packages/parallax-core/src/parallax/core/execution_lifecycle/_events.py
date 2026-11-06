@@ -26,13 +26,8 @@ from parallax.core.sql_gen import LoweredStatement
 type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 """Which outermost Handle operation a Root Execution describes."""
 
-type ReadInterface = Literal["typed", "wire", "rows"]
-"""Which interface a Read ran through: ``typed`` and ``wire`` publish a result,
-and ``rows`` is the Read of a write's target acquisition, which publishes neither."""
-
-type PublicationInterface = Literal["typed", "wire"]
-"""Which representation a delivery publishes, the only interfaces a Stream runs
-through."""
+type ResultRepresentation = Literal["typed", "wire"]
+"""Which representation a Read or Stream publishes."""
 
 type DatabaseCallKind = Literal["read", "write"]
 """Whether a Database Call ran a query or DML — carried so a failed call stays
@@ -91,9 +86,11 @@ type ReadOutcome = ReadCompleted | ReadFailed
 
 @dataclass(frozen=True, slots=True)
 class ReadStarted(_Event):
-    """A Read opened over ``target`` through ``interface``.
+    """A Read opened over ``target`` for ``purpose``.
 
-    It starts after public preflight and any read-dependency Flush, and
+    ``purpose`` is the representation it publishes, or ``row-acquisition`` for
+    the Read of a write's target acquisition, which publishes neither. It
+    starts after public preflight and any read-dependency Flush, and
     spans planning, lowering, all of its Database Calls, conversion,
     materialization, and publication. ``edition`` is the Model Edition a
     standalone Read adopted for itself, and ``None`` for a participating Read,
@@ -101,7 +98,7 @@ class ReadStarted(_Event):
     """
 
     target: str
-    interface: ReadInterface
+    purpose: ResultRepresentation | Literal["row-acquisition"]
     edition: str | None
 
 
@@ -487,7 +484,7 @@ class StreamStarted(_Event):
     """
 
     target: str
-    interface: PublicationInterface
+    purpose: ResultRepresentation
     batch_size: int
     edition: str | None
 

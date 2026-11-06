@@ -229,7 +229,7 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
         (18, 1, None),
     ]
     (started,) = _of(root, StreamStarted)
-    assert (started.target, started.interface, started.batch_size) == (
+    assert (started.target, started.purpose, started.batch_size) == (
         "parallax.compatibility.Order",
         "typed",
         2,
@@ -238,7 +238,7 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
     assert finished.outcome == StreamExhausted()
 
 
-def test_a_wire_stream_reports_its_own_interface() -> None:
+def test_a_wire_stream_reports_its_own_purpose() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     with _orders(port, recorder).wire.stream(_active_orders(), batch_size=2) as stream:
@@ -246,7 +246,7 @@ def test_a_wire_stream_reports_its_own_interface() -> None:
 
     (root,) = recorder.roots
     (started,) = _of(root, StreamStarted)
-    assert started.interface == "wire"
+    assert started.purpose == "wire"
 
 
 def test_a_page_filled_exactly_is_the_last_batch_and_the_stream_still_exhausts() -> None:

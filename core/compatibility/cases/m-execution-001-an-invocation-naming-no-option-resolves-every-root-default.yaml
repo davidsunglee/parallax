@@ -27,7 +27,7 @@ then:
           - { sequence: 2, activity: 2, parent: 1, transactionAttemptStarted: { edition: account } }
           - { sequence: 3, activity: 3, parent: 2, acquisitionStarted: { policy: writer-only } }
           - { sequence: 4, activity: 3, parent: 2, acquisitionFinished: { outcome: acquired, route: writer } }
-          - { sequence: 5, activity: 4, parent: 2, readStarted: { target: parallax.compatibility.Account, interface: typed } }
+          - { sequence: 5, activity: 4, parent: 2, readStarted: { target: parallax.compatibility.Account, purpose: typed } }
           - { sequence: 6, activity: 5, parent: 4, databaseCallStarted: { target: parallax.compatibility.Account, kind: read } }
           - { sequence: 7, activity: 5, parent: 4, databaseCallFinished: { outcome: readCompleted, returnedRows: 1 } }
           - { sequence: 8, activity: 4, parent: 2, readFinished: { outcome: completed } }

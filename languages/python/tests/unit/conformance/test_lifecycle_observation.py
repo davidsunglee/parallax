@@ -154,7 +154,9 @@ def test_every_event_states_its_correlation_and_names_its_transition() -> None:
 
 
 def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
-    read = _root("read", ReadStarted(_EXECUTION, 1, 1, None, "Account", "rows", "account"))
+    read = _root(
+        "read", ReadStarted(_EXECUTION, 1, 1, None, "Account", "row-acquisition", "account")
+    )
     invocation = _root(
         "transaction_invocation",
         TransactionInvocationStarted(_EXECUTION, 1, 1, None, JoinedInvocation()),
@@ -177,10 +179,10 @@ def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
 
 def test_a_read_states_its_target_and_the_interface_that_publishes_it() -> None:
     assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "typed", "account")) == {
-        "readStarted": {"target": "Account", "interface": "typed", "edition": "account"}
+        "readStarted": {"target": "Account", "purpose": "typed", "edition": "account"}
     }
     assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "wire", "account")) == {
-        "readStarted": {"target": "Account", "interface": "wire", "edition": "account"}
+        "readStarted": {"target": "Account", "purpose": "wire", "edition": "account"}
     }
     assert _transition(ReadFinished(_EXECUTION, 2, 1, None, ReadCompleted())) == {
         "readFinished": {"outcome": "completed"}
@@ -412,7 +414,7 @@ def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> Non
     assert _transition(started) == {
         "streamStarted": {
             "target": "Account",
-            "interface": "wire",
+            "purpose": "wire",
             "batchSize": 500,
             "edition": "account",
         }
@@ -710,7 +712,7 @@ def test_a_target_acquisition_takes_no_index_and_shifts_none() -> None:
     for it, while a published read beside it keeps its index."""
     root = _root(
         "transaction_invocation",
-        ReadStarted(_EXECUTION, 1, 1, None, "Account", "rows", None),
+        ReadStarted(_EXECUTION, 1, 1, None, "Account", "row-acquisition", None),
         _flush_call(2, 2, 1, "read", "select acquired"),
         ReadStarted(_EXECUTION, 3, 3, None, "Account", "wire", None),
         _flush_call(4, 4, 3, "read", "select published"),

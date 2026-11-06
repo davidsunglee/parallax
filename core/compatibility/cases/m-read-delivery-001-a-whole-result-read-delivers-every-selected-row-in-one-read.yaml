@@ -21,7 +21,7 @@ then:
       - execution: 1
         kind: read
         events:
-          - { sequence: 1, activity: 1, parent: null, readStarted: { target: parallax.compatibility.Account, interface: wire, edition: account } }
+          - { sequence: 1, activity: 1, parent: null, readStarted: { target: parallax.compatibility.Account, purpose: wire, edition: account } }
           - { sequence: 2, activity: 2, parent: 1, acquisitionStarted: { policy: writer-only } }
           - { sequence: 3, activity: 2, parent: 1, acquisitionFinished: { outcome: acquired, route: writer } }
           - { sequence: 4, activity: 3, parent: 1, databaseCallStarted: { target: parallax.compatibility.Account, kind: read, statement: 0 } }

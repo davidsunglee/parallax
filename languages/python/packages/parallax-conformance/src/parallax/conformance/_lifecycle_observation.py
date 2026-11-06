@@ -61,10 +61,10 @@ from parallax.core.execution_lifecycle import (
     ReadCompleted,
     ReadFailed,
     ReadFinished,
-    ReadInterface,
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
+    ResultRepresentation,
     RootExecutionKind,
     StreamBatchCompleted,
     StreamBatchFailed,
@@ -130,10 +130,10 @@ _ROOT_KIND: Final[dict[RootExecutionKind, str]] = {
     "stream": "stream",
 }
 
-_READ_INTERFACE: Final[dict[ReadInterface, str]] = {
+_READ_PURPOSE: Final[dict[ResultRepresentation | Literal["row-acquisition"], str]] = {
     "typed": "typed",
     "wire": "wire",
-    "rows": "rows",
+    "row-acquisition": "row-acquisition",
 }
 
 _FLUSH_TRIGGER: Final[dict[FlushTrigger, str]] = {
@@ -396,7 +396,7 @@ def execution_lifecycle_observation(
     (:attr:`LifecycleRun.resolving_read_calls`): the source read a keyed write
     owes reaches the database and is counted, but the case authors no golden for
     it, so it names no index. A read a Flush makes is a coverage read and a read
-    a ``rows`` Read makes is a target acquisition, which stand outside it for the
+    a ``row-acquisition`` Read makes is a target acquisition, which stand outside it for the
     same reason (`m-case-format` *The execution lifecycle oracle*). Everything else
     is indexed positionally.
     """
@@ -434,7 +434,7 @@ class _StatementIndexer:
     index's own question, which the SQL answers.
 
     The positions the delivering lane charged to a keyed write's resolving reads,
-    and every read a Flush or a ``rows`` Read makes, are the calls the emission
+    and every read a Flush or a ``row-acquisition`` Read makes, are the calls the emission
     order does not hold at all: they are skipped WITHOUT consuming an emission,
     which is what keeps the correspondence positional for every call that is in
     it. Read against that, the exhaustion check is the other half of the same
@@ -461,13 +461,13 @@ class _StatementIndexer:
             event.activity_id
             for event in root.events
             if isinstance(event, FlushStarted)
-            or (isinstance(event, ReadStarted) and event.interface == "rows")
+            or (isinstance(event, ReadStarted) and event.purpose == "row-acquisition")
         )
 
     def take(self, call: DatabaseCallStarted) -> int | None:
         """``call``'s statement index, or ``None`` where the emission order holds
         none — a lane reporting no emission at all, a resolving read, a coverage
-        read inside a Flush, or a target acquisition inside a ``rows`` Read."""
+        read inside a Flush, or a target acquisition inside a ``row-acquisition`` Read."""
         delivered = self._delivered
         self._delivered += 1
         if (
@@ -552,11 +552,11 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
 
 def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, object]:
     match event:
-        case ReadStarted(target=target, interface=interface, edition=edition):
+        case ReadStarted(target=target, purpose=purpose, edition=edition):
             return {
                 "readStarted": {
                     "target": target,
-                    "interface": _READ_INTERFACE[interface],
+                    "purpose": _READ_PURPOSE[purpose],
                     **_stated("edition", edition),
                 }
             }
@@ -574,13 +574,11 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
             return {"transactionInvocationStarted": _invocation(invocation)}
         case TransactionAttemptStarted(edition=edition):
             return {"transactionAttemptStarted": {"edition": edition}}
-        case StreamStarted(
-            target=target, interface=interface, batch_size=batch_size, edition=edition
-        ):
+        case StreamStarted(target=target, purpose=purpose, batch_size=batch_size, edition=edition):
             return {
                 "streamStarted": {
                     "target": target,
-                    "interface": _READ_INTERFACE[interface],
+                    "purpose": _READ_PURPOSE[purpose],
                     "batchSize": batch_size,
                     **_stated("edition", edition),
                 }
