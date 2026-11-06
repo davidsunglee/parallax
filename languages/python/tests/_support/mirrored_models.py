@@ -895,6 +895,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; it composes the mirrored `balance`'s transaction-time-only axis "
             "with the mirrored `orders`' dependent one-to-many, both already proven separately"
         ),
+        "keeper": (
+            "no mirror authored; its two families repeat the mirrored `rate` "
+            "table-per-concrete-subtype and `payment` table-per-hierarchy declarations, and "
+            "its to-one reverses the `reverseOf` shape `orders` already proves"
+        ),
         "lease": (
             "no mirror authored; its subject is a mixed-temporality chain, and per-class base "
             "selection means the chain adds no construct the mirrored `balance` and `orders` "

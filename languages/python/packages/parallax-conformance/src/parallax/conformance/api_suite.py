@@ -2819,6 +2819,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-planning-032": _BACK_REFERENCE_PATH_REFUSAL_REASON,
     "m-read-planning-033": _NARROWED_BACK_REFERENCE_REASON,
     "m-read-planning-034": _NARROWED_BACK_REFERENCE_REASON,
+    "m-read-planning-035": _NARROWED_BACK_REFERENCE_REASON,
+    "m-read-planning-036": _NARROWED_BACK_REFERENCE_REASON,
     "m-snapshot-read-002": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     # -- m-snapshot-read: orders-family graph siblings ----------------------- #
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,
