@@ -657,8 +657,15 @@ def _carrying_variant(variant: str | None, rows: list[dict[str, Any]]) -> list[d
     return [_tagged(_materialized_row(row), variant) for row in rows]
 
 
-def _tagged(row: _MaterializedRow, variant: str) -> dict[str, Any]:
+def _tagged(row: _MaterializedRow, variant: str | UnknownFamilyTag) -> _MaterializedRow:
+    """*row* stating *variant*, keeping the document a Column of that spelling stored.
+
+    A family reserves the spelling from every member but a Value Object's storage
+    Column (`m-inheritance` *Materialized field keys*), so whatever stands there is
+    that occurrence's document, and the bookkeeping holds it apart from the tag.
+    """
     if "familyVariant" in row:
+        row.value_object_columns.setdefault("familyVariant", row["familyVariant"])
         row.consumed_value_object_columns.add("familyVariant")
     row["familyVariant"] = variant
     return row
@@ -695,21 +702,20 @@ def _family_root(case: Case, name: str) -> str:
 
 def _with_family_variant(
     case: Case,
-    row: dict[str, Any],
+    row: _MaterializedRow,
     *,
     tag_column: str,
     variant_map: Mapping[Any, str],
     family_root: str,
     subject: str,
-) -> dict[str, Any]:
+) -> _MaterializedRow:
     """*row* with its raw tag column replaced by the ``familyVariant`` the tag names.
 
     The one tag-to-variant transformation, applied wherever a row arrives carrying a
     table-per-hierarchy discriminator. *row* is transformed IN PLACE, so a caller hands
-    over a private copy and chooses its form — a :class:`_MaterializedRow` whose Value
-    Object bookkeeping must survive, or a plain row. *subject* names the read in the
-    diagnostic, since a whole-read tag failure and a deep-fetch hop's are the same
-    defect reported against different reads.
+    over a private copy. *subject* names the read in the diagnostic, since a whole-read
+    tag failure and a deep-fetch hop's are the same defect reported against different
+    reads.
 
     A tag the reader's composed family names no concrete subtype for is stored
     data the read classifies rather than a defect of the case: the row carries an
@@ -724,10 +730,7 @@ def _with_family_variant(
         )
     tag_value = row.pop(tag_column)
     variant = variant_map.get(tag_value)
-    if isinstance(row, _MaterializedRow) and "familyVariant" in row:
-        row.consumed_value_object_columns.add("familyVariant")
-    row["familyVariant"] = UnknownFamilyTag(tag_value, family_root) if variant is None else variant
-    return row
+    return _tagged(row, UnknownFamilyTag(tag_value, family_root) if variant is None else variant)
 
 
 def _materialize_hop_variant(
@@ -749,7 +752,7 @@ def _materialize_hop_variant(
     """
     return _with_family_variant(
         case,
-        dict(row),
+        _materialized_row(row),
         tag_column=tag_column,
         variant_map=variant_map,
         family_root=family_root,
@@ -783,9 +786,9 @@ def level_order_binds(
     return tpcs.level_order_binds(case, position.view, position.branch_variants, order_by, dialect)
 
 
-def narrow_to_variant_columns(case: Case, row: PublishedRow) -> PublishedRow:
-    """Narrow *row* to its own concrete variant's declared columns (m-case-format
-    "Read targeting", the per-variant node shape).
+def narrow_to_variant_columns(case: Case, entity: Entity, row: PublishedRow) -> PublishedRow:
+    """Narrow *row*, read at *entity*'s position, to its own concrete variant's declared
+    columns (m-case-format "Read targeting", the per-variant node shape).
 
     A materialized instance carries only its own branch's members — its inherited
     chain plus its own declared attributes — never a sibling branch's null-padded
@@ -793,15 +796,15 @@ def narrow_to_variant_columns(case: Case, row: PublishedRow) -> PublishedRow:
     keeps the full concrete-superset row instead (:func:`scalar_columns`); this
     ADDITIONAL narrowing applies only where a row already carries a
     materialized ``familyVariant`` (a no-op for a non-inheritance entity, whose
-    rows carry none, and for a concrete-target read, whose rows hold only their
+    rows state none, and for a concrete-target read, whose rows hold only their
     own branch's columns).
 
     Narrowing projects what a read published rather than publishing anything, so
     a row arrives with that provenance and leaves carrying it forward.
     """
     _refuse_an_unpublished_row(case, "per-variant column narrowing", row)
-    variant = row.get("familyVariant")
-    if not isinstance(variant, str):
+    variant = _stated_variant(entity, row)
+    if variant is None:
         return row
     family = Family(case.model.entity_defs)
     own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
@@ -831,7 +834,8 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
     scalar, and any unexpected scalar column stay for the comparison to judge,
     including a scalar reusing the Column a sibling's Value Object occupies. A scalar
     the row's own concrete declares is never padded, so a read that lost it still
-    fails the comparison.
+    fails the comparison. A participant's ``familyVariant`` stays too, even where a
+    Value Object's storage Column shares the spelling: that document is what leaves.
 
     Like :func:`narrow_to_variant_columns` this projects what a read published, so
     each row arrives with that provenance and leaves carrying it forward.
@@ -862,12 +866,13 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
             *_repeated_scalar_spellings(case, position),
         ]
     )
+    synthetic = set() if target.role is None else {"familyVariant"}
     scalars: list[PublishedRow] = []
     for row in rows:
         _refuse_an_unpublished_row(case, "the scalar-column assertion", row)
         own = {
             attribute["column"] for attribute in variant_entity(case.model, target, row).attributes
-        }
+        } | synthetic
         scalars.append(
             _published(
                 dict.fromkeys(column for column in padding if column not in own)
@@ -995,6 +1000,16 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     return node
 
 
+def _stated_variant(entity: Entity, row: Mapping[str, Any]) -> str | None:
+    """The variant *row* states at *entity*'s position, where that key is the tag.
+
+    Only a family reserves the spelling, so at a standalone Entity the key is an
+    ordinary member whatever it holds.
+    """
+    variant = row.get("familyVariant")
+    return variant if entity.role is not None and isinstance(variant, str) else None
+
+
 def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Entity:
     """The concrete Entity *row* names through its own materialized ``familyVariant``.
 
@@ -1002,8 +1017,8 @@ def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Enti
     declares none of its concretes' own members. A row carrying no variant — a
     non-inheritance entity — stands at its position.
     """
-    variant = row.get("familyVariant")
-    if not isinstance(variant, str):
+    variant = _stated_variant(entity, row)
+    if variant is None:
         return entity
     try:
         return model.entity(variant)
@@ -1141,8 +1156,6 @@ def _tpcs_row_at_its_branch(
             f"{tpcs.VARIANT_COLUMN!r} literal; familyVariant cannot be "
             f"materialized (m-sql)."
         )
-    if "familyVariant" in new_row:
-        new_row.consumed_value_object_columns.add("familyVariant")
     variant = new_row.pop(tpcs.VARIANT_COLUMN)
     slots = position.slots_by_variant.get(variant)
     if slots is None:
@@ -1161,8 +1174,9 @@ def _tpcs_row_at_its_branch(
             new_row[column] = new_row.pop(result_alias)
         elif position.column_counts[column] > 1 and slot is None:
             new_row.pop(result_alias, None)
-    new_row["familyVariant"] = variant
-    return _materialize_tpcs_document_row(case, position.layouts_by_variant[variant], new_row)
+    return _materialize_tpcs_document_row(
+        case, position.layouts_by_variant[variant], _tagged(new_row, variant)
+    )
 
 
 def _materialize_tpcs_family_variant(

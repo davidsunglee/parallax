@@ -123,7 +123,7 @@ class ScenarioRowObservations:
         return retained.Observation(
             rows=rows,
             entity=entity,
-            includes=self._run_step_includes(step_index, step, rows, pairs, reader),
+            includes=self._run_step_includes(step_index, step, published, pairs, reader),
         )
 
     def _act(

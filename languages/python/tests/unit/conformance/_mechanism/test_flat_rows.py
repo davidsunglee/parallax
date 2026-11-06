@@ -21,7 +21,17 @@ from parallax.conformance._mechanism.flat_rows import flat_rows, omitted_value_o
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.db_port import MappingRow
-from parallax.core.metamodel import EntityIdentity, Metamodel, Table, ValueObjectIdentity
+from parallax.core.metamodel import (
+    Column,
+    EntityIdentity,
+    Metamodel,
+    Table,
+    ValueObjectAttributeDeclaration,
+    ValueObjectIdentity,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+)
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.wire import WireDecodingError
@@ -267,6 +277,45 @@ def test_a_standalone_member_spelled_like_the_variant_stays_a_member() -> None:
     assert rows == [{"id": 1, "family_variant": "premium"}]
 
 
+def test_a_standalone_value_object_spelled_like_the_variant_leaves_the_scalar_row() -> None:
+    # Only a family publishes the tag, so here the key is the occurrence `then.rows`
+    # leaves out.
+    ticket = EntityIdentity("catalog", "Ticket")
+    model = form_metamodel(
+        source(
+            Declaration(
+                identity=ticket,
+                container=Table("ticket"),
+                attributes=(key(ticket),),
+                value_objects=(
+                    ValueObjectOccurrenceDeclaration(
+                        name="familyVariant",
+                        storage=Column("details"),
+                        shape=ValueObjectShapeDeclaration(
+                            key=ValueObjectShapeKey(),
+                            attributes=(
+                                ValueObjectAttributeDeclaration(
+                                    "label", type=STRING, nullable=True
+                                ),
+                            ),
+                        ),
+                        nullable=True,
+                    ),
+                ),
+            )
+        )
+    )
+
+    rows = flat_rows(
+        model,
+        _query(ticket.canonical),
+        [{"id": 1, "familyVariant": {"label": "premium"}}],
+        value_objects=False,
+    )
+
+    assert rows == [{"id": 1}]
+
+
 def test_a_reused_member_name_resolves_at_each_published_variant() -> None:
     case = _case("m-inheritance-124")
     when = cast("Mapping[str, object]", case.document["when"])
@@ -341,5 +390,6 @@ def test_a_projected_row_refuses_an_ambiguous_member() -> None:
             ActualWireProjection(model),
             columns,
             None,
+            False,
             {"ambiguous": 1},
         )

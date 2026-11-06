@@ -695,6 +695,41 @@ def test_preflight_checks_scenario_expected_rows_against_their_family_variant() 
         preflight_case_literals(_polymorphic_case(scenario=True))
 
 
+def test_preflight_reads_a_standalone_member_spelled_like_the_variant_at_its_own_entity() -> None:
+    model = Model(
+        Path("synthetic-standalone.yaml"),
+        {
+            "entities": [
+                {
+                    "name": "Ticket",
+                    "namespace": "example",
+                    "table": "ticket",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "primaryKey": True},
+                        {"name": "familyVariant", "type": "string", "maxLength": 16},
+                        {"name": "detail", "type": "decimal(18,2)", "column": "detail"},
+                    ],
+                },
+                {
+                    "name": "Stub",
+                    "namespace": "example",
+                    "table": "stub",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "primaryKey": True},
+                        {"name": "detail", "type": "int64", "column": "detail"},
+                    ],
+                },
+            ]
+        },
+        {},
+    )
+    query = {"target": "example.Ticket", "predicate": {"true": {}}}
+    row = {"id": 1, "detail": "1.50", "familyVariant": "Stub"}
+    document = {"shape": "read", "when": {"objectQuery": query}, "then": {"rows": [row]}}
+
+    preflight_case_literals(Case(Path("synthetic-standalone.yaml"), document, model))
+
+
 @pytest.mark.parametrize("session", ["A", "B"])
 def test_preflight_requires_canonical_concurrency_expected_rows(session: str) -> None:
     source = _case()

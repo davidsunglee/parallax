@@ -758,7 +758,7 @@ def _expected_entity_row(
     where: str,
 ) -> None:
     variant = row.get("familyVariant")
-    if isinstance(variant, str):
+    if entity.role is not None and isinstance(variant, str):
         try:
             entity = case.model.entity(variant)
         except KeyError:
