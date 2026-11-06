@@ -19,10 +19,10 @@ It MUST carry:
 - `delivery.pageSizes`, the positive page sizes at which streamed delivery is
   measured beside eager delivery of the same result.
 
-A target-side workload catalog MUST read recipe selection, `objectQuery`, and
-`delivery.pageSizes` from the fixture rather than restating them in its reports
-or tests. It MUST preserve the selected dataset's Entity counts, parent-child
-fan-out, key relationships, traversal order, and fixed member values. A target
+A target's own measurements MUST use the fixture's recipe, `objectQuery`, and
+`delivery.pageSizes`, and MUST preserve the selected dataset's Entity counts,
+parent-child fan-out, key relationships, traversal order, and fixed member values.
+A target
 MAY construct rows lazily and use host-native carriers after canonical Wire
 conversion. Any deterministic key translation used for provisioning MUST
 preserve relationships and ordering, and be identified in workload provenance.

@@ -170,8 +170,8 @@ command, dialect, case shape, or observation field.
 
 The example above is intentionally minimal. An include-driven claim selects an
 exact case subset with `caseTags.include`, avoiding a fragile list of
-exclusions. A completed language spec ordinarily adopts its selected canonical
-`capabilities` block verbatim; only the `adapter` identity differs.
+exclusions. A language binding selects a canonical claim rather than restating it;
+only the `adapter` identity differs.
 
 A case command is claimed only when **all** of these are true:
 
@@ -207,11 +207,8 @@ first failed filter, such as `unsupported-case-tag` or `unsupported-case-shape`.
   with Testcontainers. The adapter owns the reset lifecycle needed to make each
   database-backed case isolated: reset to an empty state, apply the case model's
   derived DDL, and load fixtures according to the core case lifecycle. The
-  contract does not assume any generic container snapshot API; language specs
-  that use snapshot/restore optimizations MUST name the concrete provider API
-  and fallback reset path.
+  contract does not assume any generic container snapshot API.
 
-The target language spec records which mode the implementation uses.
 The reusable provider-test obligations for `reset`, `applyDdl`, fixture loading,
 query/write execution, rollback execution, peer connections, and declared
 full/partial database matrix profiles are recorded in
@@ -234,21 +231,11 @@ authored DML text as its only write input or reverse-engineer the operation from
 golden SQL.
 
 For a **buffered** scenario write — the **ordered keyed buffer** under
-`/scenario/<n>/write` (`m-case-format`), **one or more** keyed instructions a single
-unit of work accumulates — the adapter buffers **every** entry in **one** unit of
-work and applies the `m-unit-work` flush: it **coalesces same-object entries**
-(same-transaction insert-then-amend → a single final-value write in place;
-insert-then-delete → cancel to no DML), then **foreign-key-orders and elides** the
-general multi-object flush, emitting the per-object DML. The **same-object
-coalescing pair** — a buffer of exactly two same-object entries — is the
-single-object **special case** of that flush, emitting a **single** final-value
-write or **no** DML at all; a **single** keyed write (a buffer of one) and a
-**mixed multi-object flush** (an `insert`, `amend`, and `delete` of **different**
-objects) are the general cases. The adapter consumes the ordered structured
-instructions as the requested operations exactly as for the single-instruction
-forms — it MUST NOT treat the authored golden SQL as its write input or
-reverse-engineer the operation from golden SQL — and under `compile` the buffer
-follows the same compile-eligibility rules as any other write.
+`/scenario/<n>/write` (`m-case-format`) — the adapter submits **every** entry to
+**one** unit of work and lets the `m-unit-work` flush decide what it emits. It MUST
+NOT treat the authored golden SQL as its write input or reverse-engineer the
+operation from golden SQL, and under `compile` the buffer follows the same
+compile-eligibility rules as any other write.
 
 ### Compile eligibility
 
@@ -337,13 +324,8 @@ It consumes the same structured predicate-write instruction as `compile`, then
 compares emitted SQL and binds to the authored golden unchanged. The instruction
 adds neutral write input; it does not relax SQL comparison.
 
-It likewise consumes the same **ordered keyed buffer** as `compile`, buffering
-**every** entry in one unit of work and applying the `m-unit-work` flush —
-coalescing same-object entries, then foreign-key-ordering and eliding the general
-multi-object flush. The per-object DML that flush emits — for the same-object
-coalescing special case, one final-value write or none — is compared to the
-authored golden unchanged, exactly as for any other write, never reverse-engineered
-from it.
+It consumes the same ordered keyed buffer as `compile`, and the DML that flush emits
+is compared to the authored golden unchanged.
 
 `run` is asked for a **profile** rather than a dialect, and its envelope reports
 both. `profile` echoes the requested profile — the adapter configuration the case
@@ -373,12 +355,8 @@ the count its own execution recorded rather than the length of its `emissions`
 array. `compile`, which executes nothing, reports the emitted-statement count
 instead; that is the one place the two readings legitimately differ.
 
-When a language implementation routes case execution through its `m-db-port`
-runtime database port, read/result statements and DML outcome statements remain
-separate: row-returning reads use the port's row execution method, while
-write-sequence and conflict affected counts come from the port's affected-row
-write method. An adapter MUST NOT weaken
-the emitted SQL by adding dialect-specific row-returning clauses solely to compute
+An adapter reports the affected-row count its writes return and MUST NOT weaken the
+emitted SQL by adding dialect-specific row-returning clauses solely to compute
 affected rows.
 
 Example:
@@ -511,14 +489,8 @@ exposes and reports:
 - **`observations.databaseCalls`** — every database call the delivery made.
 - **`emissions`** — every statement the delivery executed, in execution order
   across pages: each page's root statement followed by the child levels that page
-  ran. The list is the whole delivery's, not one page's. It is read off the
-  Database Calls the delivery publishes (`m-execution-lifecycle`), like every
-  other run's, and never off the database port — a port carries the driver's own
-  statement text rather than the lowered statement a Database Call borrows, so an
-  adapter reporting from there would report a statement it recovered rather than
-  one it ran. An adapter whose streams publish no such activity reports an
-  **empty** `emissions` list; the statements the case authors are then graded by
-  executing them, which is what the corpus runner does with every golden.
+  ran. The list is the whole delivery's, not one page's. Each is the canonical
+  lowered statement the delivery ran, never text recovered from a driver.
 
 A **scenario read step** carrying `stream` (`m-case-format` *Streamed read
 steps*) is satisfied the same way, inside the unit of work its `uow` group runs

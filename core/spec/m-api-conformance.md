@@ -107,14 +107,15 @@ satisfies each is language-local.
 
 A language implementation MUST also ship a **Usage Guide**: a rendered document
 that teaches idiomatic usage through a curated selection of executable examples.
-Examples MUST be generated from the API Conformance Suite's source, with a CI
-drift check. Selection for the guide MUST NOT change the suite's coverage
+Every example it shows MUST execute as part of the API Conformance Suite, and a
+blocking check MUST fail when a shown example differs from what executes.
+Selection for the guide MUST NOT change the suite's coverage
 partition or which examples execute. The guide need not reproduce every case or
 variant the suite grades.
 
 Explanatory prose is non-normative and should explain how to use the API rather
-than restate its complete contract. Generation checks example drift; it does not
-prove prose correct. The rendering and drift-check mechanism is language-local.
+than restate its complete contract. That check covers examples; it does not prove
+prose correct. The mechanism is language-local.
 
 ## Mechanism is language-local
 
