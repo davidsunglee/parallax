@@ -1002,7 +1002,7 @@ the harness asserts:
    a `tolerance`, making the numeric comparison `abs(actual - expected) <=
    tolerance`. Booleans compare only to booleans (`true` is never `1`).
 3. **Normalization determinism** — `normalize(then.statements[].sql[dialect]) ==
-   then.statements[].sql[dialect]` via sqlglot, per the `m-sql` rules (alias scheme `t0,t1,…`,
+   then.statements[].sql[dialect]`, per the `m-sql` rules (alias scheme `t0,t1,…`,
    sorted binds, whitespace-collapsed, deterministic clause order).
 4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
    `objectQuery` encoding *and* the model descriptor (the descriptor **is** the
@@ -1071,7 +1071,7 @@ wrong propagated as-of fails the case automatically. A non-temporal child has an
 empty suffix.
 
 For a writeSequence case inserting into a `sequence`-strategy entity, the
-harness derives the **PK-generation oracle** (`case_runner._assert_pk_allocation`):
+harness derives the **PK-generation oracle**:
 it independently re-derives the allocated primary keys and the registry counter
 from the declared `pkGeneration` config (`initialValue`/`incrementSize`/
 `batchSize`) and asserts both against the post-write DB state — proving the
@@ -1375,11 +1375,9 @@ unit's insertion, and caller-stated target and predicate writes retain their
 exemptions. These reads are adapter choreography, not reads public write verbs
 perform implicitly. A write whose emissions depend on that state is run-only (see
 *Compile eligibility*). This
-reference is the one place that rule is displaced. Where it appears, an implementation **MUST**
-resolve the write's observation from the **observation store this unit of work's
-own reads filled** — the evidence the named find recorded when it ran, addressed
-by the object and by the state that read observed — and **MUST NOT** substitute
-an observation derived from case state. Two obligations follow:
+reference is the one place that rule is displaced. Where it appears, the write
+**MUST** settle against the state the named find observed in this unit of work, and
+**MUST NOT** settle against case state. Two obligations follow:
 
 - The named find MUST have observed a row of the write's own key, and the write
   MUST settle against **that** row's observed state — its milestone on a temporal
@@ -1387,12 +1385,10 @@ an observation derived from case state. Two obligations follow:
   such row is refused; it names evidence that does not exist. On a Bitemporal
   target the write's `validFrom` MUST equal the named find's Valid-Time pin,
   where a write from that source starts.
-- The write MUST reach the store by the coordinate the value it was handed came
-  from, never by primary key alone. A group whose finds read one key at as-of
-  coordinates resolving to different milestones — or at generations a write of its
-  own moved between — fills a distinct slot per observed state; an implementation
-  keying by identity alone holds one slot, and a write naming the earlier find
-  then settles against the later find's row.
+- Two finds of one key that observed different states — as-of coordinates
+  resolving to different milestones, or generations a write of the group moved
+  between — stay distinct evidence: a write naming the earlier find settles against
+  the earlier find's row, never the later find's.
 
 The reference is legal only where every part of it is meaningful: on an observed
 keyed submission (an insert opens its row, and a target or predicate
@@ -2073,18 +2069,13 @@ the two drift. An author wanting the navigated entity's rows states them as
   statement raises (a duplicate insert / a colliding update). `deadlock` and
   `lockWaitTimeout` cases trigger two-connection: a `when.concurrency` choreography
   of barrier-separated rounds, each naming the statements nodes A and B run that
-  round. The harness runs each node on
-  its own **non-autocommit session** (the provider seam's `open_session`, opened at
+  round. The harness runs each node on its own **non-autocommit session**, opened at
   the level the case resolves — its explicit `when.uow.isolation`, else its root's
   `given.databaseOptions.isolation`, else the built-in `read-committed` (*Root
-  configuration*, above) — and with the
-  dialect's lock-contention tuning — Postgres `deadlock_timeout`/`lock_timeout`,
-  MariaDB `innodb_lock_wait_timeout` — applied so a blocked lock fails fast), drives
-  them on threads synchronized by a barrier, and classifies the error raised in the
-  contention round via the provider's `classify_error`. The classifier is a thin
-  per-dialect extraction (Postgres SQLSTATE, MariaDB errno) into the shared,
-  DB-free category vocabulary; the runner asserts the category and its own predicate
-  partition over it.
+  configuration*, above) — with lock contention tuned so a blocked lock fails fast,
+  synchronizes the nodes at each round's barrier, and classifies the error raised in
+  the contention round into the shared `m-db-error` categories, asserting the
+  call-site predicate partition.
 
 A node's step takes one of two forms. A **statement step** carries the golden
 `statements` its node runs that round; on an `error` case it declares no `kind` at
@@ -2807,8 +2798,8 @@ operations, ordered Behavioral Impacts, ordered Overlap-Visible Operations, and
 Coordination Requirements — with every member authored even when empty. Splitting
 one transition across classification-only or operation-only cases is **not
 conforming**, because the returned Evolution is one internally consistent value.
-The closed vocabularies each member draws from are `m-model-evolution`'s and are
-pinned to the case schema's enums by `case_format_vocab_check`.
+The closed vocabularies each member draws from are `m-model-evolution`'s and equal
+the case schema's enums.
 
 An operation names its position by the identity kind its own `kind` fixes —
 `entity`, `attribute`, `relationship`, `valueObject`, `valueObjectAttribute`,
@@ -2928,18 +2919,10 @@ The adapter's answer for a claimed-but-run-only case under `compile` is a define
 
 ## Provisioning ↔ runner seam (DQ15)
 
-The harness splits into two clearly-separated sub-parts joined by an explicit
-seam so provisioning can be swapped without touching the assertion layer:
-
-- **Provisioning — the `DatabaseProvider` seam.** Each provider yields a clean,
-  migrated, isolated database for a single dialect, exposing `reset`,
-  `apply_ddl`, `load`, `query`, `execute` (DML, for write sequences), and a
-  `dialect` identifier. **Testcontainers** is the default mechanism, pinned at
-  the latest stable Postgres major and at the current MariaDB long-term-support
-  series; a language **MAY** substitute an embedded binary that satisfies the
-  same reset/isolation contract.
-- **Runner + assertions.** The case runner applies the four (later five) layers
-  above against whatever provider it is handed.
+The harness keeps provisioning separate from its assertions, so a database can be
+added without touching the assertion layer. A provider yields a clean, isolated
+database for one dialect; [`database-provider-test-contract.md`](database-provider-test-contract.md)
+states what one proves.
 
 This seam is also the **database-provider seam** that grows the matrix: adding a
 dialect is a new provider behind the same protocol, and the
@@ -2950,8 +2933,7 @@ running the suite across every available provider.
 
 Per DQ8, most tests **SHOULD** live at this compatibility-suite level — the suite
 is the primary behavioral surface across all languages — rather than buried in
-per-language unit tests. Each per-language spec specifies how its test runner
-(pytest / JUnit / `cargo test`) wires to the database provider.
+per-language unit tests.
 
 ## Language implementation conformance adapter
 

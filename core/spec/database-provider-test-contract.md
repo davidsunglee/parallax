@@ -9,11 +9,11 @@ The contract has three layers. A language implementation may organize files
 differently, but it must be able to point at equivalent proof for each supported
 database.
 
-## 1. Docker-free dialect contract
+## 1. Database-free dialect contract
 
-The pure `Dialect` layer has no I/O and no driver dependency. Its conformance
-suite is a table-driven test with one row per database. Adding a database means
-adding one row to that shared table, not creating a one-off suite.
+The pure `Dialect` layer has no I/O and no driver dependency. One conformance suite
+covers every supported database, and a provider missing an answer fails it; adding
+a database extends that suite rather than creating a one-off.
 
 Each row proves the database's answers for the `m-dialect` decision catalog:
 
@@ -34,8 +34,8 @@ Each row proves the database's answers for the `m-dialect` decision catalog:
   the same host-language null sentinel
 - native error-code classification
 
-The dialect suite must remain Docker-free. It should fail quickly when a new
-provider row is incomplete.
+The dialect suite must remain database-free. It should fail quickly when a new
+provider is incomplete.
 
 ## 2. Real-database adapter smoke contract
 
@@ -201,8 +201,8 @@ For every supported adapter, the smoke suite covers:
   performs after a rollout
 
 When a transient proof would be impractical for a specific database in local
-tooling, the language spec must record the gap and name the deeper suite that
-proves the same classification.
+tooling, the language's testing map must record the gap and name the deeper suite
+that proves the same classification.
 
 An adapter whose engine maps a level only with **session state**, rather than
 with a boundary keyword alone, owes two further proofs — both about that state's
@@ -241,7 +241,7 @@ Enumerating those decorators is part of the obligation, and so is the input that
 separates preserving from declaring: a decorator that authors a constant passes
 against a port declaring that same dialect and fails against any other, so the
 proof drives each one over a port whose dialect none of the language's own
-adapters declare. The language spec names where that proof lives.
+adapters declare.
 
 Each adapter must also prove the port's failure-instance identity rule
 (`m-db-port`). The rule binds every error the port itself raises, so the proof
@@ -258,8 +258,8 @@ error so raised is distinct while carrying the same category, native code, and
 message. This obligation needs
 no database and belongs wherever the language can drive the adapter over a driver
 that raises one reused exception object for every failure — the input the rule
-exists to stop an adapter from passing on — so a Docker-free structural test
-discharges it, and the language spec names where that proof lives.
+exists to stop an adapter from passing on — so a database-free structural test
+discharges it.
 
 The same rule bounds what an adapter may translate. An exception the caller's own
 `transaction` body raises is not an error the port made, so it must reach the
@@ -282,7 +282,8 @@ The `m-case-format` database provider is the case-runner provisioning surface. I
 is selected at the composition root and must not leak concrete driver dependencies
 into above-seam runtime modules.
 
-A provider contract suite must exercise these operations:
+A provider contract suite must prove these capabilities; the names below label them
+and need not exist:
 
 - `reset`: return the database to an empty, isolated state
 - `applyDdl`: apply the ordered DDL derived for a case model

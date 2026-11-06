@@ -83,7 +83,7 @@ The compatibility adapter proves the portable claim. The
 can reach that behavior through the public API; its coverage partition and
 query drift checks remain required.
 
-Generate the usage guide from a curated set of executed examples. A guide
+Build the usage guide from a curated set of executed examples. A guide
 teaches common operations; it need not publish every case or repeat the core
 specification. Keep the full conformance suite regardless of guide selection.
 

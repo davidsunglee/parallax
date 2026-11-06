@@ -1,9 +1,9 @@
 # Language Testing Contract
 
-This document is the normative cross-language contract for how an implementation
-organizes its tests and exposes them as verification commands. It fixes the
-vocabulary and the structural rules. It fixes no test framework, no runner
-mechanism, and no command names.
+This document states how an implementation's tests are classified (§3–§5) and this
+repository's contract for its verification commands and CI (§1, §2, §6–§9). It fixes
+no test framework and no runner mechanism. A target maintained outside this
+repository owes §3–§5's outcomes under its own command spelling.
 
 Rationale for these rules lives here and only here, in
 [Why this shape](#why-this-shape). Executable tool configuration owns quality

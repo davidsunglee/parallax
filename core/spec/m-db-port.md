@@ -894,8 +894,9 @@ defeating the driver-free compile/golden path.
 ## Test obligation
 
 The test obligation is split the same way as the decomposition: the pure dialect
-layer is proved by a Docker-free, one-row-per-database contract suite, while each
-concrete adapter is proved by a small real-database smoke suite, and the
+layer is proved by a database-free contract suite covering every supported
+database, while each concrete adapter is proved by a small real-database smoke
+suite, and the
 `m-case-format` provider is proved by a provider-contract suite. The portable
 checklist lives in
 [`database-provider-test-contract.md`](database-provider-test-contract.md).
