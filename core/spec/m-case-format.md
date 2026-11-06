@@ -649,8 +649,8 @@ declared graph. The pins are **pairwise disjoint** — every milestone belongs t
 **exactly one** declared graph, so an overlapping or duplicated pin (two graphs
 claiming the same milestone) is a loud failure, as is a milestone matched by no
 pin. (A v1 milestone-set graph carries **no** deep-fetch includes —
-history-with-includes (`snapshot-history-includes`) is staged and unclaimed — so
-each graph is rooted at the read's own query `target`.)
+history-with-includes is the `snapshot-history-includes` feature
+(`m-snapshot-read`) — so each graph is rooted at the read's own query `target`.)
 
 #### Streamed reads (`when.stream`)
 
