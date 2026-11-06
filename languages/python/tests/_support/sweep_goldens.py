@@ -191,6 +191,7 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-concurrency-027",
         "m-concurrency-028",
         "m-concurrency-029",
+        "m-execution-lifecycle-015",
         "m-concurrency-039",
         "m-concurrency-040",
         "m-unit-work-043",

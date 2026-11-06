@@ -28,7 +28,11 @@ type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 
 type ReadInterface = Literal["typed", "wire", "rows"]
 """Which interface a Read ran through: ``typed`` and ``wire`` publish a result,
-and ``rows`` is a write's internal target acquisition, which publishes none."""
+and ``rows`` is the Read of a write's target acquisition, which publishes neither."""
+
+type PublicationInterface = Literal["typed", "wire"]
+"""Which representation a delivery publishes, the only interfaces a Stream runs
+through."""
 
 type DatabaseCallKind = Literal["read", "write"]
 """Whether a Database Call ran a query or DML — carried so a failed call stays
@@ -483,7 +487,7 @@ class StreamStarted(_Event):
     """
 
     target: str
-    interface: ReadInterface
+    interface: PublicationInterface
     batch_size: int
     edition: str | None
 

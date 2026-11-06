@@ -12,49 +12,12 @@ preservation, topology, or coalescing eligibility, and emits no SQL. The surface
 that executes writes constructs one preparer per accepted model and hands it to
 the Write Planner it configures; `m-sql` renders and binds what it prepares.
 
-## Preparation is demand-driven and model-scoped
+## Preparation
 
-```text
-WritePayloadPreparer(model)
-  assignments(entity, PlannedAssignments) -> AssignmentPayload
-  row_slots(entity, presence)             -> RowSlots
-  row(entity, WriteRow)                   -> RowPayload
-  proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
-  equal_non_interval(RowPayload, RowPayload)              -> Boolean
-  rebound(RowPayload, WriteRow)                           -> RowPayload
-  effect_shape(PlannedStep)                               -> shape | absent
-  effect_slots(entity, shape)                             -> EffectSlots
-```
-
-The interface and its result vocabulary are `m-write-plan`'s; this module
-implements them. Preparation is pure and runs when something needs its result:
-a statement about to be lowered, or a comparison that needs complete state. A
-narrow update demands its assignments alone and never a complete row or its
-predecessor. Nothing prepares a whole plan, a later Write Group, or every row
-of a packed run in advance, and repeating a demand without
-retained backing may prepare again rather than consult a cache.
-
-A **Row Payload** holds one Write Row's persisted cells in Table Layout slot
-order, under the **Row Slots** its presence selects, and an **Assignment
-Payload** the values one revising step writes, in the same order. A Row Slots
-is placed once per Entity and presence and gathers any such row's cells
-without judging a value again: every ordinary cell a Write Row holds was
-already admitted, so a document it stores is encoded from its managed values
-directly. Each cell names its contributor by model identity — a member, the
-Table's shared Structured Column, or the table-per-hierarchy discriminator —
-never by physical column. Each payload is bound to the inputs it was prepared
-from (`m-write-plan` *Write payloads*).
-
-An effect's **shape** (`m-unit-work` *Write Group formation*) is decided from
-the step alone, before any payload is prepared, and compared by value, so
-whether two effects share a grouped effect never depends on what a bounded
-cache retains. A shape's **Effect Slots** name each per-row source column a
-grouped effect binds — each key, each As-Of Axis end bound per row, the gate,
-and each cell or assigned document path the shape's assignments place — with
-its Neutral Type, and gather each
-column from the steps and their Assignment Payloads without judging a value
-again; they are placed once per Entity and shape like Row Slots, and prepare
-nothing a lone update would not.
+Preparation is pure. What a row or assignment persists depends only on the write
+and the accepted model. Whether two effects share a grouped effect is decided
+from the effects themselves, before any payload exists, so it never varies with
+anything an implementation caches.
 
 ## Row assembly
 
@@ -91,17 +54,12 @@ A revising step writes only what it assigns. A directly stored member takes its
 own slot; a scalar collection there takes its whole encoded array. The shared Structured Column takes the ordered patches of its assigned
 paths, prepared once by the codec (`m-document-codec` *Patching*): an assigned
 leaf's encoded value or JSON null, an assigned scalar collection's encoded array,
-and an assigned occurrence's complete encoded document or JSON null, so every key the step does not name survives. Within one
-preparation, the same prepared values are what a document patched from them
-holds and what the statement assigns; nothing encodes them a second time. A
-revising step whose successor was also prepared whole for a comparison retains
-none of that comparison's backing, so its own lowering prepares its assignments
-again.
+and an assigned occurrence's complete encoded document or JSON null, so every key the step does not name survives.
 
 ## Comparing persisted state
 
-`equal_non_interval` answers whether two prepared rows persist identical cells
-outside their temporal interval. Scalars compare as stored at their Neutral
+Two prepared rows have **equal persisted state** where they persist identical
+cells outside their temporal interval. Scalars compare as stored at their Neutral
 Type; documents — the shared Structured Column, Value Object columns, scalar
 collection columns, and `json` members — compare by the codec's exact persisted
 equality, so unknown keys,
@@ -109,23 +67,3 @@ presence, array order, JSON kinds, and exact numeric meaning all participate. A
 row that leaves some Column to the database's default, or holds a generated
 value, establishes no known state and equals nothing. Object identity and
 Transaction-Time bounds are the caller's eligibility questions, not this one.
-
-`proven_unequal_non_interval` is a cheap, sound inequality check over two
-finalized Write Rows: it compares scalar members both rows state, which are
-exact managed values at their Neutral Type — a scalar collection element by
-element in order — without preparing any document.
-`true` proves the persisted states differ; `false` proves nothing, and a caller
-needing equality must compare the prepared rows. Interval members, generated
-values, members only one row states, and occurrences decide nothing here.
-
-## Rebinding prepared cells to a merged interval
-
-`rebound` answers a Row Payload's cells for a Write Row that states exactly what
-the payload was prepared from outside its temporal interval — the same origin,
-executed selection, occurrences, and every other Attribute value — and a
-different interval: the prepared values stay, and only the interval cells take
-the row's own. That is how a row merged from identical produced rows
-(`m-temporal-write` *Merging produced successors*) stores the cells its
-comparison already prepared, without finalizing, encoding, or comparing them
-again. A row stating anything else outside its interval is refused rather than
-given cells prepared from other inputs.

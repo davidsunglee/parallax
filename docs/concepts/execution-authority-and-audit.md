@@ -161,9 +161,8 @@ mechanisms authenticate the login. The rationale is recorded in
 Execution authority is what audit provenance would record. A transaction already hands
 its captured actor to write planning as an
 [Actor Identity](../../core/spec/m-unit-work.md#actor-identity): a subject verbatim, or
-`db-login:` followed by the login. The specification reserves that input so provenance
-can become a planning stage without changing its interface. Until it does, planning
-must ignore it: two plans that differ only in their actor are identical.
+`db-login:` followed by the login. An audit-neutral plan makes no use of it: two flushes
+that differ only in their actor emit identical SQL and binds.
 
 The design distinguishes four facts about a stored state, because each answers a
 different question

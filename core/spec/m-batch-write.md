@@ -14,8 +14,8 @@ to `m-unit-work`, and temporal chaining to `m-temporal-write`. The canonical gol
 SQL is fixed by `m-sql`.
 
 `m-batch-write` decides only **compatibility**: whether two buffered writes may
-share one step. The Planned Step algebra and the affected-row policy that step
-then carries are `m-write-plan`'s, and the flush's stage order is
+share one step. What a Planned Step means and the affected-row policy that step
+then carries are `m-write-plan`'s, and the flush's planning order is
 `m-unit-work`'s; this module reaches planning through the strategy port that
 module declares.
 
@@ -26,9 +26,8 @@ several. Compatible inserts become one Planned Insert with several entries;
 compatible uniform keyed updates or deletes become one Planned Update or Planned
 Delete whose Key Target holds several key tuples.
 
-- An implementation **MUST NOT** introduce a batch flag, batch identifier, group
-  wrapper, or per-row batch annotation. Two writes either share a step or they do
-  not, and that is the whole of the decision.
+- Two writes either share a step or they do not, and that is the whole of the
+  decision.
 - Execution grouping is a separate fact. A Write Group (`m-unit-work` *Write
   Group formation*) decides which settled writes execute and complete together,
   and execution may present their steps in shared calls (`m-execution`), but two
@@ -38,17 +37,17 @@ Delete whose Key Target holds several key tuples.
   **per-row gated** write (`m-concurrency`) can never join another: its gate binds
   one row's observed version, so each stays its own step even where a driver
   later transmits several in one batch.
-- Batching shares the canonical member shape and uniform values across the step;
-  it **MUST NOT** deep-copy one assignment payload per addressed row.
 - Membership does not change semantics. One multi-key Key Target owns **one
   aggregate** affected-row expectation for the rows it names (`m-unit-work`);
   collapsing writes together never weakens or discards that expectation.
 
 ## Set-based flush
 
-- Multiple inserts of the same entity collapse into a **single multi-row
-  `INSERT`** rather than one statement per row, spelled in the dialect's
-  multi-row insert form (`m-sql` *Batched insert / update*, `m-dialect`).
+- Multiple inserts of the same entity stating the same member set and
+  generated-value shape collapse into a **single multi-row `INSERT`** rather than
+  one statement per row, spelled in the dialect's multi-row insert form (`m-sql`
+  *Batched insert / update*, `m-dialect`). Inserts differing in either stay
+  separate steps.
 - Multiple updates of the same entity that set the same columns collapse into a
   single statement over a membership of their keys when the new value is
   uniform across the keys. Otherwise each key stays its own step, and a dialect

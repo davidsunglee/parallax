@@ -11,7 +11,7 @@ from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._authored_resolver import include_path_node
 from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle import PublicationInterface
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
 from parallax.core.read_delivery import InvalidData, InvalidDataError
@@ -482,7 +482,7 @@ class SnapshotPublication:
     one.
     """
 
-    interface: ReadInterface
+    interface: PublicationInterface
     roots_of: RootsOf[ReadEvidence]
     edition: str
     release: Callable[[], None]

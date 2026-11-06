@@ -1228,9 +1228,9 @@ def test_batching_merges_uniform_updates_but_not_a_lone_row() -> None:
 
 
 def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch() -> None:
-    # No-op elimination (m-unit-work stage 2) precedes batching (stage 3): a
-    # buffered update naming only its own primary key is eliminated before
-    # `_form_batches` ever sees the buffer, so it cannot occupy the run
+    # No-op elimination precedes batching: a buffered update naming only its
+    # own primary key is eliminated before `_form_batches` ever sees the
+    # buffer, so it cannot occupy the run
     # boundary between the two uniform updates surrounding it. Batching first
     # would instead leave the no-op splitting the run, and the two survivors
     # would settle as two separate singleton steps rather than one batch.

@@ -176,9 +176,11 @@ def unit_resolving_reads(
 
 # --- the coverage reads one flush makes ------------------------------------------
 
-# The most consecutive deferred writes one acquisition span shares coverage reads
-# across (`m-unit-work` *Shared coverage acquisition*), and the most uncovered
-# parts one coverage read names (`m-sql` *Requested ranges*).
+# The corpus ceiling on how many consecutive deferred writes one acquisition span
+# shares coverage reads across (`m-unit-work` *Shared coverage acquisition*), and
+# on how many uncovered parts one coverage read names (`m-sql` *Requested ranges*).
+# Each bound is the implementation's own; cases stay beneath these, so a derived
+# count holds under any implementation's bound at or above what a case reaches.
 _ACQUISITION_SPAN_WRITES = 32
 _COVERAGE_READ_PARTS = 64
 
@@ -250,9 +252,9 @@ def flush_coverage_reads(
     reads, and ``bitemporal`` names the deferred objects that may share an
     acquisition span. Objects coalesce at their first entry and order by mutation
     phase, each phase in authored order. Consecutive deferred Bitemporal objects
-    of one Entity and phase share reads in runs of at most 32, each run owing one
-    read per 64 parts, rounded up; any other object ends a run, and an object
-    outside every run reads its own parts alone.
+    of one Entity and phase share reads in runs up to the corpus ceiling, each run
+    owing one read per ceiling of parts, rounded up; any other object ends a run,
+    and an object outside every run reads its own parts alone.
 
     Where two deferred objects could share, an order the planner alone decides is
     refused rather than guessed: a phase that sorts several Entities by

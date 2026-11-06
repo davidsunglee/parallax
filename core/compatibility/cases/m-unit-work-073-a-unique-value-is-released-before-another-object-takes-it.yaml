@@ -1,0 +1,49 @@
+model: models/person.yaml
+tags: [m-unit-work, m-execution, m-sql, write-group, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the writes settle against the rows a find step of their own unit of work observed (m-case-format 'Settling against a grouped find')"
+given:
+  fixtures: true
+when:
+  scenario:
+    - uow: handoff
+      objectQuery:
+        target: parallax.compatibility.Passport
+        predicate:
+          lessThan: { path: parallax.compatibility.Passport.id, value: 103 }
+        orderBy:
+          - { attr: parallax.compatibility.Passport.id, direction: asc }
+      databaseCalls: 1
+      note: observe both passports; the unversioned target resolves to Locking, so the find takes the shared row lock
+      statements:
+        - sql:
+            postgres: select t0.id, t0.person_id, t0.number from passport t0 where t0.id < ? order by t0.id asc for share of t0
+            mariadb: select t0.id, t0.person_id, t0.number from passport t0 where t0.id < ? order by t0.id asc lock in share mode
+          binds: [103]
+      expectRows:
+        - { id: 101, person_id: 1, number: P-AAA }
+        - { id: 102, person_id: 2, number: P-BBB }
+    - uow: handoff
+      write:
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.Passport, rows: [{ id: 101, personId: 3 }] }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.Passport, rows: [{ id: 102, personId: 1 }] }
+      databaseCalls: 2
+      note: passport 102 takes the holder passport 101 gives up, so each effect keeps its authored place and neither shares a statement; run the other way round, the second write's value is still held and the unique key refuses it
+      statements:
+        - sql:
+            postgres: update passport set person_id = ? where id = ?
+            mariadb: update passport set person_id = ? where id = ?
+          binds: [3, 101]
+        - sql:
+            postgres: update passport set person_id = ? where id = ?
+            mariadb: update passport set person_id = ? where id = ?
+          binds: [1, 102]
+then:
+  databaseCalls: 3
+  tableState:
+    passport:
+      - { id: 101, person_id: 3, number: P-AAA }
+      - { id: 102, person_id: 1, number: P-BBB }

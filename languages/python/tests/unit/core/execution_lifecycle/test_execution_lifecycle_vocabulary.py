@@ -28,6 +28,7 @@ from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
     LifecycleLogDetail,
+    PublicationInterface,
     ReadInterface,
     ReadStarted,
     RootExecution,
@@ -41,6 +42,7 @@ _RUNTIME_SPELLING: Final = re.compile(r"[a-z]+(?:_[a-z]+)*\Z")
 _FAMILIES: Final[dict[str, tuple[Any, tuple[str, ...]]]] = {
     "RootExecutionKind": (RootExecutionKind, ("read", "transaction_invocation", "stream")),
     "ReadInterface": (ReadInterface, ("typed", "wire", "rows")),
+    "PublicationInterface": (PublicationInterface, ("typed", "wire")),
     "DatabaseCallKind": (DatabaseCallKind, ("read", "write")),
     "AttemptPhase": (AttemptPhase, ("callback", "pre_commit", "commit")),
     "LifecycleLogDetail": (LifecycleLogDetail, ("safe", "diagnostic")),

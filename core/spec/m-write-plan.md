@@ -1,88 +1,40 @@
 # m-write-plan — Planned Steps and State Observations
 
-`m-write-plan` specifies the finalized semantic form of a write — the Planned
-Step algebra and the Write Target, Write Gate, and Affected Rows Policy
-vocabulary it is built from — the State Observation a write against existing
-state retains, including a temporal write's Predecessor Row, and the neutral
-vocabulary of the payload a write persists. Per the dependency graph it depends
-on `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-document-codec`,
-and `m-temporal-read`, and on nothing that buffers, plans, executes, lowers, or
-places a write. `m-unit-work` plans buffered writes into this algebra and carries
-each observation to the write it settles; `m-write-payload` prepares what each
-write persists; `m-sql` lowers the algebra with those prepared values (`m-sql`
-*Private compiler inputs*). None depends on another for it.
+`m-write-plan` specifies what a finalized write means — its Planned Steps and the
+Write Target, Write Gate, and Affected Rows Policy they are stated in — the State
+Observation a write against existing state retains, including a temporal write's
+Predecessor Row, and the neutral vocabulary of the payload a write persists. Per
+the dependency graph it depends on `m-core`, `m-metamodel`, `m-predicate`,
+`m-inheritance`, `m-document-codec`, and `m-temporal-read`, and on nothing that
+buffers, plans, executes, lowers, or places a write. `m-unit-work` plans buffered
+writes into these steps and carries each observation to the write it settles;
+`m-write-payload` prepares what each write persists; `m-sql` lowers the steps with
+those prepared values (`m-sql` *Private compiler inputs*). None depends on another
+for it.
 
-## The Planned Step algebra
+## Planned Steps
 
-A **Planned Step** is one finalized semantic execution step. It may address one
-row or many, and its target, row topology, concurrency decision, and expected
-effect are all settled before SQL lowering. The algebra is **closed**:
+A **Planned Step** is one semantic effect of a write on stored rows: the **Write
+Target** it addresses — a set of keys, a resolved predicate selection, or one
+milestone's complete address — what it assigns or opens, the concurrency condition
+it carries, and the effect it expects, all settled before SQL lowering. One
+statement may carry several steps (`m-execution`). A conforming implementation
+distinguishes these kinds of step, because each has its own statement form and
+expected effect; how it represents them is private. A step is stated in Attribute
+and Value Object identities, never in physical columns, property names, or SQL
+order.
 
-```text
-PlannedStep =
-    PlannedInsert(entity, entries: NonEmpty[WriteRow])
-  | PlannedUpdate(entity, target, assignments, concurrency, affected_rows)
-  | PlannedClose(entity, target, assignments, cause, concurrency, affected_rows)
-  | PlannedDelete(entity, target, concurrency, affected_rows)
-  | PlannedTemporalRevision(entity, target, assignments, concurrency, affected_rows,
-                            predecessor_document_is_object)
-  | PlannedTemporalRemoval(entity, target, concurrency, affected_rows)
-  | PlannedTemporalGuard(entity, target, concurrency: TemporalGate, affected_rows)
-```
-
-The algebra is **semantic and Attribute-keyed**. It contains no SQL, dialect
-object, driver value, physical column name, property name, or SQL ordering.
-
-- **Planned Insert** carries one or more Write Rows. Every entry of one step
-  has the same canonical member set and generated-value shape; incompatible
-  entries form separate steps. Membership *is* the batching decision, so there is
-  no batch flag and no group identifier. A Planned Insert carries no Write
-  Target, no gate, and no Affected Rows Policy.
-- **Planned Update** revises existing Non-Temporal rows in place. Its
-  assignments are uniform across every row its target selects; differing per-key
-  assignments remain distinct steps. A Milestone Target is prohibited — a
-  temporal change is a temporal step, never a Planned Update.
-- **Planned Close** closes one current temporal milestone. Its assignments carry
-  the Transaction-Time end. Its expected effect is always exactly one row.
-- **Planned Delete** is physical row deletion. It carries no row, assignments,
-  predecessor, Row Origin, or Close Cause, and a Milestone Target is
-  prohibited: represented-state absence is a temporal step, not a delete.
-- **Planned Temporal Revision** revises one current milestone the attempt itself
-  opened, in place at its complete physical address. Its assignments carry
-  writable payload and, on a Bitemporal row, a moved Valid-Time start; they never
-  carry the logical key, an axis end, or the Transaction-Time start. Its expected
-  effect is exactly one row. It also records whether the predecessor it revises
-  was retained holding an object document, which decides whether its
-  document-resident assignments may execute (`m-temporal-write` *Ownership
-  disposal*).
-- **Planned Temporal Removal** physically removes one current milestone the
-  attempt itself opened. Its expected effect is exactly one row. It removes
-  uncommitted state of the attempt's own: a milestone that existed before the
-  attempt is never revised or removed, only closed (`m-temporal-write`
-  *Ownership disposal*).
-- **Planned Temporal Guard** proves that one current milestone that existed
-  before the attempt still stands as it was observed, for a write that leaves it
-  unchanged (`m-temporal-write` *Unchanged milestones*). It addresses the milestone as a close does
-  and always carries the close's Temporal Gate, assigns nothing it represents,
-  and its expected effect is exactly one row. It changes no observed state.
+| Step | Meaning | Expected effect |
+|---|---|---|
+| Planned Insert | opens one or more rows of one member set | none |
+| Planned Update | revises existing Non-Temporal rows in place, uniformly | as *Affected Rows Policy* states |
+| Planned Delete | physically removes Non-Temporal rows | as *Affected Rows Policy* states |
+| Planned Close | closes one current temporal milestone | exactly one row |
+| Planned Temporal Revision | revises in place a current milestone the attempt opened | exactly one row |
+| Planned Temporal Removal | removes a current milestone the attempt opened | exactly one row |
+| Planned Temporal Guard | proves a pre-attempt milestone still stands as observed, changing nothing | exactly one row |
 
 ### Write Rows, Row Origin, and Close Cause
-
-```text
-RowOrigin =
-    NewLineage
-  | CarriedFrom(predecessor)
-  | ChangedFrom(predecessor)
-
-WriteRow(
-    row:      PlannedRow,
-    origin:   RowOrigin,
-    executed: PlannedAssignments | absent,
-    prepared: RowPayload | absent,      -- backing, outside the row's meaning
-)
-
-CloseCause = Superseded | Terminated
-```
 
 A **Write Row** is one represented row's state before settlement decides how it
 is realized — opened, or revised in place where the attempt owns its
@@ -100,17 +52,14 @@ inequality or from whether a cell is its predecessor's own object. Rows the same
 assignments reach share one executed set. A new lineage writes every member it
 holds, so it needs none.
 
-A Write Row MAY carry **prepared** persisted backing (*Write payloads*, below)
-derived from exactly that row, which lowering reuses rather than preparing
-again. It is not part of the row's meaning, so equality ignores it.
-
-Origin belongs to **each Write Row**, never to the whole step and never to a
-parallel array, so a multi-row insert whose rows have different origins keeps
-that distinction. `NewLineage` begins a new Provenance Lineage; `CarriedFrom`
-carries represented state unchanged from its predecessor; `ChangedFrom` changes
-it. An update verb produces `Superseded`; a terminate verb produces `Terminated`
-even when Bitemporal head or tail successors survive — those survivors are
-independently `CarriedFrom`.
+**Row Origin** says how a Write Row came to be, and each row has its own, so a
+multi-row insert whose rows have different origins keeps that distinction:
+`NewLineage` begins a new Provenance Lineage; `CarriedFrom` carries represented
+state unchanged from its predecessor; `ChangedFrom` changes it. **Close Cause**
+says why a close ended a milestone: an update verb produces `Superseded`; a
+terminate verb produces `Terminated` even when Bitemporal head or tail successors
+survive — those survivors are independently `CarriedFrom`. Audit reads both
+(`m-unit-work` *The planning pipeline*).
 
 A row merged from several adjacent produced rows of identical persisted state
 (`m-temporal-write` *Merging produced successors*) is one Write Row over the
@@ -121,30 +70,7 @@ over the part of the row it contributed, belong to the completion its settled wr
 (`m-unit-work` *Write Groups complete before later work runs*), never to a
 second origin or a list of predecessors on the row.
 
-An implementation **MUST NOT** introduce a generic disposition field, a parallel
-mutation-kind tag, or any free-floating label that a variant could contradict.
-Row Origin exists only on a Write Row and Close Cause only on a close, so
-a termination cause on an inserted row and a lineage-start origin on a close are
-**unrepresentable** rather than merely invalid. A Planned Update needs no label
-either: *being* a Planned Update already carries the fact that an existing row
-was revised in place. A Planned Delete removes the row and so has nothing to
-label.
-
 ### Planned rows and assignments
-
-```text
-PlannedValue = ManagedValue | Null | GeneratedValueExpression
-
-PlannedRow(
-    attributes:    AttributeIdentity     -> PlannedValue,
-    value_objects: ValueObjectIdentity   -> StructuredOccurrence | Null,
-)
-
-PlannedAssignments(
-    attributes:    AttributeIdentity     -> PlannedValue,
-    value_objects: ValueObjectIdentity   -> StructuredOccurrence | Null,
-)
-```
 
 A **Planned Row** is the immutable, duplicate-free complete semantic contents of
 one Write Row, including framework-owned version, temporal, and audit
@@ -153,130 +79,45 @@ and duplicate-free, and unlike a Planned Row it names only the members its step
 changes. Entity Layout continues to decide physical `SET` and bind order
 (`m-sql`).
 
-Trusted settlement builders construct each final Attribute and Value Object map
-once and transfer that storage directly into the immutable carrier. Public or
-untrusted construction still establishes ownership defensively. Temporal
-expansion builds each successor directly as its final `WriteRow` and
-`PlannedRow`; there is no separate successor-row carrier and no metadata-to-name-
-to-metadata remapping between prepared assignments and final member identities.
-
 A **Generated Value Expression** is the closed set of cell values the *database*
 computes from the row being written rather than binding as a literal, and
 `m-pk-gen` is its only source: the `max` allocation an insert folds into its own
 statement, and the registry advance an update applies to the stored value. Each
 is legal only where the statement that renders it can express it, so a Planned
 Row and Planned Assignments admit different members of the set rather than
-different value vocabularies. A `max` allocation is **returned** where the row it
-opens is temporal: the statement then answers the allocated key, because the
-attempt records that row by its complete address (`m-unit-work` *Rows the
-attempt opened*)
-and nothing else names it. What neither admits is an **authored assignment
-expression** — anything a caller composes out of Predicate — because
-the planner resolves every caller-supplied value before a step is settled.
+different value vocabularies.
 
 ### Write Target
 
-```text
-WriteTarget = KeyTarget | ResolvedMutationSelection | MilestoneTarget
-```
-
 A **Write Target** is the semantic row selection of a Planned Step. It is
-distinct from observed predecessor state and from any concurrency condition.
+distinct from observed predecessor state and from any concurrency condition, and
+it is one of three meanings:
 
-```text
-KeyTarget(
-    key_attributes: NonEmpty[AttributeIdentity],
-    key_values:     NonEmpty[complete concrete non-null value tuples],
-)
-
-ResolvedMutationSelection(
-    target:    EntityIdentity,
-    predicate: ResolvedPredicate,
-)
-
-MilestoneTarget(
-    key_attributes: NonEmpty[AttributeIdentity],
-    key_values:     one complete value tuple,
-    end_attributes: NonEmpty[AttributeIdentity],
-    end_values:     NonEmpty[TemporalUpperBound],
-)
-
-TemporalUpperBound = Finite(Instant) | Infinity
-```
-
-- A **Key Target** stores the canonical primary-key shape once and one aligned
-  value tuple per addressed row, in planner order. Every tuple is complete,
-  concrete, non-null, and **distinct**: repeated authored keys are invalid rather
-  than silently deduplicated. A singleton and a compatible multi-key selection
-  are cardinalities of one target kind, not two — there is no separate key-set
-  target.
-- A **Resolved Mutation Selection** is legal only for a **readless** unversioned
-  Non-Temporal Planned Update or Planned Delete. It carries the exact target and
-  producer-owned resolved Predicate and nothing else — no materialized keys,
-  observation, pin, or concurrency data. Its presence already implies
-  `Unversioned` and `AnyCount`; the step is planned and executed alone, at its
-  predicate write's call (`m-unit-work` *Write Planner*), and mutation lowering
-  never fabricates an Object Query around it.
-- A **Milestone Target** addresses the current milestone slot a close,
-  revision, or removal acts on: one complete key tuple plus one write-required
-  **exclusive upper bound per As-Of Axis** — the observed predecessor's
-  Valid-Time end where that axis exists, and invariant `Infinity` for
-  Transaction Time. That tuple is the row's complete **physical address**. It contains no axis start, gate, observation,
-  or Effective Concurrency Strategy, and it is **identical under both strategies**
-  (ADR 0046). Only the gate differs.
+- A **Key Target** addresses rows by complete primary-key values. One key and
+  several keys are cardinalities of one target, not two.
+- A **Resolved Mutation Selection** addresses the rows a resolved Predicate
+  selects, for a predicate-selected write (`m-batch-write`).
+- A **Milestone Target** addresses one current milestone by its complete physical
+  address (`m-temporal-write` *Address and gate are separate*).
 
 ### Write Gate and the concurrency decision
 
-```text
-VersionGate(observed_version: PositiveInt)
-TemporalGate(start_attribute: AttributeIdentity, observed_start: Instant)
-Ungated
-
-NonTemporalConcurrency =
-    Unversioned
-  | Versioned(attribute: AttributeIdentity, gate: VersionGate | Ungated)
-```
-
-A **Write Gate** carries only the extra equality predicate lowering renders. The
-advanced version value and the close instant are **assignments**, not gate
-members, and a gate repeats neither the full observation nor the transaction's
-Effective Concurrency Strategy — both are consumed during planning and do not
-survive in the plan.
-
-`Versioned` names the target's version Attribute once, as planning settled it.
-Both strategies advance that Attribute, and only a Version Gate compares it
-against the observed version, so lowering reads it from the decision rather than
-deriving the target's version source again.
-
-Planned Update and Planned Delete carry a Non-Temporal Concurrency decision;
-Planned Close carries `TemporalGate | Ungated` directly, because every close
-requires a temporal observation and so has no unversioned case. The effective
-Locking strategy records an **explicit** `Ungated` decision rather than a null gate, which is what
-makes gate applicability structural. The gate rule itself is uniform across
-update, delete, and close and belongs to `m-concurrency`.
-
-A Version Gate requires a **singleton** Key Target, because each observed version
-belongs to exactly one row.
+A **Write Gate** is the extra equality condition a step's statement carries: a
+**Version Gate** compares one row's version with what was observed, and a
+**Temporal Gate** one milestone's Transaction-Time start. A step with neither is
+**Ungated**, which the effective Locking strategy records as a decision rather
+than as a missing gate. The gate rule itself is uniform across update, delete,
+and close and belongs to `m-concurrency`.
 
 ### Affected Rows Policy
 
-```text
-Shortfall = MissingTarget | StaleWrite | OptimisticConflict | FailedPrecondition
-
-AffectedRows =
-    AnyCount
-  | ExactCount(expected: PositiveInt, on_shortfall: Shortfall)
-```
-
 Every surviving non-insert step carries a **fully resolved** Affected Rows
 Policy before lowering. The **target** decides the expected cardinality and the
-**concurrency decision** decides the shortfall classification (ADR 0044):
-
-| Target | Policy |
-|---|---|
-| Predicate Target | `AnyCount` |
-| Key Target | `ExactCount(number of keys, …)` |
-| Milestone Target | `ExactCount(1, …)` |
+**concurrency decision** decides the shortfall classification (ADR 0044). A
+step's expected effect is any count for a predicate-selected step, the number of
+keys for a keyed step, and one for a milestone. A shortfall is classified
+`MissingTarget`, `StaleWrite`, `OptimisticConflict`, or `FailedPrecondition` as
+follows:
 
 - a **gated** shortfall is `OptimisticConflict`, or `FailedPrecondition` where
   the gate binds a caller's stated revision rather than an observation;
@@ -285,8 +126,7 @@ Policy before lowering. The **target** decides the expected cardinality and the
 
 An **excess** over any exact count is always Cardinality Corruption. It is an
 invariant failure rather than a concurrency outcome, so it is not one of the
-shortfall tags and is never carried in the policy payload. Planned Inserts carry
-no Affected Rows Policy.
+shortfall tags. A Planned Insert carries no Affected Rows Policy.
 
 The tags are **neutral**: the plan names an outcome class, never a language's
 exception type.
@@ -354,35 +194,19 @@ Value Object occurrence, the complete primary key, every temporal bound, and
 every audit value, with no generated-value expression. Completeness is required
 because temporal expansion carries members the authored mutation never mentioned,
 and because audit finalization must distinguish `m-edit`'s carried state from its
-authored assignments without a second read (ADR 0042). Successors retain or view
-that state rather than copying it, and a read retaining many MAY expose a
-logical Predecessor Row view over compact storage — aligned columns, or the
-read's own row state, for example — instead of allocating one row object per
-observation. Where a trusted producer already owns the observed state
-outright, it transfers that state into the Predecessor Row; the carrier does not
-copy it and then freeze it again.
+authored assignments without a second read (ADR 0042).
 
-The state is immutable **logically**: no consumer mutates it, and none hands it to
-a caller that could. That is what lets a trusted producer transfer state it owns
-exclusively — decoded host containers included — rather than freeze a copy. State
-a caller supplies is not owned that way, so a carrier constructed from it retains
-it in immutable form.
+The state is immutable: nothing a caller does to a value after a read changes
+what a successor stores, and no consumer hands retained state to a caller that
+could change it.
 
 Under Relational Document Layout a Predecessor Row additionally retains the
-**raw Structured Column document**, as a distinct named field beside its member
-state and never as an entry in it. Compact storage carries the same value
-aligned with each row's member state, so a logical Predecessor Row view over it
-exposes the raw document without allocating a second per-row carrier. The
-document is read-only under the same logical immutability: a successor that
+**raw Structured Column document**. The document is read-only: a successor that
 changes a member composes its own document from a copy (`m-document-codec`
-patching), and no reader alters the retained one. What a successor binds from it
-crosses the port as `m-db-port` requires of a retained document.
+patching), and no reader alters the retained one.
 
-The field is **absent — not empty — under Columns layout**, so its presence is
-itself the signal that the row came from a document-mapped Table. It is not a
-member: the member map stays purely logical, and a consumer that iterates
-members can never surface the raw document as a result field or an Entity
-member.
+Under Columns layout no document is retained. A retained document is no member:
+it never surfaces as a result field or an Entity member.
 
 Retention costs no additional query. A temporal write already materializes its
 predecessor to obtain the key, milestone bounds, and complete state; the read
@@ -409,58 +233,13 @@ mutation did not name — rides forward exactly as stored.
 
 ## Write payloads
 
-```text
-WritePayloadPreparer
-  assignments(entity, PlannedAssignments) -> AssignmentPayload
-  row_slots(entity, presence)             -> RowSlots
-  row(entity, WriteRow)                   -> RowPayload
-  proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
-  equal_non_interval(RowPayload, RowPayload)              -> Boolean
-  rebound(RowPayload, WriteRow)                           -> RowPayload
-  effect_shape(PlannedStep)                               -> shape | absent
-  effect_slots(entity, shape)                             -> EffectSlots
-
-RowSlots(entity, presence, contributors: [contributor])
-  cells(WriteRow)                         -> [value]
-EffectSlots(kind, entity, keySources, endSources, gateSource?, assignmentSources, elementTypes)
-  columnCells([PlannedStep], [AssignmentPayload | absent]) -> [[value]]
-RowPayload(slots: RowSlots, source: WriteRow, cells: [PayloadCell])
-AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
-PayloadCell(contributor, value)
-```
-
-A **Row Slots** fixes the cells every row of one Entity stating exactly the
-members of one presence stores, and gathers them from such a row. Its cells
-depend on the Entity and that presence alone, so the entries of one insert
-share one, and a Row Payload is one row's cells under its Row Slots, retained
-where a comparison prepared them.
-
-An **effect shape** is an opaque value compared by equality: two effects of one
-shape may share one grouped effect (`m-unit-work` *Write Group formation*), and
-an effect without one runs alone. A Write Group records where each run of
-effects of one shape lies among its steps as its **effect spans**: half-open
-ranges over its steps in execution order, each holding at least two steps, in
-order and never overlapping, and none in a group of one write. The **Effect
-Slots** of a shape name its step kind and each per-row source column a grouped
-effect binds — its role among the key, each As-Of Axis end bound per row, the
-gate, and the assigned cells, and its Neutral Type — and gather each column from
-the steps and their Assignment Payloads, a step assigning nothing having none.
-
-A Planned Step states what a write means; what it **persists** is its payload.
-This module declares the payload vocabulary and the interface that prepares it,
-so that settlement and lowering share one preparer without the algebra depending
-on storage placement. `m-write-payload` implements the interface; the execution
-module constructs it for one accepted model and hands it to the Write Planner it
-configures.
-
-A payload's cells follow Table Layout slot order, and each names its contributor
-by model identity — a member, the Table's shared Structured Column, or the
-table-per-hierarchy discriminator — never a physical column. A value is a
-planned scalar or generated-value expression, a complete encoded document, the
-discriminator's tag, or, for a revising step's shared Structured Column, the
-ordered prepared patches it applies. A Row Payload holds the Write Row it was
-prepared from, and an Assignment Payload its assignment set, by identity, which
-is the whole of its binding: a consumer handed a payload prepared from other
-inputs — another row, origin, executed selection, or assignment set — refuses
-it without comparing documents. No SQL, dialect object, driver value, or executable
-recipe enters a payload or a plan.
+A Planned Step states what a write means; what it **persists** is its payload:
+the cells a row stores and the values a revising step assigns, in Table Layout
+slot order. Each cell is identified by model identity — a member, the Table's
+shared Structured Column, or the table-per-hierarchy discriminator — never a
+physical column. A value is a planned scalar or generated-value expression, a
+complete encoded document, the discriminator's tag, or, for a revising step's
+shared Structured Column, the ordered patches it applies. `m-write-payload` owns
+how a payload is assembled. Settlement and lowering reach preparation through an
+interface this module declares, so no Planned Step depends on storage placement.
+No SQL, dialect object, or driver value enters a payload or a plan.

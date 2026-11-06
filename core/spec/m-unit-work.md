@@ -6,7 +6,7 @@ read-correctness rules that make that attempt's reads safe. It is expressed enti
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
-Step algebra it produces and the State Observations it carries, on
+Steps it produces and the State Observations it carries, on
 `m-temporal-write` for the temporal expansion it drives, on `m-concurrency` for
 each Entity's Effective Concurrency Strategy, version source, and evidence kind,
 and on `m-edit`, which distinguishes authored assignments from state carried by
@@ -17,8 +17,8 @@ set-based forms) is produced by `m-sql` and run by the execution runtime
 ports this module declares, so `m-unit-work` takes no direct edge to SQL generation.
 Bounded automatic retry (`m-auto-retry`) coordinates replay of attempts.
 
-`m-unit-work` also owns **write finalization**: the Write Planner and its stage
-order, which settle buffered writes into `m-write-plan`'s Planned Step algebra;
+`m-unit-work` also owns **write finalization**: the Write Planner and its planning
+order, which settle buffered writes into `m-write-plan`'s Planned Steps;
 the authoritative affected-row enforcer; and the Write Effect Error family that
 enforcer raises (ADR 0041, ADR 0048). `m-batch-write` keeps its own batching
 policy and reaches planning only through the strategy port this module declares,
@@ -52,8 +52,8 @@ opens a transaction with no unit of work at all. Within one unit of work:
   attributable to exactly one of the three. The joined (nested) boundary adds no
   further trigger: it shares the outer unit of work's buffer, and the outer
   boundary's pre-commit flush is what flushes it. The last trigger is named for
-  when it runs, because **finalization** already names the planner stage every
-  flush of every trigger goes through.
+  when it runs, because **finalization** already names what planning does on
+  every flush of every trigger.
 
 Where an implementation owns connection lifetimes (`m-db-port`), each **attempt**
 holds one connection. It is acquired after the attempt begins and before the
@@ -242,8 +242,8 @@ is never a Planned Step, and a Planned Step is never serialized back into one.
 
 A serialized keyed, target, or predicate-selected row, or a
 predicate-selected assignment, is structural input, not a planned value. After resolving the exact target Entity and member identity, the
-write frontend calls `m-wire.decodeWire(member.neutralType, literal)` exactly
-once for each non-null authored leaf. Null is handled by the member's nullability
+write frontend decodes each non-null authored leaf with
+`m-wire.decodeWire(member.neutralType, literal)`. Null is handled by the member's nullability
 rule and is never passed to the Neutral Wire Codec. Recursive Value Object
 members are traversed by declared structure; opaque Json content is converted as
 one `Json` value and is not recursively inferred as neutral leaf types.
@@ -255,9 +255,8 @@ canonical member identity and document path. The previous
 members, wrong document carriers, multiplicity violations, missing required
 members, nullability, and other structural failures retain their existing rules.
 
-Two producer operations converge on the same private immutable prepared-write
-algebra, and they are the one admissibility judgment every ingress crosses. Each
-resolves the target first and judges whether it admits the write. A target whose
+Every ingress crosses one admissibility judgment. It resolves the target first
+and judges whether it admits the write. A target whose
 family is ReadOnly admits none, and that refusal precedes every judgment below
 (*Writes to a ReadOnly family*). A
 predicate-selected write then refuses a versioned or temporal target
@@ -288,19 +287,12 @@ required member and an inadmissible value found in one pass and the first one
 met refused. A partial row — an amendment's assignments, or the identity a
 destructive write addresses — has its values judged in the order its author
 states them, each assigned member's assignment rule before its value and the
-members addressing the object after every assignment. Both producers judge a
-row in that order, whatever order a complete row states its members in.
-`prepareWireWrite` applies the serialized decoding above;
-`prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
-membership and retains developer-facing mismatch errors. Neither consumer may
-choose the other policy from the runtime carrier it happens to receive.
-Both producers supply their source access and scalar conversion to
-`m-document-codec`'s one authored-document traversal. The Typed producer borrows
-live Value Object instances and tuples until that traversal; it does not first
-render a recursive mapping/list tree. Structural validation consumes the finding
-from that same pass rather than walking the document again. A validation-only
-caller invokes the same traversal without constructing successful managed
-output.
+members addressing the object after every assignment. A row is judged in that
+order on every ingress, whatever order a complete row states its members in.
+Serialized input is decoded as above; typed input applies
+`m-core.coerceNeutralInput` followed by managed membership and retains
+developer-facing mismatch errors. The policy follows from the ingress, never from
+the runtime carrier a value arrives in.
 
 A target instruction is judged in its own fixed order: its target,
 verb, and window first, as above; then its revision arguments against the
@@ -315,19 +307,11 @@ empty collection. A deletion or termination names the key alone, and any other
 member it states is refused. A missing revision is therefore heard before an
 undeclared member, and an inadmissible window before both.
 
-`PreparedKeyedInstruction` carries the exact target, deeply owned managed rows, and
-prepared temporal bounds. `PreparedPredicateInstruction` carries its
-`ResolvedMutationSelection` and the one owned managed row it assigns every
-selected object, which never states the key and is empty for a deletion.
-`PreparedTargetInstruction` carries its exact mutation, the exact target, its one
-owned managed row, prepared temporal bounds, and its validated starting
-expectation — an expected version or an expected Transaction-Time start.
-Whether it assigns, replaces, or destroys follows from that mutation, so no
-later stage reconstructs the verb from its row. Omission and nullable assignment remain structural states; no prepared
-variant retains an authored scalar literal or unresolved instruction field.
-Construction is restricted to these operations, with no public constructor or
-serialization contract. Buffering, evidence envelopes, coalescing, and planning
-retain the immutable product and do not decode or recursively copy it again.
+A prepared write retains no authored scalar literal or unresolved instruction
+field, and omission and nullable assignment stay distinct. A write keeps what its
+verb received: mutating an authored input after the verb returns changes nothing
+the write stores or selects. Whether a target write assigns, replaces, or
+destroys follows from its mutation, never from its row.
 
 ### Writes to a ReadOnly family
 
@@ -705,7 +689,7 @@ An amendment that names nothing beside the key is the **empty** write: once it i
 validated it is dropped, with no database work, no existence or revision check,
 and no effect on earlier pending work. Only an amendment can be empty. A deletion
 or termination states nothing beside the key either, yet it keeps its intent
-through every stage, so a missing or revised target is its caller's failed
+through planning, so a missing or revised target is its caller's failed
 precondition and never an empty selection that succeeds. A nonempty amendment
 and every replacement carry **revision intent**: a versioned row's version advances even when every
 value it writes equals the stored one, and a later write composing with it keeps
@@ -815,9 +799,8 @@ discarded it, and with its write wherever the write itself is dropped.
 ### Row acquisition
 
 A write that must read existing rows before it can be settled reads them through
-one **row acquisition** port this module declares and the unit of work is
-constructed with; the execution runtime implements it (`m-execution` *Row
-acquisition*). A request describes what to read and performs no read:
+one **row acquisition** port this module declares; the execution runtime
+implements it (`m-execution` *Row acquisition*):
 
 | Request | What it reads | When |
 |---|---|---|
@@ -825,49 +808,27 @@ acquisition*). A request describes what to read and performs no read:
 | **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred settled write, inside that flush; within an acquisition span, between the span's first write's turn and each write's own (*Shared coverage acquisition*) |
 | **Completion** | nothing: the retained rows of a deferred settled write that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that write, or the first write of its acquisition span, before any of the span's coverage is read |
 
-The unit of work hands each request a consumer of its own and receives the
-consumer's result. The consumer reads the judged rows, and their aligned raw
-documents, while the acquisition still holds them, adopts the row and document
-references it keeps into canonical evidence (`m-write-plan`), and retains
-nothing of the read itself; acquisition settles its resources however the
-consumer ends. A completion reaches the same kind of consumer with no read
-behind it. Where a write reads nothing, it requests nothing: a predicate write
-is readless (`m-batch-write`), so it requests no acquisition at all.
+Where a write reads nothing, it acquires nothing: a predicate write is readless
+(`m-batch-write`).
 
-A request states whether its read takes the shared row lock, and execution
-applies that and derives nothing. A target read exists only under Locking and
-always takes the lock. A coverage read takes it exactly when its range is
-ungated, the other half of the gate decision settlement made for that range.
+A target read exists only under Locking and always takes the lock. A coverage
+read takes it exactly when its range is ungated, the other half of the gate
+decision settlement made for that range.
 
 ## Write finalization
 
 ### The Write Planner
 
 One **Write Planner** turns a flush's buffered intent into finalized semantic
-steps. It is model-scoped, constructed once per accepted Metamodel with its
-immutable batching, concurrency, temporal, and provenance strategies already
-wired, and it exposes exactly **one** planning operation over buffered writes:
+steps, for one accepted Metamodel. Planning issues no statement and reads no row,
+and reaches the clock only through the attempt's lazy Transaction Instant.
 
-```text
-finalize(
-    WritePlanningRequest(
-        actor_identity:       ActorIdentity,
-        transaction_instant:  TransactionInstant,
-        concurrency_preference: ConcurrencyPreference,
-        composed_writes:      ComposedWrites,
-        ownership:            AttemptOwnership,
-    )
-) -> WritePlan
-```
-
-**Attempt Ownership** is a read-only view of the current temporal rows the
-attempt's own successful settled writes opened (*Rows the attempt opened*,
-below), and of what those writes left for its temporal sources (*Observation
+**Attempt Ownership** is what the attempt's own successful settled writes opened
+(*Rows the attempt opened*) and left for its temporal sources (*Observation
 ownership and lifetime*). Planning reads it to decide what a temporal mutation
-does to its predecessor, which of its sources continue, and which current rows
-they bind to; it never changes it.
+does to its predecessor and which of its sources continue; it never changes it.
 
-The returned **Write Plan** is execution-ordered, and its settled writes carry
+The resulting **Write Plan** is execution-ordered, and its settled writes carry
 the source evidence of **every** write admitted against
 existing state — a write coalesced into another, superseded, or overwritten by a
 later composed assignment included (*Observed-State Coalescing*). A write keeps
@@ -878,80 +839,39 @@ that settled write completes. Work that stated nothing against existing state �
 folded into a pending insert, cancelled against one, or an amendment assigning
 no member — carries no source.
 
-No second planning operation exists to project the plan. A predicate-selected
-write is planned apart, by one more operation answering the one Planned Step its
-readless statement executes as — unversioned, expecting any count, an update
-decorated once by the configured audit — and no settled write, completion, or
-Write Group:
+A predicate-selected write is planned apart, as the one Planned Step its readless
+statement executes as — unversioned, expecting any count, an update decorated once
+by the configured audit — and publishes no settled write, completion, or Write
+Group.
 
-```text
-predicateStep(prepared: PreparedPredicateInstruction, actor_identity: ActorIdentity,
-              transaction_instant: TransactionInstant) -> PlannedStep
-```
+A buffered write against existing state settles against the observation resolved
+from the value it was authored from; planning never searches for one.
 
-A caller **MUST NOT** be required — or able — to sequence coalescing,
-cancellation, no-op elimination, batching, dependency ordering, Transaction
-Instant acquisition, temporal expansion, or audit itself. Those
-are private stages, and no second public finalized or decorated plan exists
-beside the Write Plan.
+Every flush of a unit of work plans under the accepted Metamodel that unit opened
+with, and a joining invocation plans under the unit it joined. A re-executed
+attempt opens a fresh unit of work and may adopt another accepted Metamodel.
 
-Resolving *which* observation a write settles against is the caller's, because
-only the caller holds the value the write was authored from and therefore the
-milestone that value came from. A buffered write against existing state
-**carries** the observation resolved for it (below); the planner is handed
-evidence, never a store to search. Validating that a required observation is
-present remains the planner's, at stage 5.
-
-The planner is **stateless across calls**: it retains neither request nor result.
-The operation is **pure** with respect to its inputs — it performs no database
-I/O, consults no clock directly, and emits no SQL, dialect object, physical
-column, or driver value.
-
-A unit of work is handed its planner when it opens and **retains it for its
-life**: every flush of that unit plans through the one planner it was opened
-with, and a joining invocation plans through the planner of the unit it
-joined rather than resolving one of its own. A re-executed attempt opens a
-fresh unit of work and may be handed a different planner — the one belonging
-to whatever accepted Metamodel that attempt adopted.
-
-The term **step** is reserved for one logical Planned Step; the term **stage**
-describes one private transformation inside the pipeline below.
+The term **step** is reserved for one logical Planned Step.
 
 ### The planning pipeline
 
-The unit of work owns this stage order. Stage 1 is performed as each write's
-intent is admitted to the buffer (*Same-transaction write coalescing*), so the
-Write Planner receives intent already coalesced and privately owns stages 2–9:
+How planning is staged is private. Coalescing happens as each write is admitted
+(*Same-transaction write coalescing*). **Write Settlement** is the part of
+planning that turns the ordered surviving writes into Planned Steps, validating
+each write's observation as it settles that write. These orderings are normative:
 
-```text
-1. resolve identities and coalesce buffered intent
-2. eliminate known cancellation and no-op work
-3. form compatible batches
-4. dependency-order writes into mutation phases
-5. validate the observation each surviving write carries
-6. resolve the Transaction Instant only if surviving work needs it
-7. temporal expansion: expand each temporal write's Coverage Transform over the
-   predecessors planning holds (`m-temporal-write`), or finalize a requested
-   range whose coverage no planning input holds
-8. audit: finalize each produced row, and decorate each update and close
-9. freeze the Planned Steps
-```
-
-Four of those orderings are load-bearing and therefore normative:
-
-- **Coalescing and no-op elimination precede time.** Stages 1–2 run before stage
-  6, so work that cancels or nets to zero never consults the Clock Strategy.
-- **Observation validation precedes gate rendering.** A required observation
-  that is missing is a planning error raised at stage 5, never a value that
-  reaches lowering. The write it belongs to carries it rather than being matched
-  to it, so nothing downstream of stage 5 can bind a gate from evidence about a
-  different row.
-- **Temporal expansion follows ordering.** A surviving temporal mutation stays
-  one indivisible write through stages 3–4 and expands at its already-decided
-  position in stage 7 (ADR 0045), so its own steps hold its closes ahead of its
-  successors. In a Write Group of several settled writes, other objects' steps
-  may also come between them (*Write Group formation*; ADR 0076).
-- **Audit follows topology and precedes realization and lowering.** Stage 8
+- **Coalescing and no-op elimination precede time.** Work that cancels or nets to
+  zero never consults the Clock Strategy.
+- **Observation validation precedes gate rendering.** A required observation that
+  a surviving write lacks is a planning error, never a value that reaches
+  lowering. A gate binds evidence about the row its write addresses, never about
+  another.
+- **Temporal expansion follows ordering.** A surviving temporal mutation stays one
+  indivisible write through batching and ordering and expands at its
+  already-decided position (ADR 0045), so its own steps hold its closes ahead of
+  its successors. In a Write Group of several settled writes, other objects' steps
+  may also come between them.
+- **Audit follows topology and precedes realization and lowering.** Audit
   reads each produced row's Row Origin and each close's Close Cause and adds
   ordinary planned values; it changes no topology, target, gate, or affected-row
   policy, and emits no SQL. Every row a write produces — a new lineage's
@@ -966,180 +886,90 @@ Four of those orderings are load-bearing and therefore normative:
   input itself without resolving the Transaction Instant (ADR 0071, superseding
   ADR 0037).
 
-Stages are otherwise private. The stage list is an ordering contract, not an
-interface: nothing outside the unit of work's admission (stage 1) and its
-planner (stages 2–9) may name, observe, or invoke a stage.
-
-Stages 1–4 rewrite the buffered sequence: they merge, drop, split, and reorder
-it. Stages 5–9 are **Write Settlement**, and the sequence stops changing shape
-there — settlement reads it once, validates the observation each surviving write
-carries as it settles that write, and only Planned Steps come out. Settlement
-is owned by the planner and constructed for the same accepted Metamodel: it
-reuses that model's compiled facets, never observes model publication, and is
-never rebound after one. It is reached through exactly **one** private
-operation over the **complete** dependency-ordered sequence, because packing is
-a property of adjacency and a claim survives by its write having reached
-settlement at all. That operation answers the Write Planning Result, which the
-planner returns unchanged: the planner neither wraps nor reconstructs it, so no
-fact about a settled write is decided twice.
-
 ### Write Plan and Planned Steps
 
-```text
-WritePlan(entries: PlanEntries, acquisition_spans: AcquisitionSpans)
+A **Write Plan** is the execution-ordered result of planning one flush: its Write
+Groups, its deferred settled writes, and every Planned Step that survives
+coalescing, cancellation, and known no-op elimination, with temporal topology and
+correctness semantics already decided. Complete cancellation or no-op elimination
+leaves nothing to execute.
 
-PlanEntries: an immutable, ordered, possibly empty sequence, each entry one
-    Write Group or one deferred settled write
-WriteGroup(writes: Writes, steps: PlannedSteps)
-Writes: the group's writes in order, at least one, each with the effects its
-    success publishes: the states it changes, advances, and destroys, the
-    temporal rows it derives from its predecessors, the attempt-owned rows it
-    removes and opens, and the current rows it leaves
-PlannedSteps: the immutable, ordered, possibly empty sequence of Planned Steps
-    the group's writes execute, indexable and repeatable
-AcquisitionSpans: the immutable, ordered, possibly empty sequence of
-    non-overlapping half-open ranges of entry positions whose deferred settled
-    writes share coverage acquisition (*Shared coverage acquisition*)
-```
+A **deferred settled write** is the one exception to fully expanded topology. A
+temporal object's observed writes whose requested Valid-Time range reaches
+current coverage no planning input observed (`m-temporal-write` *Observed writes
+span their requested extent*) finalize to their meaning — the composed
+assignments over that range, the source conditions, and the resolved instant —
+together with the one coverage read that range needs. Such a settled write
+carries no planned step. By the time the flush reaches
+it, the unit of work has acquired the object's current rows over the range not
+already covered (*Row acquisition*) — at that turn, or earlier through its
+acquisition span's shared reads (*Shared coverage acquisition*), inside the
+flush either way and under the shared lock when the effective
+strategy is Locking — and at its group's turn it binds those rows, or the
+absence of any, with the observed ones into the write's physical steps, before
+any step of the Write Group it runs in executes. Temporal meaning,
+concurrency, and gates are fixed when planning returns, and binding never
+recaptures the instant or consults the model: only the physical enumeration
+waits, for the rows read and for the Attempt Ownership and source continuation
+every earlier Write Group published.
+Binding audits each row it produces and each close it emits once, as audit
+does for a write settled at planning, changing no topology or gate. A range
+whose observed rows already cover it
+settles at planning like any other write. A target temporal write is
+such a range whatever it composes with, unless observed rows of its
+composition cover its window; its meaning also carries the caller's starting
+condition, which binding judges against the rows read before any step exists,
+and a replacement's extent, whose uncovered parts binding opens. Its meaning
+carries, too, the starting rows its callers' Locking acquisitions retained
+(*Retained starting rows*): one still current when its coverage is prepared is
+completed and reused as coverage, a stale one is discarded unjudged, and only the parts
+of the window neither those rows, the observed originals, nor the current rows
+the attempt holds for a continuing source (*Write Groups complete before later
+work runs*) hold are read; a
+part that read finds nothing in is a gap, read once, and a rectangle created
+concurrently inside a held row's interval is not reached (`m-temporal-write`
+*Concurrent creation in gaps*). Each caller's start holds
+only where a current row stands at the stated start, literally; any other
+caller's start is a failed precondition.
 
-A **Write Plan** is the immutable, **execution-ordered** result of one planning
-call: a sequence of entries, each a **Write Group** owning its Planned Steps and
-the settled writes they belong to, or one deferred settled write, which no
-planned group holds: execution forms the Write Group it runs in once its range
-binds (*Shared coverage acquisition*). Its Planned Steps contain every Planned
-Step that survives coalescing, cancellation, and known no-op elimination, with
-temporal topology and correctness semantics already decided.
-
-- A Write Plan **MUST NOT** retain a Transaction Instant, a raw Write
-  Observation, the transaction's Concurrency Preference, an Actor Identity, a strategy
-  object, a private group, or any other planning context.
-  Derived values are materialized *into* the steps instead. A Write Group is the
-  plan's produced execution structure, not planning context.
-- A Write Plan **MAY** retain an immutable value a strategy, a clock, or a facet
-  **produced** for one settled write — a resolved instant, a Close Cause, resolved
-  Milestone Successors, the target's compiled Inheritance Entity View, the version
-  arithmetic the effective Concurrency Strategy answers with — and
-  **MUST NOT** retain the producer: no clock, no strategy, no Metamodel, no
-  Inheritance Facet, no private group, no planner. What separates the two is
-  whether the retained thing can still **consult** something to reach an answer:
-  a producer reaches the model, a facet, the clock, or the transaction's
-  Concurrency Preference, so it could answer differently than settlement did,
-  while a produced value answers from what the step itself supplies and nothing
-  else. Carrying an operation is therefore not what makes something a producer —
-  advancing an observed version by an already-fixed step is the strategy's
-  settled answer restated, not a fresh decision.
-- A plan of **no** entry is the one canonical result for complete cancellation
-  or known no-op elimination. There is no empty-plan sentinel and no second
-  result variant.
-- A **deferred settled write** is the one exception to fully expanded topology. A
-  temporal object's observed writes whose requested Valid-Time range reaches
-  current coverage no planning input observed (`m-temporal-write` *Observed writes
-  span their requested extent*) finalize to their meaning — the composed
-  assignments over that range, the source conditions, and the resolved instant —
-  together with the one coverage read that range needs. Such a settled write
-  carries no planned step, and its meaning is data: it retains no binder, Attempt
-  Ownership, clock, strategy, or Actor Identity. By the time the flush reaches
-  it, the unit of work has acquired the object's current rows over the range not
-  already covered (*Row acquisition*) — at that turn, or earlier through its
-  acquisition span's shared reads (*Shared coverage acquisition*), inside the
-  flush either way and under the shared lock when the effective
-  strategy is Locking — and at its group's turn it binds those rows, or the
-  absence of any, with the observed ones into the write's physical steps, before
-  any step of the Write Group it runs in executes. Temporal meaning,
-  concurrency, and gates are fixed when planning returns, and binding never
-  recaptures the instant or consults the model: only the physical enumeration
-  waits, for the rows read and for the Attempt Ownership and source continuation
-  every earlier Write Group published. Binding reads the one Attempt Ownership
-  view its flush planned under (*Write Groups complete before later work runs*).
-  Binding audits each row it produces and each close it emits once, as stage 8
-  does for a write settled at planning, changing no topology or gate. A range
-  whose observed rows already cover it
-  settles at planning like any other write. A target temporal write is
-  such a range whatever it composes with, unless observed rows of its
-  composition cover its window; its meaning also carries the caller's starting
-  condition, which binding judges against the rows read before any step exists,
-  and a replacement's extent, whose uncovered parts binding opens. Its meaning
-  carries, too, the starting rows its callers' Locking acquisitions retained
-  (*Retained starting rows*): one still current when its coverage is prepared is
-  completed and reused as coverage, a stale one is discarded unjudged, and only the parts
-  of the window neither those rows, the observed originals, nor the current rows
-  the attempt holds for a continuing source (*Write Groups complete before later
-  work runs*) hold are read; a
-  part that read finds nothing in is a gap, read once, and a rectangle created
-  concurrently inside a held row's interval is not reached (`m-temporal-write`
-  *Concurrent creation in gaps*). Each caller's start holds
-  only where a current row stands at the stated start, literally; any other
-  caller's start is a failed precondition.
-- A Write Group's Planned Steps are a **logical** sequence. An implementation MAY
-  pack homogeneous runs and expose stable immutable views during iteration
-  rather than allocating one container per step; every exposed view is
-  immutable and stable, and equal views need not have object identity.
-- Each settled write — one keyed write with its expanded temporal topology, or
-  one batch — retains its own completion facts, produced values like its steps,
-  and executes in exactly one Write Group: the plan's group holding it, or, for a
-  deferred settled write, the group its binding forms.
+Each settled write — one keyed write with its expanded temporal topology, or
+one batch — retains its own completion facts, produced values like its steps,
+and executes in exactly one Write Group: the plan's group holding it, or, for a
+deferred settled write, the group its binding forms.
 
 ### Write Group formation
 
-Settlement forms the Write Groups as it settles the sequence stage 4 ordered.
-A flush's writes form one **region**, except that an insert which must follow
-the removal clearing its way starts a new one. Within each region the inserts,
-then the updates, then the deletes are each one **mutation phase**. A Write
-Group never spans two mutation phases.
+A **Write Group** is a run of settled writes that execute and complete together.
+Which writes share one is the implementation's, within these rules:
 
-Consecutive settled writes of one mutation phase share a Write Group while the
-objects they write are distinct:
+- Inserts, then updates, then deletes run as **mutation phases**, in referential
+  order, and an insert that must follow the removal clearing its way runs after
+  that removal. No group spans two phases.
+- No group holds two writes of one object under its Inheritance Family's primary
+  key, so a later write of an object observes the completion of the earlier. A
+  write whose key the database allocates, or which names no complete key, runs
+  alone.
+- Within a group every effect — each step that is not an insert — precedes every
+  insert, and each write's own steps keep their order.
+- On a dialect with array parameters, keyed effects of distinct objects in one
+  group that share a step kind, Entity, key, assigned members, gate kind, and
+  As-Of Axis ends apply as one grouped effect (`m-sql` *Grouped effects*), each
+  enforced against its own count, unless a write's own step order or an effect
+  keeping its authored place separates them.
+- An effect advancing a registry (`m-pk-gen`), or assigning a member of a unique
+  key other than the primary key, an As-Of Axis end excepted, keeps its authored
+  place, since a unique value one object hands another must be released in
+  authored order.
 
-- Each settled write names its **complete** set of Object Keys under its
-  Inheritance Family's primary key: every row of a batch, and the one object a
-  keyed, composed, or step-less write names. A write naming an object the open
-  group already holds starts the next group.
-- A group holds at most 1,024 settled writes, so a group's inserts wait behind
-  the non-insert steps of at most that many settled writes, however many the
-  flush holds.
-- A write whose insert the database allocates a key for, and a write naming no
-  complete key — an insert whose key is absent or database-computed — each form
-  a group of their own.
-- A deferred settled write is a plan entry of its own, in no planned group: the
-  group it executes in forms when it binds, from the ready writes of its
-  acquisition span, or from it alone outside any span (*Shared coverage
-  acquisition*).
-- A settled write with no step joins like any other and completes with its group.
+A group's size is bounded, and no smaller than an acquisition span's bound
+(*Shared coverage acquisition*), so a group's inserts wait behind the non-insert
+steps of a bounded number of settled writes, however many the flush holds. Within
+that bound, consecutive writes of distinct objects in one phase share a group
+wherever that lets their effects apply as one grouped effect or their inserts join
+one statement (`m-sql` *Batched insert / update*). Above the bound, like effects
+split across groups, so a flush's statement count there is the implementation's.
 
-A group's Planned Steps are every write's **effects** — each step that is not
-an insert — followed by every write's inserts, each write's own order kept
-within both. An update- or delete-phase write's inserts open the successors of
-its own effects, and an insert-phase write produces only inserts, so the layout
-moves only successors, and only past other objects' steps: no insert moves
-behind an effect of another mutation phase. A group of bound deferred writes is
-laid out the same way.
-
-A group of two or more writes lays its effects out **shape by shape**, in one
-pass. An effect's shape is what lets it share one grouped effect with another
-(`m-execution`): the same step kind, Entity, and key, the same assigned members,
-the same gate kind, and for a milestone the same As-Of Axis ends, each bound per
-effect or shared as the open Transaction-Time end. An update or delete of one
-key expecting an exact count has a shape, and so does every close, guard,
-revision, and removal of one milestone, planned or bound from a deferred range,
-unless it advances a registry (`m-pk-gen`) or assigns a member of a unique key
-other than the primary key, an As-Of Axis end excepted, since a unique value one
-object hands another must be released in authored order; every other effect has
-none. Effects are laid out in blocks of one shape each, in the
-order each block first appears. An effect joins the latest block of its shape
-unless that block precedes the block holding its own write's previous effect,
-in which case it opens a later block of that shape; an effect with no shape
-stands alone as a **barrier** that no later effect joins a block across. Each
-block of two or more effects is recorded as an **effect span** over the group's
-steps. A group of one write keeps its own steps and records no span. Several
-effects of one write may share a block where nothing of that write lies between
-them, as the closes of a temporal write's distinct milestones do; each still
-addresses its own row. So effects of distinct objects may run out of authored
-order across shapes, while each write's own effects keep their order and an
-effect assigning a unique key member keeps its authored place. Nothing else is reordered: the phases, the
-referential order, and otherwise the authored order of updates are stage 4's,
-and no key sort applies. As it forms the groups, settlement also records which
-consecutive deferred settled writes share coverage acquisition (*Shared coverage
-acquisition*); that record reorders nothing.
+Beyond these rules, the order of effects of distinct objects is not promised.
 
 ### Write Groups complete before later work runs
 
@@ -1160,23 +990,11 @@ for its own group's turn (*Shared coverage acquisition*). No write of a group
 depends on another's completion, because their objects are distinct (*Write
 Group formation*).
 
-A flush plans and binds its deferred settled writes under one Attempt Ownership
-view, chosen once for the flush: the attempt's live ownership for a
-read-dependency or predicate-write flush, and for the pre-commit flush the
-same live ownership demanding nothing a write leaves for a source, so neither
-its planning nor its binding describes a continuation it would discard. Either
-view reads every completion earlier groups published. Completing a settled
-write:
-
-```text
-record every state the settled write changed, invalidating its observations
-advance the Non-Temporal sources of every versioned state it updated
-end the Non-Temporal sources of every object it deleted
-retire the attempt-owned rows the settled write removed
-register the rows the settled write opened
-continue the temporal sources of every state it transformed through the rows it derived
-hold the current rows its execution stored that a continuing source reaches
-```
+Once a settled write completes, every later write and read of the attempt is
+judged against what it changed: the observations it invalidated, the sources it
+advanced, continued, or ended (*Observation ownership and lifetime*), and the rows
+the attempt owns (*Rows the attempt opened*). A deferred write binds against every
+completion earlier groups published.
 
 A deferred settled write's changed states, removals, and openings are those its
 binding produced. A milestone a settled write kept unchanged (`m-temporal-write`
@@ -1190,14 +1008,10 @@ to the version it writes, and a keyed deletion destroys every object it
 addresses, all of a batch's included (*Observation ownership and lifetime*).
 A predicate-selected write is no settled write: it identifies no object and
 publishes none of these.
-Removals are retired before openings
-are registered, so a row removed and reopened at one physical address remains
-owned, and an insertion whose last tagged row the settled write removed still
-stands when a row the settled write opened is tagged with it. Nothing is
-published for a group whose steps did not all succeed, nor for any write of a
-group one of whose writes did not bind; such a failure dooms the attempt
-(*Abort*). A failure completing one write of a group leaves the writes completed
-before it published, completes none after it, and dooms the attempt.
+A row removed and reopened at one physical address remains owned, and an insertion
+whose last tagged row the settled write removed still stands when a row the
+settled write opened is tagged with it. A failed group, or a group one of whose
+writes did not bind, dooms the attempt (*Abort*).
 Completion therefore happens per Write Group, not at the end of the flush: a
 later group, and any read the flush serves, observes the earlier groups'
 published effects.
@@ -1225,32 +1039,30 @@ source binds to those rows without reading them again or taking another lock;
 coverage no held row covers is read as any range reads it (*Row acquisition*).
 These records serve every later submission of the attempt, whatever flush it
 reaches; nothing releases them at the end of a flush, and the attempt's end
-releases them all. The pre-commit flush, which no submission follows and none of
-whose writes continues from another, records none.
+releases them all.
 
 ### Shared coverage acquisition
 
-An **acquisition span** is a run of at least two and at most 32 consecutive plan
-entries, each one deferred settled write of a Bitemporal Entity that names its
+An **acquisition span** is a bounded run of at least two consecutive plan entries,
+each one deferred settled write of a Bitemporal Entity that names its
 one complete Object Key, a key the database does not allocate. Its writes belong
 to one mutation phase, target one concrete Entity — so one key attribute and one
 member selection — and either all take the shared lock their coverage read
 takes under Locking or none do. Each names an object no earlier write of the
 span names under its Inheritance Family's primary key. A span never skips an
 entry: any Write Group, a deferred write of another Entity or lock requirement,
-a repeated object, a phase boundary, or the bound ends it, and the next eligible
-write may start another. A deferred write outside any span, a
-Transaction-Time-Only one included, acquires its coverage alone at its turn and
-executes as a Write Group of its own.
+a repeated object, a phase boundary, or the bound, which is the implementation's,
+ends it, and the next eligible write may start another. A deferred write outside
+any span, a Transaction-Time-Only one included, acquires its coverage alone at its
+turn and executes as a Write Group of its own.
 
 A span grants acquisition permission; its execution groups follow readiness.
 Whenever the span's first remaining write is ready, the unit of work binds it
 and each consecutive ready write after it, up to the first that is not, as one
-Write Group laid out as *Write Group formation* lays out any group; it executes
+Write Group under *Write Group formation*'s rules; it executes
 and completes that group before binding any later write or reading any further
-statement (*Write Groups complete before later work runs*). The span's bound of
-32 writes keeps every such group within the 1,024-write bound, and no statement
-is read, and no ready group delayed, to enlarge a group. Each write binds against
+statement (*Write Groups complete before later work runs*). No statement is read,
+and no ready group delayed, to enlarge a group. Each write binds against
 the rows read and the Attempt Ownership every earlier group published; the
 writes of one group name distinct objects, so none binds against another's
 completion. A deferred dependency is not coverage: no write's coverage is read
@@ -1294,10 +1106,8 @@ That timing deliberately qualifies acquisition at each write's own turn:
   steps precede its inserts, so a later write's affected-row shortfall can
   precede an earlier write's insert violation (`m-execution` *Flush
   execution*). A ready group's binding or execution failure completes none of
-  its writes and precedes every statement the span would read after it. Writes
-  that completed before a later statement or group failed stay published until
-  the doomed attempt ends (*Abort*), and no waiting write binds or executes
-  after any failure. Classification, retry eligibility, and rollback are the
+  its writes and precedes every statement the span would read after it. No
+  waiting write binds or executes after any failure. Classification, retry eligibility, and rollback are the
   encountered failure's own (`m-db-error`, `m-auto-retry`); because which of two
   independent failures is encountered can differ from acquisition, binding, and
   execution at each write's own turn, so can they.
@@ -1308,12 +1118,12 @@ it (`m-execution-lifecycle`).
 
 ## Planned Steps and State Observations
 
-`m-write-plan` owns the Planned Step algebra — Row Origin and Close Cause,
+`m-write-plan` owns what a Planned Step means — Row Origin and Close Cause,
 planned rows and assignments, the Write Target, the Write Gate and its
 concurrency decision, and the Affected Rows Policy — and the State Observation
 vocabulary: the Object Key and Object State Key that address evidence, and
 the Predecessor Row a Temporal Observation retains. This module settles
-buffered writes into that algebra, carries each observation to the write it
+buffered writes into those steps, carries each observation to the write it
 settles, and owns how long that evidence stays eligible.
 
 ### Observation ownership and lifetime
@@ -1409,20 +1219,9 @@ Absence is **structural**:
 - versioned Non-Temporal updates and deletes require a Version Observation; and
 - every temporal close requires a Temporal Observation.
 
-A required observation that is missing is a **planning error**. An implementation
-**MUST NOT** define a `NoObservation` value, a nullable observation that flows
-downstream, or a mode in which an observation-requiring write proceeds unobserved
-— the requirement holds under **both** Effective Concurrency Strategies (`m-concurrency`).
-
-Structural absence extends to the buffer. A buffered write that has an
-observation is buffered **paired** with it — one keyed instruction and the one
-observation resolved for it — and a write with none carries no
-observation field for anything to be absent from. Absence is therefore the
-absence of the pairing rather than a field carrying it, which is what lets
-planning read a write's address, gate, and carried state off one object. What an
-unobserved write MAY still travel with is what *Observed-State Coalescing* below
-gives it: the claim scope it takes, and the source it was admitted through.
-Neither is an observation.
+A required observation that is missing is a **planning error**. No mode lets an
+observation-requiring write proceed unobserved, under either Effective Concurrency
+Strategy (`m-concurrency`).
 
 ### Comparing an assigned member with its persisted value
 
@@ -1562,9 +1361,7 @@ scope** each of them takes.
 Claim scope is a **total derivation over the write kind**, from two declared
 facts: what the target Entity's family settles against (`m-concurrency`) and the
 write's own mutation. It answers for a write addressing **one** object, which is every write
-a keyed verb authors. It has exactly three arms, and an implementation **MUST
-NOT** reach one of them because something was absent — an insert observes no
-state either, so a default taken on a missing observation would sweep it in:
+a keyed verb authors. It has exactly three arms:
 
 - an **insert** claims nothing: it opens a row rather than writing against one, so
   there is no prior row for a second intent to conflict over;
@@ -1718,8 +1515,7 @@ The observable contract:
 
 - An **empty** flush, a **canceled** buffer, a buffer that **coalesces away**,
   and a nonempty flush whose surviving work requires **no timestamp** all
-  consult the Clock Strategy **zero** times. This is why pipeline stages 1–2
-  precede stage 6.
+  consult the Clock Strategy **zero** times.
 - Every timestamp-requiring write in **one attempt** shares **one** instant,
   including across a forced read-your-own-writes flush and the commit flush, so
   temporal boundaries and audit values in that attempt are coherent.
@@ -1728,8 +1524,7 @@ The observable contract:
   and it never reuses the previous attempt's value.
 
 The Transaction Instant is planning and flush context. It **MUST NOT** become a
-durable Write Instruction field, and it **MUST NOT** survive in a Write Plan:
-every step that needed it already carries the resulting concrete value.
+durable Write Instruction field.
 
 ### Rows the attempt opened
 
@@ -1798,7 +1593,7 @@ caller stated the start it compares; it is their standalone sibling, owned by
 The comparison uses the predecessor expansion already holds, so it consults the
 Clock Strategy no more often than the expansion itself does and reads nothing
 else. Where it runs follows *The planning pipeline* and *Abort* without an
-exception of its own: a predecessor planning holds is refused at stage 7, a
+exception of its own: a predecessor planning holds is refused while planning, a
 planning refusal that leaves the attempt usable and its writes buffered, so the
 next flush plans and refuses them again at the same instant; a predecessor a
 deferred range binds inside the flush is refused while that flush executes,
@@ -1821,17 +1616,10 @@ an overlap (`m-temporal-write` *Concurrent creation in gaps*).
 An **Actor Identity** is the closed identity projection of the Execution Actor
 captured by the invoking Execution Scope (`m-execution-authority`): either the
 stable, nonempty, opaque application Subject Identity or the actual nonempty
-Database Login Identity. It is a **required** planning input and the first field
-of the planning request. Its value type is owned by this module, exactly as the
-State Observation vocabulary is, so a planning request is well-typed before any
-provenance behavior exists.
+Database Login Identity.
 
-An **audit-neutral** plan makes no use of it. Until provenance decoration is
-implemented, an implementation **MUST NOT** inspect, validate, retain, serialize,
-persist, lower, or bind the supplied Actor Identity, and two planning calls
-differing only in Actor Identity **MUST** produce equal Write Plans and
-identical emitted SQL and binds. Reserving the field now is what lets provenance
-decoration later become an internal stage rather than an interface change.
+An **audit-neutral** plan makes no use of it: an Actor Identity leaves no trace,
+and two flushes differing only in Actor Identity emit identical SQL and binds.
 
 Scope-time capture, propagation across joined scopes and retries, and verbatim
 comparison belong to Execution Authority, not to this module.
@@ -1841,14 +1629,9 @@ comparison belong to Execution Authority, not to this module.
 The unit of work owns the **authoritative** interpretation of every non-insert
 execution result:
 
-```text
-enforce_affected_rows(step: PlannedStep, actual_count: NonNegativeInt)
-```
-
-The executor reports the driver's affected-row count and asks this module what it
-means. SQL lowering and database adapters **report** counts; they **MUST NOT**
-reconstruct or reinterpret the semantics (ADR 0048). Inserts carry no policy, so
-enforcement accepts them and returns.
+An execution result reports the driver's affected-row count; this module alone
+says what it means. SQL lowering and database adapters **report** counts and never
+classify them. Inserts expect nothing.
 
 Enforcement raises the closed, module-owned **Write Effect Error** family:
 
@@ -1858,8 +1641,7 @@ OptimisticLockConflictError | CardinalityCorruptionError
 ```
 
 Each error carries the same semantic payload — the Entity Identity, the Write
-Target (retained by reference), the expected count, and the actual count — and
-**nothing else**: no SQL, statement index, driver exception, whole Planned Step,
+Target, the expected count, and the actual count — and **nothing else**: no SQL, statement index, driver exception, whole Planned Step,
 assignments, or observation. That keeps the diagnostic stable across dialects and
 lets `m-auto-retry` recognize the canonical Optimistic Lock Conflict Error over
 its own edge to this module.
@@ -1934,8 +1716,7 @@ applies that answer to its own state — the participation its reads stamp, what
 its completed writes left of the states its sources observed, and the claims
 its buffer holds — and buffering is the one operation that admits a write's
 claim and buffers the write, all or nothing. The Write Planner settles each
-Planned Step's gate or explicit `Ungated` decision from the same strategy, and
-retains neither the preference nor the strategy in the Write Plan.
+Planned Step's gate or explicit `Ungated` decision from the same strategy.
 
 ### The Isolation Level beside it — what the transaction READS
 
@@ -1984,8 +1765,8 @@ A scenario's declared Database Call counts **MUST** be internally consistent wit
 the golden SQL it lists: each step's `databaseCalls` equals the number of golden SQL
 statements that step emits. A scenario whose groups compose several submissions
 into one flush is graded on the state it states instead, because the statements a
-composed flush issues are this module's to choose (`m-case-format` *State-graded
-scenarios*). The harness asserts this consistency without ever
+composed flush issues are the implementation's, within *Write Group formation*
+(`m-case-format` *State-graded scenarios*). The harness asserts this consistency without ever
 compiling a query to SQL — proving the Database Call contract from the fixture
 itself — and executes the listed golden SQL against the real database to confirm
 result-correctness.
@@ -1995,5 +1776,5 @@ emitted statement can carry them: how many times an attempt consulted the Clock
 Strategy, and that an Actor Identity left no trace. Both are observable only
 from inside an implementation, so each language target proves them in its own
 suite — clock access through a counting Clock Strategy, and audit neutrality by
-planning one flush twice under different Actor Identities and comparing the
-resulting Write Plans, SQL, and binds.
+running one flush twice under different Actor Identities and comparing its SQL
+and binds.
