@@ -52,7 +52,7 @@ __all__ = [
     "scalar_result",
 ]
 
-_BYTES_CELL: Final = re.compile(r"(?:[0-9a-fA-F]{2})*")
+_HEX_DIGITS: Final = re.compile(r"[0-9a-fA-F]*")
 
 EncodedJsonKind = Literal["boolean", "number", "string"]
 """The JSON primitive kind a scalar's canonical document encoding takes."""
@@ -117,7 +117,7 @@ def decode_bytes_cell(cell: object) -> object:
     The cell is a dialect's hexadecimal spelling rather than a Wire value, so
     either case decodes, and admission judges whatever comes back undecoded.
     """
-    if isinstance(cell, str) and _BYTES_CELL.fullmatch(cell) is not None:
+    if isinstance(cell, str) and len(cell) % 2 == 0 and _HEX_DIGITS.fullmatch(cell) is not None:
         return bytes.fromhex(cell)
     return cell
 
