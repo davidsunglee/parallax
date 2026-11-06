@@ -1,9 +1,10 @@
 # m-dialect — Database Dialect & Portability
 
-All SQL-dialect variation **MUST** live behind a single normative `Dialect`
-interface. This is the **only** place dialect-specific SQL is allowed. The
-promise "equivalent SQL per database, optimized per dialect" is made enforceable
-precisely because dialect divergence is localized to one swappable component.
+Every dialect-specific SQL decision **MUST** be localized in a driver-free dialect
+layer, separate from the code above it, and every concrete database answers each
+decision in this catalog. The catalog is normative as a set of decisions and their
+answers; how a binding factors them into operations, or delegates spelling to an
+external SQL library inside `m-sql`, is the binding's own.
 `m-dialect` depends only on `m-core`.
 
 This mirrors Reladomo's `DatabaseType` seam — obtained from the connection
@@ -12,23 +13,16 @@ manager at every SQL decision point, never from a global registry.
 ## Selection belongs to the adapter that holds the connection
 
 A `Dialect` is **selected by the concrete adapter** (`m-db-port`) that will
-execute the SQL, and every runtime caller reads it off the port it already
-holds. Nothing above the seam names a `Dialect` value beside a port, and nothing
-reaches a module-level dialect value by import: a global singleton is exactly the
-registry this seam forbids, and it lets a caller compile for one database while
-executing against another.
+execute the SQL, and every runtime statement is spelled in the dialect of the port
+that executes it. No process-wide dialect registry stands between them, so a caller
+cannot compile for one database while executing against another.
 
 The direction is one-way. An adapter declares its dialect; no code selects an
 adapter, port, or connection *from* a dialect, and two adapters MAY declare the
-same one. That is what leaves the DQ9 door open below: per-source routing becomes
-"choose a port per source", with the dialect following the port, rather than a
-second routing decision made in parallel with the first.
+same one. So whatever chooses a port has chosen the dialect, with no second
+decision that could disagree with it.
 
-**Pure** compile and lowering entry points — which hold no port — still take a
-`Dialect` explicitly, because there is nothing for them to read it off. The rule
-across the tree is therefore: a runtime signature carries a port and derives the
-dialect from it; a pure signature carries a dialect and no port; nothing carries
-both.
+Pure compile and lowering work, which holds no port, is told its dialect explicitly.
 
 The rule binds the `Dialect` a statement is **spelled and executed in**. A
 **requested dialect name** is a different thing and MAY accompany a port: it is
@@ -44,14 +38,13 @@ The database seam comprises this **pure dialect / portability layer**
 **N independently deployable concrete adapter artifacts**, and **error
 classification** (`m-db-error`). The pure dialect layer performs **no I/O**: it
 holds no connection, opens no socket, and imports no database driver. It is the
-single source of truth for every dialect-specific string and every
-dialect-specific parse rule — SQL-fragment production (SELECT shape, identifier
-quoting, row-limit clause, read-lock application, temp-table DDL), the
-neutral-type → column-type mapping, the typed-bind normalization rules, and the
-type-parse functions that turn a driver's raw column value into a core managed
-value, including the paired parse that forms an `m-core` `DocumentRead`.
+single source of truth for every dialect-specific string — SQL-fragment production
+(SELECT shape, identifier quoting, row-limit clause, read-lock application) and the
+neutral-type → column-type mapping. A dialect also states the portable rule for
+reading a structured-document pair (*Document-read parsing*) and a `bytes` cell
+(*Bytes cell*).
 
-## The `Dialect` interface
+## The decision catalog
 
 A `Dialect` is the abstract authority for every dialect-specific decision. With
 the second concrete dialect (**MariaDB**) added behind the seam, the full
@@ -63,6 +56,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 |---|---|---|
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
+| **bytes projection** (`m-sql`) | `encode(col, ?) col_hex`, binding `hex` — lowercase | `hex(col) col_hex`, no bind — uppercase |
 | **document-read parsing** | SQL-false presence → `SqlNull`; SQL-true presence + parsed `jsonb` datum → `StructuredDocument`, including JSON null | SQL-false presence → `SqlNull`; SQL-true presence + parsed `json` datum → `StructuredDocument`, including JSON null |
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
@@ -72,17 +66,14 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **single-object presence** (`m-predicate` `exists` over a value object) | `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?, false)` | none — outside the MariaDB lane |
 | **Boolean result envelope** (`m-sql` target-local narrowing with an operand) | `(coalesce((select array [ <boolean> ] …), array [ false ])) [ 1 ]` — keeps a selected target's unknown apart from an absent target (see below) | none — outside the MariaDB lane |
 | **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, cast(? as jsonb))` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, json_extract(?, '$'), …)` — one call, one pair per assigned path (see below) |
-| **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-sql` *Read-lock suffix*) | an object find that must take the shared row lock: `for share of t0` | an object find that must take the shared row lock: **`lock in share mode`** (no `for share`; MDEV-17514) |
-| temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
 | **bind parameter limit** | 65535 | 65535 |
-| typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification | SQLSTATE (`m-db-error`) | errno (`m-db-error`) |
 | **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | yes — every connection negotiates `CLIENT_FOUND_ROWS`, so an `UPDATE`'s count includes every row it matched (see below) |
@@ -186,9 +177,8 @@ Either way the cast spelling is a dialect decision:
 
 **A cast comparison binds the value, never the document encoding.** The cast moves
 the comparison into the engine's own type system, so the bound operand is the
-managed `m-core` value in the member's declared Neutral Type, rendered by the typed
-bind normalization above — exactly what an ordinary Column comparison of that type
-binds. A `decimal(p, s)` therefore binds the **exact decimal**: its document form
+managed `m-core` value in the member's declared Neutral Type, exactly what an
+ordinary Column comparison of that type binds. A `decimal(p, s)` therefore binds the **exact decimal**: its document form
 is a digit string precisely because no JSON number carries the type's contract
 (`m-wire`), and binding a JSON number instead compares a binary float,
 which matches stored decimals that are merely near the literal. A `boolean` binds
@@ -276,9 +266,8 @@ names the concrete cast type.
 
 ### Array carrier
 
-One array bind is one **array carrier**: the Neutral Type its elements share, and
-its managed elements in order, with no per-element wrapper. A null element is SQL
-NULL under every element type, and a `timestamp` element may be the open upper
+One array bind is one **array carrier**, which names the Neutral Type its elements
+share and keeps them in order. A null element is SQL NULL under every element type, and a `timestamp` element may be the open upper
 bound (`m-core`). Under `json` every other element is one portable codec document,
 and a JSON array is one element, never a further array dimension. The literal JSON
 `null` document is a distinct element marker the carrier owns; the null element
@@ -402,10 +391,8 @@ separator (`m-sql`, `m-case-format`).
 element-unnest on MariaDB is `JSON_TABLE(col, '$.phones[*]' columns (…))`, and it is
 what a future set-returning dialect (Snowflake `LATERAL FLATTEN`) mirrors. But
 `JSON_TABLE`'s path arguments are **literal syntax that cannot be a `?` bind**, and
-the `m-sql` canonical normalizer (sqlglot, non-normative harness machinery, but the
-fixed-point property it enforces **is** normative — `m-case-format` layer 3) does
-not round-trip the `COLUMNS ( … PATH '…')` clause to a stable, re-parseable,
-executable form. So golden SQL — which MUST be a normalizer fixed point — cannot use
+the `m-sql` canonical normalizer does not round-trip the `COLUMNS ( … PATH '…')`
+clause to a stable, re-parseable, executable form. So golden SQL — which MUST be a normalizer fixed point — cannot use
 `JSON_TABLE`. The **containment family** (`json_contains` / `json_length`) expresses
 the equality and occupancy forms as scalar functions that keep their paths and
 candidates as `?` binds and normalize cleanly; it is the MariaDB golden form.
@@ -603,24 +590,6 @@ holes inside two nested Postgres calls and four holes inside one MariaDB call,
 with different path spellings — a document-mutation case authors its `binds` as
 a **per-dialect map** (`m-case-format`), exactly as nested extraction does.
 
-### Structural document equality (`m-document-codec`)
-
-Two documents are equal when they carry the same members with equal values,
-independent of key order and insignificant whitespace (`m-document-codec`). The
-expression that decides it is a dialect decision, because the two engines do not
-agree by default:
-
-| Aspect | Postgres | MariaDB |
-|---|---|---|
-| comparison | `a = b` on `jsonb` | `json_equals(a, b)` |
-| why | `jsonb` normalizes on storage — whitespace removed, duplicate keys reduced, numerics canonicalized — so `=` is already structural | `json` is `longtext` with a `JSON_VALID` check, so `=` is a **text** comparison and is sensitive to key order and whitespace |
-
-A consumer comparing documents MUST obtain the comparison through this seam. On
-MariaDB the naive `=` returns false for two documents that differ only in key
-order, which under Relational Document Layout is most of a row's state, so
-leaving the choice to each consumer would make an assertion mean different
-things on the two engines. `json_equals` is available from MariaDB 10.7.
-
 ### Document column DDL (`m-storage-layout`)
 
 A Relational Document Layout Structured Column renders as `jsonb not null` on
@@ -635,24 +604,23 @@ declared nullability. A top-level scalar collection's own Structured Column unde
 `Columns` derives the same way: its `Document`-tier slot (`m-storage-layout`)
 renders the `json` type, never its element type, with the slot's effective
 nullability. A read projects `m-sql`'s adjacent SQL presence and raw-value
-cells. The concrete adapter supplies both raw cells to the dialect's paired
-document-read parser and returns its provider-neutral `m-core` `DocumentRead`.
-The parser returns `SqlNull` when the SQL discriminator is false and MUST NOT
-attempt document parsing. When it is true, the parser returns
-`StructuredDocument` containing the parsed `DocumentValue`, without requiring an
-object or array kind. In particular, a driver null sentinel in the true arm is
-JSON null, even when the same sentinel in the false arm denotes SQL `NULL`.
-Materialization passes the tag to `m-document-codec`'s located-member classifier.
-The dialect does not pre-classify JSON null, an object, a scalar, an array, or an
-array containing a non-object element.
+cells, and the adapter boundary applies *Document-read parsing* to the pair and
+returns a provider-neutral `m-core` `DocumentRead`. It returns `SqlNull` when the
+SQL discriminator is false and MUST NOT attempt document parsing. When it is true,
+it returns `StructuredDocument` containing the parsed `DocumentValue`, without
+requiring an object or array kind. In particular, a driver null sentinel in the
+true arm is JSON null, even when the same sentinel in the false arm denotes SQL
+`NULL`. Materialization passes the tag to `m-document-codec`'s located-member
+classifier. The adapter boundary does not pre-classify JSON null, an object, a
+scalar, an array, or an array containing a non-object element.
 
 The initial contract adds no generated deep `CHECK` constraint over document
 contents on either dialect. The structured-document type therefore admits JSON
 null, arrays, and scalars as well as objects. If external state contains one of
 those non-object Entity carriers, read materialization passes it to
 `m-document-codec`'s `locateEntityMember` operation and then its shared
-located-member classifier; the dialect neither rejects the row nor invents a
-provider-specific corruption result.
+located-member classifier; the adapter boundary neither rejects the row nor invents
+a provider-specific corruption result.
 
 ### Schema DDL primitives (`m-schema-delta`)
 
@@ -664,48 +632,32 @@ for DML: the generator composes over the layout and asks the `Dialect` only for
 statement fragments, so a `Dialect` never sees a layout type and `m-dialect` keeps
 its single edge to `m-core`.
 
-```text
-createExtension(name)                                  -> statement | Unsupported
-createTable(table, columns, primaryKey, intervalChecks,
-            primaryKeyName?, exclusion?)               -> statement
-addColumn(table, column)                               -> statement
-restateColumn(table, earlier, later)                   -> statement | Unsupported
-createIndex(table, name, columns, unique)              -> statement | Unsupported
-dropIndex(table, name)                                 -> statement
+A dialect answers each of these schema changes — installing a provider
+prerequisite, creating a Table, adding a Column, restating a Column, creating an
+Index, dropping an Index — with its statement, or, for the first, fourth, and
+fifth, with a dialect-neutral reason it cannot spell one, carried verbatim.
+Creating a Table, adding a Column, and dropping an Index are never unsupported.
+Answering with the statement or with why not keeps a capability check from
+drifting away from its renderer.
 
-ColumnDdl        (column, typeSql, nullable)           already-quoted name, already-mapped type
-IndexColumnDdl   (column, neutralType, maxLength)      what index admissibility depends on
-IntervalCheckDdl (name, start, end)                    already-quoted check name and endpoint Columns
-ExclusionDdl     (name, equal, overlapping)            already-quoted name, key Columns, and (start, end) pairs
-Unsupported      (reason)                              a dialect-neutral reason, carried verbatim
-PhysicalIndexName(value)                               a nonempty physical identifier
-```
-
-Every primitive takes already-quoted identifier strings and Neutral Types. Only
-the three a dialect can refuse carry the `Unsupported` arm; the signature
-itself states that creating a Table, adding a Column, and dropping an Index can
-never be unsupported. A primitive answers with **the statement or with why not**,
-which is what keeps a capability predicate from drifting away from the renderer it
-is supposed to describe.
-
-`restateColumn` receives the whole earlier-to-later Column change rather than one
-clause, because the dialects factor it differently: Postgres spells a type change
+Restating a Column depends on the whole earlier-to-later Column change rather than
+one clause, because the dialects factor it differently: Postgres spells a type change
 and a relaxed `not null` as separate actions of one `alter table`, while MariaDB
 restates the whole Column with `modify`. Nullability only ever relaxes across this
 seam — `m-schema-delta` asks for a domain restatement in exactly two shapes, and
 neither can tighten one — so a dropped `not null` is the only nullability action a
 caller can request.
 
-`createTable` receives each temporal axis's interval check in the caller's
+Creating a Table depends on each temporal axis's interval check, in the caller's
 order. Postgres spells each one inline after the key clause as
 `constraint <name> check (<start> < <end>)`, so every row the Table stores —
 whoever writes it — has a nonempty, non-inverted interval on that axis, and a
 violating row fails with the check's own name. MariaDB spells none: its generated
 temporal tables carry no native temporal constraint.
 
-A temporal Table's key arrives with its compiled name, which Postgres spells as
+A temporal Table's key carries its compiled name, which Postgres spells as
 `constraint <name> primary key (…)`; a key without one is left for the database
-to name. Its exclusion arrives as the key Columns compared for equality and one
+to name. Its exclusion is the key Columns compared for equality and one
 `(start, end)` pair per axis. Postgres spells it last, as
 `constraint <name> exclude using gist (<key> with =, …, tstzrange(<start>,
 <end>) with &&, …)`: half-open Timestamp ranges, so intervals that only meet do
@@ -715,24 +667,24 @@ kind `23P01`; an inverted interval cannot even form its range and fails `22000`,
 which the interval checks preclude on a generated Table. MariaDB spells neither a
 key name nor an exclusion, and reports no exclusion-violation kind.
 
-`createExtension` installs a provider prerequisite only where the database lacks
-it. Postgres needs `btree_gist` for an exclusion's scalar equality operands —
+A provider prerequisite is installed only where the database lacks it. Postgres
+needs `btree_gist` for an exclusion's scalar equality operands —
 every accepted key type, Int32, Int64, String, and Uuid, has its operator class —
 and spells `create extension if not exists <name>`; installing it needs the
 `CREATE` privilege on the database, which suffices because the extension is
 trusted. A dialect with no exclusion names no prerequisite.
 
-`createIndex` receives each component's Neutral Type and String bound beside its
-Column, because that is what index admissibility depends on: Postgres indexes
+Creating an Index depends on each component's Neutral Type and String bound beside
+its Column, because that is what index admissibility depends on: Postgres indexes
 every Column type this system spells, while InnoDB refuses an index over an
-unbounded String without a key length and therefore answers `Unsupported` for
-such a component. `dropIndex` receives the Table because MariaDB names it in the
-statement and Postgres does not.
+unbounded String without a key length and therefore answers with why not for such
+a component. Dropping an Index depends on its Table, because MariaDB names it in
+the statement and Postgres does not.
 
-A `PhysicalIndexName` validates only that it is a nonempty identifier. A name read
-back off a driver diagnostic is as legitimate as a generated one, and the
-identifier byte limit is the generating rule's concern — `m-schema-delta`'s —
-rather than the value's.
+A Physical Index Name need only be a nonempty identifier. A name read back off a
+driver diagnostic is as legitimate as a generated one, and the identifier byte
+limit is the generating rule's concern — `m-schema-delta`'s — rather than the
+value's.
 
 ### Unchanged-row count
 
@@ -815,14 +767,11 @@ the `m-sql` normalizer's canonical spelling of `is not null`). Where a dialect's
 native default already yields the requested placement it emits neither form: that is
 a deliberate lowering decision recorded here, not an omission.
 
-The seam returns the **whole** rendered key term, comma-joined leading rank term
-included, so a caller joining terms never learns which structure a dialect chose.
+### Native placement
 
-### Native placement is an askable fact
-
-Where a dialect places a `NULL` in a given direction when nothing asks is itself a
-dialect answer, and MUST be readable without emitting SQL: `asc` places `NULL` last
-on Postgres and first on MariaDB, `desc` the mirror. The rendered key term above and
+Where a dialect places a `NULL` in a given direction when nothing asks is a dialect
+fact that seek lowering depends on: `asc` places `NULL` last on Postgres and first on
+MariaDB, `desc` the mirror. The rendered key term above and
 this fact are one decision rather than two that could drift: the table compensates
 in exactly the cells where the requested placement is not the native one.
 
@@ -862,27 +811,17 @@ placement-free spelling `m-read-planning-012` already witnesses).
   types MUST reject or explicitly normalize non-zero sub-microsecond values
   before binding; dialects with lower-resolution storage cannot satisfy the core
   `timestamp` type without an additional adapter or degraded optional profile.
-- **Typed bind normalization.** Above-seam runtime code supplies the dialect with
-  the target `m-core` neutral type when binding a managed value. The dialect MUST
-  preserve that declared Neutral Type's managed carrier in the lowered bind
-  without changing the emitted SQL, reinterpreting the value, converting it to
-  Wire form, or wrapping it in a driver carrier. Postgres therefore retains every
-  managed scalar unchanged. MariaDB likewise retains `timestamp` values as typed
-  instants so its adapter can later bind `datetime(6)` without guessing whether
-  an arbitrary string is text or time; every other managed scalar is unchanged
-  too. The temporal `infinity` sentinel is not a `Timestamp` value: it remains an
-  unannotated framework bind outside every typed span, with its canonical
-  observation supplied by a sparse override before the adapter maps it to native
-  Postgres infinity or MariaDB's max sentinel. Concrete driver adaptation occurs
-  below the lowered statement and cannot alter a managed value retained for
-  metadata-driven canonical Wire projection. A future dialect obeys the same
-  boundary.
-- **Document-read parsing.** The adapter supplies one SQL boolean presence cell
-  and its adjacent raw structured-document cell together. The dialect parses
-  them as exactly one `m-core` `DocumentRead`: false produces `SqlNull`; true
+- **Document-read parsing.** The adapter boundary applies this rule to one SQL
+  boolean presence cell and its adjacent raw structured-document cell together,
+  forming exactly one `m-core` `DocumentRead`: false produces `SqlNull`; true
   produces `StructuredDocument` with a portable `DocumentValue`, including JSON
-  null. The parser MUST use the discriminator before interpreting a driver null
-  sentinel and MUST NOT return a driver document object above the adapter seam.
+  null. It MUST use the discriminator before interpreting a driver null sentinel
+  and MUST NOT return a driver document object above the adapter seam.
+- **Bytes cell.** A `bytes` Column projects as hexadecimal text under
+  `<column>_hex`, two digits per byte, spelled lowercase by Postgres's `encode` and
+  uppercase by MariaDB's `hex`. That text is the dialect's spelling, not Wire text:
+  the cell decodes to the same octets in either case, above the port (`m-db-port`).
+  `m-wire`'s lowercase-only rule stays with Wire values and stored document leaves.
 - **SELECT shape.** The canonical SELECT projects explicit, table-aliased columns
   (`t0.id, t0.name`) from a single aliased table (`from orders t0`), with each
   selected Structured Column expanded to `m-sql`'s adjacent presence/value pair.
@@ -913,7 +852,9 @@ placement-free spelling `m-read-planning-012` already witnesses).
   the fixture history, and the asserted table state are all dialect-neutral. The
   sentinel orders correctly above every finite milestone, preserving the
   current-row predicate. (The cost relative to native infinity is the Y9999 cliff
-  Postgres avoids — acceptable for a dialect that offers no alternative.)
+  Postgres avoids — acceptable for a dialect that offers no alternative.) The
+  sentinel is not a `Timestamp` value; it reports as the `infinity` literal wherever
+  a statement reports its binds.
 - **Read-lock application.** *Applying* the in-transaction shared read lock is a
   dialect decision of **where and how** it attaches, not whether: a read's owner
   decides that from the Effective Concurrency Strategy (`m-concurrency`). Given a
@@ -936,12 +877,10 @@ placement-free spelling `m-read-planning-012` already witnesses).
   This divergence is surfaced here and **only** here — the query, the result,
   and the independent oracle are identical; just the lock spelling differs. Each
   object-find form is the canonical fixed point of the `m-sql` normalizer for its
-  own dialect (fully lowercase per rule 2; the normalizer renders the MariaDB lock
-  through the seam rather than through sqlglot's MySQL generator, which would
-  otherwise rewrite it to `for share`).
+  own dialect (fully lowercase per rule 2).
 - **Error-code classification.** A raised database error is mapped to a neutral
-  category via this seam's per-dialect native code source; the category set, the
-  call-site predicates, and the per-dialect code tables are `m-db-error`.
+  category via this seam's per-dialect native code source; the category set and
+  the per-dialect code tables are `m-db-error`.
 
 ## Two concrete dialects prove the seam, and it stays open
 
@@ -955,11 +894,3 @@ placement-free spelling `m-read-planning-012` already witnesses).
   the harness selects a provider per dialect — so a third database is a new
   provider + a new per-dialect `sql` key in each statement entry, **not** a
   redesign.
-- **Not a one-way door (DQ9).** The seam **MUST** stay open enough that
-  per-source / per-tenant connection routing could be added later without
-  re-plumbing. Source-attribute sharding is out of scope, but
-  nothing here may *preclude* it: the dialect/connection seam is the natural
-  future home for a routing hook, and binding the dialect to the port that holds
-  the connection is what reduces such a hook to one decision — choose a port per
-  source — instead of a routing decision plus a matching dialect choice that
-  could disagree with it.

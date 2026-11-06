@@ -27,9 +27,9 @@ The canonical schema is
 ## Canonical encoding
 
 An Object Query is one object with a **format-agnostic canonical
-serialization**, in at least JSON and YAML, exactly as `m-predicate` and
-`m-descriptor` are. Every implementation MUST provide serde behavior with
-round-trip tests: `serialize(deserialize(query)) == query`.
+serialization**, as `m-predicate` defines for a Predicate. Every implementation
+MUST provide serde behavior over that document with round-trip tests:
+`serialize(deserialize(query)) == query`.
 
 ```yaml
 objectQuery:
@@ -295,85 +295,19 @@ An authoring surface may fill clauses in any order. The Object Query value fixes
 semantics directly, so no call sequence affects the result and every permutation
 of the same clause calls produces the identical canonical query.
 
-What an authoring surface owns instead is **repeated assignment**. A singleton
-clause is refused on a second assignment rather than replaced:
-
-- a second `limit`;
-- a second `narrowTo`;
-- a second selection for one Temporal Dimension;
-- any equivalent singleton replacement.
-
-Additive clauses remain additive: Sort Keys append in precedence order, Include
-Paths accumulate into the canonical set, and separate temporal calls may fill
-different dimensions.
-
 ## Planning boundary
 
-`validateObjectQuery(authoredQuery, acceptedModel)` is the mandatory semantic
-boundary for every supported read entry point. It resolves and validates every
-clause, invokes Predicate elaboration, and returns one private immutable
-`ResolvedObjectQuery`. That product carries the exact resolved target,
-`ResolvedPredicate`, temporal selections, Sort Keys, Include Paths, result
-narrowing, and row cap; it retains no authored query. Every name is an exact
-canonical identity, every typed coordinate or operand is managed, collections are
-deeply immutable, and no public constructor or serialization contract exists.
+Every supported read entry point resolves and validates all of a query's clauses
+against the accepted model, and classifies it, before SQL generation, connection
+acquisition or port access, participating unit-of-work force-flush, and any other
+observable side effect. Nothing downstream repeats that validation.
 
-The product is the complete resolved meaning of one authored Object Query, not a
-lowered SQL request and not a wrapper rebuilt from selected clauses. A producer-
-owned page-derivation operation accepts a resolved base plus a paging state,
-resolved effective order, and cap, and returns another `ResolvedObjectQuery`
-without re-resolving or decoding the base or rebuilding authored Sort Keys. The base's own Predicate is carried
-through unchanged: a page's seek is not an authored comparison.
+### Paging
 
-### Paging state
-
-A resolved query MAY carry a producer-owned paging state. Its presence means the
-read is one page of a streamed delivery and MUST capture one coordinate per
-Continuation Order term; its absence means the read captures none. Two independent
-flags are forbidden — capturing nothing while continuing from somewhere is not a
-representable state.
-
-A paging state carries at most one `ResolvedSeek`. Absence is the first page,
-which admits every result the caller's own Predicate does.
-
-```text
-ResolvedSeek
-  terms       ContinuationTerm[]        the WHOLE Continuation Order, in precedence
-  coordinate  ContinuationCoordinate    positionally aligned with terms
-
-ContinuationTerm
-  identity    the Attribute the term orders by
-  direction   asc | desc
-  nulls       first | last              the authored Null Placement
-  nullable    whether the member can hold a NULL at all
-
-ContinuationCoordinate
-  carriers    one opaque value per term, positionally, exactly as that term's
-              ordering expression evaluated it and normalized once at capture
-  equality    structural over those carriers
-  snapshot    an inert copy for diagnostics, with no way back to a coordinate
-```
-
-A coordinate is physical. It is never decoded, revalidated, admitted as a managed
-value, published as a result, or compared by anything but its own equality. `m-sql`
-is the only module that constructs one or reads what a carrier means; every other
-module carries it opaquely.
-
-The lexicographic expansion of a seek into comparisons is NOT part of this
-product. It cannot be settled without knowing where the dialect placed a NULL in
-the ordering clause that was emitted, which is `m-sql`'s own answer.
-
-`m-read-planning` is the mandatory next phase. It consumes
-`ResolvedObjectQuery` and produces the resolved flat-read products for the root
-and each non-empty child level. Each such private `PlannedEntityQuery` may
-exist without an authored Object Query behind it, but consumers never substitute
-one for the complete resolved parent at the public preflight boundary.
-
-Every supported read entry point validates and classifies the Object Query before
-SQL generation, connection acquisition or port access, participating unit-of-work
-force-flush, and any other observable side effect.
-
-Downstream SQL and deep-fetch compilation MUST NOT resolve authored names, infer
-neutral types, decode literals, or repeat model-aware validation. A child read
-derived during deep fetch is constructed from already-resolved metadata and
-managed parent keys, so it obeys the same invariant without a second Wire pass.
+A streamed delivery reads one page at a time (`m-read-delivery`). Each page statement
+of a streamed delivery captures one coordinate per Continuation Order term; a
+continuing one additionally admits only the roots after its predecessor's coordinate.
+A read that is no page of a streamed delivery, an eager read included, captures none.
+Neither changes the base query: a page's seek is not an authored comparison, and the
+query's own Predicate is carried through unchanged. Coordinates are
+`m-read-delivery`'s, and the capture and seek forms are `m-sql`'s.

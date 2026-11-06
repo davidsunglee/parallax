@@ -48,7 +48,9 @@ idiomatic developer experience while still guaranteeing parity.
   semantics, transaction / optimistic-lock rules.
 - **Protocol seams** — the metamodel (introspection **and** serde), the
   Predicate algebra (**and** its serde), the canonical model-descriptor schema,
-  and the database-dialect interface.
+  and the database-dialect decision catalog, judged by the output each dialect's
+  answers produce. The database port is a behavior contract each language spells
+  in its own public port.
 - **The module-dependency graph** — the *direction* of allowed dependencies
   between behavioral modules, enforced across language source scopes regardless
   of artifact count.

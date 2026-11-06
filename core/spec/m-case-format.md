@@ -298,7 +298,9 @@ line-length norm (~120 characters), and as a **block map** otherwise. Result row
 are almost always inline (`- { order_id: 2, total_quantity: 4 }`); wide bitemporal
 table-state rows, which do not fit, stay readable as block maps. Timestamp columns
 in `then.tableState` are ISO-8601 UTC strings at core microsecond precision, with
-the open-bound `infinity` as the literal string `infinity`.
+the open-bound `infinity` as the literal string `infinity`. A `bytes` cell under its
+`<column>_hex` result key states its octets in `m-wire`'s lowercase spelling on every
+dialect, and the runner reads the cell itself by `m-dialect` *Bytes cell*.
 
 **A document-valued cell compares structurally, in every dialect.** Where a cell
 holds a structured document — a Value Object column, or a Relational Document
@@ -310,10 +312,9 @@ both `then.tableState`, which asserts the document a write produced, and
 This is normative here rather than left to each provider because the two engines
 genuinely disagree: Postgres `jsonb` normalizes on storage and `=` is already
 structural, while MariaDB `json` is a text alias whose `=` is key-order and
-whitespace sensitive, so structural comparison needs `json_equals`
-(`m-dialect`). Under Relational Document Layout most of an asserted row is one
-document cell, so a case author must be able to write it in the order that reads
-best and get the same verdict on both dialects.
+whitespace sensitive, so `=` cannot decide it. Under Relational Document Layout most
+of an asserted row is one document cell, so a case author must be able to write it
+in the order that reads best and get the same verdict on both dialects.
 
 **A document-valued bind is authored as the document, never as its rendered text.**
 Wherever a `?` carries a **composite** structured document — an object or an array:
@@ -2087,9 +2088,8 @@ the two drift. An author wanting the navigated entity's rows states them as
   them on threads synchronized by a barrier, and classifies the error raised in the
   contention round via the provider's `classify_error`. The classifier is a thin
   per-dialect extraction (Postgres SQLSTATE, MariaDB errno) into the shared,
-  DB-free category vocabulary + call-site predicates; the runner asserts the predicate
-  partition, so the harness exercises the interface the language implementations
-  build, not a harness-only shortcut.
+  DB-free category vocabulary; the runner asserts the category and its own predicate
+  partition over it.
 
 A node's step takes one of two forms. A **statement step** carries the golden
 `statements` its node runs that round; on an `error` case it declares no `kind` at

@@ -48,8 +48,11 @@ __all__ = [
     "RenderedScalarCell",
     "ScalarResult",
     "Unsupported",
+    "decode_bytes_cell",
     "scalar_result",
 ]
+
+_BYTES_CELL: Final = re.compile(r"(?:[0-9a-fA-F]{2})*")
 
 EncodedJsonKind = Literal["boolean", "number", "string"]
 """The JSON primitive kind a scalar's canonical document encoding takes."""
@@ -88,7 +91,7 @@ class ArrayBind:
 class ScalarResult:
     """How one Column's scalar arrives in a result row and is published.
 
-    ``encoded`` cells arrive in the value's canonical Wire spelling rather than
+    ``encoded`` cells arrive as text the read decodes above the port rather than
     as the driver's native scalar, under ``publication_key`` rather than the
     Column's own spelling.
     """
@@ -101,11 +104,22 @@ def scalar_result(column: str, neutral_type: NeutralType) -> ScalarResult:
     """The result spelling and encoding of ``column``'s scalar of ``neutral_type``.
 
     A pure function of the value's type, shared by every dialect: `bytes`
-    arrives as its canonical hexadecimal text under ``<column>_hex``.
+    arrives as hexadecimal text under ``<column>_hex``.
     """
     if isinstance(neutral_type, Bytes):
         return ScalarResult(f"{column}_hex", True)
     return ScalarResult(column, False)
+
+
+def decode_bytes_cell(cell: object) -> object:
+    """The octets a `bytes` cell spells, or ``cell`` itself where it spells none.
+
+    The cell is a dialect's hexadecimal spelling rather than a Wire value, so
+    either case decodes, and admission judges whatever comes back undecoded.
+    """
+    if isinstance(cell, str) and _BYTES_CELL.fullmatch(cell) is not None:
+        return bytes.fromhex(cell)
+    return cell
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,7 +354,7 @@ class Dialect:
     ) -> RenderedScalarCell:
         """One Column's scalar select-list cell against ``alias``.
 
-        A `bytes` column renders its hex-encoded text so the wire value is stable
+        A `bytes` column renders its hex-encoded text
         (`encode(t0.col, ?) col_hex`, bind `hex`); every other column renders the
         plain alias-qualified reference with no bind. The cell is named by its
         publication key unless ``output_alias`` names it otherwise, which changes

@@ -210,6 +210,16 @@
       "valueObject": {}
     }
   },
+  "models/bytes-cell.yaml": {
+    "parallax.compatibility.BytesCell": {
+      "attribute": {
+        "id": "id",
+        "payload": "payload"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/classification-transparency-layout-twin-columns.yaml": {
     "parallax.compatibility.ClassificationTwinChild": {
       "attribute": {

@@ -69,8 +69,11 @@ connection reports it sent a password, and as `"unavailable"` otherwise. Among
 the refusals that sent a password, one whose libpq message ends with the
 server's exact `FATAL:  database "<name>" does not exist` reads as
 `"preparation_failed"`. Neither of those two reasons defers a reader or earns
-a preferred fallback. Each `connect` opens an independent runtime;
-closing one root does not close another made from the same configuration. A
+a preferred fallback. `reader_preferred` gives the reader at most half of
+`acquire_timeout`. While a reader is known to be unreachable, one
+`reader_preferred` acquisition at a time tries it again, which is what re-dials
+it, and the others go to the writer at once. Each `connect` opens an independent
+runtime; closing one root does not close another made from the same configuration. A
 connection string cannot contain a password. Required `credentials=` accepts
 `Password(...)`, a source with `resolve() -> Password`, or `DRIVER_MANAGED`,
 never `None`. Credential sources resolve when establishing connections,
@@ -128,6 +131,19 @@ that is not a `RetryPolicy`, `None` included, raises `ValueError` where it is
 supplied: eagerly in `with_options`, and in `transact` and `read_only` after
 re-entry refusal, ahead of any join comparison. The clock, sleeper, and random
 source behind the waits are the loop's own, not options.
+
+## The database port
+
+`parallax.core.db_port` spells the `m-db-port` behaviors for Python, and its
+protocols own the signatures. `DatabaseConnection.execute` takes SQL, binds, and
+the read's document cells as adjacent ordinal pairs, which an adapter folds into
+one `DocumentRead` each. A bind is `object`: a structured-document bind is a
+`StructuredDocument` and an array bind an `ArrayBind`, and a bind that states SQL
+`NULL` is `None`, so `StructuredDocument(document=None)` spells the JSON null
+document. `transaction` returns a `TransactionOutcome` rather than raising which
+boundary failed. A `DatabaseRuntime` binds authority through `login_source()` or
+`principal_source(authorization)`, and each `ConnectionContextSource.new_context`
+is one acquisition.
 
 ## Transactions and failure boundaries
 

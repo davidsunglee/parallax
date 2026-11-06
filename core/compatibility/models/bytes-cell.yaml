@@ -1,0 +1,11 @@
+entity:
+  name: BytesCell
+  namespace: parallax.compatibility
+  table: bytes_cell
+  persistence: read-only
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: payload
+      type: bytes

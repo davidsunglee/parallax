@@ -428,14 +428,36 @@ def query_rows(
     given a collision-safe execution alias before the statement runs and the alias
     is stripped back out of every row afterwards. The read observes exactly the
     columns the golden projects.
+
+    A `bytes` cell is the dialect's hexadecimal spelling, in either case
+    (`m-dialect` *Bytes cell*), and a case states the octets it spells as canonical
+    Wire, so each is folded to that case here and the authored value stays strict.
     """
     executable, presence_keys = _alias_document_presence_projections(
         sql, reader.dialect, case.model
     )
     rows = reader.query(executable, binds) if binds else reader.query(executable)
-    if not presence_keys:
+    bytes_cells = _bytes_cell_keys(case.model)
+    if not presence_keys and not bytes_cells:
         return rows
-    return [{key: value for key, value in row.items() if key not in presence_keys} for row in rows]
+    return [
+        {
+            key: value.lower() if key in bytes_cells and isinstance(value, str) else value
+            for key, value in row.items()
+            if key not in presence_keys
+        }
+        for row in rows
+    ]
+
+
+def _bytes_cell_keys(model: Model) -> frozenset[str]:
+    """The result key each `bytes` Column of *model* projects its hexadecimal cell under."""
+    return frozenset(
+        f"{attribute['column']}_hex"
+        for entity in model.entities
+        for attribute in entity.attributes
+        if attribute["type"] == "bytes"
+    )
 
 
 def reference_rows(reader: ReadExecutor, sql: str) -> list[dict[str, Any]]:

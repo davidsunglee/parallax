@@ -275,28 +275,13 @@ A deep fetch as of an instant yields a **point-in-time-consistent object graph**
 The per-hop as-of propagation rule (matched by axis, defaulting unpinned axes to
 latest) is owned by `m-navigate` and applies inside each per-level child query.
 
-## Resolved flat reads and generated key membership
+## Child reads over gathered keys
 
-The deep-fetch planner consumes only the resolved products of
-`m-object-query`. A root or child `PlannedEntityQuery` is the private
-**resolved flat read**: it carries exact modeled identities, a resolved
-Predicate containing managed values and closed over its temporal visibility
-(`m-navigate`), resolved
-ordering and projection, and compact result metadata. It contains no authored
-path, raw literal, or public predicate node requiring another semantic pass.
-
-For a child level, the planner passes the already-resolved child correlation
-Attribute to `m-predicate`'s generated-membership operation, which yields a
-membership over a deferred key set (`m-sql`). The planner gathers managed
-parent key values from the materialized parents and deduplicates them in
-encounter order; they are bound into the compiled child read as they are,
-neither encoded nor decoded. Every gathered key MUST already satisfy the
-resolved Attribute's neutral type; violating that invariant is an internal
-framework error rather than `neutral-literal-*` rejection.
-
-The resulting child read flows through the same private SQL compiler as a root
-read and is consumed exactly once. SQL compilation cannot accept a public Object
-Query or authored predicate as a fallback.
+A child level's read is built from already-resolved metadata and the managed key
+values gathered from materialized parents, so it raises no authored-name,
+type-inference, or literal failure of its own (`m-object-query`). Every gathered key
+satisfies the correlation Attribute's neutral type; a key that does not is an
+internal framework error, never a `neutral-literal-*` rejection.
 
 ## What the harness verifies
 

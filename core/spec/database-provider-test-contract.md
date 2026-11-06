@@ -25,15 +25,14 @@ Each row proves the database's answers for the `m-dialect` decision catalog:
   optimistic-mode object reads
 - neutral scalar to column-type mapping, including parametric decimals and
   bounded strings
-- bytes projection shape and any projection-introduced binds
+- bytes projection shape and any projection-introduced binds, and the projected
+  cell decoding to the same octets in either case
 - temporal infinity bind representation
 - placeholder translation at the adapter boundary
-- typed bind normalization for managed values
-- parser behavior for precision-sensitive managed values
 - paired document-read parsing, including distinct `SqlNull` and
   `StructuredDocument(document: JSON null)` results when the raw driver values use
   the same host-language null sentinel
-- native error-code classification and call-site predicates
+- native error-code classification
 
 The dialect suite must remain Docker-free. It should fail quickly when a new
 provider row is incomplete.
@@ -48,6 +47,7 @@ For every supported adapter, the smoke suite covers:
 
 - construction from the language's documented connection configuration
 - a managed scalar read returning adapter-boundary values, not driver defaults
+- precision-sensitive managed values read exactly through the adapter
 - a Structured Column read whose SQL presence/value pair becomes one managed
   `DocumentRead`, with the presence cell absent from the returned row and SQL
   `NULL` distinct from JSON null
@@ -154,9 +154,9 @@ For every supported adapter, the smoke suite covers:
   writer from an unreachable one — a transaction opening its boundary there,
   under the bound authorization — and does not fall back from a reader that is
   merely busy. A different login on the reader, refusal and recovery of a
-  pending reader, concurrent proofs, the probe slot, deadline allocation, and a
-  connection lost while being set up belong to the language's own internal
-  suites, because a server will not produce them on demand. No replication is involved:
+  pending reader, concurrent proofs, at most one acquisition trying a known-unreachable
+  reader, deadline allocation, and a connection lost while being set up belong to the
+  language's own internal suites, because a server will not produce them on demand. No replication is involved:
   what the reader route observes about the writer's changes is the subject of a
   separate standby proof
 - where the engine offers physical replication, a **reader route over a real
@@ -209,10 +209,11 @@ with a boundary keyword alone, owes two further proofs — both about that state
 whole life rather than about the statement that sets it, because `m-db-port`
 makes the option boundary-scoped while the state is the connection's. MariaDB's
 Read Committed and Repeatable Read are the cases that specification states, and
-the proofs are: the saved value is restored after the attempt commits or rolls back, and the
-save, set, and restore happen again for **every** attempt of a retried
-invocation, so an invocation neither leaves the variable changed behind it nor
-opens its second attempt without it; and a **restore that fails** preserves the
+the proofs are: whatever next uses the connection after the attempt commits or rolls
+back observes the session state it would have observed had the attempt not run, and
+the state the level needs holds for **every** attempt of a retried invocation, so an
+invocation neither leaves the variable changed behind it nor opens its second
+attempt without it; and a **restore that fails** preserves the
 outcome already reached — the work committed or did not, and a failed restore
 does not change that — while **discarding the connection** rather than returning
 it. That second proof is the same shape as the failed-rollback discard above, for

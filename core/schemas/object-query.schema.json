@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/object-query.schema.json",
   "title": "Parallax Object Query (m-object-query)",
-  "description": "Canonical, format-agnostic serialization of one Object Query — the non-recursive query value that selects and returns full objects. Every clause is a sibling property. `target` and `predicate` are required. Before SQL or deep-fetch compilation, every query passes the mandatory model-aware planning boundary, which resolves exact identities and decodes serialized predicate literals exactly once through m-wire into a private validated product. This structural schema intentionally does not duplicate per-type literal grammar.",
+  "description": "Canonical, format-agnostic serialization of one Object Query — the non-recursive query value that selects and returns full objects. Every clause is a sibling property. `target` and `predicate` are required. Before SQL or deep-fetch compilation, every query passes the mandatory model-aware planning boundary, which resolves exact identities and decodes serialized predicate literals through m-wire into a private validated product. This structural schema intentionally does not duplicate per-type literal grammar.",
   "$ref": "#/$defs/objectQuery",
   "$defs": {
     "objectQuery": {
