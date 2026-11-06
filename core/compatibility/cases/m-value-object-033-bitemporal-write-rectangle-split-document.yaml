@@ -4,6 +4,10 @@
 model: models/branch.yaml
 tags: [m-value-object, m-temporal-write, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, nested, to-many, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the write settles against the milestone an earlier entry stored, so its emissions depend on a query result"
 when:
   writeSequence:
     - mutation: insert

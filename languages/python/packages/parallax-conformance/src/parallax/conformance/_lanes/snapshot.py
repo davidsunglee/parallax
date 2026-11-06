@@ -35,10 +35,7 @@ from parallax.conformance._mechanism.envelope import (
     EngineError,
     ScenarioRun,
 )
-from parallax.conformance._mechanism.given_state import (
-    apply_given_apply,
-    seed_store_from_fixtures,
-)
+from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
     case_serving_model,
@@ -47,7 +44,6 @@ from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import (
     underlying,
 )
-from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import (
     inheritance,
     relationship,
@@ -135,8 +131,7 @@ def compile_scenario(
     """Compile a snapshot-read scenario's own find steps (instance-form,
     unlocked — a snapshot materialization is not a locking object find) and its
     write steps (each its own simulated transaction, lowered exactly as the
-    unit-of-work lane's ungrouped write step is, so a `rollback: true` step's
-    advances are restored after it); `mutate` and `access` contribute no
+    unit-of-work lane's ungrouped write step is); `mutate` and `access` contribute no
     emissions and no Database Calls at all (m-snapshot-read: an in-memory-only
     change and a closed-world navigation, never SQL)."""
     serving = case_serving_model(case)
@@ -145,8 +140,6 @@ def compile_scenario(
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
     prepare = case_wire_preparer(model)
-    store = SimulatedTemporalStore()
-    seed_store_from_fixtures(case, model, store)
     emissions: list[Emission] = []
     try:
         for index, step in enumerate(steps):
@@ -161,7 +154,6 @@ def compile_scenario(
                         prepare,
                         dialect,
                         concurrency,
-                        store,
                         entry_instant(entries[0]),
                         [],
                         rollback=step.get("rollback") is True,

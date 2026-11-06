@@ -445,7 +445,7 @@ def _valid_keyed_entry_entity(
 # `given.apply` / `given.fault` — is run-only regardless of whether its emissions
 # happen to be statically derivable, so it MUST carry the declaration. (The
 # query-result-dependence criterion is a human judgment the harness cannot detect;
-# each language's refusing compile port enforces it structurally at runtime.)
+# grading `compile` against the golden exposes a mis-declaration.)
 
 _SINGLE_CONNECTION_SHAPES = frozenset({"conflict", "concurrencySuccess", "boundary"})
 

@@ -1,6 +1,10 @@
 model: models/position.yaml
 tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, bitemporal, temporal, write-sequence, update, rectangle-split, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the Locking target write acquires the row an earlier entry stored before it writes, so its emissions depend on a query result"
 when:
   uow:
     concurrency: locking

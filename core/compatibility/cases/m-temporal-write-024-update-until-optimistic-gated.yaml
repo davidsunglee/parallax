@@ -6,6 +6,10 @@
 model: models/position.yaml
 tags: [m-temporal-write, m-concurrency, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the write settles against the milestone an earlier entry stored, so its emissions depend on a query result"
 when:
   uow:
     concurrency: optimistic

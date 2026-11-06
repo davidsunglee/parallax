@@ -1384,8 +1384,8 @@ attempt (*Resolving reads a write owes*). All of that unit's reads precede its
 writes, grouped by Entity and Valid-Time pin; an insert, a write through the same
 unit's insertion, and caller-stated target and predicate writes retain their
 exemptions. These reads are adapter choreography, not reads public write verbs
-perform implicitly. Compile observes the corresponding fixture and earlier-write
-state without executing reads. This
+perform implicitly. A write whose emissions depend on that state is run-only (see
+*Compile eligibility*). This
 reference is the one place that rule is displaced. Where it appears, an implementation **MUST**
 resolve the write's observation from the **observation store this unit of work's
 own reads filled** — the evidence the named find recorded when it ran, addressed
@@ -2899,8 +2899,8 @@ Beyond the `lane` routing above, a case declares whether an adapter's **`compile
 command can derive its emissions statically. By default a case is
 **compile-eligible**: `compile` emits its SQL without executing anything. A case is
 declared **run-only** — via a top-level **`compileEligibility`** block
-(`{ mode: run-only, reason, note? }`) — when its emissions cannot be a pure function
-of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
+(`{ mode: run-only, reason, note? }`) — when its emissions cannot be derived without
+executing SQL, so only `run` grades it. Two criteria make a case run-only:
 
 - **`single-connection`** — the case intends to exercise database **concurrency or
   locking** behavior: a `conflict` / `concurrencySuccess` / `boundary` shape, a
@@ -2917,18 +2917,19 @@ of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
   first binds the Continuation Order coordinates of the root the previous page
   delivered last, so **every** case carrying a `stream` member — a streamed
   `read` case or a scenario carrying a streamed read step — is run-only, including
-  one declaring no includes at all. `given` fixtures are legitimate
-  inputs; `then` expectations are never fed back.
+  one declaring no includes at all. Stored state is a query result whoever left it:
+  a write that settles against a stored milestone, binds a range to stored rows, or
+  acquires a stored row under Locking is run-only, whether `given` fixtures or an
+  earlier entry stored it. `then` expectations are never fed back.
 
 Eligibility is an **authored, reviewed** declaration — intent is a human judgment.
 The harness **mechanically backstops** the detectable `single-connection` cases: a
 case carrying a `given.apply` / `given.fault`, a `when.concurrency`, or a `conflict`
 / `concurrencySuccess` / `boundary` shape **MUST** carry the run-only declaration with
 reason `single-connection`, and leaving it eligible (or mis-reasoning it) is a loud
-failure. The `query-result-dependent` criterion is **not** mechanically detectable;
-each language's **refusing compile port** enforces it structurally at runtime — a
-`compile` that requests a row proves the case was mis-declared eligible
-(`m-conformance-adapter`).
+failure. The `query-result-dependent` criterion is **not** detectable from the case
+document; grading `compile` against the golden exposes a mis-declaration, short of a
+golden equal to what no rows would yield (`m-conformance-adapter`).
 
 The adapter's answer for a claimed-but-run-only case under `compile` is a defined
 `status: run-only` with a `compile-run-only` diagnostic, **not** `unsupported`

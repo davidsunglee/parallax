@@ -425,8 +425,7 @@ def compile_case(
     A run-only case (`compileEligibility`, `m-case-format`) returns the defined
     ``run-only`` status with a ``compile-run-only`` diagnostic; a compile-eligible
     claimed read case returns ``ok`` with its ordered ``emissions`` and
-    Database Calls. Compilation touches no database — the refusing port never sees a row
-    request from a well-declared read. A `rejected` and an `evolution` case
+    Database Calls. Compilation touches no database. A `rejected` and an `evolution` case
     answer the same ``run-only`` envelope unconditionally — their run-only status
     is shape-intrinsic, not authored per-case (see :data:`_RUN_GRADED_SHAPES`).
     """

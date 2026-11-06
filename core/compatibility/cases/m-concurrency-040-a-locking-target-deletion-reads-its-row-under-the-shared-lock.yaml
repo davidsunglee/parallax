@@ -1,6 +1,10 @@
 model: models/account.yaml
 tags: [m-concurrency, m-unit-work, m-sql, write-sequence, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the Locking target write acquires the row the fixtures stored before it writes, so its emissions depend on a query result"
 given:
   fixtures: true
 when:

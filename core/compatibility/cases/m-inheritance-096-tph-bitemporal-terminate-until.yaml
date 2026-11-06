@@ -3,6 +3,10 @@
 model: models/instrument.yaml
 tags: [m-inheritance, m-temporal-write, m-sql, table-per-hierarchy, tag, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the write settles against the milestone an earlier entry stored, so its emissions depend on a query result"
 when:
   uow:
     concurrency: locking

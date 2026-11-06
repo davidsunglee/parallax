@@ -4,6 +4,10 @@
 model: models/write-transparency-layout-twin-columns.yaml
 tags: [m-temporal-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, columns, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the write settles against the milestone the fixtures stored, so its emissions depend on a query result"
 given:
   fixtures: true
 when:

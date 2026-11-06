@@ -276,12 +276,13 @@ and `caseShape` and carrying at least one diagnostic whose `code` is
 }
 ```
 
-Only `run` grades a run-only case. An adapter's static compile lane wires its database
-port to **refuse** any row-returning read; a `compile` on a case declared eligible that
-nonetheless requests a row proves the case was mis-declared, so the refusing port
-structurally enforces the `query-result-dependent` criterion the authored declaration
-cannot. `describe` does not enumerate run-only cases — eligibility is a per-case
-property the runner reads from each case, not a capability claim.
+Only `run` grades a run-only case. `compile` reads nothing from a database. An eligible
+case is graded by comparing what `compile` derives from `when` and `given` to its golden,
+so a case whose emissions need a query result fails there: `compile` errors, or what it
+emits differs. Only a golden equal to what no rows would yield, such as an empty root's,
+can pass while declared eligible, and `run` grades it either way. `describe` does not
+enumerate run-only cases — eligibility is a per-case property the runner reads from each
+case, not a capability claim.
 
 A **rejected**-shape case (`m-case-format`) is **implicitly** run-only, by construction
 rather than declaration: `then.statements` is disallowed for the shape, so it carries no

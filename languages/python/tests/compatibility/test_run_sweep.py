@@ -445,6 +445,27 @@ _GIVEN_APPLY_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
 )
 
 
+# The writeSequence cases whose emissions read stored state: each is
+# `compileEligibility: run-only` (query-result-dependent), because a fixture or an
+# earlier entry left the milestone, range, or row its write reads. Graded here in
+# full exactly as a `WRITE_EXERCISED` case is, and kept out of that set because it
+# couples compile grading in.
+_STORED_STATE_WRITES_EXERCISED: Final[frozenset[str]] = frozenset(
+    {
+        *(f"m-concurrency-{n:03d}" for n in (29, 40)),
+        "m-execution-lifecycle-015",
+        *(f"m-inheritance-{n:03d}" for n in (90, 91, 94, 95, 96, 97)),
+        "m-storage-layout-011",
+        *(
+            f"m-temporal-write-{n:03d}"
+            for n in (*range(2, 6), 10, *range(13, 19), 22, 23, 24, 35, 42, 43, 69, 84, 90, 91)
+        ),
+        *(f"m-unit-work-{n:03d}" for n in (43, 44)),
+        *(f"m-value-object-{n:03d}" for n in (32, 33)),
+    }
+)
+
+
 def _reachable_write_cases() -> list[case_format.Case]:
 
     return [
@@ -454,6 +475,7 @@ def _reachable_write_cases() -> list[case_format.Case]:
             c.case_id in WRITE_EXERCISED
             or c.case_id in _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED
             or c.case_id in _GIVEN_APPLY_SCENARIOS_EXERCISED
+            or c.case_id in _STORED_STATE_WRITES_EXERCISED
             or (
                 c.case_id not in _INTERLEAVED_UOW_GROUP_CASES
                 and engine.eligibility(c) is not None
@@ -464,6 +486,15 @@ def _reachable_write_cases() -> list[case_format.Case]:
 
 
 _WRITE_CASES = _reachable_write_cases()
+
+
+def test_every_stored_state_write_is_run_only_and_graded_against_its_golden() -> None:
+    graded = {case.case_id: case for case in _WRITE_CASES}
+    for case_id in _STORED_STATE_WRITES_EXERCISED:
+        case = graded[case_id]
+        assert engine.eligibility(case) is not None, case_id
+        assert case.document.get("grading") != "state", case_id
+        assert write_golden_statements(case), case_id
 
 
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])

@@ -1,6 +1,10 @@
 model: models/balance.yaml
 tags: [m-temporal-write, m-concurrency, m-unit-work, m-sql, write-sequence, audit-only, slice-snapshot-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the target write's range reads the rows an earlier entry stored, so its emissions depend on a query result"
 when:
   uow:
     concurrency: optimistic

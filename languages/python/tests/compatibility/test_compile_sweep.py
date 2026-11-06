@@ -4,8 +4,7 @@ Parametrized from the corpus at runtime over the reachable intersection of the
 active slice and implemented module tags. Every case's compile envelope is
 schema-validated; the exercised set must emit SQL and binds equal to the case's
 ``postgres`` golden after normalization, and every other reachable case has an
-explicit skip reason. Because read compilation is pure, the refusing port never
-sees a row request.
+explicit skip reason.
 
 Pure, Docker-free, in-process behaviour, so it classifies ``dbfree`` and
 contributes to the database-free branch-coverage gate. ``compile_sweep`` is its
