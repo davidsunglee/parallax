@@ -179,7 +179,7 @@ def test_the_fixture_case_and_envelope_are_accepted_as_authored() -> None:
 
 def test_an_event_carrying_two_transitions_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][0]["readStarted"] = {"target": "Account", "interface": "typed"}
+    root["events"][0]["readStarted"] = {"target": "Account", "purpose": "typed"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
@@ -673,7 +673,7 @@ def test_a_read_dependency_flush_still_open_when_its_read_starts_is_flagged() ->
     root = _write_root()
     root["events"][4]["flushStarted"] = {"trigger": "read-dependency"}
     root["events"][7:7] = [
-        _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
+        _event(0, 6, 2, readStarted={"target": "Account", "purpose": "typed"}),
         _event(0, 6, 2, readFinished={"outcome": "completed"}),
     ]
     _renumbered(root, released=7)
@@ -737,7 +737,7 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
 def test_a_pre_commit_flush_followed_by_more_attempt_work_is_flagged() -> None:
     root = _write_root()
     root["events"][8:8] = [
-        _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
+        _event(0, 6, 2, readStarted={"target": "Account", "purpose": "typed"}),
         _event(0, 6, 2, readFinished={"outcome": "completed"}),
     ]
     _renumbered(root, released=7)
@@ -756,7 +756,7 @@ def test_a_read_dependency_flush_standing_before_its_read_is_accepted() -> None:
     root = _write_root()
     root["events"][4]["flushStarted"] = {"trigger": "read-dependency"}
     root["events"][8:8] = [
-        _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
+        _event(0, 6, 2, readStarted={"target": "Account", "purpose": "typed"}),
         _event(0, 6, 2, readFinished={"outcome": "completed"}),
     ]
     _renumbered(root, released=7)
@@ -825,7 +825,7 @@ def test_a_participating_read_taking_a_connection_of_its_own_is_flagged() -> Non
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
             _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
-            _event(5, 4, 2, readStarted={"target": "Account", "interface": "typed"}),
+            _event(5, 4, 2, readStarted={"target": "Account", "purpose": "typed"}),
             _event(6, 5, 4, acquisitionStarted={"policy": "writer-only"}),
             _event(7, 5, 4, acquisitionFinished=_ACQUIRED),
             _event(8, 4, 2, readFinished={"outcome": "completed"}),
@@ -884,7 +884,7 @@ def _read_root(*children: dict[str, Any]) -> dict[str, Any]:
             1,
             1,
             None,
-            readStarted={"target": "Account", "interface": "typed", "edition": "account"},
+            readStarted={"target": "Account", "purpose": "typed", "edition": "account"},
         ),
         *children,
         _event(1, 1, None, readFinished={"outcome": "completed"}),
@@ -903,7 +903,7 @@ def _stream_root(finish: dict[str, Any], *children: dict[str, Any]) -> dict[str,
             None,
             streamStarted={
                 "target": "Account",
-                "interface": "typed",
+                "purpose": "typed",
                 "batchSize": 2,
                 "edition": "account",
             },
@@ -1152,7 +1152,7 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
             _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
-            _event(5, 4, 2, readStarted={"target": "Account", "interface": "wire"}),
+            _event(5, 4, 2, readStarted={"target": "Account", "purpose": "wire"}),
             _event(6, 5, 4, databaseCallStarted=started),
             _event(7, 5, 4, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
             _event(8, 4, 2, readFinished={"outcome": "completed"}),

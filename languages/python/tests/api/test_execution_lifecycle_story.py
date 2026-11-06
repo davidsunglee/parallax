@@ -80,7 +80,7 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
         finished,
     ) = root.events
     assert isinstance(started, ReadStarted)
-    assert started.interface == "typed"
+    assert started.purpose == "typed"
     # The connection is a real one out of a real pool at both ends: the
     # acquisition granted what a real checkout answered, and the release reports
     # the handoff that genuinely completed. What the endpoints measure is graded

@@ -677,7 +677,7 @@ def test_run_read_case_observes_a_wire_read() -> None:
     (root,) = run.roots
     started = root.events[0]
     assert isinstance(started, ReadStarted)
-    assert started.interface == "wire"
+    assert started.purpose == "wire"
 
 
 def test_run_graph_case_reports_the_records_a_classified_root_published() -> None:

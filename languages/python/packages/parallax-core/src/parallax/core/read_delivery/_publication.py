@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Protocol
 
 from parallax.core import read_planning
-from parallax.core.execution_lifecycle import PublicationInterface
+from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.temporal_read import TemporalShape
@@ -46,12 +46,12 @@ class Publication[Origin, Eager](Protocol):
     owns the Page, so no Page outlives the operation that read it.
     :meth:`from_find` and :meth:`from_history` compose :attr:`roots_of` into an
     eager envelope, so neither is a conversion that could drift from the
-    streamed one. ``interface`` names the read interface the activity reports,
+    streamed one. ``representation`` is the purpose the activity reports,
     and ``edition`` the Model Edition every published envelope is stamped with.
     """
 
     @property
-    def interface(self) -> PublicationInterface: ...
+    def representation(self) -> ResultRepresentation: ...
 
     @property
     def roots_of(self) -> RootsOf[Origin]: ...

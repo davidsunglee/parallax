@@ -55,7 +55,7 @@ from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle import PublicationInterface, ReadInterface
+from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -339,9 +339,9 @@ class _TxnAttemptBase:
         return self._read.model.meta
 
     def open_stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> StreamActivity:
-        return self._activity.stream(target, interface, batch_size)
+        return self._activity.stream(target, purpose, batch_size)
 
     def release(self, failure: BaseException | None, /) -> None:
         """Nothing: participating work never checked anything out.
@@ -360,7 +360,7 @@ class _TxnAttemptBase:
     def eager[T](
         self,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: ResultRepresentation,
         body: Callable[[ReadActivity, ReadInputs], T],
         /,
     ) -> T:
@@ -371,15 +371,15 @@ class _TxnAttemptBase:
         SIBLING of the read under the same attempt rather than a scope
         containing it (`m-execution-lifecycle`).
         """
-        return self._admit_read(lambda: self._inside_read(target, interface, body))
+        return self._admit_read(lambda: self._inside_read(target, purpose, body))
 
     def _inside_read[T](
         self,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: ResultRepresentation,
         body: Callable[[ReadActivity, ReadInputs], T],
     ) -> T:
-        with self._activity.read(target, interface) as read:
+        with self._activity.read(target, purpose) as read:
             return body(read, self._inputs)
 
     def paged[T](
@@ -694,7 +694,7 @@ class TxnAttempt(_TxnAttemptBase):
             )
         if isinstance(request, CoverageReadRequest):
             return self._consume(self._coverage_read(request), self._flush, request, consumer)
-        with self._activity.read(request.entity.identity, "rows") as read:
+        with self._activity.read(request.entity.identity, "row-acquisition") as read:
             return self._consume(self._target_read(request), read, request, consumer)
 
     def _completed_rows[Result](

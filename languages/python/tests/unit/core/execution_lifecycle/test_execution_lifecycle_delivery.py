@@ -446,9 +446,7 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
     # count its body knows, and which count that is decides the outcome.
     recorder = RecordingLifecycleProvider()
     account = EntityIdentity(None, "Account")
-    root = open_read_root(
-        _installed(recorder), target=account, interface="typed", edition="edition"
-    )
+    root = open_read_root(_installed(recorder), target=account, purpose="typed", edition="edition")
     statement = LoweredStatement("update account set balance = ?", (5,))
     with root as read, read.database_call(statement, "write", account) as call:
         call.write_completed(3)
@@ -463,7 +461,7 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
 def test_a_row_producing_write_reports_the_rows_it_returned_not_a_count() -> None:
     recorder = RecordingLifecycleProvider()
     ledger = EntityIdentity(None, "Ledger")
-    root = open_read_root(_installed(recorder), target=ledger, interface="typed", edition="edition")
+    root = open_read_root(_installed(recorder), target=ledger, purpose="typed", edition="edition")
     statement = LoweredStatement("insert into ledger(id) select 1 returning id")
     with root as read, read.database_call(statement, "write", ledger) as call:
         call.write_rows_completed([(8,)])

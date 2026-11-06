@@ -28,9 +28,8 @@ from parallax.core.execution_lifecycle import (
     DirectFailure,
     ExecutionEvent,
     LifecycleLogDetail,
-    PublicationInterface,
-    ReadInterface,
     ReadStarted,
+    ResultRepresentation,
     RootExecution,
     RootExecutionKind,
     TransactionAttemptFinished,
@@ -41,8 +40,7 @@ _RUNTIME_SPELLING: Final = re.compile(r"[a-z]+(?:_[a-z]+)*\Z")
 
 _FAMILIES: Final[dict[str, tuple[Any, tuple[str, ...]]]] = {
     "RootExecutionKind": (RootExecutionKind, ("read", "transaction_invocation", "stream")),
-    "ReadInterface": (ReadInterface, ("typed", "wire", "rows")),
-    "PublicationInterface": (PublicationInterface, ("typed", "wire")),
+    "ResultRepresentation": (ResultRepresentation, ("typed", "wire")),
     "DatabaseCallKind": (DatabaseCallKind, ("read", "write")),
     "AttemptPhase": (AttemptPhase, ("callback", "pre_commit", "commit")),
     "LifecycleLogDetail": (LifecycleLogDetail, ("safe", "diagnostic")),
@@ -105,14 +103,19 @@ def test_the_projection_answers_every_root_kind_with_the_token_the_corpus_author
     assert [root["kind"] for root in roots] == ["read", "transaction-invocation", "stream"]
 
 
-def test_the_projection_answers_every_read_interface() -> None:
+def test_the_projection_answers_every_read_purpose() -> None:
+    purposes = (*_members("ResultRepresentation"), "row-acquisition")
     events = _transitions(
         *(
-            ReadStarted(_EXECUTION.id, index, index, None, "Account", interface, None)
-            for index, interface in enumerate(_members("ReadInterface"), start=1)
+            ReadStarted(_EXECUTION.id, index, index, None, "Account", purpose, None)
+            for index, purpose in enumerate(purposes, start=1)
         )
     )
-    assert [event["readStarted"]["interface"] for event in events] == ["typed", "wire", "rows"]
+    assert [event["readStarted"]["purpose"] for event in events] == [
+        "typed",
+        "wire",
+        "row-acquisition",
+    ]
 
 
 def test_the_projection_answers_every_database_call_kind() -> None:

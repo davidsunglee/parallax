@@ -312,7 +312,7 @@ def test_an_empty_buffer_opens_no_flush_at_all() -> None:
     ]
 
 
-def test_a_wire_read_is_a_child_of_the_attempt_under_the_wire_interface() -> None:
+def test_a_wire_read_is_a_child_of_the_attempt_for_the_wire_purpose() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
     query = deserialize_query(
@@ -324,7 +324,7 @@ def test_a_wire_read_is_a_child_of_the_attempt_under_the_wire_interface() -> Non
     root = _only(recorder)
     read = root.events[4]
     assert isinstance(read, ReadStarted)
-    assert (read.parent_activity_id, read.interface) == (2, "wire")
+    assert (read.parent_activity_id, read.purpose) == (2, "wire")
 
 
 # --------------------------------------------------------------------------- #

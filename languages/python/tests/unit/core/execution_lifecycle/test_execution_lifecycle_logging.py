@@ -209,7 +209,7 @@ def test_a_started_transition_carries_its_correlation_and_its_own_payload(
         "parent_activity": None,
         "transition": "readStarted",
         "target": "Account",
-        "interface": "typed",
+        "purpose": "typed",
         "edition": "edition",
     }
 
@@ -404,13 +404,13 @@ def test_every_runtime_classification_is_logged_in_its_own_python_spelling(
     assert kinds == {"read", "transaction_invocation", "stream"}
 
     assert _logged(
-        "interface",
+        "purpose",
         [
             ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", None),
             ReadStarted(EXECUTION.id, 2, 2, 1, "Account", "wire", None),
-            ReadStarted(EXECUTION.id, 3, 3, 1, "Account", "rows", None),
+            ReadStarted(EXECUTION.id, 3, 3, 1, "Account", "row-acquisition", None),
         ],
-    ) == {"typed", "wire", "rows"}
+    ) == {"typed", "wire", "row-acquisition"}
 
     assert _logged(
         "call_kind",
@@ -812,7 +812,7 @@ def test_the_stream_vocabulary_logs_like_every_other_transition(
         execution=STREAM,
     )
     assert records[0].fields["target"] == "Account"
-    assert records[0].fields["interface"] == "wire"
+    assert records[0].fields["purpose"] == "wire"
     assert records[0].fields["batch_size"] == 500
     assert records[0].fields["edition"] == "edition"
     assert [record.fields.get("outcome") for record in records[2:]] == [

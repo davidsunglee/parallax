@@ -100,7 +100,7 @@ def _nothing(sample: Callable[[], None]) -> None:
 
 def _unobserved_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(None, target=TARGET, interface="typed", edition=EDITION) as read,
+        open_read_root(None, target=TARGET, purpose="typed", edition=EDITION) as read,
         read.database_call(STATEMENT, "read", TARGET) as call,
     ):
         call.read_completed(ROWS)
@@ -109,7 +109,7 @@ def _unobserved_read(sample: Callable[[], None]) -> None:
 
 def _declined_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(DECLINED, target=TARGET, interface="typed", edition=EDITION) as read,
+        open_read_root(DECLINED, target=TARGET, purpose="typed", edition=EDITION) as read,
         read.database_call(STATEMENT, "read", TARGET) as call,
     ):
         call.read_completed(ROWS)
@@ -280,8 +280,8 @@ def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
     # "After decline it has the same event-, counter-, diagnostic-, and
     # clock-free path": the opening is the whole difference, so what a declined
     # root opens is costed exactly as the default path's scopes are.
-    declined = open_read_root(DECLINED, target=TARGET, interface="typed", edition=EDITION)
-    default = open_read_root(None, target=TARGET, interface="typed", edition=EDITION)
+    declined = open_read_root(DECLINED, target=TARGET, purpose="typed", edition=EDITION)
+    default = open_read_root(None, target=TARGET, purpose="typed", edition=EDITION)
     tracemalloc.start()
     try:
         default_kept, default_transient = allocation(_scopes_under(default))

@@ -51,8 +51,8 @@ from parallax.core.execution_lifecycle import (
     ReadCompleted,
     ReadFailed,
     ReadFinished,
-    ReadInterface,
     ReadStarted,
+    ResultRepresentation,
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle._activity import (
@@ -154,7 +154,7 @@ def test_a_typed_find_brackets_its_one_database_call() -> None:
     assert {event.execution_id for event in root.events} == {root.execution.id}
 
     assert isinstance(started, ReadStarted)
-    assert (started.target, started.interface) == ("parallax.compatibility.Account", "typed")
+    assert (started.target, started.purpose) == ("parallax.compatibility.Account", "typed")
     assert isinstance(call_started, DatabaseCallStarted)
     assert (call_started.target, call_started.kind) == ("parallax.compatibility.Account", "read")
     assert isinstance(call_finished, DatabaseCallFinished)
@@ -351,7 +351,7 @@ def test_a_failed_sibling_pipeline_balances_every_open_call() -> None:
     assert caused.cause_activity_id == 5
 
 
-def test_the_wire_lane_names_its_own_interface() -> None:
+def test_the_wire_lane_names_its_own_purpose() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     db = _db(port, recorder)
@@ -359,7 +359,7 @@ def test_the_wire_lane_names_its_own_interface() -> None:
     (root,) = recorder.roots
     started = root.events[0]
     assert isinstance(started, ReadStarted)
-    assert started.interface == "wire"
+    assert started.purpose == "wire"
 
 
 def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
@@ -542,7 +542,7 @@ def test_the_default_path_never_spells_the_target_it_is_handed() -> None:
     probe = _Probe()
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=probe, interface="typed", edition="edition") as read,
+        open_read_root(None, target=probe, purpose="typed", edition="edition") as read,
         read.database_call(statement, "read", probe) as call,
     ):
         call.read_completed(())
@@ -564,7 +564,7 @@ def test_the_default_path_never_sizes_the_rows_it_is_handed() -> None:
     rows = _Rows()
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=ACCOUNT_TARGET, interface="typed", edition="edition") as read,
+        open_read_root(None, target=ACCOUNT_TARGET, purpose="typed", edition="edition") as read,
         read.database_call(statement, "read", ACCOUNT_TARGET) as call,
     ):
         call.read_completed(rows)
@@ -580,7 +580,7 @@ def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
     # methods answer the function itself, so no scope entry binds anything.
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=ACCOUNT_TARGET, interface="typed", edition="edition") as read,
+        open_read_root(None, target=ACCOUNT_TARGET, purpose="typed", edition="edition") as read,
         read.database_call(statement, "read", ACCOUNT_TARGET) as call,
     ):
         bound = [
@@ -672,23 +672,23 @@ class _ReturningPort(ScriptedAdapter):
 
 def _recorded_openings(
     monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[ActivityTarget, ReadInterface]]:
+) -> list[tuple[ActivityTarget, ResultRepresentation]]:
     """What every root opening is HANDED, in the order the composition opens them.
 
     An activity is what the opener answers, so no stand-in — inert, borrowing, or
-    live — ever sees the root's own target and interface. Only the opening does.
+    live — ever sees the root's own target and purpose. Only the opening does.
     """
-    recorded: list[tuple[ActivityTarget, ReadInterface]] = []
+    recorded: list[tuple[ActivityTarget, ResultRepresentation]] = []
 
     def recording(
         installed: InstalledLifecycle | None,
         *,
         target: ActivityTarget,
-        interface: ReadInterface,
+        purpose: ResultRepresentation,
         edition: str,
     ) -> ReadActivity:
-        recorded.append((target, interface))
-        return open_read_root(installed, target=target, interface=interface, edition=edition)
+        recorded.append((target, purpose))
+        return open_read_root(installed, target=target, purpose=purpose, edition=edition)
 
     monkeypatch.setattr(read_pipeline_module, "open_read_root", recording)
     return recorded
@@ -734,11 +734,11 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     ).result()
 
     (compiled,) = compilations
-    (root_target, interface), *further_openings = openings
+    (root_target, purpose), *further_openings = openings
     (statement, kind, call_target), *further_calls = borrowing.calls
     assert further_openings == []
     assert further_calls == []
-    assert (interface, kind) == ("typed", "read")
+    assert (purpose, kind) == ("typed", "read")
     assert root_target is compiled.target
     assert call_target is compiled.target
     assert statement is compiled.statement

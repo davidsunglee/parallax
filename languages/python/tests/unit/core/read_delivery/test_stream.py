@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import read_planning
-from parallax.core.execution_lifecycle import PublicationInterface
+from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -94,9 +94,9 @@ class _Read:
         return "edition"
 
     def open_stream(
-        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
+        self, target: ActivityTarget, purpose: ResultRepresentation, batch_size: int, /
     ) -> StreamActivity:
-        del target, interface, batch_size
+        del target, purpose, batch_size
         return self.stream
 
     def release(self, failure: BaseException | None, /) -> None:
@@ -156,7 +156,7 @@ class _Publication:
         self.released = 0
 
     @property
-    def interface(self) -> PublicationInterface:
+    def representation(self) -> ResultRepresentation:
         return "typed"
 
     @property

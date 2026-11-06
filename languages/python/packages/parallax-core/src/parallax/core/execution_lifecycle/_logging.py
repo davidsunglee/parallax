@@ -73,7 +73,7 @@ type LifecycleLogDetail = Literal["safe", "diagnostic"]
 """How much of a failure a record carries.
 
 ``safe`` carries correlation, the transition and its outcome, the entity and
-interface, the counters, the duration, the failure's type and stable code, the
+purpose, the counters, the duration, the failure's type and stable code, the
 database category and native code, and the truncation flags. ``diagnostic`` adds
 the bounded message and rendered stack. Neither carries SQL or binds.
 """
@@ -263,7 +263,7 @@ def _acquisition_started_fields(
 def _read_started_fields(event: ReadStarted, _detail: LifecycleLogDetail) -> dict[str, object]:
     """A Read's own payload; ``edition`` is present exactly where the read
     adopted one, so its presence says the read was a root."""
-    fields: dict[str, object] = {"target": event.target, "interface": event.interface}
+    fields: dict[str, object] = {"target": event.target, "purpose": event.purpose}
     if event.edition is not None:
         fields["edition"] = event.edition
     return fields
@@ -325,7 +325,7 @@ def _attempt_started_fields(
 def _stream_started_fields(event: StreamStarted, _detail: LifecycleLogDetail) -> dict[str, object]:
     fields: dict[str, object] = {
         "target": event.target,
-        "interface": event.interface,
+        "purpose": event.purpose,
         "batch_size": event.batch_size,
     }
     if event.edition is not None:

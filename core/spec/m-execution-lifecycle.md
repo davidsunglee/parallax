@@ -183,13 +183,13 @@ uses `None` for both.
 The read transitions are:
 
 ```text
-ReadStarted(target, interface, edition)
+ReadStarted(target, purpose, edition)
 ReadFinished(ReadCompleted | ReadFailed(failure))
 ```
 
-`interface` is `typed`, `wire`, or `rows`. `typed` and `wire` name the
-representation a read publishes; `rows` names the Read of a write's target
-acquisition, which publishes neither: its rows are recorded for the write
+`purpose` is `typed`, `wire`, or `row-acquisition`. `typed` and `wire` name the
+representation a read publishes; `row-acquisition` names the Read of a write's
+target acquisition, which publishes neither: its rows are recorded for the write
 (`m-unit-work` *Row acquisition*). A Read starts after public
 preflight and any read-dependency Flush. It spans planning, lowering, all
 of its Database Calls, conversion, materialization, and publication until the
@@ -421,14 +421,14 @@ the current Transaction Attempt. Construction alone emits nothing. The stream
 starts only after successful context entry and finishes exactly once as:
 
 ```text
-StreamStarted(target, interface, batchSize, edition)
+StreamStarted(target, purpose, batchSize, edition)
 StreamFinished(
     StreamExhausted
   | StreamClosedEarly
   | StreamFailed(failure))
 ```
 
-`interface` is `typed` or `wire`, the representation the stream publishes.
+`purpose` is `typed` or `wire`, the representation the stream publishes.
 `batchSize` is positive. `edition` is the nonempty opaque token of the Model
 Edition a **standalone** stream adopted at context entry, retained through
 every page, and is present exactly where the stream is the root activity; a
