@@ -277,6 +277,8 @@ jobs:
           # The tree python-check-db tests: python-coverage-diff reads only data
           # measured on the tree it grades.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The cost report's tests resolve commits behind HEAD.
+          fetch-depth: 0
       - uses: extractions/setup-just@v4
       - uses: astral-sh/setup-uv@v7
         with:
