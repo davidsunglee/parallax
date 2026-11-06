@@ -874,7 +874,7 @@ placement-free spelling `m-read-planning-012` already witnesses).
   unannotated framework bind outside every typed span, with its canonical
   observation supplied by a sparse override before the adapter maps it to native
   Postgres infinity or MariaDB's max sentinel. Concrete driver adaptation occurs
-  below `LoweredStatement` and cannot alter a managed value retained for
+  below the lowered statement and cannot alter a managed value retained for
   metadata-driven canonical Wire projection. A future dialect obeys the same
   boundary.
 - **Document-read parsing.** The adapter supplies one SQL boolean presence cell

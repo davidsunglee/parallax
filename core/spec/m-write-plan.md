@@ -9,7 +9,7 @@ the dependency graph it depends on `m-core`, `m-metamodel`, `m-predicate`,
 buffers, plans, executes, lowers, or places a write. `m-unit-work` plans buffered
 writes into these steps and carries each observation to the write it settles;
 `m-write-payload` prepares what each write persists; `m-sql` lowers the steps with
-those prepared values (`m-sql` *Private compiler inputs*). None depends on another
+those prepared values (`m-sql` *Compilation boundary*). None depends on another
 for it.
 
 ## Planned Steps
