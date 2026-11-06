@@ -62,6 +62,12 @@ python := "languages/python"
 # the data file it writes.
 python_coverage := "reports/coverage"
 
+# What a class names its coverage data: the tree under test, commit and uncommitted
+# edits alike, read before the tests start. `python-coverage-diff` reads only the
+# data bearing the name of the tree it grades, so what another tree left is never
+# evidence.
+python_tree_id := "{ git rev-parse 'HEAD^{tree}'; git diff HEAD; } | git hash-object --stdin"
+
 # The environment every infrastructure command runs in: no AWS credential, profile,
 # or role can reach it, and the instance metadata service is never asked, so no
 # verification of the infrastructure can authenticate to an account or look
@@ -91,9 +97,9 @@ default:
 # its line at all, which the contract permits of a non-blocking command and which
 # says nothing about any gate above it.
 #
-# `python-coverage-diff` reads what both lanes measured, so it follows them.
+# `python-check-coverage` reads what both lanes measured, so it follows them.
 [doc("Merge gate: every blocking check a merge waits on.")]
-check: check-gates check-lanes python-coverage-diff report-check-summary
+check: check-gates check-lanes python-check-coverage report-check-summary
 
 [private]
 [parallel]
@@ -411,10 +417,10 @@ infra-format:
 # ===========================================================================
 
 [doc("Every blocking check over the Python implementation.")]
-python-check: python-check-dbfree python-check-db python-coverage-diff python-check-cost python-check-cloud
+python-check: python-check-dbfree python-check-db python-check-coverage python-check-cost python-check-cloud
 
 [doc("Every Python check that needs no live database.")]
-python-check-dbfree: python-check-static python-test-dbfree
+python-check-dbfree: python-check-static python-check-imports python-test-dbfree
 
 [doc("Every Python check that needs a live database (Docker).")]
 python-check-db shard="1/1": (python-test-db shard)
@@ -426,12 +432,15 @@ python-check-cost shard="1/1": python-check-instrument-access python-check-evide
 python-check-cloud: python-test-cloud
 
 [doc("Independent Python source, packaging, and dependency validation.")]
-python-check-static: python-format-check python-lint python-typecheck python-check-imports python-check-database-access python-check-cloud-access python-check-dead-code python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
+python-check-static: python-format-check python-lint python-typecheck python-check-database-access python-check-cloud-access python-check-dead-code python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
+
+[doc("Changed-line coverage and the source boundaries its exemptions require.")]
+python-check-coverage: python-check-imports python-coverage-diff
 
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]
 python-test-dbfree:
-    cd {{python}} && COVERAGE_FILE={{python_coverage}}/dbfree/data uv run pytest -m dbfree -n auto --cov --cov-branch --cov-report=term-missing --cov-fail-under=95
+    cd {{python}} && rm -rf {{python_coverage}}/dbfree && COVERAGE_FILE={{python_coverage}}/dbfree/$({{python_tree_id}}) uv run pytest -m dbfree -n auto --cov --cov-branch --cov-report=term-missing --cov-fail-under=95
 
 # A fixed worker count rather than one per core: each worker provisions a
 # Postgres container of its own, so what bounds the count is containers a host
@@ -444,7 +453,7 @@ python-test-dbfree:
 [metadata("runtime:slow", "scheduling:db")]
 [doc("Every Python test whose fixture closure reaches a database (Testcontainers; Docker), plus branch coverage.")]
 python-test-db shard="1/1":
-    cd {{python}} && COVERAGE_FILE={{python_coverage}}/db/data PYTEST_ADDOPTS="--cov --cov-branch --cov-report= ${PYTEST_ADDOPTS:-}" uv run pytest -m db -n 4 --dist loadgroup --db-shard {{shard}}
+    cd {{python}} && rm -rf {{python_coverage}}/db && COVERAGE_FILE={{python_coverage}}/db/$({{python_tree_id}}) PYTEST_ADDOPTS="--cov --cov-branch --cov-report= ${PYTEST_ADDOPTS:-}" uv run pytest -m db -n 4 --dist loadgroup --db-shard {{shard}}
 
 # No coverage here. Every reading is taken in a child interpreter the parent does
 # not trace, so what this selects contributes nothing to a coverage report; the
@@ -585,20 +594,20 @@ python-report-cost:
 # Reads the data the class commands left rather than depending on them: it spans
 # two classes, so no class aggregate can hold it, and CI's classes run as other
 # jobs, whose data it downloads into the same layout. Run alone it grades the
-# last run. A class that left no data costs its lines their coverage, so a missing
-# input fails the gate rather than passing it.
+# last run of this very tree. A class that left no data for this tree costs its
+# lines their coverage, and no class having left any leaves nothing to combine, so
+# a missing input fails the gate rather than passing it.
 #
-# The prerequisite is a soundness condition, not merely a file dependency.
+# Both prerequisites are soundness conditions, not merely file dependencies.
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
 # whatever was tracked.
 # The Cython sources are the one declared exemption, named in the configuration
-# this reads, and `python-check-native-sources`, which `python-check-imports`
-# runs, is what keeps that list exact.
+# this reads, and `python-check-native-sources` is what keeps that list exact.
 [metadata("runtime:fast")]
 [doc("Every changed product line is covered by a database-free or database test.")]
-python-coverage-diff: python-check-untracked-sources
-    cd {{python}} && uv run coverage combine --keep --data-file={{python_coverage}}/merged {{python_coverage}}/*/data
+python-coverage-diff: python-check-untracked-sources python-check-native-sources
+    cd {{python}} && uv run coverage combine --keep --data-file={{python_coverage}}/merged {{python_coverage}}/*/$({{python_tree_id}})
     cd {{python}} && uv run coverage xml --data-file={{python_coverage}}/merged -o coverage.xml
     cd {{python}} && uv run diff-cover coverage.xml --compare-branch origin/main --fail-under 100 --config-file pyproject.toml
 
