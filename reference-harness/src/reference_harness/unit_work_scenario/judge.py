@@ -651,7 +651,7 @@ def _settled_observed_row(
 
 def _origin_variant_columns(case: Case, origin: _SettledOn) -> tuple[str, ...]:
     """The fields of *origin*'s observed rows that state a row's variant SPELLING, in
-    precedence order — empty when that read states no variant at all.
+    precedence order — empty when that read is not discriminated.
 
     Only a read whose queried position is ABSTRACT is discriminated: it resolves over
     more than one concrete subtype, so `m-sql` gives its result a variant tag —
@@ -698,9 +698,9 @@ def _row_is_variant_of(
     table carrying that row's own ``tagValue``, so it says the same thing wherever it
     appears.
 
-    A row stating no variant answers for its key alone — a concrete-target read
-    projects no discriminator, because every row it returns is already the queried
-    subtype's.
+    A row of a read that is not discriminated answers for its key alone — a
+    concrete-target read projects no discriminator, because every row it returns is
+    already the queried subtype's.
     """
     discriminator = tag(entity)
     if discriminator is not None and discriminator[0] in row:
