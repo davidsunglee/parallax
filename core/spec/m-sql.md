@@ -689,7 +689,7 @@ family with one effective concrete — and either
   `from <= ? and to > ?`.
 
 Strict equality matches no `NULL`, so a nullable unique Column qualifies. The
-perspective is the one navigation closed onto the hop (`m-navigate`), not the
+perspective is the one propagated to the hop (`m-navigate`), not the
 read's own temporal selection. Declared cardinality, an authored field condition, and
 operand-local subtype selection prove nothing, and one concrete table's unique key
 proves nothing about another's rows. The second proof rests on the full-history

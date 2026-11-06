@@ -127,11 +127,8 @@ from broad relationship fields. A temporal node's end members read as
 [declared](declarations.md#classes-and-names): the instant that closed the
 interval, or `TemporalBound.INFINITY` while that axis is current.
 
-`edge_of` derives a temporal node's milestone `Edge` on first inspection, and a
-node shares that answer with every edit of it. Concurrent first inspections
-through any of them may each derive and retain an equal `Edge`; once every first
-inspection has returned, later inspections through any of them return one `Edge`
-object.
+`edge_of` answers a temporal node's milestone `Edge`. The answer is stable: a node
+and every edit of it answer equal `Edge` values, however often they are inspected.
 
 The envelope is not iterable, indexable, or sized, and exposes no lazy behavior.
 `result()` requires exactly one root; `result_or_none()` permits zero or one;

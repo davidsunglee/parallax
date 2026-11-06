@@ -22,25 +22,23 @@ Write Planner.
 Execution decides the conditions an operation runs under — the authority, the
 adopted model, the resolved options, the activity, the connection, and the
 transaction — while read delivery and the unit of work carry the operation out
-under them. It names no lifecycle: a lifecycle supplies the Publication its
-reads publish through (`m-read-delivery`) and the transaction surface it hands
-to an application callback, and turns its values into write instructions before
-they reach the unit of work.
+under them. It does not depend on snapshot publication (`m-snapshot-read`): a
+lifecycle supplies the Publication its reads publish through (`m-read-delivery`)
+and the transaction surface it hands to an application callback, and turns its
+values into write instructions before they reach the unit of work.
 
 ## Database Root
 
 A **Database Root** is the configured owner of one runtime (`m-db-port`). It
 owns that runtime, the installed Execution Lifecycle Provider
-(`m-execution-lifecycle`), the clock a transaction instant is read from, the
-Serving Model it serves, the reusable read-plan cache read delivery plans
-through, and one transaction runner — each exactly once. Every Execution Scope
-derived from the root shares those resources; none is rebuilt per scope or per
-attempt. Closing the root closes its runtime and the registrations it owns, and
-a scope derived from a closed root executes nothing.
+(`m-execution-lifecycle`), the clock a transaction instant is read from, and the
+Serving Model it serves. Every Execution Scope derived from the root shares them.
+Closing the root closes its runtime and the registrations it owns, and a scope
+derived from a closed root executes nothing.
 
-A root exposes authority selection and option derivation, never a modeled read,
-stream, or transaction of its own: modeled work is invoked through an Execution
-Scope (`m-execution-authority` *Scope creation and use*).
+A root exposes authority selection and option and read-policy derivation, never a
+modeled read, stream, or transaction of its own: modeled work is invoked through
+an Execution Scope (`m-execution-authority` *Scope creation and use*).
 
 ### Options a root is configured with
 
@@ -94,10 +92,10 @@ rather than among them: it is neither a transaction default nor something a join
 compares. A root and every scope carry one **read policy** naming how new read
 execution requests a Route (`m-db-port`): `writer-only`, `reader-only`,
 or `reader-preferred`. A root connected without one carries `reader-only` where
-its runtime declares a reader and `writer-only` otherwise. Deriving a root alias
-or a scope with a different policy composes with authority selection and
-option derivation in any order, preserves captured authority and the option
-record, and acquires nothing. A policy naming a route the runtime does not
+its runtime declares a reader and `writer-only` otherwise. Deriving a different
+policy from a root or a scope composes with authority selection and option
+derivation in any order, preserves captured authority and the option record, and
+acquires nothing. A policy naming a route the runtime does not
 declare is refused where it is named — at connection or derivation, before any
 acquisition — because no acquisition could honor it; the runtime's declared
 routes are immutable, so that check needs no I/O.
@@ -133,25 +131,20 @@ any modeled statement of the acquisition begins (`m-db-port` *A preferred
 acquisition*), never moves an active transaction, and adds no retry rule: the
 retry classifier and its bound are unchanged.
 
-Each operation keeps one routing state for its whole life — one eager read,
-one stream across every page, one outer invocation across every retry. Once any
-acquisition it made reports a fallback to the writer (`m-db-port`), every later
-acquisition of that operation requests `writer-only`: a later page or a
-permitted retry stays where the operation was served rather than returning to
-the route that just failed it, and each such retry still begins a new attempt
-and a new snapshot. An attempt's selection is the one it reports once its
-boundary has opened or failed, so a lease moved while its boundary was opening
-is recorded as having fallen back before the callback runs.
+Within one operation — one eager read, one stream across every page, one outer
+invocation across every retry — once any acquisition reports a fallback to the
+writer (`m-db-port`), every later acquisition requests `writer-only`: a later
+page or a permitted retry stays where the operation was served rather than
+returning to the route that just failed it, and each such retry still begins a
+new attempt and a new snapshot.
 
 ## Model Editions
 
 A **Model Selection** is a fully prepared, process-local, immutable selection of
 one accepted model under one **Model Edition**, an opaque nonempty token compared
 only for equality. Preparation completes every fallible derivation the model
-determines — member layouts, row facts, graph-construction facts, and the
-configured Write Planner with its write payload preparer — before the selection
-can be served, so no request
-path derives any of them. Preparation guarantees structural readiness, not
+determines before the selection can be served, so no such derivation fails on a
+request path. Preparation guarantees structural readiness, not
 schema readiness, valid stored data, or the success of a later operation.
 
 A root's **Serving Model** holds its current selection. Reading it returns that
@@ -167,7 +160,7 @@ Every execution **adopts** a selection once and keeps it to completion:
 - a standalone eager read adopts before it starts, and the whole result is
   served under that one selection;
 - a stream adopts at entry, and every page it reads and every root it publishes
-  stays on that edition, with no page-level interface introduced to say so;
+  stays on that edition;
 - each transaction attempt adopts before its physical boundary begins; a joining
   call inherits the attempt's selection and never renegotiates it, and a retry
   adopts afresh.
@@ -181,21 +174,17 @@ execution, fixed at adoption, is this contract's.
 
 ## Attempts
 
-An **Attempt** is the execution state of one physical transaction attempt. A
-**writable** attempt holds its unit of work, connection, adopted selection,
-attempt activity, resolved options, captured authority, and flush state; a
-**read-only** attempt holds the same less the unit of work and everything only a
-write needs. Every attempt has one **lifetime**: whether it still admits work,
-whether it is rollback-only, and the first failure that made it so. The lifetime
-is the one state the attempt's handles and streams, the calls joining it, its
+An **Attempt** is one physical transaction attempt of an invocation. A
+**writable** attempt has a unit of work; a **read-only** attempt has none. Every
+attempt has one **lifetime**: whether it still admits work, whether it is
+rollback-only, and the first failure that made it so. The lifetime is the one
+state the attempt's handles and streams, the calls joining it, its
 commit, and a writable attempt's unit of work all consult; a failure escaping a
-joined callback, and one escaping a writable flush, doom that same lifetime. The
-runtime constructs the attempt, wires every execution dependency its unit of
-work needs into it, and only then hands it to the lifecycle's transaction surface
-and the application callback — so neither can observe an Attempt whose unit of
-work is not ready. A retry constructs a fresh Attempt; a joining call reuses the
-active one, and the lifecycle surface the outer attempt was handed, rather than
-constructing another. The port owns the physical begin, commit, and rollback
+joined callback, and one escaping a writable flush, doom that same lifetime.
+Neither the lifecycle's transaction surface nor the application callback can
+observe an Attempt whose unit of work is not ready. A retry runs in a fresh
+Attempt; a joining call runs in the active one, under the lifecycle surface the
+outer attempt was handed. The port owns the physical begin, commit, and rollback
 (`m-db-port`), the lifetime owns rollback-only state, and a writable attempt's
 unit of work owns buffering and the pre-commit flush (`m-unit-work`).
 
@@ -250,21 +239,16 @@ only at entry. A standalone read leases a connection for its read, and a
 standalone stream for each page (`m-read-delivery` *The connection a delivery
 holds*); a read inside an Attempt runs on the Attempt's connection.
 
-Execution retains each eligible Page's state observations, so that a published
-value can later serve as a write source (`m-unit-work` *Write value provenance*).
-It records projections while the Page is converted and constructs the origins
-lazily once the Page is sealed, handing them to the Publication by reference
-and retaining no Page.
+Execution retains each eligible Page's state observations, and no Page, so that a
+published value can later serve as a write source (`m-unit-work` *Write value
+provenance*).
 
 ### Row acquisition
 
 A write that must read existing rows reads them through the unit of work's
-**row acquisition** port (`m-unit-work` *Row acquisition*), which execution
-implements once for every request kind: plan the entity's row read, execute it
-under the lock its request states, assemble its flat Page, and hand the unit of work's consumer the judged member
-rows and aligned raw documents while the Page's resources are still live.
-Execution settles the read afterwards whatever the consumer did — finished,
-stopped early, never started, or raised. The request kind decides the bracket:
+**row acquisition** port (`m-unit-work` *Row acquisition*). The read's resources
+are settled however the unit of work's use of the rows ends. The request kind
+decides the bracket:
 
 | Request | Bracket |
 |---|---|
@@ -274,7 +258,7 @@ stopped early, never started, or raised. The request kind decides the bracket:
 
 A row whose stored data is invalid is refused with the same judgement and
 refusal every other read uses (`m-read-delivery` *Invalid stored data*) before
-it contributes evidence. A retaining target read hands its consumer each row
+it contributes evidence. A retaining target read hands the unit of work each row
 with only what a read of the row alone judges judged, and its Value Object
 occurrences pending; a completion judges those occurrences, from the retained
 row alone, with the judgement and refusal the read would have applied to them.
@@ -285,19 +269,14 @@ The unit of work runs the Write Plan a flush finalizes Write Group by Write
 Group, binding every deferred settled write of a group before the group
 executes and completing every write of a group before a later group executes
 (`m-unit-work` *Write Groups complete before later work runs*). Execution
-implements the step-execution port: it runs each sequence of Planned Steps the
-unit of work hands it — one Write Group's steps, whether settlement planned the
-group or its deferred writes' ranges bound it — inside the Flush the unit of
-work opened for the flush. It lowers those Planned Steps
-through one shared path — the planner's payload preparer prepares what the
-statement about to run stores, and `m-sql` renders it — executes them through
-the port, and has the unit of work enforce each step's affected rows; for steps
-opening rows whose keys the database allocates, it answers those keys in step
-order. An execution returns once every step it was handed has succeeded, and
-holds nothing of them afterwards. Execution neither walks a plan's Write Groups
-nor interprets their settled writes' completions, so no later group's Planned
-Step is prepared or lowered before the earlier group completes, and a later
-step's lowering failure cannot overtake it. A shared coverage read for a later
+implements the step-execution port: it runs the Planned Steps of a Write Group
+inside the Flush the unit of work opened. It prepares what a statement stores
+when that statement is about to run, renders it through `m-sql`, executes it
+through the database port, and has the unit of work enforce each step's affected
+rows; for steps opening rows whose keys the database allocates, it answers those
+keys in step order. No later group's Planned Step is prepared or lowered before
+the earlier group completes, so a later step's lowering failure cannot overtake
+it. A shared coverage read for a later
 write of an acquisition span is row acquisition, not a step, and may run
 before an earlier group completes (`m-unit-work` *Shared coverage acquisition*). A failed execution completes
 no settled write, and the failure dooms the attempt.
@@ -335,16 +314,13 @@ guards, revisions, and removals, and Non-Temporal updates and deletes of one
 key that expect an exact count — is presented in one invocation instead of one
 call each; every other step, a multi-key or predicate-selected one included,
 and every step on a connection holding none, runs alone. Whether a step
-may join a run is decided from the step itself before its payload is demanded,
-including the bound on binds its statement promises to fit the dialect's limit;
-a statement exceeding that promise is a lowering failure. A run never crosses an
-insert or a Write Group, and an internal statement cap ends it before another
-step is even looked at. Before a run's first step is lowered, execution looks
-at the step after it, unprepared: where that step cannot join, or no step
-remains, the first would be its run's only one and runs alone, and the step
-looked at waits its turn. Looking at a step reads the sequence it was handed
-and cannot fail; only preparing or lowering a step can. The whole result is validated before any of it
-is interpreted, so a malformed one fails the invocation with the integrity error
+may join a run is decided from the step itself before its payload is demanded;
+a statement of a run that then exceeds the dialect's bind limit is a lowering
+failure. A run never crosses an insert or a Write Group, and an internal
+statement cap may end it. A step that could open a run but whose successor
+cannot join, or that has no successor, runs alone, and that successor is neither
+prepared nor lowered before the step is enforced. The whole result is validated
+before any of it is interpreted, so a malformed one fails the invocation with the integrity error
 ahead of any shortfall it reports. Confirmed outcomes are then enforced in
 original order against the exact steps they were lowered from: an earlier
 shortfall outranks a later statement failure or interruption, a statement
@@ -376,12 +352,11 @@ own Planned Step, and the statement is one ordinary Database Call. Whether an
 insert may join is decided from the step before its payload is demanded. Where
 the dialect has the array parameter cast form (`m-dialect`), the statement
 binds one array per Column however many inserts join, so no entry count or
-bind limit ends the run. Elsewhere, before another step is looked at, the
-statement must have room for one more row within the dialect's bind limit; at
-that capacity the statement runs before another step is looked at. Otherwise
-the run ends at the one step looked at that cannot join, which waits,
-unprepared, until the statement has run, or where the steps run out. A run
-never crosses a Write Group or a non-insert step, so no insert moves ahead of a
+bind limit ends the run. Elsewhere a run ends when its statement has no room for
+one more row within the dialect's bind limit. Otherwise it ends at the first
+step that cannot join, or where the steps run out. A step the run ended before
+is neither prepared nor lowered until the statement has run. A run never crosses
+a Write Group or a non-insert step, so no insert moves ahead of a
 non-insert step before it. A logical multi-entry insert, which batching formed
 by membership (`m-batch-write`), runs alone and is never joined; where the
 dialect has the array parameter cast form it is never split either, and

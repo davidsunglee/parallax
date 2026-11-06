@@ -2,10 +2,11 @@
 
 A rejected structured value crosses four seams on its way to a caller — the
 codec's finding, conversion's issue input, the public issue, and the refusal that
-reports it — and it is deliberately retained at the end of them. `m-snapshot-read`
-*What a delivery costs* admits it into the Parallax-owned working set on one
-condition: exactly ONE frozen copy of it survives, shared onward by reference,
-so what a caller holds is one copy of the stored value rather than one per seam.
+reports it — and it is deliberately retained at the end of them. `m-read-delivery`
+*Evidence a public issue carries* has every report share one retained value, and
+this suite grades Python's form of that: exactly ONE frozen copy of it survives,
+shared onward by reference, so what a caller holds is one copy of the stored value
+rather than one per seam.
 
 That is a claim about bytes, and only bytes can make it. Identity assertions
 (`test_snapshot_classification.py`) prove the object a caller reads IS the object

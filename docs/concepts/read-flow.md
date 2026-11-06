@@ -83,9 +83,8 @@ over the keys the level above gathered, so a read issues at most `1 + L` stateme
 lowers each level for the dialect, and this is where the Storage Layout, the
 inheritance mapping and each level's read lock are resolved.
 
-Planning is reusable: a [Database Root](../../core/spec/m-execution.md#database-root)
-owns one read-plan cache that every read through its scopes plans through
-([`m-read-delivery`](../../core/spec/m-read-delivery.md)).
+Whether planning is reused between reads is each language's decision; reuse never
+changes what a read answers.
 
 ### Judged Page
 

@@ -115,7 +115,9 @@ overrides.
   transaction ends, so a concurrent transaction cannot mutate the row out from
   under a read-then-write. An observation-requiring write is `Ungated`: the lock
   its required observation took is what makes it correct (`m-unit-work` *What
-  licenses a Locking write*).
+  licenses a Locking write*). A target write has no source, so its own
+  acquisition takes that lock; a live read holding it may stand in, which
+  `m-unit-work` *Target writes* permits and does not require.
 - **Optimistic.** A participating object find takes no lock. An
   observation-requiring write gates on the version or `txStart` its observation
   carries, so the database detects an intervening write.

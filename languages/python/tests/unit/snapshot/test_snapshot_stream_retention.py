@@ -1,12 +1,12 @@
 """The streamed read's memory bound, measured (`cost` class).
 
 A streamed read exists to make the Parallax-owned working set independent of the
-total number of roots. `m-snapshot-read` *What a delivery costs* states the bound
-in three layers — one sealed Page at `O(P_B)`, the current Root View's judgment
-and classification at `O(G_max)`, and its construction or Wire unwind at
-`O(G_max)` — and names three exclusions. This suite is the instrument for those
-layers — the first apart, the second and third together as a pair, for the reason
-below — and for two of the three exclusions, in both namespaces.
+total number of roots. `m-read-delivery` *What a delivery costs* states the bound
+and names three exclusions. This suite prices the bound in three layers — one
+sealed Page at `O(P_B)`, the current Root View's judgment and classification at
+`O(G_max)`, and its construction or Wire unwind at `O(G_max)` — the first apart,
+the second and third together as a pair, for the reason below, and is the
+instrument for two of the three exclusions, in both namespaces.
 
 **The three layers, and how each is priced.** The Page and the published
 root are both alive at a point a census can be taken from outside the delivery,

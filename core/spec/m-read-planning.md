@@ -16,8 +16,8 @@ The module depends on `m-object-query` (the validated query and Includes clause)
 produced at ingress), `m-relationship` (compiled relationship directions),
 `m-navigate` (temporal
 visibility and per-hop propagation), and `m-inheritance` (effective positions).
-SQL emission belongs to `m-sql`; execution, read-plan caching, paging execution,
-and Page assembly belong to `m-read-delivery`. Planning performs no database work
+SQL emission belongs to `m-sql`; execution, paging execution, and Page assembly
+belong to `m-read-delivery`. Planning performs no database work
 and publishes no lifecycle objects. Snapshot publication (`m-snapshot-read`)
 consumes its plans through read delivery.
 
@@ -77,38 +77,6 @@ plan. Paths whose retained branches share a segment prefix fetch that shared hop
 A back-reference level ends its path. A path continuing past one, such as
 `Order.items`, `OrderItem.order`, `Order.items`, **MUST** be rejected before any
 SQL with `deep-fetch-past-back-reference` (`m-case-format`).
-
-### A level names its correlation members, not only their columns
-
-Steps 1 and 4 correlate on an **Attribute**: the owner-side attribute the
-relationship's join reads a key from, and — on a level that issues a child query
-— the child-side attribute that key is matched against. A planned level **MUST**
-carry both as modeled member identities, addressed at the positions the join
-names them at, **alongside** whatever physical column each maps to.
-
-Step 4 attaches on a **relationship**, and the same rule applies to it: a planned
-level **MUST** carry the direction it attaches under as a modeled relationship
-identity, alongside the attach key — the relationship name, or the derived
-narrowed-view key of a narrowed polymorphic hop. The attach key stays, because it
-is the key the graph presents the view under; what the identity adds is again the
-inverse direction, so a consumer attaching the level names the declared direction
-instead of matching the derived key back against the owner's relationship names.
-
-The physical column stays: a level's own child statement is emitted against
-columns, and the keys it gathers are column values. What the member identity adds
-is the *inverse* direction. A consumer that has already turned a parent row into
-its own materialized form holds that form keyed by member, not by column, so
-without the identity it would have to invert a physical column back to a member
-to gather the level's keys — re-deriving a mapping the model already fixes, in a
-layer that otherwise never needs to know one. Carrying the identity is what lets
-a result surface **stop reaching for a row once that row has been converted**,
-and it is what keeps column-to-member inversion confined to whichever layer
-legitimately owns it.
-
-The identities are a property of the planned level alone. A level's emitted
-statement, its gathered key set, and its dedup identity are fixed by the hop's
-columns and its authored narrow, so each stays exactly what the rules above
-state whether or not a consumer reads the identities.
 
 ### The 1 → N → N proof
 

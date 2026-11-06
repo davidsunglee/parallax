@@ -38,20 +38,12 @@ A type mismatch is reported only when both endpoints resolve. Its location is th
 ## Validation-time join-endpoint projection
 
 Rule Sets run in unspecified order over one Candidate Metamodel, so a Rule Set
-that needs relationship facts cannot consume the Relationship Facet. This module
-exposes a pure, total, issue-free projection of the bounded fact those Rule Sets
-need:
-
-```text
-joinEndpoints(CandidateMetamodel) -> immutable set<AttributeIdentity>
-```
-
-It returns exactly the join endpoint Attributes of **defining** Relationship
-declarations that resolve locally: for each defining declaration whose
+that needs relationship facts cannot consume the Relationship Facet. The join
+endpoints such a Rule Set needs are, for each **defining** declaration whose
 `join.source` names a local Attribute of the declaring Entity and whose
 `join.target` names an Attribute of the Entity its reference establishes, both
-Identities. It emits no Issue, returns no partial or provisional value, and
-never rejects, so a consumer's result does not depend on when it asks.
+Identities. Reading them emits no Issue and depends on no other Rule Set's
+outcome.
 
 Restricting the projection to defining declarations loses nothing. A reverse
 declaration introduces no Attribute of its own; the compiler swaps the sides of
