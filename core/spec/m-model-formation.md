@@ -209,10 +209,9 @@ the wrong facet type, or a facet under the wrong key is
 
 ## Facet ownership
 
-Each compiling semantic module owns exactly one typed `FacetKey<T>` identified
-by its Module Identity. `Metamodel.facet(key)` is total only after the complete
-manifest profile succeeds. Generic facet lookup is hidden behind each owner's
-typed `view(model)` interface.
+Each compiling semantic module owns its derived view. A consumer reaches that
+view through its owner, and `m-metamodel` depends on no semantic owner to carry
+it.
 
 Facets are immutable derived semantic views over the sole Compiled Metadata
 graph. They retain declaration identities/provenance, do not mutate local
