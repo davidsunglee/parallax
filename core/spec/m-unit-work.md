@@ -77,6 +77,12 @@ The unit of work coordinates operations and their evidence. It makes no promise
 that separate reads of one row return the same instance or distinct instances;
 within each snapshot graph, identity resolution belongs to `m-snapshot-read`.
 
+### Single owner
+
+A unit of work has one owner. Sharing one across concurrent tasks is not a
+supported access pattern; a Database Root may be shared, and a unit of work may
+not.
+
 ## Abort
 
 The attempt a unit of work coordinates either **commits** or **aborts** (rolls
@@ -755,6 +761,9 @@ Submission follows the target Entity's Effective Concurrency Strategy:
   refused as any read refuses it (`m-read-delivery` *Invalid stored data*) —
   and its stored revision then decides the precondition. A failure executing the
   read or assembling its rows still precedes the count.
+
+  A Non-Temporal target's acquisition judges no Value Object occurrence: what it
+  establishes is the row's presence and revision.
 
   A temporal target's acquisition reads its row **whole**, every Value Object
   occurrence and the raw Structured Column included, so the write's range can
@@ -1964,21 +1973,6 @@ obligations*), and a join never renegotiates the level its boundary opened at,
 because an isolation is a property of a boundary only at the moment it opens.
 
 ## What the suite pins down
-
-`m-unit-work`'s observable rules are expressed as **scenario** cases — ordered
-operation steps, each with a declared Database Call count — and plain write
-cases:
-
-| Case | What it proves |
-|---|---|
-| read-your-own-writes scenario | a buffered write is flushed before a dependent find observes it |
-| rollback scenario | an aborted write is discarded; a post-abort find observes the original rows |
-| fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
-| insert-then-amend coalescing (`m-unit-work-008`, `m-temporal-write-008`, `m-temporal-write-030`) | a same-transaction insert-then-amend flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
-| insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
-| grouped inserts of distinct objects (`m-unit-work-058`) | inserts batching left as separate Planned Steps share one Write Group once ordering makes them adjacent, and execution inserts them with one statement |
-| dirty-read refusal (`m-unit-work-031`) | at Read Committed, a reading unit of work observes the committed row while a concurrent one holds an uncommitted write to it |
-| nonrepeatable-read refusal (`m-unit-work-032`, `-033`, `-034`) | at Repeatable Read, a unit of work's second read answers what its first did across a peer's committed write — for a plain find, a deep fetch's own included level, and a streamed delivery's pages |
 
 Each isolation scenario declares `when.uow.isolation` and holds TWO units of work
 open at once, labelled `reader` and `writer`, so that what the reading one

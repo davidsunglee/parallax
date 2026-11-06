@@ -33,7 +33,7 @@ writes, and physical storage:
 | Python Pin/Edge accessor | `valid_time` | `tx_time` |
 | Python framework base | supplied by `Bitemporal` | supplied by `TxTemporal` and `Bitemporal` |
 | Compatibility Pin key | `valid-time` | `transaction-time` |
-| Relationship propagation coordinate | source Valid-Time coordinate | source Transaction-Time coordinate |
+| Relationship propagation coordinate | root Valid-Time coordinate | root Transaction-Time coordinate |
 | Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the Database Root |
 | Bitemporal bounded-write upper bound | `until` (a Valid-Time bound) | not caller-authored |
 | Optimistic temporal observation | not a version | observed `txStart` / physical `in_z` |
@@ -179,11 +179,12 @@ instants, so each root of the result stands at its own.
 
 Relationship traversal propagates selections by dimension, never by physical
 column or positional axis. A target that declares the same dimension receives
-the source selection; a target without it receives no selection. An omitted
+the root's selection; a target without it receives no selection and does not
+interrupt propagation past it. An omitted
 Transaction-Time selection at the authoring root is first normalized to Latest
 and that normalized value propagates through the graph. A temporal target
-reached from a source that declares no matching dimension selects Latest for
-that unmatched dimension.
+on a path whose root declares no matching dimension selects Latest for that
+unmatched dimension.
 
 ## Writes
 

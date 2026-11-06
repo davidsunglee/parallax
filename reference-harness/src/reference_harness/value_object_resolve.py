@@ -48,6 +48,7 @@ NEUTRAL_LITERAL_NONCANONICAL = "neutral-literal-noncanonical"
 NEUTRAL_LITERAL_OUT_OF_SPACE = "neutral-literal-out-of-space"
 STRING_PREDICATE_NON_STRING_MEMBER = "string-predicate-non-string-member"
 DEEP_FETCH_VALUE_OBJECT_SEGMENT = "deep-fetch-value-object-segment"
+DEEP_FETCH_PAST_BACK_REFERENCE = "deep-fetch-past-back-reference"
 FIND_ROOT_VALUE_OBJECT = "find-root-value-object"
 SCALAR_COLLECTION_UNQUANTIFIED = "scalar-collection-unquantified"
 
@@ -73,6 +74,7 @@ REJECTED_RULES: frozenset[str] = frozenset(
         NEUTRAL_LITERAL_OUT_OF_SPACE,
         STRING_PREDICATE_NON_STRING_MEMBER,
         DEEP_FETCH_VALUE_OBJECT_SEGMENT,
+        DEEP_FETCH_PAST_BACK_REFERENCE,
         FIND_ROOT_VALUE_OBJECT,
         SCALAR_COLLECTION_UNQUANTIFIED,
         WRITE_REQUIRED_ATTRIBUTE_MISSING,

@@ -1,0 +1,51 @@
+model: models/keeper.yaml
+tags: [m-read-planning, m-inheritance, m-object-query, table-per-concrete-subtype, back-reference, narrow, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Keeper.charges binds are the ids gathered from the abstract root's result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Keeper
+    predicate:
+      "true": {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Keeper.charges
+          - rel: parallax.compatibility.Charge.keeper
+            narrowTo: [parallax.compatibility.Ranger, parallax.compatibility.Warden]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, 'Ranger' family_variant from keeper_ranger t0 union all select t0.id, t0.name, 'Vet' family_variant from keeper_vet t0 union all select t0.id, t0.name, 'Warden' family_variant from keeper_warden t0
+    - sql:
+        postgres: select t0.id, t0.keeper_id, t0.label from keeper_charge t0 where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc
+      binds: [[1, 2, 3]]
+  graph:
+    Keeper:
+      - id: 1
+        name: Rae
+        familyVariant: Ranger
+        charges:
+          - id: 11
+            keeperId: 1
+            label: north
+            "keeper[Ranger,Warden]": { id: 1, name: Rae, familyVariant: Ranger }
+      - id: 2
+        name: Vera
+        familyVariant: Vet
+        charges:
+          - id: 12
+            keeperId: 2
+            label: clinic
+            "keeper[Ranger,Warden]": null
+      - id: 3
+        name: Wes
+        familyVariant: Warden
+        charges:
+          - id: 13
+            keeperId: 3
+            label: gate
+            "keeper[Ranger,Warden]": { id: 3, name: Wes, familyVariant: Warden }
+  databaseCalls: 2

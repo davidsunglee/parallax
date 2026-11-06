@@ -78,9 +78,8 @@ process and close at the end. Each setting here has a section of its own:
 - **Read plans.** Planning a query, from its predicate and includes to the SQL for each
   level, is work a root keeps and reuses. `read_plan_cache_capacity` sets how many plans
   it keeps, 128 by default; raise it when a service runs more distinct queries than that,
-  or pass 0 to plan every read afresh. The
-  [Python execution binding](../../spec/execution.md#models-roots-and-scopes) defines
-  what makes two reads share a plan.
+  or pass 0 to plan every read afresh. Reads differing only in operand values, finite
+  temporal bounds or page limits generally share an entry.
 - **Observation.** A `lifecycle_provider` sees every read, transaction, attempt and
   statement the root runs. `LoggingLifecycleProvider` writes them to a logger you
   configure: each root operation's summary at `INFO`, or `ERROR` when it fails, a

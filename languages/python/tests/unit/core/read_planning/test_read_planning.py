@@ -1492,12 +1492,13 @@ def test_a_to_one_revisit_of_a_one_way_arrival_is_an_ordinary_queried_level() ->
 
 
 def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
-    with pytest.raises(read_planning.DeepFetchError):
+    with pytest.raises(ModelRejectedError) as refused:
         _plan(
             ORDERS,
             "Order",
             (_path(_seg("Order.items"), _seg("OrderItem.order"), _seg("Order.items")),),
         )
+    assert refused.value.rule == "deep-fetch-past-back-reference"
 
 
 # --------------------------------------------------------------------------- #

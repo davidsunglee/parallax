@@ -1,0 +1,15 @@
+model: models/orders.yaml
+tags: [m-read-planning, m-object-query, back-reference, relationship, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      "true": {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.order
+          - rel: parallax.compatibility.Order.items
+then:
+  rejectedRule: deep-fetch-past-back-reference

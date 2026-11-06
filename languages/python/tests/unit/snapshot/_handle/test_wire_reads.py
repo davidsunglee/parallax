@@ -62,10 +62,10 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import typed_read_query
-from parallax.core.predicate import TrueNode
+from parallax.core.predicate import ModelRejectedError, TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, Page, PageBuilder, ViewSchema
-from parallax.core.read_planning import DeepFetchError, IncludeTree
+from parallax.core.read_planning import IncludeTree
 from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
@@ -93,7 +93,6 @@ from parallax.snapshot._publication._wire import (
     stored_provenance_of,
 )
 from parallax.snapshot._publication._wire_render import WireRootPublisher
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
     ReadCall,
@@ -657,13 +656,14 @@ def test_a_typed_query_and_its_canonical_export_read_one_graph_past_three_hops()
 
 
 @pytest.mark.parametrize("read", deep.BACK_REFERENCE_READS)
-def test_a_typed_continuation_past_a_back_reference_stays_an_execution_failure(
+def test_a_typed_continuation_past_a_back_reference_is_refused_before_any_statement(
     read: Callable[[ScopedDatabase], object],
 ) -> None:
     port = ScriptedAdapter()
     database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
-    with raises_contextualized(DeepFetchError, match="back-reference"):
+    with pytest.raises(ModelRejectedError, match="back-reference") as refused:
         read(database)
+    assert refused.value.rule == "deep-fetch-past-back-reference"
     assert [call for call in port.calls if isinstance(call, ReadCall)] == []
 
 

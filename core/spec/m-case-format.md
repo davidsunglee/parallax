@@ -424,7 +424,7 @@ in decimal space under any authored `tolerance`.
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
 | `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level and at a level whose target position has no concrete subtype); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
+| `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level, at a level whose target position has no concrete subtype, and at a back-reference level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare only where an inexact numeric representation requires it |
 
 #### How a case spells an Entity
@@ -593,11 +593,11 @@ view loaded empty (`[]`) or null.
 
 #### Read result form
 
-**Every** read a case asserts is **instance-form** — the **object lane** of `m-sql`'s
-*Result form* — so it projects every applicable top-level Value Object `Document` slot
-(`m-sql`, *Read projection*). `m-sql`'s other lane, row-form, is internal write
-acquisition, which no read case asserts. What a case chooses is an **assertion over
-that read**, never the read itself, keyed on **where** the read is asserted:
+**Every** read a case asserts is **instance-form** (`m-sql` *Result form*), so it
+projects every applicable top-level Value Object `Document` slot (`m-sql`, *Read
+projection*). A write's row acquisition is no read a case asserts. What a case
+chooses is an **assertion over that read**, never the read itself, keyed on
+**where** the read is asserted:
 
 - **A top-level read case** states one result member:
   - **`then.rows`** — a flat observation of the read's **scalar columns**, one row per
@@ -680,8 +680,8 @@ the pages are authored: a `read` case's whole `then.statements`, a step's own
 **What the case asserts is the whole delivery, page boundaries included.**
 `then.statements` is the ordered concatenation of the pages' own statement
 groups: each page is an eager deep fetch of a bounded root query, so a page costs
-the ordinary `1 + L` — its root statement plus one statement per child level that
-gathered parent keys — and the page loop adds nothing to that ceiling. The root
+the ordinary `1 + L` — its root statement plus one statement per child level
+`m-read-planning` does not elide — and the page loop adds nothing to that ceiling. The root
 statements are **not one repeating text**: the first page's carries no seek
 conjunct, so it differs from every later page's; two continuing pages differ from
 each other wherever their coordinates differ in NULLNESS, a null one being sought
@@ -753,8 +753,10 @@ reach a node already on the current path — `[items, items.order]` navigates
 in-memory cycle (`m-snapshot-read`). What keeps the graph JSON finite is the
 **requested include tree**, not a cycle detector: each level is unwound under the
 subtree still admitted below it, that subtree strictly shrinks with depth, and the
-walk therefore terminates. A back-reference is unwound like any other level — it
-renders its target once, in full, with whatever levels remain below it:
+walk therefore terminates. A back-reference level (`m-read-planning`) renders its
+target once, in full, and ends its path (`deep-fetch-past-back-reference`), so no
+level remains below it. A level reaching an ancestor through another association
+is unwound like any other, with whatever levels remain below it:
 
 ```yaml
 then:
@@ -1029,9 +1031,9 @@ distinct parent keys gathered from the previous level (an **unordered set** — 
 children match, and child result order is fixed by the level's own `orderBy`; the
 harness therefore compares each level's binds order-insensitively, consistent with
 the order-insensitive row comparison of layer 2, and an implementation MUST NOT
-sort these keys at runtime to match the fixture), empty parent-key levels and
-levels whose target position has no concrete subtype execute no child SQL, and
-the in-memory-assembled object graph equals the case's
+sort these keys at runtime to match the fixture), empty parent-key levels,
+levels whose target position has no concrete subtype, and back-reference levels
+execute no child SQL, and the in-memory-assembled object graph equals the case's
 `then.graph`. This is what proves N+1 elimination automatically (a 1 → N → N
 deep fetch with non-empty levels must run in exactly 3 statements, not 1 + N +
 N; a deep fetch whose root is empty runs only the root statement, and one whose
@@ -2480,6 +2482,8 @@ rules:
   here rather than silently accepted.
 - `deep-fetch-value-object-segment` — an Include Path segment names a value
   object (`m-value-object` contract 4, `m-read-planning`).
+- `deep-fetch-past-back-reference` — an Include Path continues past a
+  back-reference level, which ends its path (`m-read-planning`).
 - `find-root-value-object` — a `find()` is rooted at a value object
   (`m-value-object` contract 5).
 - `subtype-selection-duplicate-alternative` — one Subtype Selection repeats the

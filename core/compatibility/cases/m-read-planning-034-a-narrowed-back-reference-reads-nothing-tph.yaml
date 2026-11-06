@@ -1,0 +1,52 @@
+model: models/keeper.yaml
+tags: [m-read-planning, m-inheritance, m-object-query, table-per-hierarchy, back-reference, narrow, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Crew.tasks binds are the ids gathered from the abstract root's result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Crew
+    predicate:
+      "true": {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Crew.tasks
+          - rel: parallax.compatibility.Task.crew
+            narrowTo: [parallax.compatibility.Medic, parallax.compatibility.Pilot]
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.name from crew t0
+    - sql:
+        postgres: select t0.id, t0.crew_id, t0.label from crew_task t0 where t0.crew_id = any(cast(? as bigint[])) order by t0.id asc
+      binds: [[1, 2, 3]]
+  referenceSql: select id, kind, name from crew
+  graph:
+    Crew:
+      - id: 1
+        name: Cal
+        familyVariant: Cook
+        tasks:
+          - id: 21
+            crewId: 1
+            label: galley
+            "crew[Medic,Pilot]": null
+      - id: 2
+        name: Mia
+        familyVariant: Medic
+        tasks:
+          - id: 22
+            crewId: 2
+            label: triage
+            "crew[Medic,Pilot]": { id: 2, name: Mia, familyVariant: Medic }
+      - id: 3
+        name: Pat
+        familyVariant: Pilot
+        tasks:
+          - id: 23
+            crewId: 3
+            label: approach
+            "crew[Medic,Pilot]": { id: 3, name: Pat, familyVariant: Pilot }
+  databaseCalls: 2

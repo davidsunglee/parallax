@@ -15,7 +15,8 @@ returned by parent so the assembly can fan them back out in memory.
     whose branches each repeat that whole group. A declared relationship ordering is
     graded on the rows the golden returned. A level whose parents gathered no keys
 issues no SQL at all, so the statement a case lists for it is dead SQL the case is
-refused for.
+refused for. A back-reference level issues none either: it attaches the rows the hop
+it arrived on started from.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from ..inheritance import (
     tag_value_to_subtype,
 )
 from ..sql_canonical import sqlglot_dialect
+from ..value_object_resolve import DEEP_FETCH_PAST_BACK_REFERENCE, RejectionError
 from . import execute, materialize, tpcs
 from .executor import ReadExecutor
 
@@ -118,6 +120,40 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
     class_name, _, rel_name = rel_ref.rpartition(".")
     entity = model.entity(class_name)
     return entity, entity.relationship_metadata_by_name(rel_name)
+
+
+def is_back_reference(model: Model, arrival_ref: str | None, rel_ref: str) -> bool:
+    """Whether *rel_ref* is a to-one level reversing the hop it arrived on.
+
+    Its target is then the object that hop started from (m-read-planning). A hop
+    leaving the root arrived on nothing, and a hop reaching the same family through
+    another association names a different reverse, so neither qualifies.
+    """
+    if arrival_ref is None:
+        return False
+    _, arrival = _resolve_rel_ref(model, arrival_ref)
+    _, direction = _resolve_rel_ref(model, rel_ref)
+    return (
+        direction["cardinality"] != "one-to-many"
+        and direction["reverse"] == arrival["name"]
+        and arrival["reverse"] == direction["name"]
+        and direction["join"]["target"]["entity"] == arrival["join"]["source"]["entity"]
+    )
+
+
+def refuse_path_past_back_reference(model: Model, query: dict[str, Any]) -> None:
+    """Reject an Include Path continuing past a back-reference level, which ends
+    its path (m-read-planning)."""
+    if not query_has_includes(query):
+        return
+    for path in _deepfetch_paths(query):
+        for arrival_ref, rel_ref, continuation in zip([None, *path], path, path[1:], strict=False):
+            if is_back_reference(model, arrival_ref, rel_ref):
+                raise RejectionError(
+                    DEEP_FETCH_PAST_BACK_REFERENCE,
+                    f"include segment {continuation!r} continues past the back-reference "
+                    f"level {rel_ref!r}, which ends its path",
+                )
 
 
 # --- resolving the paths into hops ------------------------------------------
@@ -216,7 +252,8 @@ class FetchStep:
     hop's parents are already the guarded ones) and only when the guard admits fewer
     than every root object. :attr:`union_set` is the effective concrete set a
     table-per-concrete-subtype hop reads as one ``union all`` branch each, carried only
-    when it holds two or more concretes.
+    when it holds two or more concretes. :attr:`back_reference` marks a level that
+    issues no statement, because its target is what its arriving hop started from.
     """
 
     def __init__(
@@ -239,6 +276,7 @@ class FetchStep:
         polymorphic: bool,
         variant_map: dict[Any, str],
         union_set: list[str] | None,
+        back_reference: bool,
     ) -> None:
         self.rel_ref = rel_ref
         self.rel_name = rel_ref.rpartition(".")[2]
@@ -258,6 +296,7 @@ class FetchStep:
         self.polymorphic = polymorphic
         self.variant_map = variant_map
         self.union_set = union_set
+        self.back_reference = back_reference
 
     @property
     def parent_hop(self) -> HopKey | None:
@@ -384,6 +423,9 @@ def _step_of(
         polymorphic=bool(polymorphic),
         variant_map=variant_map,
         union_set=union_set,
+        back_reference=is_back_reference(
+            model, None if hop.key.parent is None else hop.key.parent.rel_ref, rel_ref
+        ),
     )
 
 
@@ -552,8 +594,14 @@ def refuse_unused_levels(
             f"{case.path.name}: {source} ({dialect}) lists "
             f"{listed - executed.consumed} unused deep-fetch child "
             f"statement(s). Child SQL MUST be omitted for a level that gathers no "
-            f"parent keys or targets a position with no concrete subtype."
+            f"parent keys, targets a position with no concrete subtype, or is a "
+            f"back-reference."
         )
+
+
+def _within_narrow(step: FetchStep, row: materialize.PublishedRow) -> bool:
+    """Whether an already-fetched *row* is of a concrete type *step*'s narrow selects."""
+    return not step.is_narrowed or row.get("familyVariant") in (step.effective_set or ())
 
 
 def _branch_bind_groups(label: str, step: FetchStep, authored: Sequence[Any]) -> list[list[Any]]:
@@ -660,7 +708,7 @@ def execute_fetch_levels(
     source: str,
     query: dict[str, Any],
     steps: list[FetchStep],
-    root_rows: Sequence[dict[str, Any]],
+    root_rows: Sequence[materialize.PublishedRow],
     levels: list[tuple[str, list[Any]]],
 ) -> _ExecutedLevels:
     """Execute one Object Query's child levels and bucket each hop's rows by parent key.
@@ -669,8 +717,9 @@ def execute_fetch_levels(
     Path is authored at — a read case's own ``then.statements`` and a Scenario
     read step's own ``statements``, named by *source* in every diagnostic. A
     child level runs only when the previous level produced parent keys; an empty
-    parent key set elides that child SQL entirely, and a level the golden lists
-    but no parent reaches is unused SQL the case is refused for. Each executed
+    parent key set elides that child SQL entirely, a back-reference level attaches
+    the rows its arriving hop started from without a statement, and a level the
+    golden lists but no parent reaches is unused SQL the case is refused for. Each executed
     level's authored binds are cross-checked against the keys, tag values, and
     propagated as-of coordinates the oracle derives independently, once per
     `union all` branch of a level that has them, so a dropped IN list, a missing
@@ -706,6 +755,18 @@ def execute_fetch_levels(
         if not parent_keys or step.effective_set == []:
             rows_by_hop[step.hop_key] = []
             children_by_step[step.hop_key] = {}
+            continue
+
+        if step.back_reference:
+            arrival = step.parent_hop
+            assert arrival is not None  # a hop leaving the root reverses nothing
+            started_from = root_rows if arrival.parent is None else rows_by_hop[arrival.parent]
+            reached = [row for row in started_from if _within_narrow(step, row)]
+            rows_by_hop[step.hop_key] = reached
+            target_col = column_of(step.child_entity, step.child_attr)
+            children_by_step[step.hop_key] = {
+                coerce_identity_key(row[target_col]): [row] for row in reached
+            }
             continue
 
         if statement_index >= len(levels):

@@ -1,0 +1,25 @@
+model: models/lease.yaml
+tags: [m-navigate, m-object-query, m-temporal-read, m-predicate, temporal, relationship, propagation, mixed, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Lease
+    predicate:
+      any:
+        path: parallax.compatibility.Lease.notes
+        where:
+          eq:
+            path: lease.term
+            value: 12mo
+    temporal:
+      transaction-time:
+        asOf: "2024-02-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.tenant_id, t0.term, t0.in_z, t0.out_z from lease t0 where exists (select 1 from lease_note t1 left join lease t2 on t2.id = t1.lease_id and t2.in_z <= ? and t2.out_z > ? where t1.lease_id = t0.id and t2.term = ?) and t0.in_z <= ? and t0.out_z > ?
+      binds: ["2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", 12mo, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+  referenceSql: select id, tenant_id, term, in_z, out_z from lease where in_z <= '2024-02-01T00:00:00Z' and out_z > '2024-02-01T00:00:00Z' and id in (select lease_id from lease_note where lease_id in (select id from lease where term = '12mo' and in_z <= '2024-02-01T00:00:00Z' and out_z > '2024-02-01T00:00:00Z'))
+  rows:
+    - { id: 10, tenant_id: 1, term: 12mo, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }
+  databaseCalls: 1

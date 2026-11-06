@@ -242,11 +242,9 @@ invariant while each dialect emits its own optimized SQL:
 The predicate fragments in this module fix a read's **`where` clause**; this section
 fixes its **`select` list**. A read's projected column list is a **pure function of
 the model and the read's target (`objectQuery.target`, `m-object-query`) plus its result
-form — never of the predicate**. Exactly one kind of read takes a fourth input: the
-internal row-acquisition read a write makes (`m-unit-work` *Row acquisition*)
-derives its `Document` slots from the **observation the write it serves records**,
-and from nothing else, its own predicate included (the `Document` slot rule and
-*Result form*, below). The Object Query deliberately
+form — never of the predicate**. The internal read a write's row acquisition makes
+(`m-unit-work` *Row acquisition*) is the one exception: it reads what the write
+needs (*Result form*, below). The Object Query deliberately
 carries **no projection clause** (`m-object-query`): no read may project
 a proper subset of the derived list. The `orderBy` and `limit` clauses never
 change the list.
@@ -263,8 +261,8 @@ For each physical branch, SQL selects from the layout values as follows:
 1. Every applicable Attribute slot is projected. This includes model identity,
    optimistic version, ordinary Domain, Temporal start/end, and future Audit
    slots; a designation changes the slot's tier, not whether the Attribute is
-   readable. A scalar collection's own `Document`-tier slot is projected in both
-   result forms, as the document read pair defined below rather than through a
+   readable. A scalar collection's own `Document`-tier slot is projected as the
+   document read pair defined below rather than through a
    native scalar rendering, and its `DocumentRead` reaches `m-document-codec`'s
    classified collection decoding exactly as a direct occurrence's does.
 2. A table-per-hierarchy discriminator slot is projected **iff** the read's
@@ -272,9 +270,7 @@ For each physical branch, SQL selects from the layout values as follows:
    effective set to one concrete. A concrete target uses the same slot for its
    tag predicate but does not project it.
 3. Every applicable top-level Value Object `Document` slot is projected for an
-   **instance-form** read. A row-form read omits those slots by default; a
-   row-acquisition read is the one row-form read that widens the default,
-   projecting the slots the observation it records needs (*Result form*, below). Each selected slot expands to the document read pair
+   **instance-form** read. Each selected slot expands to the document read pair
    defined below; it is never projected as one ambiguous raw value. Before any
    occurrence cursor exists, instance materialization passes the resulting
    `m-core` `DocumentRead` to `m-document-codec` as a `LocatedMemberInput` for
@@ -287,14 +283,12 @@ For each physical branch, SQL selects from the layout values as follows:
    projected **once** for a branch that needs it, and not at all for a branch
    that does not. Two independent needs reach it. A read whose requested members
    include one placed at a Document Path needs it to produce that member. An
-   **observation-bearing** read — an instance-form read, and a row-acquisition
-   read that widens its own projection (*Result form*, below) — needs it whenever the branch's Table carries one at
-   all, because the stored document is itself part of what such a read observes:
-   a Predecessor Row retains the raw document (`m-write-plan`), and an owner
-   declaring no document-resident member still holds whatever keys a newer
-   application version wrote. Outside that lane a row-form read projects it only
-   for a requested document-resident member, so a row-form read of direct members
-   alone emits no document extraction and no document projection at all. The
+   instance-form read, and a row acquisition whose observation is a Predecessor
+   Row, needs it whenever the branch's Table carries one at all, because the
+   stored document is itself part of what such a read observes: a Predecessor Row
+   retains the raw document (`m-write-plan`), and an owner declaring no
+   document-resident member still holds whatever keys a newer application version
+   wrote. The
    Structured Column is never a result field: the row transform unwraps a
    `StructuredDocument` and passes its document to `m-document-codec`'s
    Entity-member locator, then fans the classified
@@ -349,26 +343,20 @@ host-language null sentinel. The row transform receives `SqlNull` or
 an observation carrier, and sends the same tagged input to classified
 materialization when the slot is a logical occurrence carrier.
 
-### Result form — row-form vs instance-form
+### Result form
 
-A read is consumed in one of two lanes, and the projection differs only in
-whether `Document` slots are selected:
+Every read a caller or a case makes is **instance-form**: the result materializes
+into instances, a snapshot-graph read or an eager fetch, including its root and
+every child level. It projects Document slots, so a value-object-bearing entity's
+whole document rides the owner's single statement (`m-value-object`). Each child
+level projects its entity's own instance-form list: its scalars plus its declared
+value-object document columns.
 
-- **Instance-form** (the **object lane**) — the result materializes into instances:
-  a snapshot-graph read or an eager fetch, including its root and every child
-  level. It projects Document slots, so a value-object-bearing entity's whole
-  document rides the owner's single statement (`m-value-object`). Each child
-  level projects its entity's own instance-form list: its scalars plus its
-  declared value-object document columns.
-- **Row-form** (the **values lane**) — internal row-acquisition reads a write
-  makes (`m-unit-work` *Row acquisition*), consumed as flat values without
-  constructing an instance. Document slots are omitted by default. A temporal
-  target's acquisition projects every declared Document slot because its
-  observation is a complete Predecessor Row (`m-write-plan`) — the
-  **predecessor projection**. Widening this projection still constructs no instance.
+A write's row acquisition constructs no instance. Where it retains a Predecessor
+Row (`m-write-plan`) it reads every declared Document slot — the **predecessor
+projection**.
 
-Row-form is **not a developer surface**: the idiomatic find API always
-materializes. What a case asserts of a read is `m-case-format`'s (*Read result
+What a case asserts of a read is `m-case-format`'s (*Read result
 form*).
 
 Everything already specified composes with this rule unchanged: a version
@@ -1091,8 +1079,6 @@ This is the **1 → N → N** shape that resolves in exactly **3 statements**, n
 the child entity's full scalar set; this **subsumes** the join key columns the harness
 needs to fan results back to their parents (the FK that correlates to the parent, and
 the child's own key when it is itself a parent of a deeper level).
-The temp-table variant for very large parent key sets is a **fast-follow**
-(`m-read-planning`); round 1 uses the simplified `IN` form only.
 
 A **path-root guard** (`m-object-query`'s `appliesTo` beside `segments`) emits
 **no statement and no clause of its own**. It restricts which already-fetched root
@@ -1136,7 +1122,8 @@ declared keys as *Ordered or limited abstract read* applies Sort Keys: it wraps
 that union as the derived table `u` and orders against the union's result aliases,
 with the gathered keys and any as-of fragment staying inside each branch. A hop
 whose target position has no concrete subtype issues none (*Inheritance — a position
-with no concrete subtype*).
+with no concrete subtype*), and neither does a back-reference level, narrowed or not
+(`m-read-planning`).
 
 ## Temporal predicates and write sequences
 
@@ -1350,15 +1337,10 @@ A `max` insert of a Non-Temporal row answers nothing.
 
 An observed write whose requested extent reaches current rectangles no read of
 it observed (`m-temporal-write` *Observed writes span their requested extent*)
-reads those rectangles inside its flush, as an ordinary row-form read of the
-object's current coverage overlapping the part of its extent no row the unit
-already holds covers:
-
-| Extent | Read | Binds |
-|---|---|---|
-| uncovered to the open bound | `select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z > ? and t0.out_z = ?` | `[pk, uncoveredFrom, infinity]` |
-| uncovered up to `uncoveredUntil` | `… where t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?` | `[pk, uncoveredFrom, uncoveredUntil, infinity]` |
-| several uncovered parts | `… where t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ?` | `[pk, from₁, until₁, from₂, until₂, infinity]` |
+reads those rectangles inside its flush, as a row acquisition of the object's
+current coverage overlapping the part of its extent no row the unit already holds
+covers. One statement selects the object's current milestones that overlap any of
+its uncovered parts.
 
 Uncovered parts are disjoint and never adjacent, each bounded by its own
 endpoints, and a statement names at most 64 of them, so many parts take several
@@ -1373,11 +1355,7 @@ it names, and a case authors no golden for it (`m-case-format`).
 The writes of one acquisition span (`m-unit-work` *Shared coverage
 acquisition*) share these reads. One statement names several objects' parts,
 each object's key beside its own parts, and the 64-part bound counts the parts of
-every object it names:
-
-| Extent | Read | Binds |
-|---|---|---|
-| several objects' uncovered parts | `… where ((t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?))) or (t0.pos_id = ? and t0.thru_z > ?)) and t0.out_z = ?` | `[pk₁, from₁, until₁, from₂, until₂, pk₂, uncoveredFrom, infinity]` |
+every object it names.
 
 Parts are packed in the span's write order, each object's in Valid-Time order,
 and an object's parts that do not fit continue in the next statement. A row
@@ -1423,8 +1401,8 @@ emitted for an unchanged rectangle.
 
 A target temporal write (`m-temporal-write` *Target writes span
 their requested extent*) observed nothing, so under Optimistic its coverage read
-starts at its own `validFrom`; a Transaction-Time-Only one reads `… where
-t0.bal_id = ? and t0.out_z = ?` with `[pk, infinity]`. Separate operations over
+starts at its own `validFrom`; a Transaction-Time-Only one reads its current row.
+Separate operations over
 disjoint windows pending together read their enclosing window, from the earliest
 window's start to the latest's end. Under Locking the rows the writes' submissions
 acquired are held already where still current (`m-unit-work` *Retained starting
@@ -1438,12 +1416,7 @@ and removal. A
 replacement's openings over the gaps of its extent follow every rectangle's
 successors, in Valid-Time order. Under
 Locking the write's submission first reads its starting rectangle alone, with
-the predecessor projection and the read-lock suffix:
-
-| Target | Read | Binds |
-|---|---|---|
-| Bitemporal | `… where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0` | `[pk, validFrom, validFrom, infinity]` |
-| Transaction-Time-Only | `… where t0.bal_id = ? and t0.out_z = ? for share of t0` | `[pk, infinity]` |
+the predecessor projection and the read-lock suffix.
 
 ## Transactional SQL fragments
 
@@ -1963,8 +1936,9 @@ statement with an empty select list or an empty `in ()`.
 - An Include level whose target position is empty issues no child statement
   even when its admitted parents gathered non-null keys, and attaches the
   loaded-empty or loaded-null view instead (`m-read-planning`). A level beneath it
-  has no parent rows and issues none. Every other level issues its statement
-  exactly as it would without the empty one.
+  has no parent rows and issues none. A back-reference level issues none either
+  way (`m-read-planning`). Every other level issues its statement exactly as it
+  would without the empty one.
 
 This is a different fact from a statement that returns nothing. A query whose
 predicate matches no stored row still issues its root statement, and a level

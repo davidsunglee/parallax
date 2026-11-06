@@ -107,6 +107,7 @@ from .metamodel import (
 )
 from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
+from .object_query_oracle.includes import refuse_path_past_back_reference
 from .object_query_validate import validate_object_query
 from .predicate_validate import validate_query_predicate
 from .predicate_write_validate import PREDICATE_WRITE_REJECTED_RULES, validate_predicate_write
@@ -659,9 +660,9 @@ def _assert_rejected(case: Case) -> None:
 
     A rejected case carries exactly one schema-valid ``when.objectQuery``,
     ``when.write``, or inline ``when.model`` and names the violated rule in
-    ``then.rejectedRule``. A query runs ``validate_object_query`` and Inheritance's
-    ``validate_query_inheritance``, resolved against the position the query itself
-    names.
+    ``then.rejectedRule``. A query runs ``validate_object_query``, Inheritance's
+    ``validate_query_inheritance``, and the back-reference rule over its Include
+    Paths, resolved against the position the query itself names.
 
     A write is dispatched on the members it carries, in order, never on the rule
     the case names (`m-case-format` Rejected cases): a ``target`` is a
@@ -696,6 +697,7 @@ def _assert_rejected(case: Case) -> None:
             validate_query_inheritance(case.model.entity_defs, query)
             validate_query_predicate(case.model.entity_defs, query)
             validate_object_query(case.model.entity(query["target"]), query)
+            refuse_path_past_back_reference(case.model, query)
         elif "write" in case.when:
             write = _rejected_write_input(case)
             if "target" in write:

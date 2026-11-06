@@ -546,13 +546,6 @@ class _PlanBuilder:
         segment: ResolvedIncludeSegment,
         root_source: tuple[EntityIdentity, ...],
     ) -> int:
-        if parent_id != _ROOT_ID and isinstance(self.steps[parent_id], BackReferenceFetchStep):
-            raise DeepFetchError(
-                f"{segment.relationship!r}: a deep-fetch path cannot continue "
-                "past a back-reference "
-                "level (m-case-format 'Back-reference cycles' — the ancestor-revisit hop's "
-                "rows are already fully known; no corpus case needs a level beneath one)"
-            )
         owner = self._owners[parent_id]
         direction = relationship.view(self.model).relationship(segment.relationship)
         if direction is None:
@@ -573,9 +566,7 @@ class _PlanBuilder:
             return existing
 
         to_many = direction.cardinality is Cardinality.ONE_TO_MANY
-        is_back_reference = not to_many and _is_inverse_edge(
-            self._arrivals.get(parent_id), direction
-        )
+        is_back_reference = direction.is_back_reference_from(self._arrivals.get(parent_id))
 
         rel_local = direction.identity.name
         attach_key = _attach_key(rel_local, narrowed, position, self.families)
@@ -730,26 +721,6 @@ def _resolved_order_terms(
             )
         )
     return tuple(terms)
-
-
-def _is_inverse_edge(arrival: RelationshipMetadata | None, direction: RelationshipMetadata) -> bool:
-    """Whether ``direction`` is ``arrival``'s peer — the two navigable directions of
-    ONE association (``m-relationship``), each naming the other as its reverse.
-
-    This is what proves a hop lands on the very node the path arrived from rather
-    than merely on that node's family: the two directions share one join, so the
-    child row's correlation attribute holds the arrival hop's own source key. Both
-    reverse names are checked, and the target Entity with them, so two unrelated
-    associations sharing a local relationship name cannot pair. An absent arrival is
-    a hop leaving the root, which nothing preceded and which therefore revisits no
-    ancestor node at all.
-    """
-    return (
-        arrival is not None
-        and arrival.reverse == direction.identity.name
-        and direction.reverse == arrival.identity.name
-        and direction.join.target.entity == arrival.identity.source_entity
-    )
 
 
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:

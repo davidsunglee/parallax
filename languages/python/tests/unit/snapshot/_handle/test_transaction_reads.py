@@ -48,10 +48,9 @@ from parallax.core.execution import (
     QueryTargetError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.predicate import QueryDefinitionError
+from parallax.core.predicate import ModelRejectedError, QueryDefinitionError
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
-from parallax.core.read_planning import DeepFetchError
 from parallax.core.unit_work import (
     ReadEvidence,
     StaleWriteError,
@@ -1186,15 +1185,16 @@ def test_a_read_only_transaction_read_executes_a_deep_include_to_its_leaf(
 
 @pytest.mark.parametrize("read", deep.BACK_REFERENCE_READS)
 @pytest.mark.parametrize("lane", ["transact", "read_only"])
-def test_a_transaction_read_past_a_back_reference_stays_an_execution_failure(
+def test_a_transaction_read_past_a_back_reference_is_refused_before_any_statement(
     lane: str, read: Callable[[Any], object]
 ) -> None:
     port = ScriptedAdapter(Transact())
     database = own_root(
         Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
     ).using_database_login()
-    with raises_contextualized(DeepFetchError, match="back-reference"):
+    with raises_contextualized(ModelRejectedError, match="back-reference") as refused:
         getattr(database, lane)(read)
+    assert refused.value.rule == "deep-fetch-past-back-reference"
     assert [call for call in port.calls if isinstance(call, ReadCall)] == []
 
 
