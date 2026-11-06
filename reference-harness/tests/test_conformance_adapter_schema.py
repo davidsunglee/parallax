@@ -107,7 +107,6 @@ def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
 def test_run_accepts_application_lifecycle_errors() -> None:
     observations = {
         "databaseCalls": 1,
-        "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": False}],
         "errors": [{"at": "/scenario/2", "errorClass": "transaction-time-pin-read-only"}],
     }
     assert list(_validator().iter_errors(_valid_run(observations))) == []
@@ -115,13 +114,18 @@ def test_run_accepts_application_lifecycle_errors() -> None:
 
 def test_run_still_valid_without_lifecycle_observations() -> None:
     # The errors key is optional/additive: an existing run output (databaseCalls plus
-    # rows / identityChecks) stays valid unchanged.
+    # rows) stays valid unchanged.
+    observations = {"databaseCalls": 1, "rows": [{"id": 1}]}
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+def test_run_refuses_an_identity_observation() -> None:
+    # `sameObjectAs` has two graders and neither reads an adapter's report.
     observations = {
         "databaseCalls": 1,
-        "rows": [{"id": 1}],
         "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": True}],
     }
-    assert list(_validator().iter_errors(_valid_run(observations))) == []
+    assert list(_validator().iter_errors(_valid_run(observations)))
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ from parallax.core import (
     Bitemporal,
     DomainModel,
     Rel,
+    TxTemporal,
     attr,
     index,
     rel,
@@ -15,7 +16,7 @@ from parallax.core import (
 
 _NS = "parallax.compatibility"
 
-__all__ = ["POLICY_MODEL", "Claim", "Coverage", "Policy"]
+__all__ = ["INVOICE_MODEL", "POLICY_MODEL", "Claim", "Coverage", "Invoice", "InvoiceLine", "Policy"]
 
 
 class Policy(
@@ -67,3 +68,30 @@ class Claim(
 
 
 POLICY_MODEL = DomainModel(Policy, Coverage, Claim)
+
+
+class Invoice(TxTemporal, table="invoice", namespace=_NS):
+    """Mirror of ``models/invoice.yaml`` ``Invoice`` (Transaction-Time-only, root of
+    the ``lines`` to-many relationship)."""
+
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    lines: Rel[tuple["InvoiceLine", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "invoice_id"), dependent=True
+    )
+
+
+class InvoiceLine(
+    TxTemporal,
+    table="invoice_line",
+    namespace=_NS,
+    indices=(index("invoice_line_invoice", "invoice_id"),),
+):
+    """Mirror of ``models/invoice.yaml`` ``InvoiceLine`` (Transaction-Time-only)."""
+
+    id: Attr[int] = attr(primary_key=True)
+    invoice_id: Attr[int]
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+INVOICE_MODEL = DomainModel(Invoice, InvoiceLine)

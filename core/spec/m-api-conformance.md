@@ -80,9 +80,8 @@ satisfies each is language-local.
    (`then.rows`, `then.graph`, `then.graphs`, `then.tableState`, `then.affectedRows`,
    Database Call counts, and snapshot view-preservation expectations), using the
    same comparison rules the conformance grade uses. For per-step `sameObjectAs`
-   or `expectError`, the suite MUST return and verify the corresponding adapter
-   `identityChecks` or `errors` observations
-   ([`m-conformance-adapter`](m-conformance-adapter.md)). A snapshot view
+   or `expectError`, the suite MUST verify the corresponding developer-surface
+   observable. A snapshot view
    preservation check uses reference identity on the developer surface; a
    declared refusal is verified through the error the verb actually raised.
 

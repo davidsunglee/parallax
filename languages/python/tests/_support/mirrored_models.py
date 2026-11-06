@@ -34,7 +34,7 @@ from parallax.conformance.composed_beast_models import COMPOSED_BEAST_READER
 from parallax.conformance.dormant_position_document_models import DORMANT_POSITION_DOCUMENT
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.edit_models import NOTE_MODEL
-from parallax.conformance.graph_models import POLICY_MODEL
+from parallax.conformance.graph_models import INVOICE_MODEL, POLICY_MODEL
 from parallax.conformance.identifier_models import (
     IDENTIFIER_TPCS_DOCUMENT,
     IDENTIFIER_TPH_DOCUMENT,
@@ -645,6 +645,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("customer", CUSTOMER_MODEL),
     ("orders", ORDERS_MODEL),
     ("policy", POLICY_MODEL),
+    ("invoice", INVOICE_MODEL),
     ("position", POSITION_MODEL),
     ("rate", RATE_MODEL),
     ("rate-sheet", RATE_SHEET_MODEL),
@@ -897,10 +898,6 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "instrument": (
             "no mirror authored; it composes the mirrored `payment`'s table-per-hierarchy with "
             "the mirrored `rate`'s root-owned bitemporal axes, both already proven separately"
-        ),
-        "invoice": (
-            "no mirror authored; it composes the mirrored `balance`'s transaction-time-only axis "
-            "with the mirrored `orders`' dependent one-to-many, both already proven separately"
         ),
         "keeper": (
             "no mirror authored; its two families repeat the mirrored `rate` "

@@ -429,7 +429,7 @@ assert different things:
   `storedDataIssues` for it on the same terms (see *Streamed reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
-- scenario cases report `databaseCalls` and any declared `identityChecks`, plus
+- scenario cases report `databaseCalls`, plus
   `stepRows` for the values their read steps and row-observing `mutate` steps published,
   `stepAffectedRows` for the count each direct predicate-write step's verb returned,
   `errors` for any step or submission declaring
@@ -705,15 +705,6 @@ instead of the shape its own inspection surface happens to answer.
 It is additive and optional in the same sense as `errors`: a run
 whose case declares no `expectGraph` omits it, and every existing `run` output
 stays valid unchanged.
-
-An **`identityCheck`** reports `{ left, right, same }`: `left` and `right`
-are JSON Pointers naming the compared steps, and `same` says whether the check
-held. An optional `identity` carries its identity witness.
-For a wire-level snapshot access check, `same` means primary-key equality of
-the already-materialized view's objects. The API Conformance Suite grades the
-same declaration as reference identity: accessing a retained view after an edit
-or write still reaches the objects its original read populated. No check
-promises interning across separate reads.
 
 Each observed row and each `graph` node of an inheritance participant additionally
 carries the **`familyVariant`** key (`m-inheritance` *Materialized field keys*),

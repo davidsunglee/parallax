@@ -1959,10 +1959,12 @@ Conformance Suite (`m-conformance-adapter`, `m-api-conformance`).
 
 - **`sameObjectAs`** — a zero-based earlier-step index. On an access step it
   asserts that the already-materialized relationship view still refers to the
-  objects that the named read populated, without a new read. The wire harness
-  checks their primary-key identity; the API Conformance Suite checks reference
-  identity (`m-snapshot-read` *Closed world*). This is a preservation check over
-  one retained graph, not an identity guarantee across independent reads.
+  objects that the named read populated, without a new read. It has two graders,
+  and an adapter reports no identity observation: the wire harness checks their
+  primary-key identity, and the API Conformance Suite checks reference identity
+  (`m-snapshot-read` *Closed world*), whose coverage partition's reasoned skip
+  applies here as to any other case. This is a preservation check over one retained
+  graph, not an identity guarantee across independent reads.
 - **`expectRows`** — the flat values a read publishes, or the derived Wire value
   a `mutate` declaring this oracle publishes without a re-read.
 - **`expectGraph`** — the relationship contents a step observes, in `then.graph`'s
