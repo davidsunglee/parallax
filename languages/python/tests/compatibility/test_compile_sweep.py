@@ -14,7 +14,6 @@ orthogonal focused selector, not a class.
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
@@ -32,6 +31,7 @@ from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
     assert_wire_binds,
+    assert_write_emissions_equal_goldens,
     read_golden_statements,
     write_golden_statements,
 )
@@ -144,13 +144,6 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     return f"read lowering deferred past the read path: {message}"
 
 
-def _pointer_ok(shape: str, pointer: str) -> bool:
-    """Whether an emission ``casePointer`` is well-formed for a write case's shape."""
-    if shape == "writeSequence":
-        return re.fullmatch(r"/writeSequence/\d+", pointer) is not None
-    return re.fullmatch(r"/scenario/\d+/(write|objectQuery)", pointer) is not None
-
-
 def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) -> None:
     """Grade a keyed unit-of-work write case: per-step emissions == the golden DML,
     Database Calls == the DML statement count, and every casePointer well-formed for
@@ -167,12 +160,7 @@ def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) ->
     model = engine.load_case_metamodel(case)
     golden_statements = write_golden_statements(case)
     assert envelope["databaseCalls"] == len(golden_statements), case.case_id
-    emissions = envelope["emissions"]
-    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
-    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
-        assert emission["sql"] == golden_sql, (case.case_id, emission)
-        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
-        assert _pointer_ok(case.shape, emission["casePointer"]), (case.case_id, emission)
+    assert_write_emissions_equal_goldens(case, model, golden_statements, envelope["emissions"])
 
 
 @pytest.mark.parametrize("case", _REACHABLE, ids=[c.case_id for c in _REACHABLE])

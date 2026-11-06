@@ -3799,8 +3799,8 @@ def test_a_compiled_versioned_write_no_evidence_licenses_is_refused_when_submitt
 def test_a_compiled_temporal_write_no_evidence_licenses_is_refused_when_submitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The case state holds no milestone of the Balance the write closes, so no
-    # Temporal Observation licenses it.
+    # Compile reads no milestone of the Balance the write closes, so no Temporal
+    # Observation licenses it.
     admitted = _admitted(monkeypatch)
     case = _synthetic_write(
         "writeSequence",

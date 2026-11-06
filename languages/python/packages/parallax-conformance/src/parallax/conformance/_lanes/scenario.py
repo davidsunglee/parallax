@@ -1463,8 +1463,8 @@ def _group_is_doomed(case: case_format.Case, label: str) -> bool:
 class CaseContext:
     """Fixed case model, planning preference, root options, and authored transaction keywords.
 
-    Simulated state is passed explicitly only to compile helpers. The dialect comes
-    from each executing connection, which may differ across interleaved groups."""
+    The dialect comes from each executing connection, which may differ across
+    interleaved groups."""
 
     serving: ServingModel
     model: AcceptedMetamodel
