@@ -200,34 +200,20 @@ layout by `m-storage-layout`.
 
 ### Validation-time table-group projection
 
-Inheritance exposes a pure, total projection of Candidate Metamodel family facts
-for the dependent `m-storage-layout` Rule Set. The projection accepts only the
-Candidate Metamodel, emits no Issue, consumes no facet, and assumes no Rule Set
-has run. It shares this module's topology walk without creating a
-validation-time `InheritanceFacet`.
-
-```text
-InheritanceTableGroup
-  table: Table
-  mappingOwner: EntityIdentity
-  mappingProvenance: EntityLocation
-  rowOwners: immutable sequence<EntityIdentity>
-  declarationContributors:
-    immutable sequence<AttributeDeclaration
-                       | TopLevelValueObjectDeclaration
-                       | TablePerHierarchyTagDeclaration>
-
-projectTableGroups(candidate: CandidateMetamodel)
-  -> immutable sequence<InheritanceTableGroup>
-```
+Inheritance supplies a pure, total **table-group projection** of Candidate
+Metamodel family facts for `m-storage-layout`'s validation. It reads only the
+Candidate Metamodel, reports no Issue, and assumes no Rule Set has run. Each group
+names its Table, its mapping owner, its mapping provenance, its row owners, and its
+declaration contributors: Attribute, top-level Value Object, and table-per-hierarchy
+tag declarations.
 
 The projection returns one mapping-owner group per standalone Entity, one per
 unambiguous table-per-hierarchy family, and one per unambiguous table-per-
 concrete-subtype concrete Entity, ordered by canonical mapping-owner Entity
 Identity. A standalone Entity is its owner; a TPH root represents its whole
 family owner, including all family participants; and a TPCS concrete Entity is
-its own owner. `mappingProvenance` is that owner's `EntityLocation`, the precise
-Model Location available for its Table declaration. TPH descendants are family
+its own owner. A group's mapping provenance is that owner's `EntityLocation`, the
+precise Model Location available for its Table declaration. TPH descendants are family
 participants and never appear as competing owners.
 
 The projection does not coalesce independent owners that name equal structural
@@ -281,7 +267,7 @@ materialized Entity node has four provenance-bearing contributor categories:
    or under a narrowed-view key; and
 4. a polymorphic result renders the synthetic `familyVariant` key.
 
-An implementation MUST preserve those categories until graph rendering. In
+Those categories stay distinct in the rendered node. In
 particular, a Value Object document column whose physical name equals a
 relationship name is legal when the Value Object's canonical occurrence name is
 different: attaching the relationship MUST neither overwrite the document nor
@@ -289,7 +275,7 @@ cause the relationship to be renamed as the Value Object. The physical document
 key is an input-row key, not the occurrence's rendered graph key. The same
 provenance rule permits a Value Object storage column named `familyVariant` when
 the occurrence renders under a different canonical name: the decoded document
-and the synthetic variant remain separate until rendering.
+and the synthetic variant remain separate in the rendered node.
 
 Every key that can coexist on one concrete node MUST nevertheless be distinct in
 the rendered mapping. Formation rejects an Attribute physical column that equals
@@ -366,16 +352,13 @@ bare local Entity name when that name is unique among the family's concrete
 subtypes; when two concrete subtypes in one family share a local name across
 namespaces, each such subtype uses its canonical qualified Entity spelling. Thus
 existing families retain `Dog`, while duplicate local names render, for example,
-`catalog.SharedVariant` and `archive.SharedVariant`. What each returned leaf carries **beyond**
-that tag depends on how the read is observed (`m-case-format` *Read result form*):
-a **`then.rows`** leaf is the flat superset row of the read's scalar columns (every
-branch's columns, non-applicable ones `null`); a **`then.graph`** leaf, at a read
-case's own top-level leaves, is a **complete concrete instance** in the ordinary
-sense — only its own branch's inherited-plus-own members, never a sibling's
-null-padded column. Inheritance resolves one effective concrete set and branch
-applicability for the read, and `m-sql` owns its projection, which neither
-observation changes. After the read, materialization narrows the branch-backed
-values to the concrete variant's own declared shape. This is the read-side counterpart of *Concrete-
+`catalog.SharedVariant` and `archive.SharedVariant`. Beyond that tag, a top-level
+leaf of a read naming no Includes is a **complete concrete instance** in the
+ordinary sense — only its own branch's inherited-plus-own members, never a
+sibling's null-padded column. Inheritance resolves one effective concrete set and
+branch applicability for the read, and `m-sql` owns its projection. Every other
+node shape, and how a case asserts that read, the flat row included, are
+`m-case-format`'s (*Read result form*). This is the read-side counterpart of *Concrete-
 subtype writes*, below: a discriminated union at both boundaries, with family
 semantics retained here and result projection retained by SQL.
 
@@ -652,87 +635,33 @@ owns the complete code-set declaration; this module owns each code's meaning.
 ## The Inheritance Facet
 
 After validation, the `m-inheritance` Model Compiler produces the immutable
-`InheritanceFacet` under `FacetKey(m-inheritance)`. Generic
-`Metamodel.facet(...)` retrieval stays hidden behind this module's typed
-`view(model) -> InheritanceFacet` function (`m-model-formation` "Facet
-ownership"). The facet owns ancestry, family identity, effective member
+`InheritanceFacet`. The facet owns ancestry, family identity, effective member
 applicability, strategy, table selection, and the effective root-owned
 Persistence Mode; the Temporal and Concurrency facets derive their own
 root-owned facts through this facet rather than this facet repeating them.
-Every Metadata value the facet returns is the accepted declaration value
-itself — declaring identities and provenance preserved, so an inherited member
-still names the ancestor that introduced it — never a copy, and the facet
-neither mutates nor extends the local declaration view.
+Every Metadata value the facet returns keeps its declaring identity and
+provenance, so an inherited member still names the ancestor that introduced it.
 
-```text
-InheritanceFacet
-  entity(EntityIdentity) -> InheritanceEntityView | absent
-  position(members: nonempty sequence<EntityIdentity>)
-    -> InheritancePositionView | absent
-  family(root: EntityIdentity) -> InheritanceFamilyView | absent
+The facet answers three questions: `entity(...)` gives one Entity's view,
+`position(...)` the view of an arbitrary resolved position, and `family(...)` one
+family's complete declaration sequences.
 
-EntityMemberSelection
-  shape: MemberShape
-  bindings: immutable sequence<AttributeMetadata | ValueObjectMetadata>
-  attributes: immutable sequence<AttributeMetadata>
-  value_objects: immutable sequence<ValueObjectMetadata>
-  position(MemberIdentity) -> integer
-  binding(MemberName) -> AttributeMetadata | ValueObjectMetadata | absent
-
-InheritanceEntityView
-  entity: EntityIdentity
-  root: EntityIdentity
-  primary_key: AttributeMetadata
-  strategy: InheritanceStrategy | absent
-  ancestry: nonempty immutable sequence<EntityIdentity>
-  concrete_subtypes: immutable sequence<EntityIdentity>
-  container: StorageContainer | absent
-  tag_column: string | absent
-  tag_value: string | absent
-  persistence: PersistenceMode
-  member_selection: EntityMemberSelection
-  applicable_attributes: immutable sequence<AttributeMetadata>
-  applicable_relationships: immutable sequence<RelationshipDeclaration>
-  applicable_value_objects: immutable sequence<ValueObjectMetadata>
-  applicable_document_shape: MemberShape
-  superset_attributes: immutable sequence<AttributeMetadata>
-  superset_value_objects: immutable sequence<ValueObjectMetadata>
-  applicable_attribute(local_name) -> AttributeMetadata | absent
-  applicable_relationship(local_name) -> RelationshipDeclaration | absent
-  applicable_value_object(local_name) -> ValueObjectMetadata | absent
-
-InheritancePositionView
-  concrete_subtypes: immutable sequence<EntityIdentity>
-  superset_attributes: immutable sequence<AttributeMetadata>
-  superset_value_objects: immutable sequence<ValueObjectMetadata>
-
-InheritanceFamilyView
-  attributes: immutable sequence<AttributeMetadata>
-  value_objects: immutable sequence<ValueObjectMetadata>
-```
-
-`entity(...)` is total, nonthrowing, and expected amortized O(1); it returns
+`entity(...)` is total and nonthrowing; it returns
 absent only for an identity outside the accepted Metamodel. It covers
 **every** accepted Entity, not only inheritance participants: a standalone
 Entity has the trivial view whose `root` is itself, whose `ancestry` and
 `concrete_subtypes` are `[entity]`, and whose `strategy`, `tag_column`, and
 `tag_value` are absent. `primary_key` is the family's one primary-key
 Attribute as its root declares it, so every position of one family answers the
-same value. Every view member and named lookup is an expected amortized O(1)
-read of formation output — the compiler precomputes these answers once, so
-behavioral modules never repeat ancestry walks or key searches at query or
-write time.
+same value. These answers are settled at formation, so behavioral modules never
+repeat ancestry walks or key searches at query or write time.
 
 `member_selection` is the one complete inheritance-effective Attribute and
 top-level Value Object selection for the Entity. It composes every applicable
 Attribute in root-to-descendant declaration order, then every applicable Value
 Object occurrence in that order. Its `shape.members` and `bindings` are aligned;
 the shape references declaration-owned member definitions while each binding
-retains its contextual Entity identity and storage metadata. The selection owns
-the distinct `MemberIdentity`-to-position index. `applicable_attributes`,
-`applicable_value_objects`, `applicable_document_shape`, and their named lookups
-are views over this selection rather than independently retained tuples, shapes,
-or name maps.
+retains its contextual Entity identity and storage metadata.
 
 - `root` names the family's root (the family identity); `ancestry` is the
   parent chain `root -> … -> entity` in that order.
@@ -776,7 +705,7 @@ position; a standalone Entity is its own trivial one-member position. It is
 total and nonthrowing, returning absent exactly when a member identity is
 outside the accepted Metamodel or the members do not all belong to one
 inheritance family (a standalone Entity forms a position only alone).
-The caller supplies canonical, duplicate-free, pairwise-disjoint members under
+The caller supplies nonempty, canonical, duplicate-free, pairwise-disjoint members under
 the Subtype Selection contract above. The facet resolves without re-validating
 that construction; a position whose effective set is empty returns empty
 sequences rather than absence so the validator can classify the empty selection.
@@ -797,10 +726,8 @@ sequences rather than absence so the validator can classify the empty selection.
   is never in these sequences; Storage Layout supplies its physical slot and
   `m-sql` retains the semantics for when that slot is projected or filtered.
 
-`position(...)` is expected output-sensitive: its cost is linear in the
-member count plus the returned view's size — resolution over precomputed
-per-Entity formation output, never a repeated whole-model walk — and every
-returned sequence is immutable with O(1) access.
+`position(...)` resolves over per-Entity formation output, never a repeated
+whole-model walk, and every returned sequence is immutable.
 
 ### The family declaration sequence
 
@@ -827,9 +754,8 @@ superset sequences stay empty. A standalone Entity's sequence is its own
 declared members.
 
 `family(root)` answers the two complete sequences for a family root, including
-every standalone Entity, and is absent for any other identity. It is an
-expected amortized O(1) read of formation output: the sequences are the
-accepted declaration values, and reading them never recomputes contributor
+every standalone Entity, and is absent for any other identity. The sequences are
+the accepted declaration values, and reading them never recomputes contributor
 order.
 
 ## Prior art (Reladomo)

@@ -14,8 +14,8 @@ The Rule Set validates physical Table ownership, Column claims, and the
 consequences of the declared Storage Layout over the Candidate Metamodel;
 whether that layout is declared where it may be is `m-inheritance`'s rule, not
 this one's. The compiler runs only after validation, consumes Compiled Metadata
-plus `FacetKey(m-inheritance)` and `FacetKey(m-relationship)`, and publishes the
-immutable `StorageLayoutFacet`.
+plus the Inheritance and Relationship Facets, and publishes the immutable
+`StorageLayoutFacet`.
 
 Storage Layout adds exactly one descriptor authoring form: the root-owned
 Storage Layout selection below. It adds no per-member placement authoring form —
@@ -111,44 +111,17 @@ root over its member tree (`m-document-codec`). The root set and member trees ar
 therefore equal under `Columns` and `Document`; neither a physical Structured
 Column boundary nor the depth of a derived Document Path is a judging boundary.
 
-Placement only determines how materialization reaches a requested position. The
-Entity-root classifier accepts one located member input rather than one physical
-carrier kind: a document-valued `DirectColumn` supplies the database port's
-already-tagged `m-core` `DocumentRead`, while a
-`DocumentPath` supplies `m-document-codec`'s `locateEntityMember` result over the
-raw Entity document. Document-valued members in either arm then pass through
-`decodeLocatedMemberClassified`; direct scalar Attributes retain row conversion.
-The read seam normalizes by logical member identity. In particular, an absent or
-JSON-null non-nullable top-level Entity Attribute under `Document` and an SQL-null
-value for that Attribute under `Columns` both produce
-`stored-data-attribute-null` with unavailable hydration. The document-local
-`RequiredMemberAbsent` or `RequiredMemberNull` is detection evidence, not a
-layout-selected public verdict.
-
-The shared Structured Column's database type guarantees a non-SQL-null document,
-not an object-shaped document. When its raw value is JSON null, an array, or a
-scalar, `locateEntityMember` supplies no Entity-root cursor and returns `Missing`
-for the requested document-resident Entity member. The shared classifier then
-supplies that member's existing verdict and hydration. The materializer passes
-the raw carrier to the locating operation without inspecting its JSON shape. The
-raw carrier has no logical member identity and therefore creates no independent
-stored-data issue or recursive validation work.
-
-For a top-level occurrence under `Columns`, its own Structured Column is the
-occurrence carrier, and a top-level scalar collection's own Structured Column is
-likewise its carrier: its `Document`-tier slot routes it through the same
-`DocumentRead` and classified decoding, never through a native scalar column
-conversion. Under `Document` a scalar collection is located in the shared
-document like any other document-resident Attribute. Under `Document`, classified Entity-member decoding obtains
-the occurrence carrier by passing the Entity's shared Structured Column to
-`locateEntityMember`. The Columns arm supplies the database port's already-tagged
-`m-core` `DocumentRead` as `SqlNull` or `StructuredDocument`;
-the Document arm supplies `Missing` or `StructuredDocument`. Both pass that located
-input to `decodeLocatedMemberClassified`, so SQL null, JSON null, object, scalar,
-array, and malformed-array carriers receive the occurrence's same presence and
-kind verdict before the materializer enters its root. The occurrence carrier
-remains a direct member of the Entity root in both arms, even though one arm
-stores that member as a Column and the other as an Entity-document key.
+Placement determines only how materialization reaches a requested position; the
+verdict belongs to the logical member. An absent or JSON-null non-nullable top-level
+Entity Attribute under `Document` and an SQL-null value for that Attribute under
+`Columns` both produce `stored-data-attribute-null` with unavailable hydration. The
+shared Structured Column's database type guarantees a non-SQL-null document, not an
+object-shaped one: when its raw value is JSON null, an array, or a scalar, every
+requested document-resident member of that row reads as absent and takes that
+member's existing verdict and hydration, and the raw carrier creates no stored-data
+issue or recursive validation work. A top-level occurrence and a top-level scalar
+collection receive the same presence and kind verdict under either placement, and a
+scalar collection's Column is never read as a native scalar.
 
 Logical roots do not authorize subtree validation. Classification remains one
 requested branch at a time. A nested occurrence supplies no additional root, but
@@ -253,6 +226,11 @@ applicability.
 
 ## Layout values
 
+The terms here and under *Entity and position views* name the derived facts other
+modules cite. Their field sets, accessor spellings, and representation are not a
+binding contract; the ordering, applicability, nullability, and placement rules
+stated over them are.
+
 The closed semantic tiers, in canonical order, are:
 
 ```text
@@ -293,51 +271,18 @@ and the same Column. It is the **only** contributor that claims a Structured
 Column under `Document`: document-resident members contribute no slot and make
 no Column claim at all.
 
-```text
-ColumnSlot
-  column: Column
-  tier: ColumnTier
-  contributor: ColumnContributor
-  declaringOwner: EntityIdentity
-  effectiveNullable: boolean
-  applicableEntities: immutable set<EntityIdentity>
+A **Column Slot** is one physical Column of one Table. It names its `column`,
+`tier`, `contributor`, `declaringOwner`, `effectiveNullable` answer, and
+`applicableEntities`.
 
-MemberPlacement =
-    DirectColumn(slot: ColumnSlot)
-  | DocumentPath(slot: ColumnSlot,
-                 path: nonempty sequence<MemberName>)
+A **Member Placement** (`MemberPlacement`) locates one logical member. Its two arms
+are `DirectColumn(slot)` and `DocumentPath(slot, path)`, whose `path` is a nonempty
+sequence of `MemberName`.
 
-PhysicalIndex
-  declaration: IndexMetadata
-  columns: immutable sequence<ColumnSlot>
-
-PhysicalTemporalAxis
-  declaration: AsOfAxisMetadata
-  start: ColumnSlot
-  end: ColumnSlot
-  intervalCheckName: string
-
-TemporalHistoryConstraints
-  primaryKey: PhysicalIndex
-  primaryKeyName: string
-  logicalKey: immutable sequence<ColumnSlot>
-  transactionAxis: PhysicalTemporalAxis
-  validAxis: PhysicalTemporalAxis | absent
-  exclusionName: string
-
-TableLayout
-  table: Table
-  columns: immutable sequence<ColumnSlot>
-  physicalPrimaryKey: immutable sequence<ColumnSlot>
-  primaryKeyIndex: PhysicalIndex | absent
-  indices: immutable sequence<PhysicalIndex>
-  uniqueKeys: immutable sequence<PhysicalIndex>
-  temporalConstraints: TemporalHistoryConstraints | absent
-  column(Column) -> ColumnSlot | absent
-  columnPosition(Column) -> integer | absent
-  contribution(ColumnContributor) -> ColumnSlot | absent
-  placement(MemberIdentity) -> MemberPlacement | absent
-```
+A **Table Layout** (`TableLayout`) is the composed physical shape of one Table: its
+`columns`, its `physicalPrimaryKey`, its `indices` with their `primaryKeyIndex` and
+`uniqueKeys`, and its `temporalConstraints`. It answers a Column's slot and
+position, a contributor's slot, and a member's Member Placement.
 
 `MemberName` is a canonical local declared member name — the same spelling the
 Metamodel and a materialized result use. A `DocumentPath` therefore names no
@@ -349,13 +294,13 @@ job and happens below this contract, never inside it.
 locates the member *within that document*: the Table's one `RelationalDocument`
 slot under `Document`, and the containing top-level Value Object occurrence's own
 Structured Column under `Columns`. `DirectColumn.slot` is always a slot the
-member's own contributor owns, so under `Columns` layout `placement(m)` and
-`contribution(m)` select the same slot for every applicable member that is itself
-a contributor — a top-level Attribute or a top-level Value Object occurrence.
+member's own contributor owns, so under `Columns` layout every applicable member
+that is itself a contributor — a top-level Attribute or a top-level Value Object
+occurrence — is placed over the slot it contributes.
 
 `TableLayout.columns` is the complete physical Table sequence and is the sole
 physical order exposed to consumers. `physicalPrimaryKey` selects the same
-immutable slot values from `columns`; it does not copy slots or restate Columns.
+immutable slot values from `columns`.
 The structural identity of a slot is `(Table, ColumnContributor)`. An inherited
 Attribute in two table-per-concrete-subtype Tables therefore has one distinct
 slot per Table even though both slots reference the same declaration identity.
@@ -377,47 +322,22 @@ shared Table. The shared Structured Column applies to every row owner in its
 governed Table, because every governed row carries a document even when that
 document is the empty object.
 
-All sequences and sets are immutable. The four lookups are total, nonthrowing,
-and expected amortized O(1); they return absent for an unknown Column,
-contributor, or member. `columnPosition(...)` names the position in `columns` and
-shares the Column index used by `column(...)`; it does not retain a second
-Column-keyed index. Physical-column uniqueness makes both Column lookups
-unambiguous.
+All sequences and sets are immutable. A Table Layout's lookups are total and
+nonthrowing; they return absent for an unknown Column, contributor, or member.
+Physical-column uniqueness makes both Column lookups unambiguous.
 
 ## Member Placement is the sole logical locator
 
-`contribution(...)` and `placement(...)` answer different questions and both
-survive. `contribution(...)` answers *which physical slot does this contributor
-own*, and is what DDL, physical order, fixture binding, and physical Table
-read-back consume. `placement(...)` answers *where does this member live*, and
-is what SQL predicates, projection, write lowering, and materialization consume.
-Under `Columns` the two agree for every applicable member that is a contributor,
-so conventional behavior is one case of this contract rather than a parallel
-path. They are not one lookup under a second name: a member inside a top-level
-Value Object occurrence has no contributor at all, so `contribution(...)` has no
-answer for it while `placement(...)` does, and the Structured Column has no
-member, so `placement(...)` has no answer for it while `contribution(...)` does.
+Member Placement is the one answer to where a logical member lives; *Storage
+Layout transparency* states what no consumer's use of it may change.
 
-`placement(...)` is **the sole authority for locating a logical member**. No
-consumer may re-derive direct-versus-document residency, reconstruct a Document
-Path from member names, or infer a placement from a Column spelling, a tier, or
-the presence of a Structured Column. A consumer that needs a member's location
-asks; a consumer that gets absence has asked about a member this Table does not
-carry.
+Every member applicable to a Table has exactly one location. A member has no
+Member Placement only when it is unknown or inapplicable — a lookup miss, never a
+"not resolved yet". There is no partial, provisional, or deferred placement value,
+and absence never means the compiler has more work to do.
 
-`placement(...)` is **total** over the members applicable to its Table. It
-returns absent only for a member that is unknown or inapplicable — a lookup
-miss, never a "not resolved yet". There is no partial, provisional, or
-deferred placement value, and absence never means the compiler has more work to
-do.
-
-Totality is possible because the facet is published whole and only after every
-Rule Set has succeeded, so relationship resolution, temporal designation, and
-family topology are all settled before the first `placement(...)` call. **No
-Rule Set may call `placement(...)`**, and no Rule Set may consume any part of
-`StorageLayoutFacet`: during validation no facet exists. A Rule Set that needs
-another module's facts consumes that module's pure Candidate Metamodel
-projection instead.
+Every Rule Set judges the Candidate Metamodel; validation depends on nothing
+compilation produces.
 
 Placement follows the accepted layout of the member's mapping owner:
 
@@ -435,7 +355,7 @@ Conventional storage therefore already has Document Paths. A top-level Value
 Object occurrence has always been stored as a document and its leaves have always
 been addressed inside it (`m-value-object`); what the layout selects is how many
 documents a row carries and which members live in them, not whether a member can
-live inside one. That is why `placement(...)` stays total over `MemberIdentity`
+live inside one. That is why Member Placement covers every `MemberIdentity`
 — `ValueObjectAttributeIdentity` included — under both layouts, and why no
 consumer branches on the layout to locate a member.
 
@@ -577,9 +497,8 @@ object explicitly.
 
 This physical non-null guarantee does not assert that externally written stored
 JSON is object-shaped. The DDL deliberately has no deep shape constraint. Read
-materialization passes a JSON-null, array, or scalar carrier to
-`locateEntityMember`, which performs the member-local missing projection without
-creating a codec cursor, before the shared located-member classifier runs.
+materialization treats a JSON-null, array, or scalar carrier by the member-local
+missing projection, and creates no cursor for it.
 
 The fourth rule makes a required subtype-only member nullable in a shared
 table-per-hierarchy Table, because rows of a sibling subtype have no value for
@@ -678,7 +597,7 @@ its own design rather than a looser index rule.
 
 `temporalConstraints` is a temporal Table's own constraint definitions, compiled
 once with the layout and retained for the accepted model's lifetime; it is absent
-exactly when the family mapped to the Table declares no As-Of Axis. Each `PhysicalTemporalAxis`
+exactly when the family mapped to the Table declares no As-Of Axis. Each of its axes
 references the family root's accepted `AsOfAxisMetadata` and selects the Table's
 existing slots for its start and end Attributes, resolved through the Table's own
 contributor lookup exactly as the physical primary key's components are. So a
@@ -711,7 +630,8 @@ constraint; its Columns are unchanged.
 Rendering the checks, the key name, and the exclusion is `m-schema-delta`'s and
 `m-dialect`'s.
 
-Each constraint's name is:
+Each constraint's compiled name — `primaryKeyName`, `exclusionName`, and each
+axis's interval check name — is:
 
 ```text
 pxc_<kind>_<readable-table-prefix>_<fingerprint>
@@ -753,62 +673,16 @@ Index Names are `m-schema-delta`'s separate convention.
 ## Entity and position views
 
 The facet exposes table layouts plus selections that reference their existing
-slots:
-
-```text
-DiscriminatorAssignment
-  slot: ColumnSlot
-  value: string
-
-DocumentResidentSelection
-  shape: MemberShape
-  memberSelection: EntityMemberSelection
-  positions: immutable sequence<integer>
-  placements: immutable sequence<DocumentPath>
-
-EntityLayoutView
-  entity: EntityIdentity
-  layout: TableLayout
-  columns: immutable sequence<ColumnSlot>
-  discriminator: DiscriminatorAssignment | absent
-  memberSelection: EntityMemberSelection
-  documentResidents: DocumentResidentSelection | absent
-
-PositionColumn
-  contributor: AttributeIdentity | ValueObjectIdentity
-  tier: ColumnTier
-  declaringOwner: EntityIdentity
-
-PositionBranch
-  layout: TableLayout
-  concreteEntities: immutable sequence<EntityIdentity>
-  slots: immutable sequence<ColumnSlot | absent>
-  placements: immutable sequence<MemberPlacement | absent>
-  discriminatorSlot: ColumnSlot | absent
-
-PositionLayoutView
-  concreteEntities: immutable sequence<EntityIdentity>
-  columns: immutable sequence<PositionColumn>
-  members: immutable sequence<MemberIdentity>
-  branches: immutable sequence<PositionBranch>
-
-StorageLayoutFacet
-  tables: immutable sequence<TableLayout>
-  table(Table) -> TableLayout | absent
-  entity(EntityIdentity) -> EntityLayoutView | absent
-  position(immutable sequence<EntityIdentity>) -> PositionLayoutView | absent
-```
-
-`tables` is deterministic and contains exactly one layout per physical Table.
+slots. `tables` is deterministic and contains exactly one layout per physical Table.
 `table(...)` is total and returns absent only for a Table outside the accepted
 layout graph.
 
-`entity(...)` returns a view for a standalone or concrete row-owning Entity and
-returns absent for an unknown or rowless abstract Entity. Its `columns` are the
-layout's slots applicable to that Entity, retained in complete table order; the
-shared-table discriminator is included and its derived concrete tag value is
-exposed by `discriminator`. The sequence references layout slots and creates no
-second physical order.
+`entity(...)` returns an **Entity Layout** for a standalone or concrete row-owning
+Entity and returns absent for an unknown or rowless abstract Entity. It names its
+Entity and Table Layout. Its `columns` are the layout's slots applicable to that
+Entity, retained in complete table order; the shared-table discriminator is
+included and its derived concrete tag value is exposed by `discriminator`. The
+sequence references layout slots and creates no second physical order.
 
 `memberSelection` is the exact `m-inheritance` selection for this Entity, held by
 reference rather than copied. `documentResidents` is present exactly under
@@ -821,17 +695,21 @@ concrete variants of one shared Table therefore carry their own complete residen
 selection. Under `Columns` it is absent, even though nested Value Object members
 still have Document Paths inside their occurrence-owned Structured Columns.
 
-`position(...)` accepts the canonical effective concrete-Entity sequence
-already resolved by Inheritance. An unknown Entity, a noncanonical sequence, or
+`position(...)` answers a **Position Layout** for the canonical effective
+concrete-Entity sequence already resolved by Inheritance, which the view names. An
+unknown Entity, a noncanonical sequence, or
 Entities from different families returns absent. An empty valid sequence
 returns an empty view. `columns` is one logical, declaration-provenance-bearing
 union for the position: the family's complete declaration sequence
 (`m-inheritance`), keeping each contributor that applies to at least one
 selected concrete, then stable tier partitioning, with an inherited
-contributor included once. It excludes physical discriminators because a TPCS
-position has none and `familyVariant` remains a result concern.
+contributor included once. Each entry names its Attribute or top-level Value
+Object contributor, its tier, and its declaring owner. `columns` excludes physical
+discriminators because a TPCS position has none and `familyVariant` remains a
+result concern.
 
-Each branch names one physical Table represented in the position and aligns its
+Each branch names one physical Table represented in the position and the selected
+concretes stored in it, and aligns its
 `slots` with the logical `columns`. An entry references that Table's slot when
 the contributor applies to at least one selected concrete in the branch and is
 absent otherwise. TPH has one shared-table branch; TPCS has one branch per
@@ -848,10 +726,11 @@ answering *where does this member live in this branch's row*: the entry is that
 branch's `MemberPlacement` when the member applies to at least one selected
 concrete in the branch, and absent otherwise.
 
-`placements` is a derived projection, not a second fact. Each entry **is**
-`branch.layout.placement(members[i])` where the member applies, and absent where
-it does not, so there is one authority and the sequence can no more disagree with
-it than `slots` can disagree with `branch.layout.contribution(...)`.
+`placements` is a derived projection, not a second fact. Each entry **is** that
+member's Member Placement in the branch's Table Layout where the member applies,
+and absent where it does not, so there is one authority and the sequence can no
+more disagree with it than `slots` can disagree with that layout's contributor
+slots.
 
 What it adds is alignment, which is the position view's whole shape. A
 polymorphic read walks one logical member order and emits or decodes each branch
@@ -874,13 +753,12 @@ answers for one declaration reaches them through that declaration, not through a
 shared index.
 
 The union carries top-level members only. A Value Object leaf is located
-through the branch's own `layout.placement(...)`, which is total over every
+through its Member Placement in the branch's own Table Layout, which covers every
 member applicable to that Table; enumerating leaves per position would grow the
 view without adding an answer the branch's Table Layout does not already give.
 
-Facet and view indices are immutable and bounded by the accepted model. A
-compiler may intern repeated applicability sets and store slot selections as
-ordinals, but public values preserve structural equality and immutable access.
+Facet and view indices are immutable and bounded by the accepted model, and public
+values preserve structural equality and immutable access.
 Arbitrary position views are statement-scoped and must not create an unbounded
 model-lifetime cache.
 
@@ -999,8 +877,8 @@ This Rule Set receives only the Candidate Metamodel and owns exactly
 `storage-layout-document-member-column-override`, and
 `storage-layout-index-over-document-member`. The Column
 collision code remains exclusive to distinct physical Column claims. The Rule
-Set consumes no `InheritanceFacet` or `RelationshipFacet`, assumes no other Rule
-Set has run, and makes no topology decision. The post-validation Model Compiler
+Set assumes no other Rule Set has run and makes no topology decision. The
+post-validation Model Compiler
 emits no Issue and never chooses a winner for duplicate Table or Column claims.
 
 Because Rule Sets run in unspecified order over one Candidate Metamodel, a model
@@ -1023,51 +901,6 @@ their spellings equals a physical Column.
 
 ## Consumer contract
 
-- SQL read lowering resolves physical Tables, ordered projected slots, and
-  per-branch slot presence through layout views, and locates every logical
-  member it projects, filters, or orders by through Member Placement. It retains
-  tag predicates, typed `NULL` expressions, result aliases, `familyVariant`, and
-  row transforms.
-- Physical DML filters present cells from an Entity view in layout order.
-  Operation-specific primary-key, discriminator, optimistic, and temporal gates
-  retain their semantic selection and map the selected identities to slots.
-  Assignments to document-resident members compose against the one Structured
-  Column slot their placements name, in canonical logical placement order.
-- DDL iterates `TableLayout.columns`, applies `effectiveNullable`, selects
-  `physicalPrimaryKey`, and renders every other entry of `indices` over its
-  selected slots; dialects only render the already-selected values. Every key
-  or unique constraint it emits comes from an Index: the derived primary-key Index is
-  rendered as the key constraint and each other unique Index as a unique
-  constraint, and the two sets are disjoint because Model Formation refuses an
-  Entity whose Indices share one name, so no consumer suppresses one constraint
-  because another happens to span the same Columns. A temporal Table's key
-  name, interval checks, and exclusion come from `temporalConstraints` under
-  their compiled names. The Structured
-  Column appears in DDL purely as a consequence of the layout owning one more
-  `Document`-tier slot.
-- Fixture loading resolves logical members and derived discriminator values
-  through an Entity view while preserving the surface's omitted-cell policy. It
-  places a document-resident member through its Member Placement rather than
-  binding it to a Column of its own.
-- Physical Table observation enumerates `StorageLayoutFacet.tables` once and
-  reads every layout's complete slot sequence.
-- Document Codec consumers — read materialization, write composition, temporal
-  predecessor retention, and fixture construction — take the document shape they
-  encode or decode from Member Placement and the accepted Metamodel, never from
-  a Column spelling or a stored document's own keys.
-- Read materialization derives Logical Judging Roots from accepted Metadata
-  before using Member Placement to locate member inputs. It normalizes direct and
-  document-resident Entity members at that carrier-independent seam. It passes a
-  direct document's provider-neutral `DocumentRead` or `m-document-codec`'s
-  Entity-member location result to the same located-member classifier, then
-  advances Logical Judging Cursors only along requested occurrence branches. It
-  cannot inspect or project an Entity carrier itself, interpret a direct
-  occurrence carrier outside the codec, or use a Structured Column boundary to
-  add, remove, or recursively expand classification work.
-
-No consumer may infer a declaration from a duplicate raw Column spelling,
-rebuild a whole-family table projection, retain a competing canonical physical
-order, or re-derive whether a member is direct or document-resident. The raw
-Structured Column value is never an Entity member, a result field, or a
-navigable member: it reaches a consumer only as the carrier the codec decodes
-and the writer patches.
+The raw Structured Column value is never an Entity member, a result field, or a
+navigable member: it reaches a consumer only as the carrier the codec decodes and
+the writer patches.

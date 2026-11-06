@@ -45,26 +45,14 @@ storage-neutral and acquire no column during formation.
 
 ## Sole accepted metadata ownership
 
-The mandatory Metadata Compiler produces exactly one immutable
-`CompiledMetadata` object graph. The accepted Metamodel owns that exact graph
-and attaches the complete immutable facet set to it without copying Entity,
-member, occurrence, or facet values.
-
-This is the sole canonical accepted metadata object graph for one formation:
-
-- a hub MAY own lifecycle state, export context, and language-class bindings;
-- a hub MAY delegate the Metamodel interface to the accepted object;
-- a hub MUST NOT reconstruct accepted Metadata or compiled facets;
-- a hub MUST NOT create independent normalized accepted-metadata indices;
-- language bindings MAY index canonical Entity Identity to native class, but
-  that index is binding state, not model metadata; and
-- descriptor export MUST derive from the accepted Metamodel and MUST NOT retain
-  a mirrored accepted descriptor graph.
-
-`CompiledMetadata` itself contains the immutable canonical Entity sequence and
-the immutable indices used by all accepted local lookup. The Metamodel adds
-facet retrieval only. This ownership rule applies equally to descriptor-backed
-and class-backed hubs.
+The mandatory Metadata Compiler produces one formation's **Compiled Metadata**:
+the immutable canonical Entity sequence and its accepted local lookup. One
+formation produces exactly one accepted Metamodel holding it, the sole authority
+for that formation's accepted Metadata and compiled facts, whichever frontend
+supplied the model. A language-level model object may add binding state around
+it, such as export context or class bindings, and answers every accepted-model
+question from it. Canonical descriptor export derives from the accepted
+Metamodel, never from a retained source document.
 
 ## Canonical identities and order
 
@@ -176,11 +164,12 @@ never run after resolution issues. The resolver performs only identity,
 reference, and foundational local-shape checks assigned to `m-metamodel`; it
 does not implement another module's semantic rules.
 
-## Formation-input protocols
+## Formation-input facts
 
-The formation-input interfaces are exact. Implementations MAY use native
-read-only frontend objects to satisfy them; the interfaces do not require a
-second declaration record graph.
+The structures below name the normalized facts a frontend supplies and
+foundational resolution produces. They fix what each state knows, not a binding's
+type decomposition: a binding may realize the states as distinct values, as one
+value, or as views over native objects.
 
 ```text
 UnresolvedMetamodel
@@ -194,6 +183,7 @@ UnresolvedEntityDeclaration
   identity: EntityIdentity
   container: StorageContainer | absent
   persistence: PersistenceMode | absent
+  layout: StorageLayout | absent
   attributes: immutable sequence<AttributeMetadata>
   relationships: immutable sequence<UnresolvedRelationshipDeclaration>
   value_objects: immutable sequence<ValueObjectOccurrenceDeclaration>
@@ -205,6 +195,7 @@ EntityDeclaration
   identity: EntityIdentity
   container: StorageContainer | absent
   persistence: PersistenceMode | absent
+  layout: StorageLayout | absent
   attributes: immutable sequence<AttributeMetadata>
   relationships: immutable sequence<RelationshipDeclaration>
   value_objects: immutable sequence<ValueObjectOccurrenceDeclaration>
@@ -218,11 +209,6 @@ facet access, effective view, uniqueness guarantee, or semantic source order.
 Its outer sequence MAY retain frontend order for diagnostics, but that order is
 not observable model semantics. Each Entity's local sequences preserve authored
 order. No Unresolved declaration exposes lookup.
-
-Candidate Metamodel enumerates Entities in canonical Entity Identity order and
-provides total, nonthrowing, expected amortized `O(1)` exact Entity lookup. A
-miss returns absence. It has no member lookup, facet access, effective view,
-Metadata, or behavioral authority. Its local sequences retain authored order.
 
 Only reference-bearing or occurrence-relative facts have separate Declaration
 types. Attribute, As-Of Axis, and Index facts already have final Identities and
@@ -317,11 +303,7 @@ model shape.
 ### Reusable Value Object declarations
 
 ```text
-ValueObjectShapeKey
-  opaque formation-local equality/hash token
-
 ValueObjectShapeDeclaration
-  key: ValueObjectShapeKey
   attributes: immutable sequence<ValueObjectAttributeDeclaration>
   value_objects: immutable sequence<NestedValueObjectOccurrenceDeclaration>
 
@@ -345,18 +327,13 @@ NestedValueObjectOccurrenceDeclaration
   shape: ValueObjectShapeDeclaration
 ```
 
-A Shape Key denotes one reusable declaration node during one Model Formation.
-Each occurrence of that node carries the same key; distinct declaration nodes
-carry distinct keys even when structurally equal. A key promises equality and
-hashing only. It has no spelling, order, serialization, cross-formation
-identity, Model Location, or accepted-Metadata representation.
+A reusable Value Object declaration may occur at several positions. Formation
+judges reuse and containment cycles over declaration identity rather than
+structural equality, and accepted Metadata retains no trace of that identity.
 
 Only a top-level occurrence owns Storage Location. Shapes and nested
 occurrences are storage-neutral. Every sequence preserves declaration order
-and exposes no lookup. Candidate Metamodel retains the graph unchanged. The
-`m-value-object` Rule Set uses Shape Keys to validate reuse and cycles without
-host-object identity; after successful validation the Metadata Compiler expands
-each occurrence into path-identified Metadata and discards all Shape Keys.
+and exposes no lookup. Candidate Metamodel retains the graph unchanged.
 
 ## Inheritance declarations
 
@@ -392,6 +369,7 @@ EntityMetadata
   identity: EntityIdentity
   declared_container: StorageContainer | absent
   declared_persistence: PersistenceMode | absent
+  declared_layout: StorageLayout | absent
   declared_attributes: immutable sequence<AttributeMetadata>
   declared_relationships: immutable sequence<RelationshipDeclaration>
   declared_value_objects: immutable sequence<ValueObjectMetadata>
@@ -403,6 +381,8 @@ EntityMetadata
 It never copies inherited or otherwise effective facts. Every property whose
 effective value may differ through inheritance has a `declared_` qualifier.
 Owner modules expose contextual effective views through compiled facets.
+`StorageLayout` is the selection `m-storage-layout` states; this module carries
+it and gives it no meaning.
 
 Exact lookup is local-only, total, nonthrowing, and expected amortized `O(1)`:
 
@@ -579,19 +559,10 @@ IndexMetadata
 A `MemberShape` is the ordered document form of accepted Metadata: canonical
 member names, declared Neutral Types, multiplicity, and nullability, and nothing
 physical. Scalars precede occurrences, and every `OccurrenceDefinition.shape` is
-the exact shape owned by the reusable declaration that defines that occurrence. A
-declaration composes its immutable shape child-first and each accepted occurrence
-binding references those definitions; using one declaration at several paths or
-in several model formations does not copy its `ScalarDefinition`,
-`OccurrenceDefinition`, or nested shape values. Accepted bindings add contextual identities and storage facts but
-retain no declaration key or wrapper topology.
+the exact shape owned by the reusable declaration that defines that occurrence.
 
-Each shape retains one canonical name-to-position index over `members`.
-`position(...)` and `member(...)` are total, nonthrowing, expected-amortized O(1)
-lookups with first-declared-wins behavior; they return absent on a miss. A
-read-only name mapping may expose the same index and ordered members but may not
-retain a second name-to-member dictionary. `MemberName` is the canonical declared
-name.
+`position(...)` and `member(...)` return absent on a miss. `MemberName` is the
+canonical declared name.
 
 Only a top-level Value Object owns Storage Location. A nested occurrence and a
 Value Object Attribute cannot carry Entity-only storage, primary-key,
@@ -728,24 +699,14 @@ reported by the owning module's Rule Set, never by a second `metamodel-*` code.
 ## Compiled metadata and facets
 
 ```text
-CompiledMetadata
-  entities: canonical immutable sequence<EntityMetadata>
-  entity(EntityIdentity) -> EntityMetadata | absent
-
-FacetKey<T>
-  owner: canonical module-catalog identity
-
 Metamodel
   entities: canonical immutable sequence<EntityMetadata>
   entity(EntityIdentity) -> EntityMetadata | absent
-  facet(FacetKey<T>) -> T
 ```
 
-Facet retrieval is total for an accepted Formation Profile. The generic facet
-mechanism is an internal collaboration seam; each owner exposes a typed
-`view(model)` function. `m-metamodel` imports no semantic owner and knows no
-contributor implementation; opaque facet keys and installed facet values do
-not give it formation-composition responsibility.
+`m-metamodel` imports no semantic owner and knows no contributor implementation,
+and the facets compiled over it do not give it formation-composition
+responsibility.
 
 The Metadata Compiler may expand an already validated acyclic Value Object
 occurrence graph and build immutable local indices. It may not decide semantic

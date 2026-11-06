@@ -289,7 +289,7 @@ The defining form is:
 | `name` | local relationship name (REQUIRED) |
 | `cardinality` | `one-to-one` \| `many-to-one` \| `one-to-many` (REQUIRED) |
 | `join` | `{ source: <local attribute>, target: { entity: <entity reference>, attribute: <target-local attribute> } }` (REQUIRED) |
-| `dependent` | bool, default `false` — target is owned by the source; retained as relationship metadata and compared by model evolution |
+| `dependent` | bool, default `false` — target is owned by the source; relationship metadata that model evolution compares |
 | `orderBy` | optional target-attribute ordering for a to-many direction; each item is `{ attribute, direction?, nulls? }` |
 
 The reverse form is:
@@ -631,21 +631,9 @@ it to the `m-metamodel` Unresolved Metamodel seam: it expands every omitted
 defaults, so candidate and accepted Metadata never expose an absent Storage
 Location or a partially configured Sequence.
 
-The same phase derives the Entity's temporal structure and its primary-key
-index, in this order:
-
-1. Read `temporality`, defaulting an absent one to `nontemporal`. `nontemporal`
-   derives no axis and stops here.
-2. Synthesize each derived axis's start and end Attribute as `type: timestamp`,
-   non-nullable, over the framework-fixed column of the mapping table above —
-   **not** through `defaultColumn`, which would yield `tx_start` rather than
-   `in_z`.
-3. Place them after every authored Attribute, Valid Time before Transaction
-   Time.
-4. Emit the resolved As-Of Axis structure, each axis referencing the endpoints
-   step 2 synthesized.
-5. Derive the `<table>_pk` index over the declared primary key plus each axis's
-   end Attribute.
+The same phase derives the Entity's temporal structure and its primary-key index
+from `temporality`, by *`temporality` — the temporal profile* and *The derived
+primary-key index*.
 
 Past this seam the profile is fully discharged: an Unresolved Entity Declaration
 carries the complete Attribute list and the resolved axes, exactly as if both had

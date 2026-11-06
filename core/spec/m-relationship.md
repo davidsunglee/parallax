@@ -12,8 +12,7 @@ it does not pair directions, swap joins, or invert cardinality.
 ## Formation contribution
 
 The module contributes the required `m-relationship` Rule Set and one Model
-Compiler under `FacetKey(m-relationship)`. It requires no other facet. Its
-complete Issue Code set is:
+Compiler, which requires no other facet. Its complete Issue Code set is:
 
 | Code | Rule |
 |---|---|
@@ -64,31 +63,20 @@ facet exists.
 
 ## Facet
 
-```text
-RelationshipFacet
-  relationship(RelationshipIdentity) -> RelationshipMetadata | absent
-  relationships(EntityIdentity)
-    -> immutable sequence<RelationshipMetadata> | absent
+The Relationship Facet answers one **Relationship Metadata**
+(`RelationshipMetadata`) value per accepted declaration, by its Relationship
+Identity and as a per-Entity enumeration. A value
+states its direction: its identity, cardinality, `join` from `source` to `target`
+Attribute Identity, the local name of its `reverse` when it has one, whether it is
+`dependent`, and its ordering.
 
-RelationshipMetadata
-  identity: RelationshipIdentity
-  cardinality: OneToOne | ManyToOne | OneToMany
-  join: RelationshipJoin(source: AttributeIdentity,
-                         target: AttributeIdentity)
-  reverse: nonempty local relationship name | absent
-  dependent: boolean
-  order_by: immutable sequence<RelationshipOrder>
-```
+Exact lookup is total and nonthrowing. Per-Entity enumeration returns absence for
+an unknown Entity, empty for a known Entity with none, and otherwise preserves
+local declaration order.
 
-Exact lookup is total, nonthrowing, and expected amortized `O(1)`. Per-Entity
-enumeration returns absence for an unknown Entity, empty for a known Entity
-with none, and otherwise preserves local declaration order.
-
-The compiler returns one directional value for every accepted declaration. It
-swaps join sides and inverts cardinality for reverse directions, but never
-copies or replaces the accepted local Relationship Declarations. The target is
-`join.target.entity` and is not repeated. No `relatedEntity`, `foreignKey`, or
-parallel reverse-pair map exists.
+The compiler returns one directional value for every accepted declaration,
+swapping join sides and inverting cardinality for reverse directions. The target
+is `join.target.entity`.
 
 `RelationshipOrder` contains one target Attribute Identity, Ascending or
 Descending Sort Direction, and NullsFirst or NullsLast Null Placement. An

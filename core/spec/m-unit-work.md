@@ -8,8 +8,8 @@ serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
 Steps it produces and the State Observations it carries, on
 `m-temporal-write` for the temporal expansion it drives, on `m-concurrency` for
-each Entity's Effective Concurrency Strategy, version source, and evidence kind,
-and on `m-edit`, which distinguishes authored assignments from state carried by
+each Entity's Effective Concurrency Strategy, version source, and what its writes
+settle against, and on `m-edit`, which distinguishes authored assignments from state carried by
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by `m-sql` and run by the execution runtime

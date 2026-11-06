@@ -194,8 +194,8 @@ For each physical branch, SQL selects from the layout values as follows:
    **instance-form** read. Each selected slot expands to the document read pair
    defined below; it is never projected as one ambiguous raw value. Before any
    occurrence cursor exists, instance materialization passes the resulting
-   `m-core` `DocumentRead` to `m-document-codec` as a `LocatedMemberInput` for
-   the top-level occurrence.
+   `m-core` `DocumentRead` to `m-document-codec`, which classifies the top-level
+   occurrence.
 4. A table-per-concrete-subtype abstract read appends the SQL-owned
    `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
    placeholders and collision-safe aliases are likewise SQL renderings over a
@@ -212,9 +212,9 @@ For each physical branch, SQL selects from the layout values as follows:
    wrote. The
    Structured Column is never a result field: a row's requested logical members —
    none, where the read requested none — are classified from its document through
-   `m-document-codec`'s Entity-member locator, and the raw value is not among them.
+   `m-document-codec`'s classified decoding, and the raw value is not among them.
    A document-resident top-level Value Object and the direct slot in step 3 receive
-   the same located-member classification.
+   the same classification.
 
 Within one Table, selected physical slots retain `TableLayout.columns` order:
 `Identity`, `Discriminator`, `Domain`, `Temporal`, `Audit`, then `Document`, with
