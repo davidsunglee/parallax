@@ -255,6 +255,44 @@ def test_a_bytes_cell_a_case_authors_uppercase_fails(damaged_case: CaseLoader) -
         assert_case_read(case, reads)
 
 
+def test_a_bytes_cell_a_wrapped_union_carries_grades_in_either_case(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_BYTES_CELL)
+    arm = "select t0.id, hex(t0.payload) payload_hex from bytes_cell t0"
+    case.then["statements"][0]["sql"]["mariadb"] = (
+        f"select u.id, u.payload_hex from (({arm} where t0.id = 1) union all ({arm})) u"
+    )
+
+    assert_case_read(case, ScriptedReads("mariadb", [[{"id": 1, "payload_hex": "0A1B"}]]))
+
+
+def test_a_string_column_spelled_like_a_bytes_cell_compares_exactly(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_BYTES_CELL)
+    case.model.descriptor["entities"] = [
+        {
+            "name": "TextCell",
+            "namespace": "parallax.compatibility",
+            "table": "text_cell",
+            "persistence": "read-only",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "payload_hex", "type": "string"},
+            ],
+        },
+        case.model.descriptor.pop("entity"),
+    ]
+    case.when["objectQuery"]["target"] = "parallax.compatibility.TextCell"
+    case.then["statements"][0]["sql"]["mariadb"] = "select t0.id, t0.payload_hex from text_cell t0"
+    case.then["rows"] = [{"id": 1, "payload_hex": "abc"}]
+    reads = ScriptedReads("mariadb", [[{"id": 1, "payload_hex": "ABC"}]])
+
+    with pytest.raises(CaseFailure, match="then.statements .mariadb. rows != then.rows"):
+        assert_case_read(case, reads)
+
+
 def test_an_abstract_target_read_materializes_family_variant_from_the_raw_tag(
     corpus_case: CaseLoader,
 ) -> None:
