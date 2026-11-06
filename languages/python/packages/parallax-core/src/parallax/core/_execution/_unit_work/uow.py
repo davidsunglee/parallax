@@ -100,8 +100,8 @@ lets an observer state which of the three produced a flush instead of guessing
 from position.
 
 ``pre_commit`` is named for WHEN it runs rather than for what it does,
-because "finalization" already names the planner stage every flush of any
-trigger goes through.
+because "finalization" already names what planning does on every flush of any
+trigger.
 """
 
 

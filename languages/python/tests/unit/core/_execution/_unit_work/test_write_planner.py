@@ -831,7 +831,7 @@ def test_a_predicate_update_is_one_unversioned_statement_over_its_selection() ->
 
 
 # --------------------------------------------------------------------------- #
-# Elision (m-unit-work "eliminate known cancellation and no-op work").        #
+# Elision of known no-op work.                                                #
 # --------------------------------------------------------------------------- #
 def test_empty_change_set_update_emits_no_instruction() -> None:
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1},))  # only the PK: no changed field
@@ -846,9 +846,8 @@ def test_nonempty_change_set_update_survives_elision() -> None:
 
 
 def test_a_key_only_update_is_eliminated_ahead_of_batching_beside_an_assigning_one() -> None:
-    # Stage 2 eliminates known no-op work ahead of batching, where the
-    # normative stage order puts it, so the key-only update never joins its
-    # neighbour's batch as an update with no member to write.
+    # Known no-op work is eliminated ahead of batching, so the key-only update
+    # never joins its neighbour's batch as an update with no member to write.
     plan = _plan(
         [
             KeyedWriteInstruction("amend", "Wallet", ({"id": 1},)),
@@ -899,8 +898,8 @@ def test_a_temporal_update_naming_only_its_key_is_still_eliminated(
     concurrency: ConcurrencyPreference, repeats: int
 ) -> None:
     # A temporal update assigning nothing opens no successor worth chaining, so
-    # stage 2 removes it exactly as it removes a non-temporal one, however
-    # often it repeats.
+    # no-op elimination removes it exactly as it removes a non-temporal one,
+    # however often it repeats.
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1},))
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
     plan = _plan(
@@ -1307,8 +1306,8 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
 # Transaction Instant laziness through the full pipeline (ADR 0010).          #
 # --------------------------------------------------------------------------- #
 def test_planning_never_captures_the_transaction_instant_for_canceled_work() -> None:
-    # The stage order's whole point: coalescing cancels the pair before any
-    # surviving write could need a Transaction-Time boundary, so the clock
+    # Coalescing precedes time: it cancels the pair before any surviving
+    # write could need a Transaction-Time boundary, so the clock
     # behind the holder the request carries is never consulted.
     clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
     insert = KeyedWriteInstruction(
@@ -1689,7 +1688,7 @@ def test_audit_finalizes_the_rows_and_closes_temporal_expansion_produced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Audit follows TOPOLOGY, so what a temporal mutation hands the strategy is
-    # what stage 7 expanded it into rather than the one update the buffer
+    # what temporal expansion produced rather than the one update the buffer
     # carried: its close is decorated and each successor row it produces is
     # finalized, once each, and the frozen plan holds exactly what the hooks
     # returned.
@@ -1845,10 +1844,10 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
     # Two surviving writes settle against one observed state — a destruction and
     # an assignment of one state are a pair no verb admitted as combinable, so
     # both are left standing — and each one's settled write keeps its own
-    # source and publishes its own outcome. A write the earlier stages retire
+    # source and publishes its own outcome. A write retired before settlement
     # takes its source out of the flush with it: the key-only update below is
-    # known no-op work, eliminated at stage 2, and never settled, so its source
-    # is absent by ABSENCE rather than by a second filter.
+    # known no-op work, eliminated and never settled, so its source is absent
+    # by ABSENCE rather than by a second filter.
     one = corpus_object_key("Account", ("id", 1))
     state = VersionedObjectStateKey(one, 7)
     shared = RetainedObservation(state, VersionObservation(observed_version=7), None)

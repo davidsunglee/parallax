@@ -964,10 +964,13 @@ Which writes share one is the implementation's, within these rules:
 A group's size is bounded, and no smaller than an acquisition span's bound
 (*Shared coverage acquisition*), so a group's inserts wait behind the non-insert
 steps of a bounded number of settled writes, however many the flush holds. Within
-that bound, consecutive writes of distinct objects in one phase share a group
-wherever that lets their effects apply as one grouped effect or their inserts join
-one statement (`m-sql` *Batched insert / update*). Above the bound, like effects
-split across groups, so a flush's statement count there is the implementation's.
+that bound, writes of distinct objects adjacent in one phase, or separated only by
+writes with no step, share a group wherever that lets their effects apply as one
+grouped effect or their inserts join one statement
+(`m-sql` *Batched insert / update*). Writes that another write's steps separate
+need not share one, so the statement count of a flush interleaving unlike writes is
+the implementation's. Above the bound, like effects split across groups, so a
+flush's statement count there is the implementation's too.
 
 Beyond these rules, the order of effects of distinct objects is not promised.
 

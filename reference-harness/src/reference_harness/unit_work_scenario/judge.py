@@ -303,7 +303,7 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
     addresses (:func:`write_plan.statement_object`), never by the order the buffer
     names objects in: a flush dependency-orders its surviving writes so a parent is
     inserted before and deleted after the children referencing it (`m-unit-work`
-    *the planning pipeline*, `m-case-format` *foreign-key-ordered at flush*), so
+    *Write Group formation*, `m-case-format` *foreign-key-ordered at flush*), so
     the statement order a legal buffer produces is the graph's, not the author's.
     Entries settling against one state of one object coalesce into ONE statement
     (`m-unit-work` *Observed-State Coalescing*) — what distinguishes them is the

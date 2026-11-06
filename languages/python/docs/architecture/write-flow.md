@@ -270,11 +270,11 @@ before an empty amendment is dropped, so stating nothing never lets an ineligibl
 source through. A target write's empty amendment is dropped before any condition is
 consulted.
 
-This composition is the first stage of the unit of work's
+This composition begins the unit of work's
 [planning pipeline](../../../../core/spec/m-unit-work.md#the-planning-pipeline):
 admission resolves each write's object and coalesces it with the pending intent as the
 write arrives, so the buffer only ever holds coalesced intent, and the Write Planner
-owns the later stages.
+owns the rest.
 
 Admission owns the buffer and its claims, not an insertion's lifecycle. The
 `SourceAuthority` keeps its `WriteOwnership` behind it, and that owner's
@@ -424,10 +424,9 @@ of its own.
 Planning is pure: `finalize` performs no I/O and reads no clock, and the
 `TransactionInstant` it threads is captured only when settlement reaches a surviving
 temporal write. `UnitOfWork` hands the planner the buffer as admission composed it, so
-the planner indexes nothing again and starts at the pipeline's second stage, dropping
-known no-op work in `_without_noop_rows`. `compile` performs Write Settlement, the
-pipeline's last five stages, and returns the `WritePlan` that `finalize` returns
-unchanged.
+the planner indexes nothing again and starts by dropping known no-op work in
+`_without_noop_rows`. `compile` performs Write Settlement and returns the `WritePlan`
+that `finalize` returns unchanged.
 
 A deferred settled write is the one entry whose steps are not known at planning:
 its window reaches coverage no planning input held. Its meaning, gates and instant are
@@ -600,7 +599,7 @@ owns it and so revises or removes it in place, and the successors it opens.
 | Gates and versions | [`m-concurrency`](../../../../core/spec/m-concurrency.md) |
 | Coalescing and composition | [`m-unit-work`](../../../../core/spec/m-unit-work.md#same-transaction-write-coalescing), [ADR 0023](../../../../docs/adr/0023-same-transaction-writes-coalesce-in-the-unit-of-work.md) |
 | Batching and predicate writes | [`m-batch-write`](../../../../core/spec/m-batch-write.md), [ADR 0075](../../../../docs/adr/0075-predicate-writes-are-readless-only.md), [ADR 0077](../../../../docs/adr/0077-predicate-writes-execute-at-the-call-and-sources-continue-across-flushes.md) |
-| Write Planner, stage order, Write Plan, Write Groups | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-finalization), [ADR 0041](../../../../docs/adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md), [ADR 0076](../../../../docs/adr/0076-write-groups-run-every-effect-before-any-insert.md), [ADR 0080](../../../../docs/adr/0080-write-groups-hold-up-to-1024-settled-writes.md) |
+| Write Planner, planning order, Write Plan, Write Groups | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-finalization), [ADR 0041](../../../../docs/adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md), [ADR 0076](../../../../docs/adr/0076-write-groups-run-every-effect-before-any-insert.md), [ADR 0080](../../../../docs/adr/0080-write-groups-hold-up-to-1024-settled-writes.md) |
 | Planned Steps and State Observations | [`m-write-plan`](../../../../core/spec/m-write-plan.md), [ADR 0068](../../../../docs/adr/0068-the-planned-write-algebra-is-its-own-module.md) |
 | Temporal expansion | [`m-temporal-write`](../../../../core/spec/m-temporal-write.md#temporal-expansion), [ADR 0042](../../../../docs/adr/0042-temporal-plans-retain-complete-predecessor-state-and-close-cause.md), [ADR 0045](../../../../docs/adr/0045-temporal-mutations-expand-in-place-after-ordering.md), [ADR 0069](../../../../docs/adr/0069-temporal-writes-settle-through-one-coverage-transform-and-predecessor-expansion.md) |
 | Audit of produced rows | [ADR 0071](../../../../docs/adr/0071-audit-finalizes-represented-rows-before-their-realization-is-chosen.md) |

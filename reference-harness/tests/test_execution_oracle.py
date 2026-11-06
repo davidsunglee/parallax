@@ -1604,19 +1604,7 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 
 
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
-    """Every case authoring the oracle, named: the `m-execution-lifecycle` cases,
-    of which `-012` and `-013` witness a shared coverage read as one Database Call
-    of its Flush naming no golden statement, under each Storage Layout, and `-015`
-    a target acquisition's Read doing the same; the one optimistic-lock success
-    whose resolving read makes it the corpus witness for a Database Call that
-    names no golden statement, the
-    auto-retry cases whose streams are the only place one requested Isolation
-    Level is seen standing over two attempts (`-006`, and its root-configured
-    pair `-009`/`-010`) or a root's zero bound is seen ending the loop (`-007`),
-    the join cases whose streams are the only place an accepted join and a
-    refused one are told apart (`m-unit-work-035`, and the root-configured
-    `-037` through `-041`), and the read-only invocations whose streams state
-    an access mode and no preference (`m-execution-002`, `-005`)."""
+    """Every case authoring the oracle is named, so none stops authoring it unnoticed."""
     authored = []
     for case_path in sorted(_CASES.glob("**/*.y*ml")):
         case = read_corpus_yaml(case_path)

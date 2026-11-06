@@ -205,7 +205,7 @@ class WritePlanCompiler:
         """Every mutation phase, in flush order, as one Write Plan.
 
         Each settled write carries the exact Read Evidence of every source it
-        settled. An item the planner's earlier stages retired — folded into a
+        settled. An item retired before settlement — folded into a
         pending insert, cancelled against one, or eliminated as a known no-op —
         never reaches this loop, and therefore no settled write carries the
         evidence it was holding.
@@ -358,8 +358,6 @@ class WritePlanCompiler:
             own_version=scope.version if isinstance(scope, VersionedObjectStateKey) else None,
             conditioned=isinstance(item, TargetWrite),
         )
-
-    # Stages 5, 6, 7: validate the observation the item arrived carrying, #
 
     def _settle(
         self,
@@ -857,9 +855,9 @@ def _require_unobserved(
     quietly stripped.
 
     Settled is the whole reach of that guarantee. Coalescing and no-op
-    elimination run first, in the stage order `m-unit-work` fixes, and a write
-    they retire — folded into a pending insert, cancelled against one, or
-    eliminated as a key-only no-op — is never settled at all. Nothing is
+    elimination run first, and a write they retire — folded into a pending
+    insert, cancelled against one, or eliminated as a key-only no-op — is never
+    settled at all. Nothing is
     stripped there either: the write itself is gone, so its observation gates,
     advances, and attributes nothing.
     """
