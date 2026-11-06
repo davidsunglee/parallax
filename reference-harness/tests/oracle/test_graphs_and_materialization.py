@@ -29,6 +29,7 @@ from reference_harness.document_codec import ParsedJsonString
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.object_query_oracle import materialize as oracle_materialize
 from reference_harness.temporality import derive_temporal_structure
+from reference_harness.unit_work_scenario.observations import ScenarioRowObservations
 
 from .conftest import ScriptedReads
 
@@ -1128,11 +1129,16 @@ def test_a_narrowed_view_golden_omitting_its_variant_fails(damaged_case: CaseLoa
         assert_case_read(case, ScriptedReads(results=[_PEOPLE, _DOGS]))
 
 
-def test_a_value_object_stored_under_the_variant_column_survives_a_concrete_read(
-    damaged_case: CaseLoader,
-) -> None:
-    """A concrete read's synthetic tag and the document stored at its spelling stay apart."""
-    case = damaged_case("m-inheritance-119-value-object-family-variant-overlap-graph.yaml")
+_VARIANT_OVERLAP = "m-inheritance-119-value-object-family-variant-overlap-graph.yaml"
+_PROFILE_HOP = "m-inheritance-118-value-object-relationship-name-overlap-graph.yaml"
+_SCENARIO_WITH_INCLUDES = "m-snapshot-read-026-multi-hop-access-drops-null-branches.yaml"
+_PROFILE = {"label": "variant-profile"}
+_STORED_PROFILE = json.dumps(_PROFILE)
+_NOTE_NODE = {"id": 2, "profile": _PROFILE, "familyVariant": "VariantNote"}
+
+
+def _concrete_note_read(case: Case) -> Case:
+    """*case*, the abstract overlap read, retargeted at its one concrete."""
     case.when["objectQuery"]["target"] = "compatibility.overlap.VariantNote"
     case.then["statements"] = [
         {
@@ -1144,14 +1150,295 @@ def test_a_value_object_stored_under_the_variant_column_survives_a_concrete_read
         }
     ]
     del case.then["referenceSql"]
+    case.then["graph"] = {"VariantNote": [_NOTE_NODE]}
+    return case
+
+
+def _with_note_hop(
+    case: Case,
+    target: str,
+    *,
+    narrow_to: list[str] | None = None,
+    tag_column: bool = False,
+    storage: Callable[[dict[str, Any]], None] = lambda _document: None,
+) -> Case:
+    """*case*, the ProfileOwner read, including a hop *target* over the overlap family."""
+    segment: dict[str, Any] = {"rel": "compatibility.overlap.ProfileOwner.note"}
+    if narrow_to is not None:
+        segment["narrowTo"] = narrow_to
+
+    def declare_hop(document: dict[str, Any]) -> None:
+        _entity(document, "ProfileOwner")["relationships"].append(
+            {
+                "name": "note",
+                "cardinality": "many-to-one",
+                "join": {
+                    "source": "targetId",
+                    "target": {"entity": target, "attribute": "id"},
+                },
+            }
+        )
+        storage(document)
+
+    case.when["objectQuery"]["includes"] = [{"segments": [segment]}]
+    tag, tag_filter, tag_binds = (
+        ("t0.kind, ", "", []) if tag_column else ("", " and t0.kind = ?", ["note"])
+    )
+    level = {
+        "sql": {
+            "postgres": f'select t0.id, {tag}not t0."familyVariant" is null, t0."familyVariant" '
+            f"from variant_record t0 where t0.id = any(cast(? as bigint[])){tag_filter}"
+        },
+        "binds": {"postgres": [[2], *tag_binds]},
+    }
+    case.then["statements"] = [case.then["statements"][0], level]
+    view = "note" if narrow_to is None else "note[VariantNote]"
     case.then["graph"] = {
-        "VariantNote": [
-            {"id": 2, "profile": {"label": "variant-profile"}, "familyVariant": "VariantNote"}
+        "ProfileOwner": [
+            {
+                "id": 1,
+                "targetId": 2,
+                "profile": {"label": "owner-profile"},
+                view: _NOTE_NODE,
+            }
         ]
     }
-    stored = {"id": 2, "familyVariant": json.dumps({"label": "variant-profile"})}
+    return _with_descriptor_change(case, declare_hop)
+
+
+_OWNER_ROWS = [{"id": 1, "target_id": 10, "details": json.dumps({"label": "owner-profile"})}]
+
+
+@pytest.mark.parametrize(
+    ("target", "narrow_to", "tag_column"),
+    [
+        pytest.param("compatibility.overlap.VariantNote", None, False, id="concrete"),
+        pytest.param("compatibility.overlap.VariantRecord", ["VariantNote"], False, id="narrowed"),
+        pytest.param("compatibility.overlap.VariantRecord", None, True, id="polymorphic"),
+    ],
+)
+def test_a_level_keeps_a_document_stored_under_the_variant_spelling(
+    target: str, narrow_to: list[str] | None, tag_column: bool, damaged_case: CaseLoader
+) -> None:
+    """The synthetic tag and a document stored at its spelling stay apart at every hop."""
+    case = _with_note_hop(
+        damaged_case(_PROFILE_HOP), target, narrow_to=narrow_to, tag_column=tag_column
+    )
+    owners = [_OWNER_ROWS[0] | {"target_id": 2}]
+    level = {"id": 2, "familyVariant": _STORED_PROFILE} | ({"kind": "note"} if tag_column else {})
+
+    assert_case_read(case, ScriptedReads(results=[owners, [level], owners]))
+
+
+def _table_per_concrete_subtype(document: dict[str, Any]) -> None:
+    root = _entity(document, "VariantRecord")
+    del root["table"]
+    root["inheritance"] = {"role": "root", "strategy": "table-per-concrete-subtype"}
+    for name, table in (("VariantNote", "variant_note"), ("VariantMemo", "variant_memo")):
+        _entity(document, name)["table"] = table
+        del _entity(document, name)["inheritance"]["tagValue"]
+
+
+def test_a_union_level_keeps_a_document_stored_under_the_variant_spelling(
+    damaged_case: CaseLoader,
+) -> None:
+    """A branch literal resolves to the tag without displacing the branch's document."""
+    case = _with_note_hop(
+        damaged_case(_PROFILE_HOP),
+        "compatibility.overlap.VariantRecord",
+        storage=_table_per_concrete_subtype,
+    )
+    branch = (
+        'select t0.id, not t0."familyVariant" is null, t0."familyVariant", '
+        "'{variant}' family_variant from {table} t0 where t0.id = any(cast(? as bigint[]))"
+    )
+    case.then["statements"][1] = {
+        "sql": {
+            "postgres": " union all ".join(
+                branch.format(variant=variant, table=table)
+                for variant, table in (
+                    ("VariantMemo", "variant_memo"),
+                    ("VariantNote", "variant_note"),
+                )
+            )
+        },
+        "binds": {"postgres": [[2], [2]]},
+    }
+    owners = [_OWNER_ROWS[0] | {"target_id": 2}]
+    level = {"id": 2, "familyVariant": _STORED_PROFILE, "family_variant": "VariantNote"}
+
+    assert_case_read(case, ScriptedReads(results=[owners, [level], owners]))
+
+
+def _with_family_variant_member(document: dict[str, Any]) -> None:
+    _entity(document, "ProfileTarget")["attributes"].append(
+        {"name": "familyVariant", "type": "string"}
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("customer-value", id="no-entity"),
+        pytest.param("VariantNote", id="an-entity"),
+    ],
+)
+def test_a_standalone_member_spelled_like_the_variant_stays_a_member(
+    value: str, damaged_case: CaseLoader
+) -> None:
+    """Only a family reserves the spelling, whatever Entity the stored value happens to name."""
+    case = _with_descriptor_change(damaged_case(_PROFILE_HOP), _with_family_variant_member)
+    case.then["graph"]["ProfileOwner"][0]["details"]["familyVariant"] = value
+
+    level = [{"id": 10, "familyVariant": value}]
+
+    assert_case_read(case, ScriptedReads(results=[_OWNER_ROWS, level, _OWNER_ROWS]))
+
+
+def test_a_standalone_column_spelled_like_the_variant_renames_no_node_of_a_family(
+    damaged_case: CaseLoader,
+) -> None:
+    """A node's keys come from its own Entity, never from an unrelated one's Column."""
+
+    def declare_marker(document: dict[str, Any]) -> None:
+        _entity(document, "ProfileTarget")["attributes"].append(
+            {"name": "marker", "type": "string", "column": "familyVariant"}
+        )
+
+    case = _with_descriptor_change(
+        _concrete_note_read(damaged_case(_VARIANT_OVERLAP)), declare_marker
+    )
+
+    assert_case_read(case, ScriptedReads(results=[[{"id": 2, "familyVariant": _STORED_PROFILE}]]))
+
+
+def _as_rows(case: Case, rows: list[dict[str, Any]]) -> Case:
+    del case.then["graph"]
+    case.then["rows"] = rows
+    return case
+
+
+def test_a_concrete_row_states_its_variant_and_leaves_the_document_out(
+    damaged_case: CaseLoader,
+) -> None:
+    """`then.rows` leaves a Value Object out, never the tag sharing its Column's spelling."""
+    case = _as_rows(
+        _concrete_note_read(damaged_case(_VARIANT_OVERLAP)),
+        [{"id": 2, "familyVariant": "VariantNote"}],
+    )
+
+    assert_case_read(case, ScriptedReads(results=[[{"id": 2, "familyVariant": _STORED_PROFILE}]]))
+
+
+def test_an_abstract_row_states_its_variant_and_leaves_the_document_out(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _as_rows(damaged_case(_VARIANT_OVERLAP), [{"id": 2, "familyVariant": "VariantNote"}])
+    stored = {"id": 2, "kind": "note", "familyVariant": _STORED_PROFILE}
+
+    assert_case_read(case, ScriptedReads(results=[[stored], [{"id": 2, "kind": "note"}]]))
+
+
+def test_a_standalone_document_under_the_variant_spelling_leaves_the_row(
+    damaged_case: CaseLoader,
+) -> None:
+    """Only a family's row holds a tag at that spelling, so here it is the document."""
+
+    def store_under_the_variant_spelling(document: dict[str, Any]) -> None:
+        _entity(document, "ProfileOwner")["valueObjects"][0]["column"] = "familyVariant"
+
+    case = _as_rows(damaged_case(_PROFILE_HOP), [{"id": 1, "target_id": 10}])
+    del case.when["objectQuery"]["includes"]
+    del case.then["referenceSql"]
+    del case.then["statements"][1]
+    case = _with_descriptor_change(case, store_under_the_variant_spelling)
+    stored = {"id": 1, "target_id": 10, "familyVariant": _STORED_PROFILE}
 
     assert_case_read(case, ScriptedReads(results=[[stored]]))
+
+
+def _scenario_read_of_a_note_with_its_target(case: Case, model: Model) -> Case:
+    """One Scenario read of a `VariantNote` whose document lies in a Column of another name."""
+
+    def declare_hop(document: dict[str, Any]) -> None:
+        root = _entity(document, "VariantRecord")
+        root["valueObjects"][0]["column"] = "details"
+        root["attributes"].append({"name": "targetId", "type": "int64"})
+        _entity(document, "VariantNote")["relationships"] = [
+            {
+                "name": "target",
+                "cardinality": "many-to-one",
+                "join": {
+                    "source": "targetId",
+                    "target": {
+                        "entity": "compatibility.overlap.ProfileTarget",
+                        "attribute": "id",
+                    },
+                },
+            }
+        ]
+
+    case.raw["when"]["scenario"] = [
+        {
+            "objectQuery": {
+                "target": "compatibility.overlap.VariantNote",
+                "predicate": {"true": {}},
+                "includes": [{"segments": [{"rel": "compatibility.overlap.VariantNote.target"}]}],
+            },
+            "databaseCalls": 2,
+            "statements": [
+                {
+                    "sql": {
+                        "postgres": "select t0.id, t0.target_id, not t0.details is null, "
+                        "t0.details from variant_record t0 where t0.kind = ?"
+                    },
+                    "binds": ["note"],
+                },
+                {
+                    "sql": {
+                        "postgres": "select t0.id from profile_target t0 "
+                        "where t0.id = any(cast(? as bigint[]))"
+                    },
+                    "binds": [[10]],
+                },
+            ],
+            "expectGraph": {
+                "VariantNote": [
+                    {
+                        "id": 2,
+                        "targetId": 10,
+                        "profile": _PROFILE,
+                        "familyVariant": "VariantNote",
+                        "target": {"id": 10},
+                    }
+                ]
+            },
+        }
+    ]
+    return _with_descriptor_change(replace(case, model=model), declare_hop)
+
+
+def test_a_scenario_graph_keeps_a_root_value_object_of_a_family(
+    damaged_case: CaseLoader,
+) -> None:
+    """A step's graph is assembled from what it published, as a read case's is."""
+    case = _scenario_read_of_a_note_with_its_target(
+        damaged_case(_SCENARIO_WITH_INCLUDES), damaged_case(_VARIANT_OVERLAP).model
+    )
+    reads = ScriptedReads(
+        results=[[{"id": 2, "target_id": 10, "details": _STORED_PROFILE}], [{"id": 10}]]
+    )
+
+    ScenarioRowObservations(case).assert_step(0, reads)
+
+
+def test_a_value_object_stored_under_the_variant_column_survives_a_concrete_read(
+    damaged_case: CaseLoader,
+) -> None:
+    """A concrete read's synthetic tag and the document stored at its spelling stay apart."""
+    case = _concrete_note_read(damaged_case(_VARIANT_OVERLAP))
+
+    assert_case_read(case, ScriptedReads(results=[[{"id": 2, "familyVariant": _STORED_PROFILE}]]))
 
 
 def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(

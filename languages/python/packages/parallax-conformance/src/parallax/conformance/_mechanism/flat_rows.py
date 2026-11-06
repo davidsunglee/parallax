@@ -63,8 +63,11 @@ def flat_rows(
         else None
     )
     projection = ActualWireProjection(model)
+    participant = _reads_a_participant(model, query)
     return [
-        _projected_row(model, projection, columns, superset, envelope.graph_root(root) or {})
+        _projected_row(
+            model, projection, columns, superset, participant, envelope.graph_root(root) or {}
+        )
         for root in roots
     ]
 
@@ -87,6 +90,7 @@ def _projected_row(
     projection: ActualWireProjection,
     columns: _MemberColumns,
     superset: Mapping[str, None] | None,
+    participant: bool,
     node: Mapping[str, object],
 ) -> MappingRow:
     """One published node as its projection's row.
@@ -94,9 +98,9 @@ def _projected_row(
     ``superset`` holds an abstract position's superset columns, each ``null``
     until the node fills it, and is ``None`` for a concrete read. A sibling's
     column reusing a member name renders nothing here: the node's own member
-    stands at that name, and it is a Value Object the row leaves out. A key no
-    member claims is the synthetic variant, since a family reserves that spelling
-    and a standalone Entity declaring it renders it as the member it is.
+    stands at that name, and it is a Value Object the row leaves out. Only a
+    ``participant`` publishes the synthetic variant, so a key of that spelling on
+    a standalone Entity is the member it renders as, or an occurrence left out.
     """
     variant = node.get(inheritance.FAMILY_VARIANT_KEY)
     selected = _variant_members(model, node) if superset is not None and node else None
@@ -122,7 +126,7 @@ def _projected_row(
         return published
     if superset is not None:
         return {**superset, **published, inheritance.FAMILY_VARIANT_KEY: variant}
-    if variant is not None and inheritance.FAMILY_VARIANT_KEY not in columns:
+    if participant and variant is not None:
         published[inheritance.FAMILY_VARIANT_KEY] = variant
     return published
 
@@ -143,6 +147,11 @@ def _variant_members(
     return frozenset(
         member.identity for member in (*view.applicable_attributes, *view.applicable_value_objects)
     )
+
+
+def _reads_a_participant(model: AcceptedMetamodel, query: ObjectQueryNode) -> bool:
+    view = inheritance.view(model).entity(case_entity(model, query.target.canonical).identity)
+    return view is not None and view.strategy is not None
 
 
 def _read_projection(

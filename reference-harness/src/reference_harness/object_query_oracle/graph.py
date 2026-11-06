@@ -76,33 +76,27 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     keys*), while a read row arrives keyed by its physical column, so the
     attribute half is renamed here. Value Object occurrences and relationship
     views are already name-keyed by
-    :func:`..materialize.materialize_variant_owner_node` and the assembly, and
-    `familyVariant` names no declared member, so both pass through.
+    :func:`..materialize.materialize_variant_owner_node` and the assembly, and a
+    participant's `familyVariant` names no declared member, so both pass through.
 
     Both the occurrence decode and the rename map come from the node's OWN
     concrete Entity where the row states one: an abstract-root read narrows each
     node to its variant's declared columns, two concrete siblings may spell one
     column name for two different members, and an occurrence a single concrete
-    declares is invisible from the abstract position the read targeted. The
-    model's remaining declarations fill what a node's own Entity cannot name —
-    never overriding what it can.
+    declares is invisible from the abstract position the read targeted.
     """
     if materialize.is_unavailable(row):
         return None
-    model = case.model
-    concrete = materialize.variant_entity(model, entity, row)
+    concrete = materialize.variant_entity(case.model, entity, row)
     try:
         node = materialize.materialize_variant_owner_node(
-            case, entity, materialize.narrow_to_variant_columns(case, row)
+            case, entity, materialize.narrow_to_variant_columns(case, entity, row)
         )
     except DocumentEncodingError:
         # A stored scalar no value of its declared type spells — a collection
         # element included — leaves the position unhydratable.
         return None
     names = {attribute["column"]: attribute["name"] for attribute in concrete.attributes}
-    for other in model.entities:
-        for attribute in other.attributes:
-            names.setdefault(attribute["column"], attribute["name"])
     return {names.get(key, key): value for key, value in node.items()}
 
 
