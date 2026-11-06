@@ -56,7 +56,7 @@ def _read(scope: ExecutionScope) -> None:
 
 def _two_pages(scope: ExecutionScope) -> None:
     read = scope.begin()
-    with read.open_stream(_TARGET, "rows", 5) as stream:
+    with read.open_stream(_TARGET, "wire", 5) as stream:
         read.paged(stream.batch(), lambda _calls, _inputs: None)
         read.paged(stream.batch(), lambda _calls, _inputs: None)
 
@@ -276,7 +276,7 @@ def test_a_failed_acquisition_s_selection_is_recorded_too() -> None:
     scope = root(adapter, read_policy="reader_preferred").using_database_login()
     read = scope.begin()
 
-    with read.open_stream(_TARGET, "rows", 5) as stream:
+    with read.open_stream(_TARGET, "wire", 5) as stream:
         with pytest.raises(ConnectionAcquisitionError):
             read.paged(stream.batch(), lambda _calls, _inputs: None)
         read.paged(stream.batch(), lambda _calls, _inputs: None)
