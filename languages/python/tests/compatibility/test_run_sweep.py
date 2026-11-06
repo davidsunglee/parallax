@@ -32,7 +32,6 @@ from tests._support.corpus import (
     CollectionKinds,
     case_document,
     case_fixtures,
-    compare_binds,
     compare_graph,
     compare_rows,
     compare_rows_in_order,
@@ -54,6 +53,7 @@ from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
     assert_wire_binds,
+    assert_write_emissions_equal_goldens,
     wire_binds,
     write_golden_statements,
 )
@@ -509,7 +509,8 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     possibly uncommitted mid-transaction state), committing or rolling back only at
     the group's own last step. A writeSequence executes the whole FK-ordered
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
-    golden DML and its total Database Calls the case's `then.databaseCalls`; every scenario
+    golden DML, each at a `casePointer` well-formed for the case's shape, and its total
+    Database Calls the case's `then.databaseCalls`; every scenario
     row-observing step's `stepRows` observation equals its `expectRows`
     (:func:`_grade_step_rows`), every direct predicate-write step's
     `stepAffectedRows` observation its `expectAffectedRows`
@@ -552,23 +553,7 @@ def _grade_write_run(
         return
 
     golden_statements = write_golden_statements(case)
-    emissions = envelope["emissions"]
-    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
-    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
-        assert emission["sql"] == golden_sql, (case.case_id, emission)
-        # `compare_binds` (the exact-Decimal-fallback comparison
-        # `test_write_no_drift.py`'s typed-instance no-drift check already
-        # uses): a temporal write's carried-forward payload value is a REAL
-        # ``decimal``-typed bind sourced from the row its observation holds
-        # (psycopg's native ``Decimal``, never lossily coerced to ``float`` for
-        # SQL execution — `m-core`), which a plain YAML-authored golden literal
-        # (``200.00``, a ``float``) only reconciles against in Decimal space, not
-        # by bare wire equality.
-        compare_binds(
-            emission["binds"],
-            golden_binds,
-            statement_bind_positions(model, golden_sql, golden_binds),
-        )
+    assert_write_emissions_equal_goldens(case, model, golden_statements, envelope["emissions"])
     assert_driver_write_zero_signs(model, port.dialect, golden_statements, port.writes)
     assert_driver_write_document_nulls(model, port.dialect, golden_statements, port.writes)
     assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
@@ -682,6 +667,9 @@ def _write_case(case_id: str) -> case_format.Case:
     return case
 
 
+_PORT_NEVER_REACHED: Final = cast("RecordingCaseDatabase", None)
+
+
 @pytest.mark.parametrize(
     ("case_id", "fault", "refusal"),
     [
@@ -720,6 +708,42 @@ def test_write_run_grading_rejects_a_float_zero_turned_negative(
 
     profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
     _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
+
+
+def _run_answering_goldens(case: case_format.Case) -> dict[str, Any]:
+    """The run envelope of a writeSequence whose first entry emitted its goldens."""
+    return {
+        "schemaVersion": adapter.SCHEMA_VERSION,
+        "command": "run",
+        "status": "ok",
+        "adapter": {"language": "python", "name": "parallax", "version": "0"},
+        "case": f"cases/{case.path.name}",
+        "profile": "pg-full",
+        "dialect": "postgres",
+        "caseShape": case.shape,
+        "emissions": [
+            {"casePointer": "/writeSequence/0", "sql": sql, "binds": binds}
+            for sql, binds in write_golden_statements(case)
+        ],
+        "observations": {"databaseCalls": len(write_golden_statements(case))},
+    }
+
+
+def test_write_run_grading_refuses_a_write_attributed_to_a_read() -> None:
+    case = _write_case("m-temporal-write-002")
+    envelope = _run_answering_goldens(case)
+    envelope["emissions"][1]["casePointer"] = "/objectQuery"
+    with pytest.raises(AssertionError, match=r"m-temporal-write-002.*/objectQuery"):
+        _grade_write_run(case, engine.load_case_metamodel(case), envelope, _PORT_NEVER_REACHED)
+
+
+def test_write_run_grading_refuses_a_decimal_bind_at_another_scale() -> None:
+    case = _write_case("m-temporal-write-002")
+    envelope = _run_answering_goldens(case)
+    assert envelope["emissions"][0]["binds"][2] == "100.00"
+    envelope["emissions"][0]["binds"][2] = "100.0"
+    with pytest.raises(AssertionError, match=r"'100\.0'.*'100\.00'"):
+        _grade_write_run(case, engine.load_case_metamodel(case), envelope, _PORT_NEVER_REACHED)
 
 
 def _grade_step_rows(
@@ -975,16 +999,12 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     )
     capture_scenario(case, run)
 
-    golden_statements = write_golden_statements(case)
-    emissions = run.emissions
-    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
-    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
-        assert emission.sql == golden_sql, (case.case_id, emission)
-        compare_binds(
-            list(emission.binds),
-            golden_binds,
-            statement_bind_positions(model, golden_sql, golden_binds),
-        )
+    assert_write_emissions_equal_goldens(
+        case,
+        model,
+        write_golden_statements(case),
+        [emission.to_json() for emission in run.emissions],
+    )
 
     then = case_document(case)["then"]
     assert run.database_calls == then["databaseCalls"], case.case_id
@@ -1243,12 +1263,9 @@ def test_run_only_write_sequence_run_sweep(
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
 
-    golden_statements = write_golden_statements(case)
-    emissions = envelope["emissions"]
-    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
-    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
-        assert emission["sql"] == golden_sql, (case.case_id, emission)
-        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
+    assert_write_emissions_equal_goldens(
+        case, model, write_golden_statements(case), envelope["emissions"]
+    )
     assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
 
     expected_state = cast(

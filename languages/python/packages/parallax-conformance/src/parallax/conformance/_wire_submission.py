@@ -294,7 +294,8 @@ def _observation_refusal(
         return (
             f"a temporal row authors no `{key}` (m-unit-work: a temporal write observes a whole "
             "predecessor milestone, which no flat row cell can name — the engine resolves one "
-            "from tracked case state or from the find its own step settles against)"
+            "from the resolving read its write owes or from the find its own step settles "
+            "against)"
         )
     if mutation in INSERT_MUTATIONS:
         return (

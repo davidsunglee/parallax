@@ -220,9 +220,8 @@ def absorbing_rollback() -> Generator[None]:
     sentinel is absorbed: the step's DML executed and counted its Database Calls,
     and the abort is the outcome the case asked for rather than a failure.
     Everything else propagates. A context manager rather than a parameter,
-    because a lane enters this around whatever else the step entered — a
-    staged simulated store, a boundary it drove itself — and the absorption has to
-    close after all of it.
+    because a lane enters this around whatever else the step entered, such as a
+    boundary it drove itself, and the absorption has to close after all of it.
     """
     with contextlib.suppress(_RollbackStep):
         yield

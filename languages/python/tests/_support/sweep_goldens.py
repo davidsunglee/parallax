@@ -8,6 +8,7 @@ and the readers are surface-neutral rather than owned by either.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format
@@ -311,6 +312,30 @@ def assert_wire_binds(
     observed, expected = wire_binds(observed_binds), wire_binds(golden_binds)
     assert observed == expected, (golden_sql, observed, expected)
     assert_zero_signs(observed, expected, statement_bind_positions(model, golden_sql, golden_binds))
+
+
+def _write_pointer_well_formed(shape: str, pointer: str) -> bool:
+    if shape == "writeSequence":
+        return re.fullmatch(r"/writeSequence/\d+", pointer) is not None
+    return re.fullmatch(r"/scenario/\d+/(write|objectQuery)", pointer) is not None
+
+
+def assert_write_emissions_equal_goldens(
+    case: case_format.Case,
+    model: Metamodel,
+    golden_statements: list[tuple[str, list[object]]],
+    emissions: list[dict[str, Any]],
+) -> None:
+    """Each reported write emission states its golden's SQL and canonical binds, at
+    a ``casePointer`` well-formed for the case's shape."""
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
+        assert _write_pointer_well_formed(case.shape, emission["casePointer"]), (
+            case.case_id,
+            emission,
+        )
 
 
 def read_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:
