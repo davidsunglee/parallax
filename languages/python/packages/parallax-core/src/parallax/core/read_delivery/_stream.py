@@ -4,7 +4,7 @@ from collections.abc import Callable, Generator, Iterator
 from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.core import continuation, read_planning
-from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle import PublicationInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -60,7 +60,7 @@ class StreamRead[Selection](Protocol):
     def edition(self) -> str: ...
 
     def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> StreamActivity: ...
 
     def release(self, failure: BaseException | None, /) -> None: ...

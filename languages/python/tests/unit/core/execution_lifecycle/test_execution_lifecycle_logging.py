@@ -408,7 +408,7 @@ def test_every_runtime_classification_is_logged_in_its_own_python_spelling(
         [
             ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", None),
             ReadStarted(EXECUTION.id, 2, 2, 1, "Account", "wire", None),
-            StreamStarted(EXECUTION.id, 3, 3, 1, "Account", "rows", 100, None),
+            ReadStarted(EXECUTION.id, 3, 3, 1, "Account", "rows", None),
         ],
     ) == {"typed", "wire", "rows"}
 
@@ -869,7 +869,7 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
         TransactionInvocationFinished(EXECUTION.id, 8, 4, 1, JoinedInvocationReturned()),
         TransactionAttemptStarted(EXECUTION.id, 9, 5, 1, "account"),
         TransactionAttemptFinished(EXECUTION.id, 10, 5, 1, AttemptCommitted()),
-        StreamStarted(EXECUTION.id, 11, 6, 1, "Account", "rows", 100, None),
+        StreamStarted(EXECUTION.id, 11, 6, 1, "Account", "wire", 100, None),
         StreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
         StreamBatchStarted(EXECUTION.id, 13, 7, 6),
         StreamBatchFinished(EXECUTION.id, 14, 7, 6, StreamBatchCompleted()),

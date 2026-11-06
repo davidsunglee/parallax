@@ -1604,11 +1604,12 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 
 
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
-    """Every case authoring the oracle, named: the thirteen `m-execution-lifecycle`
-    cases, the last two of which witness a shared coverage read as one Database
-    Call of its Flush naming no golden statement, under each Storage Layout; the
-    one optimistic-lock success whose resolving read makes it the corpus
-    witness for a Database Call that names no golden statement, the
+    """Every case authoring the oracle, named: the `m-execution-lifecycle` cases,
+    of which `-012` and `-013` witness a shared coverage read as one Database Call
+    of its Flush naming no golden statement, under each Storage Layout, and `-015`
+    a target acquisition's Read doing the same; the one optimistic-lock success
+    whose resolving read makes it the corpus witness for a Database Call that
+    names no golden statement, the
     auto-retry cases whose streams are the only place one requested Isolation
     Level is seen standing over two attempts (`-006`, and its root-configured
     pair `-009`/`-010`) or a root's zero bound is seen ending the loop (`-007`),
@@ -1654,6 +1655,7 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-012-a-shared-coverage-read-is-one-unindexed-call-of-its-flush-columns-layout.yaml",
         "m-execution-lifecycle-013-a-shared-coverage-read-is-one-unindexed-call-of-its-flush-document-layout.yaml",
         "m-execution-lifecycle-014-an-ordered-invocation-presents-effects-of-distinct-shapes-together.yaml",
+        "m-execution-lifecycle-015-a-locking-target-write-acquires-its-row-in-a-read-serving-rows.yaml",
         "m-read-delivery-001-a-whole-result-read-delivers-every-selected-row-in-one-read.yaml",
         "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",
         "m-unit-work-037-a-join-inherits-every-root-configured-option.yaml",

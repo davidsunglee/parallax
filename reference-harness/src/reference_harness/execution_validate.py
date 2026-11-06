@@ -35,7 +35,7 @@ observation alike (`m-execution-lifecycle`):
   is — a query by a read, DML by a write — or a resolving read taking a write's
   index would cover the space while the write that ran it appears nowhere; the
   calls that name none are the two the space does not hold — every call where
-  nothing is authored at all, and the resolving read a keyed write owes, which
+  nothing is authored at all, and the resolving read a write owes, which
   is a read;
 - **counts.** The record's sole count oracle — ``then.databaseCalls`` on a case,
   ``observations.databaseCalls`` on an envelope — counts the Database Call
@@ -1036,7 +1036,7 @@ def _check_statements(calls: list[_Call], space: _StatementSpace, problems: list
     the space holds none to name. There are two such places, and they are the
     reason this is a claim about the WHOLE record rather than about one call: a
     lane authoring no golden at all — `api-conformance` — where nothing is
-    indexed, and the resolving read a keyed write owes, which reaches the
+    indexed, and the resolving read a write owes, which reaches the
     database and is counted but which the case authors no statement for
     (`m-case-format` "Resolving reads a write owes").
 
@@ -1084,7 +1084,7 @@ def _check_statement_kinds(named: list[_Call], space: _StatementSpace, problems:
     A call names the statement IT ran, so a read call cannot own an authored
     ``UPDATE`` and a write call cannot own an authored query. This is what makes
     the resolving-read omission provable rather than merely permitted: the read
-    a keyed write owes authors no golden, so a read carrying a DML index is one
+    a write owes authors no golden, so a read carrying a DML index is one
     that took the index of the write call that ran it — and that write call is
     then missing from a record coverage alone reports as complete.
     """

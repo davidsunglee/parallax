@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Protocol
 
 from parallax.core import read_planning
-from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle import PublicationInterface
 from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.temporal_read import TemporalShape
@@ -51,7 +51,7 @@ class Publication[Origin, Eager](Protocol):
     """
 
     @property
-    def interface(self) -> ReadInterface: ...
+    def interface(self) -> PublicationInterface: ...
 
     @property
     def roots_of(self) -> RootsOf[Origin]: ...

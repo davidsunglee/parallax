@@ -73,6 +73,7 @@ from parallax.core.execution_lifecycle._events import (
     OuterInvocation,
     OuterInvocationCommitted,
     OuterInvocationFailed,
+    PublicationInterface,
     ReadCompleted,
     ReadFailed,
     ReadFinished,
@@ -706,7 +707,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         ...
 
     def stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> StreamActivity:
         """Open a participating Stream under this attempt.
 
@@ -844,7 +845,7 @@ class _InertActivity:
         return self
 
     def stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> _InertActivity:
         return self
 
@@ -1985,14 +1986,14 @@ class _LiveStream(_LiveActivity):
 
     __slots__ = ("_batch_size", "_edition", "_finished", "_interface", "_target")
 
-    _interface: ReadInterface
+    _interface: PublicationInterface
 
     def __init__(
         self,
         publisher: _Publisher,
         parent: _LiveActivity | None,
         target: ActivityTarget,
-        interface: ReadInterface,
+        interface: PublicationInterface,
         batch_size: int,
         edition: str | None,
     ) -> None:
@@ -2164,7 +2165,7 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
         return _LiveFlush(self._publisher, self, trigger)
 
     def stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> _LiveStream:
         return _LiveStream(self._publisher, self, target, interface, batch_size, None)
 
@@ -2370,7 +2371,7 @@ def open_stream_root(
     installed: InstalledLifecycle | None,
     *,
     target: ActivityTarget,
-    interface: ReadInterface,
+    interface: PublicationInterface,
     batch_size: int,
     edition: str,
 ) -> StreamActivity:

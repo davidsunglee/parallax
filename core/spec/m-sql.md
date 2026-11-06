@@ -1216,10 +1216,10 @@ The locking-mode close keeps the ungated form above (`… where bal_id = ? and
 out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a
 conflict (optimistic) or a stale/consistency error (locking), never silent
 (`m-temporal-write`; `m-unit-work` *Affected-row enforcement*). Each close, guard, revision, and removal
-stays its own step with that expectation; where a Write Group holds several of
-one shape, a dialect with array parameters applies them as one grouped effect
-(*Grouped effects*, below), each still enforced against its own source
-ordinal's count.
+stays its own step with that expectation; where a Write Group holds several
+alike (`m-unit-work` *Write Group formation*), a dialect with array parameters
+applies them as one grouped effect (*Grouped effects*, below), each still enforced
+against its own source ordinal's count.
 
 ### Bitemporal as-of reads (both axes)
 
@@ -1343,9 +1343,10 @@ covers. One statement selects the object's current milestones that overlap any o
 its uncovered parts.
 
 Uncovered parts are disjoint and never adjacent, each bounded by its own
-endpoints, and a statement names at most 64 of them, so many parts take several
-such reads, all before the range binds. A row overlapping a part is read whole
-however little of it the part reaches, and a row two statements both return is
+endpoints, and a statement names a bounded number of them, so many parts take
+several such reads, all before the range binds. The bound is the implementation's,
+within the dialect's bind limit (`m-dialect` *Bind parameter limit*). A row
+overlapping a part is read whole however little of it the part reaches, and a row two statements both return is
 one row. Its projection is the predecessor projection (*Result form*), the
 Structured Column included under Relational Document Layout, and under Locking
 it carries the read-lock suffix below. The read belongs to the write step: it is
@@ -1354,8 +1355,8 @@ it names, and a case authors no golden for it (`m-case-format`).
 
 The writes of one acquisition span (`m-unit-work` *Shared coverage
 acquisition*) share these reads. One statement names several objects' parts,
-each object's key beside its own parts, and the 64-part bound counts the parts of
-every object it names.
+each object's key beside its own parts, and the bound counts the parts of every
+object it names.
 
 Parts are packed in the span's write order, each object's in Valid-Time order,
 and an object's parts that do not fit continue in the next statement. A row
@@ -1545,7 +1546,7 @@ below) and a dialect without them runs one statement per key.
 
 ### Grouped effects
 
-A **grouped effect** applies the keyed effects of one effect span (`m-unit-work`
+A **grouped effect** applies like keyed effects of one Write Group (`m-unit-work`
 *Write Group formation*; `m-execution` *Flush execution*) with one statement. Its
 source is `unnest(…) with ordinality`: one array bind per **source column**,
 each cast in the **array parameter cast form** (`m-dialect`), aliased `v` with

@@ -395,9 +395,10 @@ def execution_lifecycle_observation(
     position in the run's own delivery order
     (:attr:`LifecycleRun.resolving_read_calls`): the source read a keyed write
     owes reaches the database and is counted, but the case authors no golden for
-    it, so it names no index. A read a Flush makes is a coverage read, which
-    stands outside it for the same reason (`m-case-format` *The execution
-    lifecycle oracle*). Everything else is indexed positionally.
+    it, so it names no index. A read a Flush makes is a coverage read and a read
+    a ``rows`` Read makes is a target acquisition, which stand outside it for the
+    same reason (`m-case-format` *The execution lifecycle oracle*). Everything else
+    is indexed positionally.
     """
     indexer = _StatementIndexer(statements, resolving_reads)
     portable: list[dict[str, object]] = []
@@ -433,43 +434,46 @@ class _StatementIndexer:
     index's own question, which the SQL answers.
 
     The positions the delivering lane charged to a keyed write's resolving reads,
-    and every read a Flush makes, are the calls the emission order does not hold
-    at all: they are skipped WITHOUT consuming an emission, which is what keeps
-    the correspondence positional for every call that is in it. Read against
-    that, the exhaustion check is the other half of the same claim — an emission
-    no call named means the two orders disagree even though every index that was
-    handed out landed.
+    and every read a Flush or a ``rows`` Read makes, are the calls the emission
+    order does not hold at all: they are skipped WITHOUT consuming an emission,
+    which is what keeps the correspondence positional for every call that is in
+    it. Read against that, the exhaustion check is the other half of the same
+    claim — an emission no call named means the two orders disagree even though
+    every index that was handed out landed.
     """
 
-    __slots__ = ("_delivered", "_flushes", "_position", "_resolving", "_statements")
+    __slots__ = ("_delivered", "_position", "_resolving", "_statements", "_unauthored_readers")
 
     def __init__(self, statements: Sequence[str], resolving_reads: Collection[int] = ()) -> None:
         self._statements = statements
         self._resolving = frozenset(resolving_reads)
-        self._flushes: frozenset[int] = frozenset()
+        self._unauthored_readers: frozenset[int] = frozenset()
         self._delivered = 0
         self._position = 0
 
     def enter(self, root: RecordedRoot) -> None:
         """Read ``root``'s calls next.
 
-        Activity IDs are scoped to their root, so which activities are Flushes
-        is too.
+        Activity IDs are scoped to their root, so which activities read what no
+        case authors is too.
         """
-        self._flushes = frozenset(
-            event.activity_id for event in root.events if isinstance(event, FlushStarted)
+        self._unauthored_readers = frozenset(
+            event.activity_id
+            for event in root.events
+            if isinstance(event, FlushStarted)
+            or (isinstance(event, ReadStarted) and event.interface == "rows")
         )
 
     def take(self, call: DatabaseCallStarted) -> int | None:
         """``call``'s statement index, or ``None`` where the emission order holds
-        none — a lane reporting no emission at all, a resolving read, or a
-        coverage read inside a Flush."""
+        none — a lane reporting no emission at all, a resolving read, a coverage
+        read inside a Flush, or a target acquisition inside a ``rows`` Read."""
         delivered = self._delivered
         self._delivered += 1
         if (
             not self._statements
             or delivered in self._resolving
-            or (call.kind == "read" and call.parent_activity_id in self._flushes)
+            or (call.kind == "read" and call.parent_activity_id in self._unauthored_readers)
         ):
             return None
         statement = call.statement

@@ -29,8 +29,8 @@ contract owners; this index does not add requirements.
 | Target Write | A write addressing one existing logical object by primary key under the starting revision its caller states, independently of a source value | [Unit of work](core/spec/m-unit-work.md) |
 | Settled Write | One caller write after settlement: the completion facts it publishes and the Planned Steps it executes | [Unit of work](core/spec/m-unit-work.md) |
 | Write Group | Settled writes that execute as one sequence of Planned Steps and complete together, before any later group executes: a Write Plan's planned group, or the ready deferred writes one turn binds | [Unit of work](core/spec/m-unit-work.md) |
-| Mutation Phase | A region's inserts, its updates, or its deletes in flush order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
-| Planned Step | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
+| Mutation Phase | The inserts, the updates, or the deletes of a flush, which run in that order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
+| Planned Step | One semantic effect of a write on stored rows, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
 | Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Write plan](core/spec/m-write-plan.md) |
 | State Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
 | Write Row / executed assignments | One represented row before its realization is chosen, and the members it states explicitly rather than carries | [Write plan](core/spec/m-write-plan.md) |

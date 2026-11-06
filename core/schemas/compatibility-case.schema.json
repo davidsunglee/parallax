@@ -2460,7 +2460,7 @@
       "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
-      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Flush. `interface` is what the Read serves — the public `typed` or `wire` interface publishing its result, or the internal `rows` target acquisition of a write, which publishes neither — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Flush. `interface` is what the Read serves — `typed` or `wire` for a read publishing its result in that representation, or `rows` for the Read of a write's target acquisition, which publishes neither — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "interface"],
@@ -2478,7 +2478,7 @@
       "properties": {"trigger": {"enum": ["read-dependency", "predicate-write", "pre-commit"]}}
     },
     "lifecycleDatabaseCallStarted": {
-      "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED where the authored order holds no statement to name: on a lane that authors no golden SQL at all (`api-conformance`), where `kind` and the outcome are the whole portable oracle, and on the resolving read a keyed write owes, which the case counts in `then.databaseCalls` and authors no golden for. The indices the remaining calls name are that order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
+      "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED where the authored order holds no statement to name: on a lane that authors no golden SQL at all (`api-conformance`), where `kind` and the outcome are the whole portable oracle, and on the resolving read a write owes, which the case counts in `then.databaseCalls` and authors no golden for. The indices the remaining calls name are that order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "kind"],
@@ -2703,13 +2703,13 @@
       ]
     },
     "lifecycleStreamStarted": {
-      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size. `edition` is the Model Edition a STANDALONE stream adopted at entry — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the stream is the root activity; a participating stream carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `interface` is the representation the stream publishes. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size. `edition` is the Model Edition a STANDALONE stream adopted at entry — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the stream is the root activity; a participating stream carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "interface", "batchSize"],
       "properties": {
         "target": {"$ref": "#/$defs/lifecycleTarget"},
-        "interface": {"enum": ["typed", "wire", "rows"]},
+        "interface": {"enum": ["typed", "wire"]},
         "batchSize": {"type": "integer", "minimum": 1},
         "edition": {"type": "string", "minLength": 1}
       }

@@ -562,7 +562,7 @@ publication landing mid-run is a language-level scenario the API Conformance
 Suite owns. A Database Call names its
 statement by index into this envelope's own `emissions` array, just as the oracle
 uses the case's flattened authored statements. A call the envelope emits no
-statement for — the resolving read a keyed write owes (`m-case-format`) — names
+statement for — the resolving read a write owes (`m-case-format`) — names
 no index, and the indices the rest name are the emission order exactly, in
 delivery order and once each. Every present index must be in range and be named
 by a call of the kind its own emission is — a query by a read, DML by a write;

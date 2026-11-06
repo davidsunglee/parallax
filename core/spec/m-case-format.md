@@ -1213,14 +1213,10 @@ also owes the **coverage reads** its flush makes (`m-sql` *Requested ranges*),
 counted in the Database Calls of the step or entry that flushes it. Where a
 case's own fixtures and earlier entries leave that coverage known, the count is
 derivable like every other. Coverage reads are the statements the flush
-actually issues, not one per object: taking the unit's objects in the order its
-flush settles them, consecutive Bitemporal objects of one Entity and mutation
-phase whose writes defer (`m-unit-work` *Shared coverage acquisition*) share
-reads in runs of at most 32 objects, and each run owes one read per 64
-uncovered parts it holds, rounded up — none where none is uncovered. Any other
-write between them ends a run. An object outside every run owes one read per 64
-of its own uncovered parts, rounded up, and a Transaction-Time-Only object that
-reads at all owes one.
+actually issues, not one per object: `m-unit-work` *Shared coverage acquisition*
+and `m-sql` *Requested ranges* state which objects share a read, and a case's
+count follows them. Each read's bound and a span's are an implementation's own, and
+a case stays beneath them.
 
 A resolving or coverage read is counted and never authored: `then.statements` is
 the DML a case states, so neither appears in it, and neither names a statement
@@ -1668,7 +1664,8 @@ adapter's, and the harness provider's, own work.
 
 Golden SQL per step is not defined for a unit of work that composes several
 submissions into one flush: which statements a flush issues, and in what order, is
-the implementation's, as long as the effects are the ones `m-unit-work` specifies.
+the implementation's, within `m-unit-work` *Write Group formation*, as long as the
+effects are the ones that module specifies.
 A scenario declaring top-level **`grading: state`** is therefore graded on the state
 it states. Such a case states its inputs — its steps and their submissions — the
 refusal each submission's verb raises, each group's fate (*Unit fates*, below), and
@@ -2300,7 +2297,7 @@ timing identities calls share, implementation type names, messages, stack
 traces, and native database codes. A Database Call names its statement by
 zero-based index into the case's flattened authored golden statement order.
 Three calls name none: every call on the `api-conformance` lane, where a case
-authors no golden SQL at all, a **resolving read** a keyed write owes
+authors no golden SQL at all, a **resolving read** a write owes
 (*Resolving reads a write owes*), and a **coverage read** a flush makes, a read
 inside the Flush that issues it (`m-sql` *Requested ranges*); each reaches the
 database and is counted, but the case authors no golden for it. The indices the remaining calls name ARE that order

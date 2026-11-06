@@ -16,7 +16,7 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_query_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle import PublicationInterface, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     DatabaseCallScope,
@@ -307,7 +307,7 @@ class StandaloneRead:
         return self.selected.edition
 
     def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> StreamActivity:
         return open_stream_root(
             self.lifecycle,

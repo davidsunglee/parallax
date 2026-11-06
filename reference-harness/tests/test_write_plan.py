@@ -367,8 +367,8 @@ def test_a_subquerys_own_predicate_is_not_this_statements_address(dialect: str) 
 
 # --- the coverage reads one flush makes --------------------------------------
 #
-# Counted from the spans `m-unit-work` *Shared coverage acquisition* defines and
-# the 64-part statement bound `m-sql` *Requested ranges* states, never from a
+# Counted from the spans `m-unit-work` *Shared coverage acquisition* defines, under
+# the corpus ceilings on a span's writes and a statement's parts, never from a
 # runtime's planner: consecutive deferred Bitemporal objects of one Entity and
 # phase share reads in runs of at most 32.
 

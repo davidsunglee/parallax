@@ -47,7 +47,11 @@ from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index
 from parallax.core.execution import QueryTargetError, TxnOptions
-from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
+from parallax.core.execution_lifecycle import (
+    ExecutionLifecycleReentryError,
+    PublicationInterface,
+    ReadInterface,
+)
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -189,7 +193,7 @@ class _Recording:
         self._inputs = inputs
         self.calls: list[str] = []
         self.eager_calls: list[tuple[ActivityTarget, ReadInterface]] = []
-        self.stream_calls: list[tuple[ActivityTarget, ReadInterface, int]] = []
+        self.stream_calls: list[tuple[ActivityTarget, PublicationInterface, int]] = []
         self.advances = 0
         self.releases = 0
 
@@ -225,7 +229,7 @@ class _Recording:
         return body(INERT, self._inputs)
 
     def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> StreamActivity:
         self.calls.append("open_stream")
         self.stream_calls.append((target, interface, batch_size))

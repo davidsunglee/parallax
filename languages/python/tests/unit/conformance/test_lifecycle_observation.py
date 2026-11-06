@@ -408,11 +408,11 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
 
 
 def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> None:
-    started = StreamStarted(_EXECUTION, 1, 1, None, "Account", "rows", 500, "account")
+    started = StreamStarted(_EXECUTION, 1, 1, None, "Account", "wire", 500, "account")
     assert _transition(started) == {
         "streamStarted": {
             "target": "Account",
-            "interface": "rows",
+            "interface": "wire",
             "batchSize": 500,
             "edition": "account",
         }
@@ -703,6 +703,22 @@ def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
     )
     events = cast("list[dict[str, Any]]", _roots(portable)[0]["events"])
     assert [event["databaseCallStarted"].get("statement") for event in events] == [None, 0, 1]
+
+
+def test_a_target_acquisition_takes_no_index_and_shifts_none() -> None:
+    """A ``rows`` Read's call reaches the database and the case authors no golden
+    for it, while a published read beside it keeps its index."""
+    root = _root(
+        "transaction_invocation",
+        ReadStarted(_EXECUTION, 1, 1, None, "Account", "rows", None),
+        _flush_call(2, 2, 1, "read", "select acquired"),
+        ReadStarted(_EXECUTION, 3, 3, None, "Account", "wire", None),
+        _flush_call(4, 4, 3, "read", "select published"),
+    )
+    portable = execution_lifecycle_observation([root], ["select published"])
+    events = cast("list[dict[str, Any]]", _roots(portable)[0]["events"])
+    calls = [event["databaseCallStarted"] for event in events if "databaseCallStarted" in event]
+    assert [call.get("statement") for call in calls] == [None, 0]
 
 
 def _flush_call(

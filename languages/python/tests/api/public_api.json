@@ -99,6 +99,7 @@
     "OuterInvocationFailed",
     "PoolMetricsObserver",
     "PoolObservation",
+    "PublicationInterface",
     "ReadCompleted",
     "ReadFailed",
     "ReadFinished",

@@ -55,7 +55,7 @@ from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle import ReadInterface
+from parallax.core.execution_lifecycle import PublicationInterface, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -339,7 +339,7 @@ class _TxnAttemptBase:
         return self._read.model.meta
 
     def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+        self, target: ActivityTarget, interface: PublicationInterface, batch_size: int, /
     ) -> StreamActivity:
         return self._activity.stream(target, interface, batch_size)
 

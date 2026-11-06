@@ -1474,6 +1474,13 @@ _WRITE_GROUP_WITNESS_REASON: Final[str] = (
     "pins per call shape"
 )
 
+_UNIQUE_VALUE_HAND_OFF_REASON: Final[str] = (
+    "a flush-order witness: it amends two sources an idiomatic story already shows, and what "
+    "the case grades is that two effects run in their authored order so the unique key "
+    "admits the hand-off, an execution property the run conformance lane grades end to end "
+    "and no developer verb spells"
+)
+
 _OBSERVED_GENERATION_REASON: Final[str] = (
     "an object-state KEYING witness: it grades which of a unit of work's several "
     "observed generations of one key a write settles against, which a case states by "
@@ -2487,6 +2494,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-012": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-013": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-014": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-015": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-004": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-005": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-007": _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON,
@@ -2502,6 +2510,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-027": _OBJECT_CLAIM_COALESCING_REASON,
     "m-unit-work-058": _WRITE_GROUP_WITNESS_REASON,
     "m-unit-work-065": _INDEPENDENT_OPENING_REASON,
+    "m-unit-work-073": _UNIQUE_VALUE_HAND_OFF_REASON,
     "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,

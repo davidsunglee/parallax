@@ -146,7 +146,7 @@ returns fresh state to write from.
 ### Ordering
 
 At a flush, the [Write Planner](../../core/spec/m-unit-work.md#the-write-planner) takes
-the composed buffer. Its first stages rewrite the sequence
+the composed buffer. It first rewrites the sequence
 ([the planning pipeline](../../core/spec/m-unit-work.md#the-planning-pipeline)):
 
 - Known no-op work is dropped, such as an amendment that names only the key.
@@ -155,9 +155,8 @@ the composed buffer. Its first stages rewrite the sequence
   A write gated on an observation never joins a batch, because its gate belongs to one
   row.
 - The rest is ordered into [Mutation Phases](../../core/spec/m-unit-work.md#write-group-formation):
-  inserts parent-first, then updates in the order you wrote them, then deletes
-  child-first, so foreign keys hold. An insert that must follow the removal clearing its
-  way starts a new round of phases.
+  inserts parent-first, then updates, then deletes child-first, so foreign keys hold.
+  An insert that must follow the removal clearing its way runs after that removal.
 
 All of this happens before the Transaction Instant is captured, so a buffer that
 cancels away never reads the clock
@@ -166,7 +165,7 @@ cancels away never reads the clock
 ### Settlement
 
 Settlement turns the ordered writes into
-[Planned Steps](../../core/spec/m-write-plan.md#the-planned-step-algebra): inserts,
+[Planned Steps](../../core/spec/m-write-plan.md#planned-steps): inserts,
 updates, closes, deletes, and the revisions, removals and guards temporal writes use.
 For each write it validates the observation the write carries, captures the Transaction
 Instant if the write needs one, expands a temporal write over the milestones it reaches
@@ -180,7 +179,7 @@ the flush reads the missing coverage when it reaches the write
 [row acquisition](../../core/spec/m-unit-work.md#row-acquisition)).
 
 Settlement also forms the **Write Groups**: runs of settled writes of distinct objects
-within one Mutation Phase, laid out with every effect before any insert
+within one Mutation Phase, each with every effect before any insert
 ([ADR 0076](../adr/0076-write-groups-run-every-effect-before-any-insert.md)). The result
 is the Write Plan, the one product of planning.
 
@@ -238,7 +237,7 @@ until a deletion, or a termination over the instant it was read at, leaves nothi
 
 An Entity's [Storage Layout](../../core/spec/m-storage-layout.md#storage-layout-transparency)
 plays no part in the meaning of a write. Instructions, licences, composition and the
-Planned Step algebra all speak in logical members and contain no physical column. The
+Planned Steps all speak in logical members and contain no physical column. The
 layout is consulted only for physical work: deciding which rows can share one statement,
 comparing what adjacent new rows would store, and, when a step is about to execute,
 [payload preparation](../../core/spec/m-write-payload.md#row-assembly), which places

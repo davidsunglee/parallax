@@ -6,7 +6,7 @@ expansion** that realizes both — one Coverage Transform of a written object's
 existing coverage, applied by one Predecessor Expansion to each existing
 milestone it reaches. A temporal write chains milestone rows rather than
 mutating a value in place, which is what produces the audit trail. Per the
-dependency graph it depends on `m-write-plan`, whose Planned Step algebra and
+dependency graph it depends on `m-write-plan`, whose Planned Steps and
 Predecessor Rows it settles into; on `m-temporal-read`, whose intervals and axes
 it shares with as-of reads; on `m-inheritance`, `m-core`, and `m-metamodel` for
 the family-effective state it carries; and on `m-document-codec` for effective
@@ -525,10 +525,7 @@ A temporal write is finalized by `m-unit-work`'s Write Planner, which expands ea
 surviving temporal write in place, at its already-decided position (ADR 0045).
 Expansion is **neutral**: it names no SQL, dialect, physical column, or statement
 and takes no dialect argument, which is what lets it live inside planning while
-column participation and quoting stay in lowering. An implementation **MUST NOT**
-expose a milestone plan, a milestone step, or a per-row expansion value on any
-cross-module interface; only the Planned Steps it produces, and the effects
-their success publishes, leave it.
+column participation and quoting stay in lowering.
 
 ### Coverage Transform
 
@@ -717,10 +714,10 @@ predecessor is chosen only once they have (*Merging produced successors*).
 Under Relational Document Layout a revision's document-resident assignments
 patch the stored Structured Column in place, so what the row holds afterward
 follows from the patches alone only where that column holds an object
-(`m-dialect` *Document mutation-expression form*). The revision therefore
-carries whether the predecessor it revises was retained holding an object
-document (`m-write-plan` *The Planned Step algebra*): an absent, SQL NULL, JSON
-null, array, or scalar document is not one. A revision whose prepared
+(`m-dialect` *Document mutation-expression form*). Whether the predecessor it
+revises was retained holding an object document therefore decides whether those
+assignments may execute: an absent, SQL NULL, JSON null, array, or scalar
+document is not one. A revision whose prepared
 assignments patch the Structured Column of a predecessor not known to hold an
 object is refused as a lowering failure when its payload is demanded, before
 its statement executes. That is an execution failure (`m-unit-work` *Abort*):
