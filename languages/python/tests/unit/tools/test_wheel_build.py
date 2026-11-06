@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from io import StringIO
@@ -159,3 +160,65 @@ def test_shared_preparation_builds_six_production_sdists_and_keeps_conformance_w
     }
     assert "parallax-conformance" in wheels
     assert "parallax-postgres" not in wheels
+
+
+@pytest.mark.parametrize("manager", ["dnf", "yum"])
+@pytest.mark.parametrize("failures", [0, 1, 2, 3])
+def test_libpq_dependency_install_retries_with_fresh_metadata_and_preserves_failure(
+    tmp_path: Path, manager: str, failures: int
+) -> None:
+    executable = tmp_path / manager
+    executable.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'echo "$*" >> "$STATE/commands"\n'
+        'if [ "$1" = clean ]; then\n'
+        '    rm "$STATE/repomd.xml"\n'
+        "    exit 0\n"
+        "fi\n"
+        'if [ -f "$STATE/repomd.xml" ]; then\n'
+        '    echo "reused broken metadata" >&2\n'
+        "    exit 42\n"
+        "fi\n"
+        "attempt=0\n"
+        'if [ -f "$STATE/attempt" ]; then read -r attempt < "$STATE/attempt"; fi\n'
+        "attempt=$((attempt + 1))\n"
+        'echo "$attempt" > "$STATE/attempt"\n'
+        'if [ "$attempt" -le "$FAILURES" ]; then\n'
+        '    : > "$STATE/repomd.xml"\n'
+        '    echo "repomd.xml parser error: Parse error at line: 1 (Document is empty)" >&2\n'
+        "    exit 23\n"
+        "fi\n"
+    )
+    executable.chmod(0o755)
+    sleep = tmp_path / "sleep"
+    sleep.write_text('#!/bin/sh\necho "sleep $*" >> "$STATE/commands"\n')
+    sleep.chmod(0o755)
+    for command in ("mktemp", "rm"):
+        location = shutil.which(command)
+        assert location is not None
+        (tmp_path / command).symlink_to(location)
+    result = subprocess.run(
+        [
+            "/bin/sh",
+            "-c",
+            'script=$1; shift; curl() { echo "downloads reached"; exit 0; }; . "$script"',
+            "sh",
+            str(wheel_build.PY_ROOT / "tools/build_wheel_libpq.sh"),
+            "18.6",
+        ],
+        env={"PATH": str(tmp_path), "STATE": str(tmp_path), "FAILURES": str(failures)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    installs = min(failures + 1, 3)
+    expected_commands = ["install -y flex bison perl"]
+    for _ in range(installs - 1):
+        expected_commands.extend(["sleep 5", "clean all", "install -y flex bison perl"])
+    assert (tmp_path / "commands").read_text().splitlines() == expected_commands
+    assert (tmp_path / "attempt").read_text().strip() == str(installs)
+    assert result.returncode == (23 if failures == 3 else 0)
+    assert result.stderr.count("Document is empty") == min(failures, 3)
+    assert "reused broken metadata" not in result.stderr
+    assert ("downloads reached" in result.stdout) == (failures < 3)

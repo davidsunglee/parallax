@@ -15,10 +15,27 @@ if [ "$minor" -lt 6 ] || [ "$#" -ne 1 ]; then
 fi
 prefix=/opt/wheel-libpq
 
+install_build_dependencies() {
+    for attempt in 1 2 3; do
+        if "$1" install -y flex bison perl; then
+            return 0
+        else
+            status=$?
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            return "$status"
+        fi
+        echo "$1 install failed (attempt $attempt/3); retrying in 5 seconds" >&2
+        sleep 5
+        # Discard malformed repository metadata before the next install fetches it.
+        "$1" clean all
+    done
+}
+
 if command -v dnf >/dev/null 2>&1; then
-    dnf install -y flex bison perl
+    install_build_dependencies dnf
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y flex bison perl
+    install_build_dependencies yum
 fi
 
 build_root=$(mktemp -d)
