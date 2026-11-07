@@ -253,7 +253,9 @@ invalid root from that same fully prepared sequence.
 
 This atomicity is specific to eager delivery. A stream retains the root-local
 publication boundary stated below: once one root has crossed it, a later root's
-failure cannot recall the published prefix.
+failure cannot recall the published prefix. A Shared Graph's roots
+(`m-snapshot-read` *Node sharing*) are built together, and each still crosses its
+own delivery boundary.
 
 ## Streamed delivery
 
@@ -273,6 +275,14 @@ a provider or continuation failure on a later page, invalid-data refusal in the
 default view, or a lifecycle failure during publication. The checked view differs
 only by publishing classified invalid data in band; both views judge the same root
 sequence and retain the same prefix boundary.
+
+A page-scope read completes a Page's Shared Graph before that Page's first root is
+delivered, so that root waits for the Page's later roots, and nothing enriches a
+root after it is delivered. Failure keeps the maximal prefix all the same. A conflict
+or a failed attempt to share leaves the Page to its per-root publication, which
+fails at the same root with the same prefix. A classified root publishes when the
+delivery reaches it, so a default view builds no classified root past the one it
+refuses, and the valid roots after that one are built and never delivered.
 
 Roots arrive in the **Continuation Order**: a deterministic total order the
 delivery derives rather than an Object Query clause. It is composed the same way
@@ -325,7 +335,9 @@ Delivery is bounded by a **page size** counting root positions. It never bounds
 included relationship rows, and over storage the model describes it is a performance
 dial and nothing else: changing it changes neither the order roots arrive in, nor
 which roots arrive, nor the members, loadedness, identity, or issues any of them
-carries.
+carries. A page-scope read is the one exception, because the Page is its sharing
+boundary: page size can change which roots share a node and what a shared node
+holds beyond what its position requested, and nothing a position requested.
 
 Each page is an ordinary read of a bounded root query, so `m-read-planning`'s
 **`1 + L` ceiling applies once per page** and a page's child levels are the same
@@ -372,7 +384,8 @@ applies identically to every representation. Invalid stored data is not among
 them: it ends no checked delivery, which is stated below the four.
 
 **Because a stream publishes one root at a time**, it never holds two roots'
-results together, and three divergences follow:
+results together, save the roots of one Page's Shared Graph, and three divergences
+follow:
 
 - **A milestone set arrives one root at a time rather than grouped by
   milestone.** Both whole-result and streamed `history` / `asOfRange` reads use
@@ -542,9 +555,11 @@ bound is `O(P_B + G_max)` and contains no term in `N`.
 The bound covers a page's fetched rows and their relationship fan-out, and the
 current root's judgment, classification, and published graph with its cycle and
 aliasing closure. What a delivery holds for a page does not survive that page, and
-what it holds for a root does not survive the delivery's advance past it. Of a
-page's evaluated coordinates, only the boundary the next page seeks from outlives
-it.
+what it holds for a root does not survive the delivery's advance past it. A Shared
+Graph holds at most one node per logical row on its Page, so it adds nothing beyond
+`P_B`, and its values live with their Page rather than with one root: the delivery
+holds them until it moves past that Page. Of a page's evaluated coordinates, only
+the boundary the next page seeks from outlives it.
 
 The bound is deliberately **not** `O(B)`. `P_B` is a page's whole converted
 result rather than its root count, so a page of roots each carrying a large

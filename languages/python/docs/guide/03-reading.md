@@ -7,8 +7,8 @@ when you hand the query to `find` or `stream`.
 
 This chapter starts with the question every read answers first, where it runs, and then
 builds queries, loads graphs and chooses result shapes. After that it covers streaming
-large results, reading history, and the Wire API, which delivers the same reads as plain
-mappings. The examples use the shop model from [Modeling](02-modeling.md) and these
+large results, sharing rows across results, reading history, and the Wire API, which
+delivers the same reads as plain mappings. The examples use the shop model from [Modeling](02-modeling.md) and these
 imports:
 
 <!-- example: reading-imports -->
@@ -384,7 +384,8 @@ object, not a copy.
 
 The sharing stops at the edge of each root. Two orders from the same customer each
 come with their own `Customer` object: equal, but not the same object. So compare
-values across roots by their keys, not with `is`.
+values across roots by their keys, not with `is`. A read can opt into
+[sharing rows across results](#sharing-rows-across-results).
 
 Touching a relationship the read didn't include raises `UnloadedRelationshipError`. A
 to-one relationship that was included but has no target is `None`, as for an order whose
@@ -554,6 +555,70 @@ moves a row can be your own loop.
 Inside a transaction, the isolation level adds its own guarantees across pages, as the
 [table above](#where-a-read-runs) shows. A shared row lock doesn't help here: it protects
 rows already read, not rows the stream has yet to reach.
+
+## Sharing rows across results
+
+When many results reach the same rows, each result normally builds its own copy of
+them. A thousand orders under a hundred customers, read through `Order.customer.orders`,
+publish eleven thousand objects for 1,100 rows. `sharing_scope="page"` builds those rows
+once:
+
+<!-- example: share-rows-across-results -->
+```python
+def orders_sharing_their_customers(db: ScopedDatabase, since: dt.date) -> list[Order]:
+    """Orders of one customer may hold one ``Customer`` object between them."""
+    query = Order.where(Order.placed_on >= since).include(Order.customer.orders)
+    return db.find(query, sharing_scope="page").results()
+```
+<!-- /example -->
+
+The results hold the same values as they would at `"root"`, the default. What changes is
+that two results can now reach one object, so memory and time follow the rows you read
+rather than the results times what each one reaches. Wire reads take the same option and
+build one mapping for each row and requested shape. `Snapshot.wire()` and
+`SnapshotStream.wire()` need no option, because they render the values already built.
+
+Sharing stops at the page. `find` reads one page, so a whole result can share, and each
+page of a stream shares only within itself, so `batch_size` changes what shares. Nothing
+ever shares across two reads. A stream finishes building a page before it hands you that
+page's first result, and nothing changes a result after you've received it:
+
+<!-- example: stream-with-rows-shared-per-page -->
+```python
+def what_each_orders_customer_spent(db: ScopedDatabase, page: int) -> dict[int, Decimal]:
+    """Total each order's customer, building each page's repeated rows once."""
+    query = Order.where(Order.all).include(Order.customer.orders)
+    spent: dict[int, Decimal] = {}
+    with db.stream(query, batch_size=page, sharing_scope="page") as orders:
+        for order in orders:
+            if order.customer is not None:
+                totals = (placed.total for placed in order.customer.orders)
+                spent[order.id] = sum(totals, Decimal("0.00"))
+    return spent
+```
+<!-- /example -->
+
+A read shares only where it can do so without choosing between observations. A page
+whose rows or relationships differ between results, which a concurrent commit can cause
+at Read Committed, publishes each result separately, exactly as `"root"` does, and a
+page with nothing to share does the same. A result with invalid stored data keeps its
+own separate graph while the results beside it go on sharing, and writes through a
+shared value work as they do through any other. Parallax promises none of this sharing
+for any two results, so never rely on `a is b` across them.
+
+Three things depend on what your code does afterwards, so the choice is yours:
+
+- **Use `"page"`** to consume whole results or pages where many results reach the same
+  rows.
+- **Stay on `"root"`** to keep a small subset of results, or to get a stream's first
+  result as early as possible. Keeping one shared result keeps everything connected to
+  it on its page, so a stream that keeps one result per page can hold the whole result.
+- **Request what you read.** A shared object can have a relationship loaded that you
+  never asked for at that position, because another result loaded it, and whether it
+  does varies with your data and `batch_size`. `order.customer.orders[i].customer` under
+  `Order.customer.orders` raises `UnloadedRelationshipError` at `"root"`, and works at
+  `"page"` only when that order is also a result on the same page. Include
+  `Order.customer.orders.customer` and it loads in either mode, with no extra statement.
 
 ## Transaction-Time-Only reads
 

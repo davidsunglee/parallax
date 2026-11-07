@@ -1,0 +1,122 @@
+# Streamed repeated fan-out at both Sharing Scopes (m-snapshot-read *Node sharing*): roots 11
+# and 12 reach one Order, and the Page ends between 421 and 422, so Order 42 is reached
+# from two Pages and each Page publishes it for itself.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-read-planning, sharing-scope, stream, streamed-delivery, to-many, relationship, graph, materialization, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - page 2's root statement binds the primary key of the root page 1 delivered last, and each page's child levels bind the keys that page's own roots gathered"
+when:
+  objectQuery:
+    target: parallax.compatibility.OrderItem
+    predicate:
+      in:
+        path: parallax.compatibility.OrderItem.id
+        values:
+          - 11
+          - 12
+          - 421
+          - 422
+    includes:
+      - segments:
+          - rel: parallax.compatibility.OrderItem.order
+          - rel: parallax.compatibility.Order.items
+  stream:
+    batchSize: 3
+  sharingScope: root
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc limit ?
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
+      binds: { postgres: [[11, 12, 421, 422], 4], mariadb: [11, 12, 421, 422, 4] }
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
+      binds: { postgres: [[1, 42]], mariadb: [1, 42] }
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+      binds: { postgres: [[1, 42]], mariadb: [1, 42] }
+    - sql:
+        postgres: select u.id, u.order_id, u.sku, u.quantity, u.shipped_on, u.parallax_seek_0 from ((select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id = any(cast(? as bigint[])) and t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id = any(cast(? as bigint[])) and t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id in (?, ?, ?, ?) and t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+      binds: { postgres: [[11, 12, 421, 422], 421, 421, 4, [11, 12, 421, 422], 4, 4], mariadb: [11, 12, 421, 422, 421, 421, 4] }
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+      binds: { postgres: [[42]], mariadb: [42] }
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+      binds: { postgres: [[42]], mariadb: [42] }
+  referenceSql: select id, order_id, sku, quantity, shipped_on from order_item where id in (11, 12, 421, 422)
+  graph:
+    OrderItem:
+      - id: 11
+        orderId: 1
+        sku: A-100
+        quantity: 2
+        shippedOn: null
+        order:
+          id: 1
+          name: Ada
+          sku: A-100
+          qty: 5
+          price: "10.50"
+          active: true
+          orderedOn: 2024-01-05
+          items:
+            - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+            - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+      - id: 12
+        orderId: 1
+        sku: B-200
+        quantity: 1
+        shippedOn: 2024-02-15
+        order:
+          id: 1
+          name: Ada
+          sku: A-100
+          qty: 5
+          price: "10.50"
+          active: true
+          orderedOn: 2024-01-05
+          items:
+            - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+            - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+      - id: 421
+        orderId: 42
+        sku: A-999
+        quantity: 3
+        shippedOn: 2024-03-10
+        order:
+          id: 42
+          name: Grace
+          sku: A-999
+          qty: 30
+          price: "99.99"
+          active: true
+          orderedOn: 2024-06-30
+          items:
+            - { id: 422, orderId: 42, sku: B-200, quantity: 5, shippedOn: 2024-02-05 }
+            - { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
+      - id: 422
+        orderId: 42
+        sku: B-200
+        quantity: 5
+        shippedOn: 2024-02-05
+        order:
+          id: 42
+          name: Grace
+          sku: A-999
+          qty: 30
+          price: "99.99"
+          active: true
+          orderedOn: 2024-06-30
+          items:
+            - { id: 422, orderId: 42, sku: B-200, quantity: 5, shippedOn: 2024-02-05 }
+            - { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
+  databaseCalls: 6

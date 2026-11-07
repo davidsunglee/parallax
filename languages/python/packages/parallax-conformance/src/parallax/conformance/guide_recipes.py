@@ -113,6 +113,7 @@ __all__ = [
     "open_an_account_even_if_the_order_fails",
     "orders_of",
     "orders_placed_on",
+    "orders_sharing_their_customers",
     "orders_with_their_customer",
     "payments_for",
     "place_an_order",
@@ -138,6 +139,7 @@ __all__ = [
     "table_statements",
     "total_of_every_order",
     "tracked_deliveries_for",
+    "what_each_orders_customer_spent",
     "who_placed",
     "withdraw_a_credit_limit",
 ]
@@ -321,6 +323,12 @@ def orders_with_their_customer(db: ScopedDatabase, since: dt.date) -> list[Order
     """Each order arrives with its customer, and that customer with all of its orders."""
     query = Order.where(Order.placed_on >= since).include(Order.customer.orders)
     return db.find(query).results()
+
+
+def orders_sharing_their_customers(db: ScopedDatabase, since: dt.date) -> list[Order]:
+    """Orders of one customer may hold one ``Customer`` object between them."""
+    query = Order.where(Order.placed_on >= since).include(Order.customer.orders)
+    return db.find(query, sharing_scope="page").results()
 
 
 def customer_with_email(db: ScopedDatabase, email: str) -> Customer | None:
@@ -743,6 +751,18 @@ def total_of_every_order(db: ScopedDatabase, page: int) -> Decimal:
         for order in orders:
             total += order.total
     return total
+
+
+def what_each_orders_customer_spent(db: ScopedDatabase, page: int) -> dict[int, Decimal]:
+    """Total each order's customer, building each page's repeated rows once."""
+    query = Order.where(Order.all).include(Order.customer.orders)
+    spent: dict[int, Decimal] = {}
+    with db.stream(query, batch_size=page, sharing_scope="page") as orders:
+        for order in orders:
+            if order.customer is not None:
+                totals = (placed.total for placed in order.customer.orders)
+                spent[order.id] = sum(totals, Decimal("0.00"))
+    return spent
 
 
 def export_customers(db: ScopedDatabase, out: TextIO, page: int) -> int:

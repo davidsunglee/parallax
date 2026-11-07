@@ -162,7 +162,9 @@ class SnapshotStream[T]:
 
     Typed ``wire()`` projection is available only while paused at a delivered
     root. It uses that page's includes and does not advance the stream. Page size
-    counts root positions and does not change their order or contents.
+    counts root positions and does not change their order or contents, except that
+    a page-scope read shares nodes only within a page, so it can change which
+    objects two roots share and what a shared Typed instance incidentally loaded.
     """
 
     __slots__ = ("_delivery", "_projection_publication", "_projection_state")

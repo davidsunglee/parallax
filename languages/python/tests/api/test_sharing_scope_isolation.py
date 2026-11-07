@@ -18,7 +18,13 @@ import pytest
 from parallax.core import MANY_TO_ONE, ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, rel
 from parallax.core.db_port import IsolationLevel
 from parallax.core.entity import model_of
-from parallax.snapshot import SharingScope, Snapshot, SnapshotConsistencyError, connect
+from parallax.snapshot import (
+    ScopedDatabase,
+    SharingScope,
+    Snapshot,
+    SnapshotConsistencyError,
+    connect,
+)
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 from tests.api._statement_interleaving import AfterReadStatement
@@ -77,22 +83,18 @@ def _root(
 _ONE_ROOT_PER_PATH: Final = (_root(1, child=9), _root(2, hop=5))
 _A_ROOT_ON_BOTH_PATHS: Final = (_root(1, child=9, hop=5), _root(2, child=9))
 _ONE_PARENT_ROOT_PER_PATH: Final = (_root(1, parent=7), _root(2, hop=5))
+_A_LATER_ROOT_ON_BOTH_PATHS: Final = (_root(1, child=9), _root(2, child=9, hop=5))
 
 
-def _read(
+def _interleaved_database(
     profile_run: Any,
-    query: Any,
     roots: tuple[dict[str, object], ...],
     *,
     after_table: str,
     peer_sql: str,
-    isolation: IsolationLevel,
-    sharing_scope: SharingScope,
-    wire: bool = False,
-) -> Snapshot[Any]:
-    """``query`` read at ``sharing_scope`` from a fresh seed, with ``peer_sql``
-    committed right after the first read of ``after_table``. ``wire`` reads it
-    through direct Wire."""
+) -> tuple[ScopedDatabase, AfterReadStatement]:
+    """A fresh seed of ``roots``, with ``peer_sql`` committed right after the first
+    read of ``after_table``."""
     profile_run.reset(
         model_of(_MODEL),
         {
@@ -114,6 +116,25 @@ def _read(
     db = own_root(
         connect(profile_run.port, _MODEL, lifecycle_provider=interleaving)
     ).using_database_login()
+    return db, interleaving
+
+
+def _read(
+    profile_run: Any,
+    query: Any,
+    roots: tuple[dict[str, object], ...],
+    *,
+    after_table: str,
+    peer_sql: str,
+    isolation: IsolationLevel,
+    sharing_scope: SharingScope,
+    wire: bool = False,
+) -> Snapshot[Any]:
+    """``query`` read at ``sharing_scope`` around a peer commit. ``wire`` reads it
+    through direct Wire."""
+    db, interleaving = _interleaved_database(
+        profile_run, roots, after_table=after_table, peer_sql=peer_sql
+    )
     snapshot = db.read_only(
         lambda tx: (tx.wire if wire else tx).find(query, sharing_scope=sharing_scope),
         isolation=isolation,
@@ -286,3 +307,43 @@ def test_direct_wire_preserves_a_membership_difference_across_roots_at_read_comm
     first, second = snapshot.results()
     assert [child["id"] for child in first["parent"]["children"]] == [9]
     assert [child["id"] for child in second["hop"]["parent"]["children"]] == [9, 10]
+
+
+@pytest.mark.parametrize("read", ["typed", "wire", "projected"])
+def test_a_stream_conflict_raises_at_the_same_root_with_the_same_prefix(
+    profile_run: Any, read: str
+) -> None:
+    def delivered_before_the_conflict(
+        sharing_scope: SharingScope,
+    ) -> tuple[list[Any], SnapshotConsistencyError]:
+        db, interleaving = _interleaved_database(
+            profile_run,
+            _A_LATER_ROOT_ON_BOTH_PATHS,
+            after_table="isolation_hop",
+            peer_sql=_CHANGE_CHILD,
+        )
+        delivered: list[Any] = []
+
+        def drain(tx: Any) -> None:
+            reader = tx.wire if read == "wire" else tx
+            with reader.stream(_CHILD_TWICE, sharing_scope=sharing_scope) as stream:
+                for root in stream:
+                    delivered.append(stream.wire(root) if read == "projected" else root)
+
+        with raises_contextualized(SnapshotConsistencyError) as raised:
+            db.read_only(drain, isolation="read_committed")
+        assert interleaving.fired
+        assert interleaving.failures == []
+        return delivered, raised.value
+
+    at_page, conflict_at_page = delivered_before_the_conflict("page")
+    at_root, conflict_at_root = delivered_before_the_conflict("root")
+
+    assert len(at_page) == len(at_root) == 1
+    assert conflict_at_page.object_key == conflict_at_root.object_key
+    assert conflict_at_page.members == conflict_at_root.members
+    assert conflict_at_page.fetched_rows == conflict_at_root.fetched_rows
+    if read == "typed":
+        assert [root.id for root in at_page] == [root.id for root in at_root] == [1]
+    else:
+        assert [root["id"] for root in at_page] == [root["id"] for root in at_root] == [1]

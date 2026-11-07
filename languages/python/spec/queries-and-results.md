@@ -129,11 +129,12 @@ interval, or `TemporalBound.INFINITY` while that axis is current.
 `edge_of` answers a temporal node's milestone `Edge`. The answer is stable: a node
 and every edit of it answer equal `Edge` values, however often they are inspected.
 
-Typed and Wire `find` take a keyword-only `sharing_scope`, a `SharingScope` of
-`"root"`, the default, or `"page"`, which selects the read's Sharing Scope
-(`m-snapshot-read` *Node sharing*). Any other value raises `ValueError` as the call evaluates its
-arguments, before the query is judged, before any I/O, and ahead of the re-entry
-check a transaction's read makes. `Snapshot.wire` takes no option: it renders the
+Typed and Wire `find` and `stream` take a keyword-only `sharing_scope`, a
+`SharingScope` of `"root"`, the default, or `"page"`, which selects the read's
+Sharing Scope (`m-snapshot-read` *Node sharing*). Any other value raises `ValueError`
+as the call evaluates its arguments, before the query is judged, before any I/O, and
+ahead of the re-entry check a transaction's read makes and a stream's `batch_size`
+check. `Snapshot.wire` and `SnapshotStream.wire` take no option: they render the
 published values through the read's include shape.
 
 The envelope is not iterable, indexable, or sized, and exposes no lazy behavior.
@@ -218,7 +219,9 @@ the checked iterator returns their records. There are no arity accessors or
 whole-stream projection.
 
 `batch_size` requires a positive exact built-in integer;
-it counts root positions. It is a per-call option only. Core determines page
+it counts root positions. It is a per-call option only. Under `sharing_scope="page"`
+each page is its own sharing boundary, so it also changes which roots share an
+object and what a shared Typed instance incidentally loaded. Core determines page
 stability and continuation ordering. A non-total continuation raises
 `StreamContinuationError` with code
 `snapshot-stream-continuation-order-not-total`; its coordinate is diagnostic

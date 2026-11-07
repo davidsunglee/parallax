@@ -41,9 +41,18 @@ from parallax.core import (
 from parallax.core.entity import UnloadedRelationshipError, model_of
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.object_query import TX_TIME
-from parallax.core.read_delivery import InvalidData
+from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
-from parallax.snapshot import ScopedDatabase, SharingScope, TxnContext, connect, edge_of, pin_of
+from parallax.snapshot import (
+    ScopedDatabase,
+    SharingScope,
+    SnapshotStream,
+    TxnContext,
+    connect,
+    edge_of,
+    is_view_loaded,
+    pin_of,
+)
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
@@ -82,6 +91,13 @@ _NODES_AT_PAGE_SCOPE: Final = _ROOTS + 1
 _NODES_AT_ROOT_SCOPE: Final = _ROOTS * (_ROOTS + 1)
 _DOCUMENTS_AT_PAGE_SCOPE: Final = 2 * _ROOTS + 1
 _DOCUMENTS_AT_ROOT_SCOPE: Final = _ROOTS * (_ROOTS + 2)
+_SPLITTING_THE_ROOTS: Final = 2
+_TWO_PAGES_OF_PURCHASES: Final = (7, 8, 9, *_ORDER_IDS)
+_INVALID_ORDINAL_ON_THE_LATER_PAGE: Final = 4
+_NODES_ON_THE_LATER_PAGE_AT_PAGE_SCOPE: Final = 9
+_NODES_ON_THE_LATER_PAGE_AT_ROOT_SCOPE: Final = 16
+_NODES_ACROSS_TWO_PAGES: Final = 2 * _NODES_AT_PAGE_SCOPE
+_DOCUMENTS_ACROSS_TWO_PAGES: Final = _ROOTS + 2 * _NODES_AT_PAGE_SCOPE
 _REPLACED_ON: Final = dt.date(2024, 5, 1)
 _ORDER_KEYS: Final = {"id", "customerId", "placedOn", "total", "version"}
 _CUSTOMER_KEYS: Final = {"id", "name", "email"}
@@ -124,9 +140,13 @@ def _db(profile_run: Any, *, lifecycle_provider: Any = None) -> ScopedDatabase:
 
 
 def _db_with_a_corrupt_depot(
-    profile_run: Any, *, depot_of: Callable[[int], int], corrupt: int
+    profile_run: Any,
+    *,
+    depot_of: Callable[[int], int],
+    corrupt: int,
+    purchases: tuple[int, ...] = _ORDER_IDS,
 ) -> ScopedDatabase:
-    """Three Purchases of one Buyer, each at ``depot_of`` its id, with the required
+    """``purchases`` of one Buyer, each at ``depot_of`` its id, with the required
     ``street`` of Depot ``corrupt`` absent. That stays hydratable, so an invalid root
     still publishes the nodes a write door must refuse."""
     profile_run.reset(
@@ -138,7 +158,7 @@ def _db_with_a_corrupt_depot(
                     "id": depot,
                     "shipTo": {"street": "1 Quay", "city": "Oslo", "postcode": "0150"},
                 }
-                for depot in {depot_of(purchase) for purchase in _ORDER_IDS}
+                for depot in {depot_of(purchase) for purchase in purchases}
             ],
             "Purchase": [
                 {
@@ -148,7 +168,7 @@ def _db_with_a_corrupt_depot(
                     "note": "held",
                     "version": 1,
                 }
-                for purchase in _ORDER_IDS
+                for purchase in purchases
             ],
         },
     )
@@ -353,6 +373,10 @@ def test_an_unknown_scope_is_refused_before_any_database_call(profile_run: Any) 
             reader.find(_REPEATED, sharing_scope=unknown)
         with pytest.raises(ValueError, match="sharing_scope"):
             reader.wire.find(_REPEATED, sharing_scope=unknown)
+        with pytest.raises(ValueError, match="sharing_scope"):
+            reader.stream(_REPEATED, sharing_scope=unknown)
+        with pytest.raises(ValueError, match="sharing_scope"):
+            reader.wire.stream(_REPEATED, sharing_scope=unknown)
         assert observation.database_calls == before
 
     refused_inside(db)
@@ -528,3 +552,240 @@ def test_a_corrupt_row_every_root_reaches_publishes_no_more_documents_than_root_
 
     assert _purchase_documents(at_page) == _purchase_documents(at_root)
     assert at_page == at_root
+
+
+def _delivered(stream: SnapshotStream[Any]) -> list[Any]:
+    with stream as roots:
+        return list(roots)
+
+
+def _projected(stream: SnapshotStream[Any]) -> list[Any]:
+    with stream as roots:
+        return [stream.wire(root) for root in roots]
+
+
+def _checked(stream: SnapshotStream[Any]) -> list[Any]:
+    with stream:
+        return list(stream.checked())
+
+
+def _checked_and_projected(stream: SnapshotStream[Any]) -> list[Any]:
+    with stream:
+        return [stream.wire(root) for root in stream.checked()]
+
+
+def _delivered_before_a_refusal(stream: SnapshotStream[Any]) -> tuple[list[Any], Any]:
+    delivered: list[Any] = []
+    with stream as roots, raises_contextualized(InvalidDataError) as refused:
+        delivered.extend(roots)
+    return delivered, refused.value
+
+
+def _direct_wire_stream(reader: Any, query: Any, **options: Any) -> SnapshotStream[Any]:
+    return reader.wire.stream(query, **options)
+
+
+def _typed_stream(reader: Any, query: Any, **options: Any) -> SnapshotStream[Any]:
+    return reader.stream(query, **options)
+
+
+_WIRE_STREAMS: Final = pytest.mark.parametrize(
+    ("open_stream", "drain"),
+    [(_direct_wire_stream, _delivered), (_typed_stream, _projected)],
+    ids=["direct", "projected"],
+)
+_CHECKED_WIRE_STREAMS: Final = pytest.mark.parametrize(
+    ("open_stream", "drain"),
+    [(_direct_wire_stream, _checked), (_typed_stream, _checked_and_projected)],
+    ids=["direct", "projected"],
+)
+
+
+def test_a_stream_shares_within_each_page_and_never_across_one(profile_run: Any) -> None:
+    db = _db(profile_run)
+    whole = _delivered(db.stream(_REPEATED, sharing_scope="page"))
+    paged = _delivered(db.stream(_REPEATED, batch_size=_SPLITTING_THE_ROOTS, sharing_scope="page"))
+    at_root = _delivered(db.stream(_REPEATED, batch_size=_SPLITTING_THE_ROOTS))
+
+    assert _nodes(whole) == _NODES_AT_PAGE_SCOPE
+    assert _nodes(paged) == _NODES_ACROSS_TWO_PAGES
+    assert _nodes(at_root) == _NODES_AT_ROOT_SCOPE
+    assert [root.id for root in paged] == list(_ORDER_IDS)
+    last_on_the_page, past_the_boundary = paged[1:]
+    assert last_on_the_page.customer is not past_the_boundary.customer
+    assert _by_id(last_on_the_page.customer.orders, past_the_boundary.id) is not past_the_boundary
+
+
+@_WIRE_STREAMS
+def test_a_wire_stream_shares_within_each_page_and_never_across_one(
+    profile_run: Any, open_stream: Any, drain: Any
+) -> None:
+    db = _db(profile_run)
+    whole = drain(open_stream(db, _REPEATED, sharing_scope="page"))
+    paged = drain(open_stream(db, _REPEATED, batch_size=_SPLITTING_THE_ROOTS, sharing_scope="page"))
+    at_root = drain(open_stream(db, _REPEATED, batch_size=_SPLITTING_THE_ROOTS))
+
+    assert _documents(whole) == _DOCUMENTS_AT_PAGE_SCOPE
+    assert _documents(paged) == _DOCUMENTS_ACROSS_TWO_PAGES
+    assert _documents(at_root) == _DOCUMENTS_AT_ROOT_SCOPE
+    assert [root["id"] for root in paged] == list(_ORDER_IDS)
+    last_on_the_page, past_the_boundary = paged[1:]
+    assert last_on_the_page["customer"] is not past_the_boundary["customer"]
+    _assert_each_position_holds_its_keys(paged)
+    assert paged == at_root
+
+
+def _standalone(db: ScopedDatabase, read: Callable[[Any], list[Any]]) -> list[Any]:
+    return read(db)
+
+
+def _read_only(db: ScopedDatabase, read: Callable[[Any], list[Any]]) -> list[Any]:
+    return db.read_only(read)
+
+
+def _read_write(db: ScopedDatabase, read: Callable[[Any], list[Any]]) -> list[Any]:
+    return db.transact(read)
+
+
+@pytest.mark.parametrize("run", [_standalone, _read_only, _read_write])
+def test_a_stream_shares_wherever_it_runs(profile_run: Any, run: Any) -> None:
+    db = _db(profile_run)
+
+    def typed(reader: Any) -> list[Any]:
+        return _delivered(reader.stream(_REPEATED, sharing_scope="page"))
+
+    def wire(reader: Any) -> list[Any]:
+        return _delivered(reader.wire.stream(_REPEATED, sharing_scope="page"))
+
+    assert _nodes(run(db, typed)) == _NODES_AT_PAGE_SCOPE
+    assert _documents(run(db, wire)) == _DOCUMENTS_AT_PAGE_SCOPE
+
+
+def test_a_delivered_root_already_carries_all_it_will_ever_carry(profile_run: Any) -> None:
+    db = _db(profile_run)
+
+    with db.stream(_REPEATED, batch_size=_SPLITTING_THE_ROOTS, sharing_scope="page") as stream:
+        roots = iter(stream)
+        first = next(roots)
+        on_this_page = _by_id(first.customer.orders, _ORDER_IDS[1])
+        on_the_next_page = _by_id(first.customer.orders, _ORDER_IDS[2])
+
+        assert on_this_page.customer is first.customer
+        assert not is_view_loaded(on_the_next_page, Order.customer)
+        assert [root.id for root in roots] == list(_ORDER_IDS[1:])
+
+    assert not is_view_loaded(on_the_next_page, Order.customer)
+
+
+def test_a_stream_keeps_its_prefix_at_an_invalid_root_and_a_checked_stream_passes_it(
+    profile_run: Any,
+) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+
+    delivered, refused = _delivered_before_a_refusal(
+        db.stream(_BESIDE_AN_INVALID_ROOT, sharing_scope="page")
+    )
+    at_root, refused_at_root = _delivered_before_a_refusal(db.stream(_BESIDE_AN_INVALID_ROOT))
+    assert [root.id for root in delivered] == [root.id for root in at_root] == list(_ORDER_IDS[:1])
+    assert [record.ordinal for record in refused.invalid_data] == [1]
+    assert refused.invalid_data[0].issues == refused_at_root.invalid_data[0].issues
+
+    first, invalid, last = _checked(db.stream(_BESIDE_AN_INVALID_ROOT, sharing_scope="page"))
+    assert [first.id, invalid.data.id, last.id] == list(_ORDER_IDS)
+    assert invalid.ordinal == 1
+    assert _purchase_nodes([first, last]) == _NODES_BESIDE_AN_INVALID_ROOT_AT_PAGE_SCOPE
+    assert invalid.data is not _by_id(first.buyer.purchases, _INVALID)
+    assert invalid.data.buyer is not first.buyer
+
+
+@_CHECKED_WIRE_STREAMS
+def test_a_checked_wire_stream_passes_an_invalid_root_and_its_neighbours_share(
+    profile_run: Any, open_stream: Any, drain: Any
+) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+
+    first, invalid, last = drain(open_stream(db, _BESIDE_AN_INVALID_ROOT, sharing_scope="page"))
+    at_root = drain(open_stream(db, _BESIDE_AN_INVALID_ROOT))
+
+    assert [first["id"], invalid.data["id"], last["id"]] == list(_ORDER_IDS)
+    assert invalid.ordinal == 1
+    assert invalid.issues == at_root[1].issues
+    assert _purchase_documents([first, last]) == _DOCUMENTS_BESIDE_AN_INVALID_ROOT_AT_PAGE_SCOPE
+    assert invalid.data is not _purchase_document(first, _INVALID)
+    assert invalid.data["buyer"] is not first["buyer"]
+    assert invalid.data == at_root[1].data
+    assert [first, last] == _valid(at_root)
+
+
+def test_a_default_wire_stream_keeps_its_prefix_at_an_invalid_root(profile_run: Any) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+
+    delivered, refused = _delivered_before_a_refusal(
+        db.wire.stream(_BESIDE_AN_INVALID_ROOT, sharing_scope="page")
+    )
+    at_root, _ = _delivered_before_a_refusal(db.wire.stream(_BESIDE_AN_INVALID_ROOT))
+
+    assert delivered == at_root
+    assert [root["id"] for root in delivered] == list(_ORDER_IDS[:1])
+    assert [record.ordinal for record in refused.invalid_data] == [1]
+
+
+def test_an_invalid_root_on_a_later_page_keeps_its_place_in_the_result(profile_run: Any) -> None:
+    db = _db_with_a_corrupt_depot(
+        profile_run,
+        depot_of=lambda purchase: purchase,
+        corrupt=_INVALID,
+        purchases=_TWO_PAGES_OF_PURCHASES,
+    )
+
+    def delivered(**scope: SharingScope) -> list[Any]:
+        return _checked(db.stream(_BESIDE_AN_INVALID_ROOT, batch_size=_ROOTS, **scope))
+
+    at_page = delivered(sharing_scope="page")
+    at_root = delivered()
+
+    invalid = at_page[_INVALID_ORDINAL_ON_THE_LATER_PAGE]
+    assert invalid.data.id == _INVALID
+    assert invalid.ordinal == _INVALID_ORDINAL_ON_THE_LATER_PAGE
+    assert invalid.issues == at_root[_INVALID_ORDINAL_ON_THE_LATER_PAGE].issues
+    valid_on_the_later_page = _valid(at_page[_ROOTS:])
+    assert _purchase_nodes(valid_on_the_later_page) == _NODES_ON_THE_LATER_PAGE_AT_PAGE_SCOPE
+    assert _purchase_nodes(_valid(at_root[_ROOTS:])) == _NODES_ON_THE_LATER_PAGE_AT_ROOT_SCOPE
+
+
+def test_a_write_inside_a_stream_loop_is_admitted_on_a_shared_node(profile_run: Any) -> None:
+    db = _db(profile_run)
+
+    def amend_as_delivered(tx: TxnContext) -> None:
+        delivered: list[Any] = []
+        with tx.stream(_REPEATED, sharing_scope="page") as roots:
+            for root in roots:
+                tx.amend(root.edit(total=Decimal("6.00")))
+                delivered.append(root)
+        assert _nodes(delivered) == _NODES_AT_PAGE_SCOPE
+
+    db.transact(amend_as_delivered)
+    stored = db.find(_REPEATED).results()
+    assert [(root.total, root.version) for root in stored] == [(Decimal("6.00"), 2)] * _ROOTS
+
+
+@pytest.mark.parametrize(
+    "open_stream", [_direct_wire_stream, _typed_stream], ids=["direct", "projected"]
+)
+def test_a_write_inside_a_stream_loop_is_admitted_on_a_shared_document(
+    profile_run: Any, open_stream: Any
+) -> None:
+    db = _db(profile_run)
+
+    def amend_as_delivered(tx: TxnContext) -> None:
+        delivered: list[Any] = []
+        with open_stream(tx, _REPEATED, sharing_scope="page") as stream:
+            for root in stream:
+                document = root if open_stream is _direct_wire_stream else stream.wire(root)
+                tx.wire.amend(document, {"total": "6.00"})
+                delivered.append(document)
+        assert _documents(delivered) == _DOCUMENTS_AT_PAGE_SCOPE
+
+    db.transact(amend_as_delivered)
+    stored = db.find(_REPEATED).results()
+    assert [(root.total, root.version) for root in stored] == [(Decimal("6.00"), 2)] * _ROOTS

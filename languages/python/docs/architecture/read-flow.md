@@ -43,10 +43,10 @@ rtx.find / rtx.stream / rtx.wire.* → the ReadOnlyTxnAttempt
 
 public spelling     captured as (convert_query)                publication           graph execution
 ──────────────────  ─────────────────────────────────────────  ────────────────────  ───────────────────────
-Typed find/stream   ObjectQuery → typed_read_query             typed_publication_for read_graph /
-                      → AuthoredQuery                                                StreamDelivery
-Wire find/stream    mapping → deserialize → ObjectQueryNode    wire_publication_for  read_graph /
-                    ObjectQueryNode → itself                                         StreamDelivery
+Typed find/stream   ObjectQuery → typed_read_query             typed_publication_    read_graph /
+                      → AuthoredQuery                          builder(scope)        StreamDelivery
+Wire find/stream    mapping → deserialize → ObjectQueryNode    wire_publication_     read_graph /
+                    ObjectQueryNode → itself                   builder(scope)        StreamDelivery
                     ObjectQuery → typed_read_query
                       → AuthoredQuery
 ```
@@ -348,6 +348,14 @@ node object, even when they reached the same Entity State. A relationship value 
 root's carried views discard, such as an overwritten view, is still compared and judged
 but publishes nowhere, so its findings do not classify the root.
 
+At `sharing_scope="page"`, `roots_of` takes `publish_shared_roots`, which tries one
+`GraphView` over all of a Page's roots before any root is handed over. A Page that
+overlaps and proves compatible publishes one Shared Graph for its valid roots, through
+each publisher's `publish_shared_graph`. Each invalid root still publishes alone
+through `publish_root`: an eager read does that before releasing the Page, and a stream
+does it when delivery reaches that root. Every other Page, and any failure in the
+attempt, ends in `publish_roots`.
+
 The eager path publishes nothing until every root is ready, which is the whole-result
 boundary; a stream publishes each root as soon as it is ready and keeps what it has
 already published if a later root fails. Typed publication needs the selection's
@@ -369,6 +377,7 @@ are already published into Wire form in memory, with no further read.
 - `parallax.snapshot._handle._read:SnapshotPublication.from_find`
 - `parallax.snapshot._handle._read:SnapshotPublication.from_history`
 - `parallax.snapshot._publication._root_publication:publish_roots`
+- `parallax.snapshot._publication._root_publication:publish_shared_roots`
 - `parallax.core.read_delivery._page._rows:page_schedule`
 - `parallax.core.read_delivery._page._rows:page_edges`
 - `parallax.core.read_delivery._page._rows:release_finished_rows`

@@ -10,7 +10,7 @@ classifies nor refuses a root whose carried views never reach it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Final, Literal, cast
 
 import pytest
@@ -144,6 +144,49 @@ def test_a_failed_shared_attempt_publishes_every_root_through_the_per_root_pass(
 
     assert [root.id for root in published] == [1, 2]
     assert published[0].items[0] is not published[1].items[0]
+
+
+@pytest.mark.parametrize(("atomic", "prefix"), [(False, 3), (True, 0)], ids=["streamed", "atomic"])
+def test_a_failure_publishing_an_invalid_root_keeps_the_prefix_its_delivery_promises(
+    atomic: bool, prefix: int
+) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    orders = tuple(_order(fixture, order_id) for order_id in (1, 2, 3, 4))
+    shared_item = _item(fixture, 11)
+    fixture.attach(orders[0], _ITEMS, (shared_item,))
+    fixture.attach(orders[1], _ITEMS, (shared_item,))
+    fixture.attach(orders[2], _ITEMS, (_item(fixture, 12, code=_UNDECODABLE),))
+    fixture.attach(orders[3], _ITEMS, (_item(fixture, 13, code=_UNDECODABLE),))
+    publisher = TypedRootPublisher(
+        fixture.model,
+        graph_construction_for(ENCODED_ORDERS),
+        prepared_view_keys_for(ENCODED_ORDERS),
+    )
+    shared_positions: list[tuple[int, ...]] = []
+
+    def publish_shared(view: GraphView, positions: Sequence[int]) -> tuple[object, ...]:
+        shared_positions.append(tuple(positions))
+        return publisher.publish_shared_graph(view, positions)
+
+    def failing_at_the_last_root(root: GraphView, ordinal: int) -> tuple[object, ...]:
+        if ordinal == len(orders) - 1:
+            raise RuntimeError("the last invalid root failed")
+        return publisher(root, ordinal)
+
+    received: list[object] = []
+    with pytest.raises(RuntimeError, match="the last invalid root failed"):
+        received.extend(
+            publish_shared_roots(
+                fixture.page(*orders),
+                failing_at_the_last_root,
+                publish_shared,
+                fixture.model,
+                atomic=atomic,
+            )
+        )
+
+    assert shared_positions == [(0, 1)]
+    assert len(received) == prefix
 
 
 # --------------------------------------------------------------------------- #
