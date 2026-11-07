@@ -1,0 +1,121 @@
+# An invalid root beside a Shared Graph at both Sharing Scopes (m-snapshot-read *Node
+# sharing*), the companion to m-snapshot-read-050: Locations 100 and 101 reach Customer 1,
+# so a page-scope read of this Page keeps sharing it, while Location 102 reaches a Customer
+# whose required `address.street` is corrupted. That root stays hydratable and publishes
+# its own diagnostic graph at its result position, and the finding costs no other root.
+model: models/customer.yaml
+tags: [m-snapshot-read, sharing-scope, stored-data, relationship, to-one, graph, slice-snapshot-1]
+shape: read
+given:
+  corrupt:
+    - entity: parallax.compatibility.Customer
+      key: 2
+      member: [address, street]
+      value: null
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Customer IN-list binds are gathered from the three Location roots"
+when:
+  objectQuery:
+    target: parallax.compatibility.Location
+    predicate:
+      in:
+        path: parallax.compatibility.Location.id
+        values:
+          - 100
+          - 101
+          - 102
+    orderBy:
+      - attr: parallax.compatibility.Location.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Location.customer
+  sharingScope: page
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc
+        mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.id in (?, ?, ?) order by t0.id asc
+      binds: { postgres: [[100, 101, 102]], mariadb: [100, 101, 102] }
+    - sql:
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?, ?)
+      binds: { postgres: [[1, 2]], mariadb: [1, 2] }
+  graph:
+    Location:
+      - id: 100
+        customerId: 1
+        label: HQ
+        address:
+          street: 1 Harbour Way
+          city: Oslo
+          geo:
+            country: "NO"
+            elevation: 12.0
+            point: { lat: 59.91, lon: 10.75 }
+          phones:
+            - { type: work, number: '555-0100' }
+        customer:
+          id: 1
+          name: Ada
+          address:
+            street: 1 Park Ave
+            city: Oslo
+            geo:
+              country: "NO"
+              elevation: 10.5
+              point: { lat: 59.9, lon: 10.7 }
+            phones:
+              - { type: home, number: '555-1234' }
+              - { type: work, number: '555-9999' }
+      - id: 101
+        customerId: 1
+        label: Depot
+        address: null
+        customer:
+          id: 1
+          name: Ada
+          address:
+            street: 1 Park Ave
+            city: Oslo
+            geo:
+              country: "NO"
+              elevation: 10.5
+              point: { lat: 59.9, lon: 10.7 }
+            phones:
+              - { type: home, number: '555-1234' }
+              - { type: work, number: '555-9999' }
+      - id: 102
+        customerId: 2
+        label: Home
+        address:
+          street: 5 Karl Johans Gate
+          city: Oslo
+          geo:
+            country: "NO"
+            elevation: 8.0
+            point: { lat: 59.92, lon: 10.74 }
+          phones: []
+        customer:
+          id: 2
+          name: Linus
+          address:
+            street: null
+            city: Oslo
+            geo:
+              country: "NO"
+              elevation: 20.0
+              point: { lat: 59.9, lon: 10.8 }
+            phones:
+              - { type: home, number: '555-9999' }
+  storedDataIssues:
+    - ordinal: 2
+      hydrated: true
+      issues:
+        - code: stored-data-required-member-null
+          entity: parallax.compatibility.Customer
+          member: parallax.compatibility.Customer.address.street
+          objectKey: { entity: parallax.compatibility.Customer, key: { id: 2 } }
+  databaseCalls: 2

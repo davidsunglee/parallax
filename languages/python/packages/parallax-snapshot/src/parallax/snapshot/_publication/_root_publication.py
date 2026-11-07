@@ -138,9 +138,10 @@ def publish_shared_roots[T](
     milestones: TemporalShape | None = None,
     read_evidence: Mapping[int, ReadEvidence] = _NO_READ_EVIDENCE,
 ) -> Iterator[T]:
-    """Publish ``page``'s roots as one Shared Graph through
-    ``publish_shared_graph``, or through :func:`publish_roots` when the Page has
-    nothing to share, cannot share, or fails in the attempt.
+    """Publish ``page``'s valid roots as one Shared Graph through
+    ``publish_shared_graph`` and each invalid root alone through ``publish_root``,
+    or every root through :func:`publish_roots` when the Page has nothing to
+    share, cannot share, or fails in the attempt.
 
     A ``milestones`` read skips the attempt, because each of its roots stands at
     its own pin.
@@ -161,7 +162,7 @@ def publish_shared_roots[T](
             read_evidence=read_evidence,
         )
         return
-    yield from _deliver_in_result_order(page, shared, ordinal_offset)
+    yield from _deliver_in_result_order(page, shared, publish_root, ordinal_offset)
 
 
 def _attempt_shared_graph[T](
@@ -190,11 +191,27 @@ def _attempt_shared_graph[T](
 
 
 def _deliver_in_result_order[T](
-    page: Page, shared: SharedGraph[T], ordinal_offset: int
+    page: Page,
+    shared: SharedGraph[T],
+    publish_root: Callable[[GraphView, int], tuple[T, ...]],
+    ordinal_offset: int,
 ) -> Iterator[T]:
-    """Release ``page``, whose values are all prepared, and hand over each root."""
+    """Publish each invalid root through ``shared``'s view, whose Shared Graph is
+    published and done with, then release ``page`` and hand over every root in
+    result order."""
+    rows = page_rows(page)
     observer = page_cadence(page)
+    view = shared.view
+    published_alone: dict[int, tuple[T, ...]] = {}
+    for position in sorted(shared.invalid):
+        view.resolve_root(position, rows.pin)
+        published_alone[position] = publish_root(view, ordinal_offset + position)
+    positions = range(len(rows.roots))
     release_page_rows(page)
-    for position, root in enumerate(shared.roots):
-        yield root
+    shared_roots = iter(shared.roots)
+    for position in positions:
+        if position in published_alone:
+            yield from published_alone[position]
+        else:
+            yield next(shared_roots)
         observer.root_published(ordinal_offset + position)

@@ -195,7 +195,7 @@ Nodes are **compatible** when all of these hold:
 | Stored state | Every fetched row of the logical row holds equal stored values |
 | Concrete Entity | Stored-values equality, which includes the resolved concrete |
 | Relationship views | A view loaded at two positions names the same nodes in the same order. A view loaded at one position and unloaded at another is compatible. A back-reference naming several coordinate-distinct logical rows is not, because it resolves among what each root reached |
-| Validity | A classified root never joins a Shared Graph |
+| Validity | A classified root never joins a Shared Graph, and no node of a Shared Graph reaches a finding |
 | Publication provenance | One Page has one attempt and one pin, and a shared node reads its provenance and Read Evidence from one **node row**: the first of its logical row's fetched rows in the walk from the Shared Graph's roots. Stored rows decide the node, so nothing merges by comparing evidence |
 
 Compatibility is judged over every logical row the Page's roots reach, which is
@@ -208,6 +208,16 @@ across roots coexist. So does a Page whose attempt to share fails in any way
 before its first root is delivered. Page scope therefore adds no read failure and
 never chooses between two observations. Validity and conflicts are still decided
 per Root View, even on a Page that shares.
+
+A finding costs only the roots it classifies. A shared node can hold a relationship
+a given root never reached, so each root is classified from its own Root View, and
+one that reaches no finding stays valid beside one that does, even where both reach
+one logical row. A classified root publishes its own diagnostic graph at its result
+position, sharing no node with the Shared Graph or with another classified root.
+The remaining valid roots still publish one Shared Graph when they overlap among
+themselves, formed from them alone along their relationship views. If that graph
+would still reach a finding, which a node merged from a row no single Root View
+carried can lead to, the Page publishes each root through its own Root View.
 
 One node may therefore hold the union of the relationships its positions loaded.
 A Typed value publishes one instance per node, so it can gain a relationship

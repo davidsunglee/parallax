@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import cast
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
@@ -122,7 +122,7 @@ class GraphView:
             not schema.may_repeat_rows(level) for level in range(schema.level_count)
         )
         self._every_level_proved = all(self._proved_levels)
-        self._read_evidence = read_evidence
+        self._read_evidence: Mapping[int, ReadEvidence] = read_evidence
         self._pin = rows.pin
         self._node_rows: list[int] = []
         self._resolved: dict[int, int] = {}
@@ -293,11 +293,17 @@ class GraphView:
         the Page takes the per-root pass instead.
 
         A Page whose roots carry no view cannot overlap, so it is not walked.
-        Any other Page shares only when two roots reach one logical row, every
-        logical row is compatible, and no reached node holds a finding, which a
-        keyless root does once it is judged. Compatibility is decided before any
-        decoding, and nothing here releases a Page row, so the per-root pass can
-        still run after any outcome.
+        Any other Page shares only when two roots reach one logical row and every
+        logical row is compatible. A finding costs only the roots it classifies:
+        each root's own resolve decides that, since a merged node can hold a
+        relationship a given root never reached, and the Shared Graph is then
+        rebuilt over the valid roots, which must still overlap. A row reached only
+        through a discarded relationship value can merge into a node a valid root
+        reaches, so a finding those roots' views lead to after compaction, which
+        none of them held alone, sends the Page to the per-root pass.
+
+        Compatibility is decided before any decoding, and nothing here releases a
+        Page row, so the per-root pass can still run after any outcome.
         """
         rows = self._rows
         view_rows = rows.view_rows
@@ -306,14 +312,47 @@ class GraphView:
         reached = overlapping_reach(rows, rows.roots)
         if reached is None or not self._allocate_if_compatible(reached):
             return None
+        if not any(self._findings):
+            self._capture_read_evidence()
+            return frozenset()
+        invalid = self._invalid_positions()
+        valid = [root for position, root in enumerate(rows.roots) if position not in invalid]
+        reached = overlapping_reach(rows, valid)
+        if reached is None or not self._allocate_if_compatible(reached):
+            return None
+        self._compact_to_view_reach([self._resolved[root] for root in valid])
         if any(self._findings):
             return None
         self._capture_read_evidence()
-        return frozenset()
+        return invalid
 
     def root_node(self, position: int) -> int:
         """The node the root at ``position`` resolved to in the Shared Graph."""
         return self._resolved[self._rows.roots[position]]
+
+    def _invalid_positions(self) -> frozenset[int]:
+        """The positions whose own resolve publishes a finding. These resolves
+        publish nothing, so they run against no Read Evidence, and none is built
+        or registered for the values they discard."""
+        rows = self._rows
+        read_evidence = self._read_evidence
+        self._read_evidence = {}
+        invalid: list[int] = []
+        for position in range(len(rows.roots)):
+            self.resolve_root(position, rows.pin)
+            if self._has_issues:
+                invalid.append(position)
+        self._read_evidence = read_evidence
+        return frozenset(invalid)
+
+    def _clear_nodes(self) -> None:
+        self._node_rows.clear()
+        self._resolved.clear()
+        self._layouts.clear()
+        self._member_rows.clear()
+        self._findings.clear()
+        self._view_layouts.clear()
+        self._view_rows.clear()
 
     def _allocate_if_compatible(self, reached: Sequence[int]) -> bool:
         """Allocate one node per logical row ``reached`` belongs to, and judge
@@ -323,6 +362,7 @@ class GraphView:
         its node row's state exists, and a failure part way through judging
         leaves the per-root pass to read what is still pending.
         """
+        self._clear_nodes()
         try:
             self._allocate_per_logical_row(self._rows, reached, False, self._node_row_if_equal)
         except _RowsIncompatible:
@@ -522,15 +562,17 @@ class GraphView:
             cast("list[object]", [ABSENT] * len(view_layout.slots)) if view_layout.slots else ()
         )
 
-    def _compact_to_view_reach(self) -> None:
-        """Compact the segment to the nodes the root's relationship views reach.
+    def _compact_to_view_reach(self, roots: Collection[int] = (0,)) -> None:
+        """Compact the segment to the nodes the relationship views of the nodes
+        ``roots`` reach.
 
         An overwritten relationship value or a merged fetched row's losing slot
         extends Page reach without being carried, so it is judged and compared but published
-        nowhere; the remaining nodes keep their allocation order, node 0 first.
+        nowhere; the remaining nodes keep their allocation order, and every fetched
+        row they resolve from follows them.
         """
         view_rows = self._view_rows
-        kept = _view_reach(view_rows)
+        kept = _view_reach(view_rows, roots)
         if len(kept) == len(view_rows):
             return
         nodes = sorted(kept)
@@ -541,6 +583,11 @@ class GraphView:
         self._findings[:] = [self._findings[node] for node in nodes]
         self._view_layouts[:] = [self._view_layouts[node] for node in nodes]
         self._view_rows[:] = [_renumbered(view_rows[node], renumbered) for node in nodes]
+        self._resolved = {
+            fetched_row: renumbered[node]
+            for fetched_row, node in self._resolved.items()
+            if node in renumbered
+        }
 
     def _node_row_or_conflict(self, fetched_rows: Sequence[int]) -> int:
         rows = self._rows
@@ -715,10 +762,10 @@ def _member_order(
     )
 
 
-def _view_reach(view_rows: Sequence[Sequence[object]]) -> set[int]:
-    """Every node node 0's relationship views reach, itself included."""
-    kept = {0}
-    pending = [0]
+def _view_reach(view_rows: Sequence[Sequence[object]], roots: Collection[int]) -> set[int]:
+    """Every node the relationship views of ``roots`` reach, ``roots`` included."""
+    kept = set(roots)
+    pending = list(roots)
     while pending:
         for value in view_rows[pending.pop()]:
             if type(value) is tuple:
