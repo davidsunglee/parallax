@@ -118,6 +118,8 @@ def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any
 
     first, second = recorder.roots
     assert first.execution.id != second.execution.id
+    assert {event.execution_id for event in first.events} == {first.execution.id}
+    assert {event.execution_id for event in second.events} == {second.execution.id}
     # Independent sequences: the second root starts over at one rather than
     # continuing the first, and neither implies an order over the other.
     assert [event.sequence for event in first.events] == [1, 2, 3, 4, 5, 6, 7, 8]
