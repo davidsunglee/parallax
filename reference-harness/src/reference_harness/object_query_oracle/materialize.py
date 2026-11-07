@@ -195,7 +195,7 @@ def _published(row: dict[str, Any]) -> PublishedRow:
     return PublishedRow(dict(row), _SEAM)
 
 
-def edited(row: PublishedRow, assignments: Mapping[str, Any]) -> PublishedRow:
+def edited(row: dict[str, Any], assignments: Mapping[str, Any]) -> PublishedRow:
     """Derive a published Wire row by replacing the authored bindings whole."""
     copied = _materialized_row(row)
     copied.update(assignments)
@@ -956,7 +956,7 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
 
 
 def at_value_object_columns(model: Model, entity: Entity, row: PublishedRow) -> dict[str, Any]:
-    """*row*, read at *entity*'s position, as a step's ``expectRows`` entry states it.
+    """*row*, read at *entity*'s position, as a read's ``expectRows`` entry states it.
 
     A decoded top-level Value Object stands under its occurrence name for the graph
     a step can assemble, while a flat row keeps the projection's physical spelling
