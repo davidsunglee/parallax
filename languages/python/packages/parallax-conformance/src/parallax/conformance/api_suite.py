@@ -1831,12 +1831,12 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "and the instance cannot carry the field"
 )
 _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
-    "an authored `tagValue` has no idiomatic spelling: it is framework-owned metadata "
-    '(m-inheritance "Metadata is framework-owned, never authored"), derived from '
-    "`inheritance=ConcreteSubtype(tag_value=...)` at CLASS-DEFINITION time, never a "
-    "per-instance Pydantic field a caller can pass to `tx.insert`/`tx.amend` — "
-    "`test_transaction_writes.py` exercises the classified rule directly at the neutral "
-    "seam (`TxnContext._buffer`) instead"
+    "an authored `tagValue` or `_type` has no idiomatic spelling: each is framework-owned "
+    'metadata (m-inheritance "Metadata is framework-owned, never authored"), derived from '
+    "the class and its `inheritance=ConcreteSubtype(tag_value=...)` at CLASS-DEFINITION "
+    "time, never a per-instance Pydantic field a caller can pass to `tx.insert`/`tx.amend` "
+    "— `test_write_instructions.py` exercises the classified rule directly at the write "
+    "preparation seam (`prepare_wire_write`) instead"
 )
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
     "the idiomatic spelling EXISTS: `subtype-write-set-based-unsupported`'s natural "
@@ -1884,19 +1884,22 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "rather than a missing story"
 )
 
-# The leaves-only family rule is the one `when.model` inheritance reject the class
-# grammar CAN spell: the role is authored per class and Python subclassing
-# supplies the parent, so a concrete class with a concrete subclass reaches
-# `DomainModel` construction and is refused there as the shared formation-time
-# issue (`test_inheritance_frontend.py`). The observable is a rejected model.
-_INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON: Final[str] = (
-    "a `when.model` family invariant Model Formation classifies at model construction "
+# The rules only Model Formation classifies are the `when.model` rejects the class
+# grammar CAN spell: the role is authored per class, Python subclassing supplies the
+# parent, and `attr(column=...)` or `TablePerHierarchy(...)` names a Column, so a
+# concrete class with a concrete subclass, or a Column colliding with a materialized
+# field key, reaches `DomainModel` construction and is refused there as the shared
+# formation-time issue. The observable is a rejected model.
+_INHERITANCE_FORMATION_REJECT_REASON: Final[str] = (
+    "a `when.model` invariant Model Formation classifies at model construction "
     "(a `MetamodelValidationError` issue), not a query or write the Usage Guide's "
     "statement- and verb-level examples could spell. The class frontend reaches the "
     "SAME issue — a concrete class with a concrete subclass forms into "
-    "`inheritance-concrete-subtype-with-children` at `DomainModel` construction "
-    "(`test_inheritance_frontend.py` exercises it at that seam) — but the observable "
-    "is a rejected model, not a developer verb an idiomatic story can narrate"
+    "`inheritance-concrete-subtype-with-children`, and a member or tag Column colliding "
+    "with a materialized field key forms into `inheritance-materialization-key-collision`, "
+    "each at `DomainModel` construction (`test_inheritance_frontend.py` and "
+    "`test_type_column_routes.py` exercise that seam) — but the observable is a rejected "
+    "model, not a developer verb an idiomatic story can narrate"
 )
 
 # Relationship-quantifier siblings of the exercised `.any(...)` / `.none(...)`
@@ -2775,20 +2778,20 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-099": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-102": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-103": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-115": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-116": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-119": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-165": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-166": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-167": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-168": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    "m-inheritance-171": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
-    # -- m-inheritance: `when.model` formation reject (unreachable) ---------- #
-    "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
+    # -- m-inheritance: `when.model` formation rejects (no story) ------------ #
+    "m-inheritance-115": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-116": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-117": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-119": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-138": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-165": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-166": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-167": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-168": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-171": _INHERITANCE_FORMATION_REJECT_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #
     "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
     "m-metamodel-002": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
