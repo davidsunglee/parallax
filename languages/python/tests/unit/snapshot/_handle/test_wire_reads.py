@@ -1236,10 +1236,10 @@ def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -
 _VARIANT_ROOT = EntityIdentity("catalog", "AssetRecord")
 _SHARED_VARIANT = EntityIdentity("archive", "SharedVariant")
 
-# One Entity family whose Value Object storage column is spelled exactly like the
-# synthetic family-variant key. A projection that published members by COLUMN
-# would put the stored document where the variant spelling belongs; declared
-# names cannot collide with it, and the wire node proves both survive.
+# One Entity family whose Value Object storage column is spelled apart from its
+# occurrence name. A projection that published members by COLUMN would state the
+# document under a key the node never declares; the wire node proves it publishes
+# by declared name beside the family variant.
 _VARIANT_MODEL = form_metamodel(
     source(
         Declaration(
@@ -1249,7 +1249,7 @@ _VARIANT_MODEL = form_metamodel(
             value_objects=(
                 ValueObjectOccurrenceDeclaration(
                     name="mailingAddress",
-                    storage=Column("familyVariant"),
+                    storage=Column("mailing_document"),
                     shape=ValueObjectShapeDeclaration(
                         key=ValueObjectShapeKey(),
                         attributes=(ValueObjectAttributeDeclaration("label", STRING),),
@@ -1276,14 +1276,14 @@ _VARIANT_MODEL = form_metamodel(
 )
 
 
-def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both() -> None:
+def test_a_value_object_publishes_by_its_declared_name_beside_the_variant() -> None:
     compiled = compile_read(
         TrueNode(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL), result_form="instance"
     )
     stored = {
         "id": 1,
         "kind": "archive-shared",
-        "familyVariant": StructuredDocument({"label": "mail"}),
+        "mailing_document": StructuredDocument({"label": "mail"}),
         "archive_profile": StructuredDocument({"label": "archive"}),
     }
     builder = PageBuilder(ViewSchema.of())

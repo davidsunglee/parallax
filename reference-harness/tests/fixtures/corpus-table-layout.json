@@ -10066,7 +10066,7 @@
             "compatibility.overlap.VariantMemo",
             "compatibility.overlap.VariantNote"
           ],
-          "column": "familyVariant",
+          "column": "variantProfile",
           "contributor": "valueObject:compatibility.overlap.VariantRecord.profile",
           "declaringOwner": "compatibility.overlap.VariantRecord",
           "effectiveNullable": false,

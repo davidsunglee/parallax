@@ -69,8 +69,10 @@ _MATERIALIZATION_KEY_CASES = {
     "core/compatibility/cases/m-inheritance-116-rejected-narrowed-view-materialization-key-collision.yaml",
     "core/compatibility/cases/m-inheritance-117-rejected-family-variant-materialization-key-collision.yaml",
     "core/compatibility/cases/m-inheritance-118-value-object-relationship-name-overlap-graph.yaml",
-    "core/compatibility/cases/m-inheritance-119-value-object-family-variant-overlap-graph.yaml",
+    "core/compatibility/cases/m-inheritance-119-rejected-value-object-column-materialization-key-collision.yaml",
     "core/compatibility/cases/m-inheritance-120-qualified-duplicate-local-variants-graph.yaml",
+    "core/compatibility/cases/m-inheritance-164-value-object-storage-column-family-graph.yaml",
+    "core/compatibility/cases/m-inheritance-165-rejected-standalone-family-variant-materialization-key-collision.yaml",
 }
 
 

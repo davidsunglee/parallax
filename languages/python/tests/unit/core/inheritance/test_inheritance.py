@@ -511,7 +511,13 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-117-rejected-family-variant-materialization-key-collision": (
         MATERIALIZATION_KEY_COLLISION
     ),
+    "m-inheritance-119-rejected-value-object-column-materialization-key-collision": (
+        MATERIALIZATION_KEY_COLLISION
+    ),
     "m-inheritance-122-rejected-layout-declared-on-descendant": LAYOUT_NOT_ROOT_OWNED,
+    "m-inheritance-165-rejected-standalone-family-variant-materialization-key-collision": (
+        MATERIALIZATION_KEY_COLLISION
+    ),
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 
@@ -1065,23 +1071,97 @@ def test_attribute_column_cannot_occupy_a_narrowed_relationship_namespace() -> N
     assert issues[0].related == (RelationshipLocation(RelationshipIdentity(owner, "details")),)
 
 
-def test_value_object_storage_may_match_the_synthetic_family_variant_key() -> None:
+def test_family_variant_is_reserved_from_a_value_object_storage_column() -> None:
     profile = ValueObjectOccurrenceDeclaration(
         name="profile", storage=Column("familyVariant"), shape=_shape("label")
     )
-    assert (
-        _codes(
-            Declaration(
-                identity=_ROOT,
-                container=Table("ledger"),
-                attributes=(key(_ROOT),),
-                value_objects=(profile,),
-                inheritance=AbstractRoot(TablePerHierarchy("kind")),
-            ),
-            _concrete(_LEAF),
-        )
-        == []
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            container=Table("ledger"),
+            attributes=(key(_ROOT),),
+            value_objects=(profile,),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        _concrete(_LEAF),
     )
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].location == ValueObjectLocation(ValueObjectIdentity(_ROOT, ("profile",)))
+    assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+_RESERVED_TARGET = identity("ReservedTarget")
+
+
+@pytest.mark.parametrize(
+    ("attributes", "value_objects", "relationships"),
+    [
+        pytest.param((attribute(_ROOT, "familyVariant", type=STRING),), (), (), id="attribute"),
+        pytest.param(
+            (attribute(_ROOT, "marker", type=STRING, column="familyVariant"),),
+            (),
+            (),
+            id="attribute-column",
+        ),
+        pytest.param(
+            (),
+            (
+                ValueObjectOccurrenceDeclaration(
+                    name="familyVariant", storage=Column("profile"), shape=_shape("label")
+                ),
+            ),
+            (),
+            id="value-object",
+        ),
+        pytest.param(
+            (),
+            (
+                ValueObjectOccurrenceDeclaration(
+                    name="profile", storage=Column("familyVariant"), shape=_shape("label")
+                ),
+            ),
+            (),
+            id="value-object-column",
+        ),
+        pytest.param(
+            (attribute(_ROOT, "targetId"),),
+            (),
+            (_relationship(_ROOT, _RESERVED_TARGET, "familyVariant"),),
+            id="relationship",
+        ),
+    ],
+)
+def test_a_standalone_entity_may_not_declare_the_family_variant_spelling(
+    attributes: tuple[AttributeMetadata, ...],
+    value_objects: tuple[ValueObjectOccurrenceDeclaration, ...],
+    relationships: tuple[UnresolvedDefiningRelationshipDeclaration, ...],
+) -> None:
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            container=Table("ledger"),
+            attributes=(key(_ROOT), *attributes),
+            value_objects=value_objects,
+            relationships=relationships,
+        ),
+        Declaration(identity=_RESERVED_TARGET, attributes=(key(_RESERVED_TARGET),)),
+    )
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+def test_a_participant_attribute_may_not_take_the_family_variant_name() -> None:
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            container=Table("ledger"),
+            attributes=(key(_ROOT), attribute(_ROOT, "familyVariant", type=STRING)),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        _concrete(_LEAF),
+    )
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].related == (EntityLocation(_ROOT),)
 
 
 def test_family_variant_is_reserved_from_rendered_member_names() -> None:

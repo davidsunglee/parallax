@@ -299,7 +299,7 @@ class ScenarioRowObservations:
             rows_equal(rows, expect, case.tolerance, ordered="stream" in step)
             if entity is None
             else row.rows_equal(
-                rows,
+                [materialize.at_value_object_columns(case.model, entity, found) for found in rows],
                 expect,
                 case.model,
                 entity,

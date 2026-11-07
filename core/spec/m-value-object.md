@@ -97,11 +97,9 @@ The document's physical key and the occurrence's rendered graph key retain
 distinct provenance. A graph renders the decoded value under the occurrence's
 canonical name, not its storage override. Therefore a document storage column
 may equal a relationship's local name when the occurrence's canonical name is
-different; relationship attachment MUST preserve both values. It may likewise
-equal the synthetic `familyVariant` key when its canonical occurrence name is
-different; materialization preserves the document and variant as separate
-provenance-bearing values until both render. Collisions among the keys that
-actually render on one node are formation errors under
+different; relationship attachment MUST preserve both values. Collisions among
+the keys that actually render on one node, and the storage column spelling
+`m-inheritance` reserves on every Entity, are formation errors under
 `m-inheritance`'s `inheritance-materialization-key-collision` rule.
 
 On read, that Structured Column is raw occurrence input rather than an already

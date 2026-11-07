@@ -42,6 +42,7 @@ from reference_harness.inheritance import (
     ABSTRACT_WRITE_TARGET,
     INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN,
     INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    INHERITANCE_MATERIALIZATION_KEY_COLLISION,
     INHERITANCE_MISSING_CONCRETE_SUBTYPE,
     INHERITANCE_MISSING_ROOT,
     INHERITANCE_MISSING_TAG_VALUE,
@@ -295,6 +296,60 @@ def test_tph_concrete_subtype_missing_tag_value_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
     assert exc.value.rule == INHERITANCE_MISSING_TAG_VALUE
+
+
+_LABELLED = [{"name": "label", "type": "string"}]
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param({"attributes": [{"name": "familyVariant", "type": "string"}]}, id="attribute"),
+        pytest.param(
+            {"attributes": [{"name": "marker", "type": "string", "column": "familyVariant"}]},
+            id="attribute-column",
+        ),
+        pytest.param(
+            {"valueObjects": [{"name": "familyVariant", "attributes": _LABELLED}]},
+            id="value-object",
+        ),
+        pytest.param(
+            {
+                "valueObjects": [
+                    {"name": "profile", "column": "familyVariant", "attributes": _LABELLED}
+                ]
+            },
+            id="value-object-column",
+        ),
+        pytest.param({"relationships": [{"name": "familyVariant"}]}, id="relationship"),
+    ],
+)
+@pytest.mark.parametrize("standalone", [True, False], ids=["standalone", "participant"])
+def test_no_entity_may_declare_the_variant_spelling(
+    members: dict[str, Any], standalone: bool
+) -> None:
+    descriptor: dict[str, Any] = (
+        {"entity": {"name": "Ticket", "table": "ticket", **members}}
+        if standalone
+        else {
+            "entities": [
+                _tph_root(),
+                {
+                    "name": "Dog",
+                    "inheritance": {
+                        "role": "concrete-subtype",
+                        "parent": "Animal",
+                        "tagValue": "dog",
+                    },
+                    **members,
+                },
+            ]
+        }
+    )
+
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MATERIALIZATION_KEY_COLLISION
 
 
 def test_independent_families_in_one_descriptor_are_accepted() -> None:

@@ -138,7 +138,8 @@ MATERIALIZATION_KEY_COLLISION: Final[IssueCode] = "inheritance-materialization-k
 
 Scalar fields render by physical column, Value Objects and relationships by
 canonical member name, narrowed relationships under a derived bracketed key,
-and inheritance participants under the synthetic ``familyVariant`` key.
+and inheritance participants under the synthetic ``familyVariant`` key. That
+spelling is reserved on every Entity, so the key only ever means the variant.
 """
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
@@ -255,17 +256,22 @@ def _local_members(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelL
 
 
 def _rendered_keys(
-    declarations: Sequence[EntityDeclaration], *, family_root: EntityIdentity | None
+    declarations: Sequence[EntityDeclaration], *, reserved_by: EntityIdentity
 ) -> Iterator[tuple[str, ModelLocation]]:
     """Every field key one rendered node claims, in the order it claims them."""
-    if family_root is not None:
-        yield FAMILY_VARIANT_KEY, EntityLocation(family_root)
+    yield FAMILY_VARIANT_KEY, EntityLocation(reserved_by)
     for declaration in declarations:
         for attribute in declaration.attributes:
-            yield attribute.storage.name, AttributeLocation(attribute.identity)
+            location = AttributeLocation(attribute.identity)
+            yield attribute.storage.name, location
+            if attribute.identity.name == FAMILY_VARIANT_KEY:
+                yield FAMILY_VARIANT_KEY, location
     for declaration in declarations:
         for occurrence in declaration.value_objects:
-            yield occurrence.name, _occurrence_location(declaration, occurrence.name)
+            location = _occurrence_location(declaration, occurrence.name)
+            yield occurrence.name, location
+            if occurrence.storage.name == FAMILY_VARIANT_KEY:
+                yield FAMILY_VARIANT_KEY, location
     for declaration in declarations:
         for relationship in declaration.relationships:
             yield relationship.identity.name, RelationshipLocation(relationship.identity)
@@ -276,19 +282,20 @@ def _occurrence_location(declaration: EntityDeclaration, name: str) -> ValueObje
 
 
 def _materialization_key_issues(
-    declarations: Sequence[EntityDeclaration], *, family_root: EntityIdentity | None
+    declarations: Sequence[EntityDeclaration], *, reserved_by: EntityIdentity
 ) -> list[MetamodelIssue]:
     """Rendered-node key collisions over one concrete's applicable chain.
 
-    Value Object storage columns deliberately do not participate: decoding keeps
+    Value Object storage columns otherwise do not participate: decoding keeps
     their provenance and renders each document under its canonical occurrence
     name. Relationship attachment is likewise provenance-separated from row
-    fields. Only the final keys that coexist in the rendered mapping are claimed
-    here.
+    fields. So beyond the ``familyVariant`` reservation, which ``reserved_by``
+    answers for, only the final keys that coexist in the rendered mapping are
+    claimed here.
     """
     claimed: dict[str, ModelLocation] = {}
     issues: list[MetamodelIssue] = []
-    for key, location in _rendered_keys(declarations, family_root=family_root):
+    for key, location in _rendered_keys(declarations, reserved_by=reserved_by):
         existing = claimed.get(key)
         if existing is None:
             claimed[key] = location
@@ -572,14 +579,14 @@ def _record_materialization_issues(
     recorded: dict[_IssueKey, MetamodelIssue],
     declarations: Sequence[EntityDeclaration],
     *,
-    family_root: EntityIdentity | None,
+    reserved_by: EntityIdentity,
 ) -> None:
     """Record one rendered node's key collisions, once per location and related set.
 
     A collision among shared ancestors recurs under every concrete descendant
     whose chain they head, and is one defect.
     """
-    for issue in _materialization_key_issues(declarations, family_root=family_root):
+    for issue in _materialization_key_issues(declarations, reserved_by=reserved_by):
         recorded.setdefault((issue.location, issue.related), issue)
 
 
@@ -588,7 +595,9 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
     materialization_issues: dict[_IssueKey, MetamodelIssue] = {}
     for declaration in candidate.entities:
         if declaration.inheritance is None:
-            _record_materialization_issues(materialization_issues, (declaration,), family_root=None)
+            _record_materialization_issues(
+                materialization_issues, (declaration,), reserved_by=declaration.identity
+            )
 
     topology = project_topology(candidate)
     participants = topology.participants
@@ -617,7 +626,7 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
         if isinstance(participant.inheritance, ConcreteSubtype):
             declarations = tuple(participants[identity].declaration for identity in chain)
             _record_materialization_issues(
-                materialization_issues, declarations, family_root=chain[0]
+                materialization_issues, declarations, reserved_by=chain[0]
             )
     for family in topology.families:
         missing_concrete = _missing_concrete_issue(family.root, family.members)

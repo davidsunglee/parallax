@@ -1417,7 +1417,7 @@ def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None
     for definition in case.model.entity_defs:
         if definition["name"] == "Memo":
             definition["attributes"].append(
-                {"name": "familyVariant", "type": "string", "column": "family_variant"}
+                {"name": "variantMarker", "type": "string", "column": "family_variant"}
             )
     with pytest.raises(CaseFailure, match="parallax_attr_0"):
         assert_case_read(case, _Reads([]))

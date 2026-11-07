@@ -1,6 +1,6 @@
-# A polymorphic Value Object may store its document in the physical `familyVariant`
-# column because storage provenance is separate from the synthetic graph key: both the
-# `profile` document and exact concrete variant must survive one abstract-family read.
+# A polymorphic Value Object may store its document in a Column spelled apart from its
+# occurrence name because a graph renders it by that name: both the `profile` document
+# and the exact concrete variant must survive one abstract-family read.
 model: models/materialization-key-compatibility.yaml
 tags: [m-inheritance, m-value-object, m-sql, m-api-conformance, table-per-hierarchy, familyVariant, graph, instance-form, materialization-key, positive, slice-snapshot-1]
 shape: read
@@ -12,8 +12,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, not t0."familyVariant" is null, t0."familyVariant" from variant_record t0
-        mariadb: select t0.id, t0.kind, not t0.`familyVariant` is null, t0.`familyVariant` from variant_record t0
+        postgres: select t0.id, t0.kind, not t0."variantProfile" is null, t0."variantProfile" from variant_record t0
+        mariadb: select t0.id, t0.kind, not t0.`variantProfile` is null, t0.`variantProfile` from variant_record t0
   referenceSql: select id, kind from variant_record
   graph:
     VariantRecord:

@@ -28,7 +28,7 @@ entities:
       - { name: id, type: int64, primaryKey: true }
     valueObjects:
       - name: profile
-        column: familyVariant
+        column: variantProfile
         attributes:
           - { name: label, type: string }
     inheritance:

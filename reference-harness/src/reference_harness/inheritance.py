@@ -765,23 +765,28 @@ class _MaterializedKeyClaims:
         self._claimed[key] = contributor
 
 
-def _validate_materialization_keys(
-    definitions: list[dict[str, Any]], *, family_variant: bool
-) -> None:
-    """Reject provenance-distinct contributors that render one node key."""
+def _validate_materialization_keys(definitions: list[dict[str, Any]]) -> None:
+    """Reject provenance-distinct contributors that render one node key.
+
+    ``familyVariant`` is reserved on every Entity, participant or not, and from
+    declared names as well as Columns, so the key only ever means the variant.
+    """
     claims = _MaterializedKeyClaims()
-    if family_variant:
-        claims.claim("familyVariant", "polymorphic family variant")
+    claims.claim("familyVariant", "the reserved family variant")
     relationships: list[tuple[str, str]] = []
     attributes: list[tuple[str, str]] = []
     for definition in definitions:
         entity = definition["name"]
-        attributes.extend(
-            (effective_column(attribute), f"Attribute {entity}.{attribute['name']}")
-            for attribute in _declared(definition, "attributes")
-        )
+        for attribute in _declared(definition, "attributes"):
+            contributor = f"Attribute {entity}.{attribute['name']}"
+            attributes.append((effective_column(attribute), contributor))
+            if attribute["name"] == "familyVariant":
+                claims.claim("familyVariant", contributor)
         for value_object in _declared(definition, "valueObjects"):
-            claims.claim(value_object["name"], f"Value Object {entity}.{value_object['name']}")
+            contributor = f"Value Object {entity}.{value_object['name']}"
+            claims.claim(value_object["name"], contributor)
+            if value_object.get("column") == "familyVariant":
+                claims.claim("familyVariant", contributor)
         relationships.extend(
             (relationship["name"], f"Relationship {entity}.{relationship['name']}")
             for relationship in _declared(definition, "relationships")
@@ -839,7 +844,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     """
     for definition in entity_defs:
         if inheritance_of(definition) is None:
-            _validate_materialization_keys([definition], family_variant=False)
+            _validate_materialization_keys([definition])
 
     participants = [d for d in entity_defs if inheritance_of(d) is not None]
     if not participants:
@@ -1044,7 +1049,7 @@ def _check_concrete_leaves(family: Family, participants: list[dict[str, Any]]) -
 def _check_concrete_materialization_keys(family: Family, concretes: list[dict[str, Any]]) -> None:
     for definition in concretes:
         chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
-        _validate_materialization_keys(chain, family_variant=True)
+        _validate_materialization_keys(chain)
 
 
 def _check_table_per_concrete_subtype_family(family: Family, members: list[dict[str, Any]]) -> None:

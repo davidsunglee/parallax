@@ -564,26 +564,20 @@ def _edited_node_identity(
     the read because one read answers many concretes at once; only a step holding
     exactly one node has a concrete to name.
 
-    ``familyVariant`` is read as PROVENANCE only where the target position
-    participates in a family, because that is the only place the name is reserved
-    for one: `m-inheritance` reserves the synthetic key from declared members "on
-    an inheritance participant", so a STANDALONE Entity may declare an ordinary
-    member spelled exactly that way and a read then publishes its domain value
-    under that key. The participation test is the position's own strategy — the
-    same test the read makes before publishing a synthetic variant at all — so
-    one node's key means metadata to both sides or domain state to both.
+    ``familyVariant`` is always provenance, because `m-inheritance` reserves the
+    spelling from every Entity's declared members; a node without it stands at
+    ``target``.
 
-    A variant spelling naming no concrete subtype of a PARTICIPANT ``target`` is
-    refused rather than fallen back on: falling back would resolve a subtype member
-    against the abstract position again, which is the hole this resolution exists
-    to close.
+    A variant spelling naming no concrete subtype of ``target`` is refused rather
+    than fallen back on: falling back would resolve a subtype member against the
+    abstract position again, which is the hole this resolution exists to close.
     """
-    facet = inheritance.view(model)
-    position = facet.entity(target)
-    if position is None or position.strategy is None:
-        return target
     variant = node.get(inheritance.FAMILY_VARIANT_KEY)
     if not isinstance(variant, str):
+        return target
+    facet = inheritance.view(model)
+    position = facet.entity(target)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return target
     for concrete in position.concrete_subtypes:
         if inheritance.family_variant_name(facet, concrete) == variant:
@@ -695,8 +689,7 @@ def _edited_copy(
     drops. The MODEL is what that gate asks, rather than the materialized
     mapping's own keys: an inheritance participant's node publishes the synthetic
     `familyVariant` beside its members, and that key is read-time provenance no
-    edit authors — while on a standalone Entity the same spelling is an ordinary
-    declared member the gate admits. The source's members and what survives both
+    edit authors. The source's members and what survives both
     are decoded together by the conformance case ingress into managed values, and
     nothing is judged: `m-case-format` makes a `set` naming an unassignable member or a
     value its member does not admit a case-authoring failure, refused before any

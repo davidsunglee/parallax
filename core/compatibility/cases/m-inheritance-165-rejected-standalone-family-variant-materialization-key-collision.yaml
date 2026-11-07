@@ -1,0 +1,16 @@
+# The synthetic familyVariant key means one thing wherever it appears, so a standalone
+# Entity may not declare a member of that name either, even though it carries no
+# variant and its Column is spelled differently. Model Formation must reject it.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, familyVariant, standalone, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Ticket
+      table: ticket
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: familyVariant, type: string, column: ticket_kind }
+then:
+  rejectedRule: inheritance-materialization-key-collision

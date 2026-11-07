@@ -122,22 +122,19 @@ class _MaterializedRow(dict[str, Any]):
     """A result row that still remembers which of its columns are raw VO blobs.
 
     ``value_object_columns`` are the columns carrying an undecoded Value Object
-    occurrence; ``consumed_value_object_columns`` are the ones a projection has
-    already taken, so an identity-only comparison can drop the rest.
+    occurrence, so an identity-only comparison can drop them.
     """
 
-    __slots__ = ("consumed_value_object_columns", "value_object_columns")
+    __slots__ = ("value_object_columns",)
 
     def __init__(
         self,
         values: dict[str, Any],
         *,
-        value_object_columns: dict[str, Any] | None = None,
-        consumed_value_object_columns: set[str] | None = None,
+        value_object_columns: set[str] | None = None,
     ) -> None:
         super().__init__(values)
-        self.value_object_columns = value_object_columns or {}
-        self.consumed_value_object_columns = consumed_value_object_columns or set()
+        self.value_object_columns = value_object_columns or set()
 
 
 _SEAM = object()
@@ -171,8 +168,7 @@ class PublishedRow(_MaterializedRow):
         values: dict[str, Any],
         seam: object,
         *,
-        value_object_columns: dict[str, Any] | None = None,
-        consumed_value_object_columns: set[str] | None = None,
+        value_object_columns: set[str] | None = None,
     ) -> None:
         if seam is not _SEAM:
             raise CaseFailure(
@@ -180,21 +176,13 @@ class PublishedRow(_MaterializedRow):
                 "because the provenance stands for the derivation its materialization "
                 "entry points run; a row assembled elsewhere has not been through it."
             )
-        super().__init__(
-            values,
-            value_object_columns=value_object_columns,
-            consumed_value_object_columns=consumed_value_object_columns,
-        )
+        super().__init__(values, value_object_columns=value_object_columns)
 
 
 def _materialized_row(row: dict[str, Any]) -> _MaterializedRow:
     """A writable copy of *row* preserving any Value Object bookkeeping it carries."""
     if isinstance(row, _MaterializedRow):
-        return _MaterializedRow(
-            dict(row),
-            value_object_columns=dict(row.value_object_columns),
-            consumed_value_object_columns=set(row.consumed_value_object_columns),
-        )
+        return _MaterializedRow(dict(row), value_object_columns=set(row.value_object_columns))
     return _MaterializedRow(dict(row))
 
 
@@ -203,12 +191,7 @@ def _published(row: dict[str, Any]) -> PublishedRow:
     if isinstance(row, PublishedRow):
         return row
     if isinstance(row, _MaterializedRow):
-        return PublishedRow(
-            dict(row),
-            _SEAM,
-            value_object_columns=dict(row.value_object_columns),
-            consumed_value_object_columns=set(row.consumed_value_object_columns),
-        )
+        return PublishedRow(dict(row), _SEAM, value_object_columns=set(row.value_object_columns))
     return PublishedRow(dict(row), _SEAM)
 
 
@@ -243,17 +226,11 @@ def reference_identity_row(row: dict[str, Any]) -> dict[str, Any]:
     """*row* reduced to the identity a ``referenceSql`` oracle can be compared to.
 
     An undecoded Value Object occurrence is dropped, because the independent
-    oracle selects the matched row SET rather than re-deriving the document; an
-    occurrence a projection already consumed stays, since the column then carries a
-    materialized value rather than the raw blob.
+    oracle selects the matched row SET rather than re-deriving the document.
     """
     if not isinstance(row, _MaterializedRow):
         return dict(row)
-    return {
-        key: value
-        for key, value in row.items()
-        if key not in row.value_object_columns or key in row.consumed_value_object_columns
-    }
+    return {key: value for key, value in row.items() if key not in row.value_object_columns}
 
 
 # --- the sequence, per kind of position --------------------------------------
@@ -388,10 +365,7 @@ def _carrying_value_object_columns(read: Case, rows: list[dict[str, Any]]) -> li
     if not isinstance(target, str):
         return rows
     columns = _position_value_object_columns(read, read.model.entity(target))
-    return [
-        _MaterializedRow(row, value_object_columns={key: row[key] for key in columns if key in row})
-        for row in rows
-    ]
+    return [_MaterializedRow(row, value_object_columns=columns & row.keys()) for row in rows]
 
 
 def _position_value_object_columns(case: Case, entity: Entity) -> set[str]:
@@ -658,15 +632,6 @@ def _carrying_variant(variant: str | None, rows: list[dict[str, Any]]) -> list[d
 
 
 def _tagged(row: _MaterializedRow, variant: str | UnknownFamilyTag) -> _MaterializedRow:
-    """*row* stating *variant*, keeping the document a Column of that spelling stored.
-
-    A family reserves the spelling from every member but a Value Object's storage
-    Column (`m-inheritance` *Materialized field keys*), so whatever stands there is
-    that occurrence's document, and the bookkeeping holds it apart from the tag.
-    """
-    if "familyVariant" in row:
-        row.value_object_columns.setdefault("familyVariant", row["familyVariant"])
-        row.consumed_value_object_columns.add("familyVariant")
     row["familyVariant"] = variant
     return row
 
@@ -786,9 +751,9 @@ def level_order_binds(
     return tpcs.level_order_binds(case, position.view, position.branch_variants, order_by, dialect)
 
 
-def narrow_to_variant_columns(case: Case, entity: Entity, row: PublishedRow) -> PublishedRow:
-    """Narrow *row*, read at *entity*'s position, to its own concrete variant's declared
-    columns (m-case-format "Read targeting", the per-variant node shape).
+def narrow_to_variant_columns(case: Case, row: PublishedRow) -> PublishedRow:
+    """Narrow *row* to its own concrete variant's declared columns (m-case-format
+    "Read targeting", the per-variant node shape).
 
     A materialized instance carries only its own branch's members — its inherited
     chain plus its own declared attributes — never a sibling branch's null-padded
@@ -803,8 +768,8 @@ def narrow_to_variant_columns(case: Case, entity: Entity, row: PublishedRow) -> 
     a row arrives with that provenance and leaves carrying it forward.
     """
     _refuse_an_unpublished_row(case, "per-variant column narrowing", row)
-    variant = _stated_variant(entity, row)
-    if variant is None:
+    variant = row.get("familyVariant")
+    if not isinstance(variant, str):
         return row
     family = Family(case.model.entity_defs)
     own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
@@ -817,8 +782,7 @@ def narrow_to_variant_columns(case: Case, entity: Entity, row: PublishedRow) -> 
     return PublishedRow(
         {key: value for key, value in row.items() if key == "familyVariant" or key in own_columns},
         _SEAM,
-        value_object_columns=dict(row.value_object_columns),
-        consumed_value_object_columns=set(row.consumed_value_object_columns),
+        value_object_columns=set(row.value_object_columns),
     )
 
 
@@ -834,8 +798,7 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
     scalar, and any unexpected scalar column stay for the comparison to judge,
     including a scalar reusing the Column a sibling's Value Object occupies. A scalar
     the row's own concrete declares is never padded, so a read that lost it still
-    fails the comparison. A participant's ``familyVariant`` stays too, even where a
-    Value Object's storage Column shares the spelling: that document is what leaves.
+    fails the comparison.
 
     Like :func:`narrow_to_variant_columns` this projects what a read published, so
     each row arrives with that provenance and leaves carrying it forward.
@@ -866,13 +829,12 @@ def scalar_columns(case: Case, rows: list[PublishedRow]) -> list[PublishedRow]:
             *_repeated_scalar_spellings(case, position),
         ]
     )
-    synthetic = set() if target.role is None else {"familyVariant"}
     scalars: list[PublishedRow] = []
     for row in rows:
         _refuse_an_unpublished_row(case, "the scalar-column assertion", row)
         own = {
             attribute["column"] for attribute in variant_entity(case.model, target, row).attributes
-        } | synthetic
+        }
         scalars.append(
             _published(
                 dict.fromkeys(column for column in padding if column not in own)
@@ -987,27 +949,24 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
         column = occurrence["column"]
         if column not in node:
             continue
-        raw = (
-            row.value_object_columns[column]
-            if isinstance(row, _MaterializedRow) and column in row.value_object_columns
-            else node.pop(column)
+        node[occurrence["name"]] = _project_value_object(
+            occurrence, decode_stored(node.pop(column))
         )
-        if column in node and (
-            not isinstance(row, _MaterializedRow) or column not in row.consumed_value_object_columns
-        ):
-            node.pop(column)
-        node[occurrence["name"]] = _project_value_object(occurrence, decode_stored(raw))
     return node
 
 
-def _stated_variant(entity: Entity, row: Mapping[str, Any]) -> str | None:
-    """The variant *row* states at *entity*'s position, where that key is the tag.
+def at_value_object_columns(model: Model, entity: Entity, row: PublishedRow) -> dict[str, Any]:
+    """*row*, read at *entity*'s position, as a step's ``expectRows`` entry states it.
 
-    Only a family reserves the spelling, so at a standalone Entity the key is an
-    ordinary member whatever it holds.
+    A decoded top-level Value Object stands under its occurrence name for the graph
+    a step can assemble, while a flat row keeps the projection's physical spelling
+    (`m-case-format` *Read result form*).
     """
-    variant = row.get("familyVariant")
-    return variant if entity.role is not None and isinstance(variant, str) else None
+    columns = {
+        occurrence["name"]: occurrence["column"]
+        for occurrence in variant_entity(model, entity, row).value_objects
+    }
+    return {columns.get(key, key): value for key, value in row.items()}
 
 
 def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Entity:
@@ -1017,13 +976,8 @@ def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Enti
     declares none of its concretes' own members. A row carrying no variant — a
     non-inheritance entity — stands at its position.
     """
-    variant = _stated_variant(entity, row)
-    if variant is None:
-        return entity
-    try:
-        return model.entity(variant)
-    except KeyError:
-        return entity
+    variant = row.get("familyVariant")
+    return model.entity(variant) if isinstance(variant, str) else entity
 
 
 def materialize_variant_owner_node(case: Case, entity: Entity, row: PublishedRow) -> PublishedRow:
