@@ -23,7 +23,7 @@ a member declares at most a Column Override, never a path — and no escape by
 which one ordinary member opts out of its layout. Temporal axes and optional
 Audit Metadata designate Attributes already declared in the Metamodel; they do
 not introduce storage declarations. Relationships, narrowed relationship views,
-SQL aliases, and `familyVariant` are result or query concerns and never
+SQL aliases, and `_type` are result or query concerns and never
 become physical slots.
 
 ## Storage Layout selection
@@ -700,7 +700,7 @@ union for the position: the family's complete declaration sequence
 selected concrete, then stable tier partitioning, with an inherited
 contributor included once. Each entry names its Attribute or top-level Value
 Object contributor, its tier, and its declaring owner. `columns` excludes physical
-discriminators because a TPCS position has none and `familyVariant` remains a
+discriminators because a TPCS position has none and `_type` remains a
 result concern.
 
 Each branch names one physical Table represented in the position and the selected
@@ -891,7 +891,7 @@ valid root-owned layout, not its ownership.
 
 `inheritance-materialization-key-collision` remains owned by Inheritance.
 Relationship names, narrowed-view keys, Value Object rendered occurrence names,
-and `familyVariant` occupy the materialized result keyspace even when one of
+and `_type` occupy the materialized result keyspace even when one of
 their spellings equals a physical Column.
 
 ## Consumer contract

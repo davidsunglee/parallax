@@ -937,7 +937,7 @@ def test_the_public_insert_answers_its_nested_polymorphic_node_inside_the_window
         again = lowering_support.insert_response(handle, case)
     assert marks == ["opened", "closed"]
     assert dict(node) == dict(again)
-    assert node["familyVariant"] == "Dog"
+    assert node["_type"] == "write.lowering.Dog"
     address = cast("Mapping[str, Any]", node["address"])
     assert cast("Mapping[str, Any]", address["geo"])["country"] == "country-response"
     assert [

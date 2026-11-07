@@ -672,7 +672,7 @@ def _polymorphic_case(*, scenario: bool) -> Case:
         {},
     )
     query = {"target": "example.Payment", "predicate": {"true": {}}}
-    row = {"id": 1, "detail": "not-a-decimal", "familyVariant": "CashPayment"}
+    row = {"id": 1, "detail": "not-a-decimal", "_type": "example.CashPayment"}
     document = (
         {
             "shape": "scenario",
@@ -685,12 +685,12 @@ def _polymorphic_case(*, scenario: bool) -> Case:
     return Case(Path("synthetic-polymorphic.yaml"), document, model)
 
 
-def test_preflight_checks_top_level_expected_rows_against_their_family_variant() -> None:
+def test_preflight_checks_top_level_expected_rows_against_their_type() -> None:
     with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.detail.*type-mismatch for decimal"):
         preflight_case_literals(_polymorphic_case(scenario=False))
 
 
-def test_preflight_checks_scenario_expected_rows_against_their_family_variant() -> None:
+def test_preflight_checks_scenario_expected_rows_against_their_type() -> None:
     with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*type-mismatch for decimal"):
         preflight_case_literals(_polymorphic_case(scenario=True))
 

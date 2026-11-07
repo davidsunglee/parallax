@@ -5,8 +5,8 @@ from collections.abc import Mapping, Sequence
 from parallax.core.inheritance._compile import MODEL_COMPILER, root_metadata
 from parallax.core.inheritance._facet import (
     FACET_KEY,
-    FAMILY_VARIANT_KEY,
     INHERITANCE_MODULE,
+    WIRE_TYPE_KEY,
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
@@ -33,11 +33,11 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
 __all__ = [
     "FACET_KEY",
-    "FAMILY_VARIANT_KEY",
     "INHERITANCE_MODULE",
     "ISSUE_CODES",
     "MODEL_COMPILER",
     "RULE_SET",
+    "WIRE_TYPE_KEY",
     "AttributeTableContributor",
     "EntityMemberSelection",
     "InheritanceEntityView",
@@ -74,12 +74,13 @@ class InheritanceError(ValueError):
 
 
 def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
-    """Return ``concrete``'s stable wire/graph variant spelling.
+    """Return ``concrete``'s variant spelling: its narrowed-view key segment and
+    its table-per-concrete-subtype branch literal.
 
-    A family-unique local Entity name stays bare for compatibility. When two
-    concrete subtypes in the same family share that local name across namespaces,
-    the canonical qualified Entity spelling is required so the value resolves to
-    exactly one accepted Identity.
+    A family-unique local Entity name stays bare. When two concrete subtypes in
+    the same family share that local name across namespaces, the canonical
+    qualified Entity spelling is required so the value resolves to exactly one
+    accepted Identity.
     """
     concrete_view = _entity_view(facet, concrete)
     root_view = _entity_view(facet, concrete_view.root)
@@ -87,7 +88,7 @@ def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> st
     return concrete.canonical if matches > 1 else concrete.name
 
 
-_FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", FAMILY_VARIANT_KEY})
+_FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", WIRE_TYPE_KEY})
 
 
 def validate_subtype_write(
@@ -103,7 +104,7 @@ def validate_subtype_write(
     family's root-owned primary-key attributes, denoting an unsupported
     set-based write), **metadata** (``subtype-write-metadata-field`` -- ``row``
     carries the framework-owned tag column / ``tag`` / ``tagValue`` /
-    ``familyVariant``), **sibling** (``subtype-write-sibling-attribute`` -- no
+    ``_type``), **sibling** (``subtype-write-sibling-attribute`` -- no
     single concrete subtype in ``entity``'s effective set accepts every
     FAMILY-DECLARED field ``row`` carries; a name the family declares nowhere sits
     on no branch, so it belongs to the caller's own member-honesty check and is
@@ -134,7 +135,7 @@ def validate_subtype_write(
         raise InheritanceError(
             "subtype-write-metadata-field",
             f"{name}: write carries framework-owned metadata field(s) "
-            f"{carried_metadata} -- the tag / tagValue / familyVariant are derived, never "
+            f"{carried_metadata} -- the tag / tagValue / _type are derived, never "
             "authored",
             entity=name,
         )

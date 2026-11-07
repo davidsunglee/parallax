@@ -8,7 +8,7 @@ branch reads, the one logical contributor sequence every branch aligns to, and e
 branch's slot-or-absence entry per contributor. What this module asserts is the SQL
 layered over them: the collision-safe result aliases, a real column reference where a
 branch owns the slot and a `cast(null as <declared type>)` placeholder in that dialect's
-type where it does not, each branch's `familyVariant` literal, and the derived-table
+type where it does not, each branch's `family_variant` literal, and the derived-table
 wrap an ordered or limited read applies its tail against.
 
 Every assertion is read from the golden text rather than from a sample row, so a
@@ -58,11 +58,11 @@ from .execute import (
 )
 
 # The projected output column that carries the table-per-concrete-subtype
-# `familyVariant` literal per `union all` branch (the settled TPCS asymmetry,
+# `family_variant` literal per `union all` branch (the settled TPCS asymmetry,
 # m-sql): unlike table-per-hierarchy — which projects the RAW tag column and
-# derives `familyVariant` at materialization — TPCS has no tag column, so each
+# derives `_type` at materialization — TPCS has no tag column, so each
 # branch projects a subtype-name literal aliased to this column, which the oracle
-# renames to `familyVariant` after asserting the branch shape.
+# resolves to `_type` after asserting the branch shape.
 VARIANT_COLUMN = "family_variant"
 
 
@@ -113,7 +113,7 @@ def _union_all_body(case: Case, tree: Any, dialect: str, facts: WrapFacts) -> An
     A `union all` has no clause tail of its own, so an ordered or limited
     table-per-concrete-subtype read wraps it as a derived table and applies the
     tail against the union's alias (m-sql). The branch facts — count, order, the
-    Table each reads, its per-column shape, its `familyVariant` literal — are the
+    Table each reads, its per-column shape, its `family_variant` literal — are the
     same either way, so unwrapping here keeps one oracle for both forms rather
     than forking it by whether the read declared a result shape.
 
@@ -152,7 +152,7 @@ def _assert_branch_projection_shape(
 ) -> None:
     """Assert one `union all` branch's per-column projection SHAPE (m-sql).
 
-    For every superset column (all but the trailing `familyVariant` literal): a column
+    For every superset column (all but the trailing `family_variant` literal): a column
     the branch OWNS A SLOT for MUST be a real column reference (``t0.<col>``); a column
     it owns no slot for MUST be exactly ``cast(null as <type>)`` in the column's
     declared type mapped to *dialect* (`placeholder_cast_type`, m-dialect). This closes
@@ -212,7 +212,7 @@ def branch_variants(
     A table-per-concrete-subtype position owns exactly one branch per concrete Table,
     so the layout's branch sequence IS the `union all` branch order; each branch is
     paired with the family's rendered spelling of its single row owner, which is what
-    the golden's `familyVariant` literal carries.
+    the golden's `family_variant` literal carries.
     """
     rendered = {family.defs.canonical_key(name): name for name in ordered}
     pairs = [
@@ -339,7 +339,7 @@ def assert_union_shape(
     layout concerns: the collision-safe result aliases, each branch's per-column shape
     (an owned slot is a real reference; a slotless position is a
     `cast(null as <declared type>)` placeholder in that dialect's type), and each
-    branch's `familyVariant` literal (the concrete subtype NAME). EVERY declared golden
+    branch's `family_variant` literal (the concrete subtype NAME). EVERY declared golden
     dialect is checked (so a MariaDB `char` cast is asserted with the MariaDB type
     mapping, not the Postgres one). Parsed from the golden text, so it is
     row-count-independent — a zero-row abstract read still witnesses a mis-ordered
@@ -387,7 +387,7 @@ def _assert_union_branches(
     """Assert one statement's `union all` branches against the position they read.
 
     What a whole read and a deep-fetch level share: the branch count and order, the
-    Table each branch reads, its aligned projection, and its `familyVariant` literal.
+    Table each branch reads, its aligned projection, and its `family_variant` literal.
     """
     superset = list(view.column_spellings)
     placeholder_types = _placeholder_types(case.model, view.columns)
@@ -420,9 +420,9 @@ def _assert_union_branches(
         if out_columns != expected_columns:
             raise CaseFailure(
                 f"{case.path.name}: `union all` branch {position} ({name!r}) projects "
-                f"{out_columns}, not the stable superset + familyVariant literal "
+                f"{out_columns}, not the stable superset + family_variant literal "
                 f"{expected_columns} (the position's one contributor sequence, then "
-                f"familyVariant; m-sql)."
+                f"family_variant; m-sql)."
             )
         logical_branch = branch.copy()
         logical_branch.set("expressions", logical_projections)
@@ -439,9 +439,9 @@ def _assert_union_branches(
         literal = string_literal_value(logical_projections[-1])
         if literal != name:
             raise CaseFailure(
-                f"{case.path.name}: `union all` branch {position} projects familyVariant "
+                f"{case.path.name}: `union all` branch {position} projects family_variant "
                 f"literal {literal!r}, expected the concrete subtype name {name!r} "
-                f"(TPCS projects familyVariant as a per-branch literal; m-sql)."
+                f"(TPCS projects family_variant as a per-branch literal; m-sql)."
             )
 
 

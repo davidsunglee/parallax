@@ -8,7 +8,6 @@ from typing import Protocol
 from parallax.core.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
-    family_variant_name,
 )
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -50,9 +49,8 @@ class EntityLayout:
 
     ``primary_key`` locates the family's key Attribute in that row. ``family``
     is the logical family root under either storage strategy. Relationship positions use whole
-    identities and ancestry-first declaration order. ``family_variant`` is
-    qualified only when concrete local names collide; standalone Entities have
-    none.
+    identities and ancestry-first declaration order. ``wire_type`` is the canonical
+    Entity name a family node publishes; standalone Entities have none.
     """
 
     concrete: EntityIdentity
@@ -64,7 +62,7 @@ class EntityLayout:
     to_many: frozenset[RelationshipIdentity]
     primary_key: tuple[int, ...]
     temporal_starts: tuple[int, ...] = ()
-    family_variant: str | None = None
+    wire_type: str | None = None
 
     @property
     def members(self) -> Sequence[MemberIdentity]:
@@ -175,9 +173,7 @@ class LayoutCatalog:
             ),
             primary_key=self._key_positions(position, index_of),
             temporal_starts=self._temporal_start_positions(position.root, index_of),
-            family_variant=(
-                None if position.strategy is None else family_variant_name(facet, identity)
-            ),
+            wire_type=None if position.strategy is None else identity.canonical,
         )
 
     def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:

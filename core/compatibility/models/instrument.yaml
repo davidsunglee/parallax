@@ -19,7 +19,7 @@
 #
 # Effective concrete alpha order: Bond, Stock. A temporal abstract-target read
 # (m-inheritance-092) injects the as-of predicate over the shared table and projects
-# the raw tag column so familyVariant materializes; the bitemporal terminate /
+# the raw tag column so _type materializes; the bitemporal terminate /
 # terminateUntil writes (m-inheritance-094 / -096) inactivate the Transaction-Time-current
 # rectangle with the tag GUARD among the identity predicates and chain head / tail
 # milestones setting the tag from tagValue — the standalone m-temporal-write shapes,

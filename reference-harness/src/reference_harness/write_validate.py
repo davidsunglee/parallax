@@ -53,6 +53,7 @@ from .inheritance import (
     SUBTYPE_WRITE_METADATA_FIELD,
     SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
     SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
+    TYPE_KEY,
     Family,
     inheritance_of,
     is_abstract,
@@ -476,7 +477,7 @@ def _validate_document(value_object: dict[str, Any], document: Any, *, path: str
 # sibling) before the target-validity rule (abstract handle); `m-inheritance` fixes
 # the same ordering.
 
-_METADATA_PAYLOAD_FIELDS = frozenset({"tag", "tagValue", "familyVariant"})
+_METADATA_PAYLOAD_FIELDS = frozenset({"tag", "tagValue", TYPE_KEY})
 
 
 def validate_subtype_write(
@@ -496,7 +497,7 @@ def validate_subtype_write(
 
     # The framework-owned metadata a payload MUST NOT carry: the tag column (its value
     # is derived from the concrete subtype's tagValue), plus the `tag` / `tagValue` /
-    # `familyVariant` handles.
+    # `_type` handles.
     metadata_fields = set(_METADATA_PAYLOAD_FIELDS)
     tag_column = family.tag_column_of(name)
     if tag_column is not None:

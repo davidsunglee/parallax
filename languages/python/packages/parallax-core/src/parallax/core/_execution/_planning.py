@@ -89,7 +89,7 @@ def _wire_entity_facts(
             for attribute in attributes
         ),
         attribute_types=tuple(attribute.type for attribute in attributes),
-        family_variant=layout.family_variant,
+        wire_type=layout.wire_type,
         occurrences=tuple(
             (
                 occurrence.identity.path[-1],

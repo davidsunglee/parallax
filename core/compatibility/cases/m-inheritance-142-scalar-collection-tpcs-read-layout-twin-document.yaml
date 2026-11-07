@@ -19,6 +19,6 @@ then:
         mariadb: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.payload, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
   graph:
     TagKit:
-      - { id: 1, tags: [t], bits: [8, 8], familyVariant: TagDrill }
-      - { id: 2, tags: [], blades: [rip], familyVariant: TagSaw }
+      - { id: 1, tags: [t], bits: [8, 8], _type: parallax.compatibility.TagDrill }
+      - { id: 2, tags: [], blades: [rip], _type: parallax.compatibility.TagSaw }
   databaseCalls: 1

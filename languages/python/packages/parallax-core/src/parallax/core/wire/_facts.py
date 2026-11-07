@@ -70,16 +70,16 @@ class WireEntityFacts:
     """How one Entity's member row renders, prepared once per model.
 
     The Attributes come first in the member row, keyed, encoded and typed by
-    the three parallel tuples; the family variant spelling follows them in the
-    rendered mapping, then each Value Object occurrence under its own key.
+    the three parallel tuples; a family node's type follows them in the rendered
+    mapping, then each Value Object occurrence under its own key.
     """
 
     __slots__ = (
         "attribute_encodings",
         "attribute_keys",
         "attribute_types",
-        "family_variant",
         "occurrences",
+        "wire_type",
     )
 
     def __init__(
@@ -88,13 +88,13 @@ class WireEntityFacts:
         attribute_keys: tuple[str, ...],
         attribute_encodings: tuple[int, ...],
         attribute_types: tuple[NeutralType, ...],
-        family_variant: str | None,
+        wire_type: str | None,
         occurrences: tuple[tuple[str, WireOccurrenceFacts], ...],
     ) -> None:
         self.attribute_keys = attribute_keys
         self.attribute_encodings = attribute_encodings
         self.attribute_types = attribute_types
-        self.family_variant = family_variant
+        self.wire_type = wire_type
         self.occurrences = occurrences
 
 

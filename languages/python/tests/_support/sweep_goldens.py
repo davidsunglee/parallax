@@ -76,7 +76,7 @@ _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
 )
 _DESCRIPTOR_DEFAULT_COLUMN_READS: Final[frozenset[str]] = frozenset({"m-descriptor-002"})
 _MATERIALIZATION_KEY_COMPATIBILITY_READS: Final[frozenset[str]] = frozenset(
-    {"m-inheritance-120", "m-inheritance-164"}
+    {"m-inheritance-120", "m-inheritance-164", "m-inheritance-170"}
 )
 _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
     {

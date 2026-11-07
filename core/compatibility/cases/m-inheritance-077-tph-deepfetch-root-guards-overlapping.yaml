@@ -1,7 +1,7 @@
 # Two OVERLAPPING path-root guards over one relationship stay two hops, and the
 # shared roots are fetched twice (m-read-planning, m-inheritance).
 model: models/animal.yaml
-tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1]
+tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, type-key, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
@@ -41,26 +41,26 @@ then:
         ownerId: 10
         licenseId: L-100
         barkVolume: 7
-        familyVariant: Dog
+        _type: parallax.compatibility.Dog
         owner: { id: 10, name: Alice }
       - id: 2
         name: Fido
         ownerId: 11
         licenseId: L-101
         barkVolume: 3
-        familyVariant: Dog
+        _type: parallax.compatibility.Dog
         owner: { id: 11, name: Bob }
       - id: 3
         name: Whiskers
         ownerId: 10
         licenseId: L-200
         indoor: true
-        familyVariant: Cat
+        _type: parallax.compatibility.Cat
         owner: { id: 10, name: Alice }
       - id: 4
         name: Tusker
         ownerId: 12
         tuskLength: "12.50"
-        familyVariant: WildBoar
+        _type: parallax.compatibility.WildBoar
         owner: { id: 12, name: Carol }
   databaseCalls: 3

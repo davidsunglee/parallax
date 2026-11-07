@@ -35,12 +35,12 @@ then:
         "keeper[Ranger]":
           id: 1
           name: Rae
-          familyVariant: Ranger
+          _type: parallax.compatibility.Ranger
           charges:
             - id: 11
               keeperId: 1
               label: north
-              "keeper[Ranger,Warden]": { id: 1, name: Rae, familyVariant: Ranger }
+              "keeper[Ranger,Warden]": { id: 1, name: Rae, _type: parallax.compatibility.Ranger }
       - id: 12
         keeperId: 2
         label: clinic

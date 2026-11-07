@@ -25,7 +25,7 @@ when:
             postgres: select t0.id, t0.kind, t0.name, t0.version, t0.doors, t0.axles from vehicle t0 where t0.id = ?
           binds: [1]
       expectRows:
-        - { id: 1, name: Sedan, version: 5, doors: 4, axles: null, familyVariant: Car }
+        - { id: 1, name: Sedan, version: 5, doors: 4, axles: null, _type: parallax.compatibility.Car }
     - uow: observe-and-update
       write:
         - mutation: amend
@@ -52,6 +52,6 @@ when:
             postgres: select t0.id, t0.name, t0.version, t0.doors from vehicle t0 where t0.id = ? and t0.kind = ?
           binds: [1, car]
       expectRows:
-        - { id: 1, name: Coupe, version: 6, doors: 4, familyVariant: Car }
+        - { id: 1, name: Coupe, version: 6, doors: 4, _type: parallax.compatibility.Car }
 then:
   databaseCalls: 3

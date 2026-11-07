@@ -461,7 +461,7 @@ def test_invalid_narrowed_view_projects_only_its_position_evidence() -> None:
     invalid = projected.result()
     assert isinstance(invalid, InvalidData)
     assert invalid.data is not None
-    assert invalid.data["familyVariant"] == "NarrowedLeft"
+    assert invalid.data["_type"] == "parallax.compatibility.NarrowedLeft"
     assert "rightValue" not in invalid.data
     direct_invalid = direct.result()
     assert isinstance(direct_invalid, InvalidData)
@@ -634,7 +634,7 @@ def test_projection_uses_the_retained_model_for_equivalent_positions() -> None:
         pet,
         at=AnimalOwnerPerson.pets.narrow(Cat, Dog),
     )
-    assert equivalent["familyVariant"] == "Dog"
+    assert equivalent["_type"] == "parallax.compatibility.Dog"
     assert snapshot.edition == "old"
     with pytest.raises(SnapshotInspectionError) as subset:
         snapshot.wire(pet, at=AnimalOwnerPerson.pets.narrow(Dog))

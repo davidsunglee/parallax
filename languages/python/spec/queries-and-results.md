@@ -164,7 +164,7 @@ exists. Wire queries accept canonical mappings, `ObjectQueryNode`, and a typed
 Object Query. `WireEntity` is an immutable mapping published by the runtime,
 not directly constructible. Nested collections remain immutable; copying
 returns the same value and pickling produces plain domain data. A Wire node's one
-framework key is `familyVariant`, carried by every node of an inheritance
+framework key is `_type`, carried by every node of an inheritance
 participant ([`m-inheritance`](../../../core/spec/m-inheritance.md)); a Typed result
 has no such key. Typed and Wire results use the same invalid data verdicts and
 envelope edition.

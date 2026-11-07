@@ -104,7 +104,7 @@ _DOGS: list[dict[str, Any]] = [
     {"id": 2, "name": "Fido", "owner_id": 11, "license_id": "L-101", "bark_volume": 3},
 ]
 
-# A polymorphic hop projects the raw `kind` column instead; `familyVariant` is
+# A polymorphic hop projects the raw `kind` column instead; `_type` is
 # materialized from the tag metadata map.
 _KEEPERS: list[dict[str, Any]] = [
     {"id": 10, "name": "Mowgli"},
@@ -443,7 +443,7 @@ def _animal_node(identifier: int, variant: str, **views: Any) -> dict[str, Any]:
         "name": row["name"],
         "ownerId": row["owner_id"],
         **{member: row[column] for member, column in _OWN_MEMBERS[variant].items()},
-        "familyVariant": variant,
+        "_type": f"parallax.compatibility.{variant}",
         **views,
     }
 
@@ -908,7 +908,7 @@ def test_a_flat_tpcs_read_dropping_its_collections_is_refused(
             "from tag_drill t0 union all select t0.id, 'TagSaw' family_variant from tag_saw t0) "
             "u order by u.id asc"
         )
-    case.then["rows"] = [{"id": 1, "familyVariant": "TagDrill"}]
+    case.then["rows"] = [{"id": 1, "_type": "parallax.compatibility.TagDrill"}]
     reads = ScriptedReads(results=[[{"id": 1, "family_variant": "TagDrill"}]])
 
     with pytest.raises(CaseFailure, match="tags"):
@@ -1055,7 +1055,7 @@ def _as_a_milestone_set_read(case: Case) -> Case:
                         "id": 1,
                         "price": Decimal("100.00"),
                         "coupon": Decimal("5.00"),
-                        "familyVariant": "Bond",
+                        "_type": "parallax.compatibility.Bond",
                         "validStart": _JANUARY_INSTANT,
                         "validEnd": _JUNE_INSTANT,
                         "txStart": _JANUARY_INSTANT,
@@ -1072,7 +1072,7 @@ def _as_a_milestone_set_read(case: Case) -> Case:
                         "id": 1,
                         "price": Decimal("110.00"),
                         "coupon": Decimal("5.00"),
-                        "familyVariant": "Bond",
+                        "_type": "parallax.compatibility.Bond",
                         "validStart": _JUNE_INSTANT,
                         "validEnd": "infinity",
                         "txStart": _JANUARY_INSTANT,
@@ -1085,14 +1085,14 @@ def _as_a_milestone_set_read(case: Case) -> Case:
     return case
 
 
-def test_an_abstract_target_milestone_set_publishes_familyVariant_not_the_raw_tag(
+def test_an_abstract_target_milestone_set_publishes_type_not_the_raw_tag(
     damaged_case: CaseLoader,
 ) -> None:
     """A milestone is a whole object at an instant, so its roots are materialized.
 
     The golden projects the raw `kind` column and the whole concrete superset; each
     declared graph states the concrete instance the milestone stood at — its own
-    branch's members and the `familyVariant` derived from the tag map, with no
+    branch's members and the `_type` derived from the tag map, with no
     sibling branch's null padding and no storage column of any kind.
     """
     case = _as_a_milestone_set_read(damaged_case(_TEMPORAL_ABSTRACT_READ))
@@ -1124,7 +1124,28 @@ def test_a_hop_child_row_still_carrying_the_shared_tag_column_is_refused(
 def test_a_narrowed_view_golden_omitting_its_variant_fails(damaged_case: CaseLoader) -> None:
     """A single-concrete view's node carries the tag its level never projected."""
     case = damaged_case(_NARROWED_PETS)
-    del case.then["graph"]["Person"][0]["pets[Dog]"][0]["familyVariant"]
+    del case.then["graph"]["Person"][0]["pets[Dog]"][0]["_type"]
+
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
+        assert_case_read(case, ScriptedReads(results=[_PEOPLE, _DOGS]))
+
+
+@pytest.mark.parametrize("stated", ["Dog", "parallax.compatibility.Cat"])
+def test_a_narrowed_view_golden_naming_the_wrong_type_fails(
+    damaged_case: CaseLoader, stated: str
+) -> None:
+    case = damaged_case(_NARROWED_PETS)
+    case.then["graph"]["Person"][0]["pets[Dog]"][0]["_type"] = stated
+
+    with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
+        assert_case_read(case, ScriptedReads(results=[_PEOPLE, _DOGS]))
+
+
+def test_a_golden_stating_a_type_on_a_node_outside_a_family_fails(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_NARROWED_PETS)
+    case.then["graph"]["Person"][0]["_type"] = "parallax.compatibility.Person"
 
     with pytest.raises(CaseFailure, match="assembled graph != then.graph"):
         assert_case_read(case, ScriptedReads(results=[_PEOPLE, _DOGS]))
@@ -1135,7 +1156,7 @@ _PROFILE_HOP = "m-inheritance-118-value-object-relationship-name-overlap-graph.y
 _SCENARIO_WITH_INCLUDES = "m-snapshot-read-026-multi-hop-access-drops-null-branches.yaml"
 _PROFILE = {"label": "variant-profile"}
 _STORED_PROFILE = json.dumps(_PROFILE)
-_NOTE_NODE = {"id": 2, "profile": _PROFILE, "familyVariant": "VariantNote"}
+_NOTE_NODE = {"id": 2, "profile": _PROFILE, "_type": "compatibility.overlap.VariantNote"}
 
 
 def _concrete_note_read(case: Case) -> Case:
@@ -1278,7 +1299,7 @@ def test_a_concrete_row_states_its_variant_and_leaves_the_document_out(
 ) -> None:
     case = _as_rows(
         _concrete_note_read(damaged_case(_VARIANT_OVERLAP)),
-        [{"id": 2, "familyVariant": "VariantNote"}],
+        [{"id": 2, "_type": "compatibility.overlap.VariantNote"}],
     )
 
     assert_case_read(case, ScriptedReads(results=[[{"id": 2, "variantProfile": _STORED_PROFILE}]]))
@@ -1287,7 +1308,9 @@ def test_a_concrete_row_states_its_variant_and_leaves_the_document_out(
 def test_an_abstract_row_states_its_variant_and_leaves_the_document_out(
     damaged_case: CaseLoader,
 ) -> None:
-    case = _as_rows(damaged_case(_VARIANT_OVERLAP), [{"id": 2, "familyVariant": "VariantNote"}])
+    case = _as_rows(
+        damaged_case(_VARIANT_OVERLAP), [{"id": 2, "_type": "compatibility.overlap.VariantNote"}]
+    )
     stored = {"id": 2, "kind": "note", "variantProfile": _STORED_PROFILE}
 
     assert_case_read(case, ScriptedReads(results=[[stored], [{"id": 2, "kind": "note"}]]))
@@ -1344,7 +1367,7 @@ def _scenario_read_of_a_note_with_its_target(case: Case, model: Model) -> Case:
                         "id": 2,
                         "targetId": 10,
                         "profile": _PROFILE,
-                        "familyVariant": "VariantNote",
+                        "_type": "compatibility.overlap.VariantNote",
                         "target": {"id": 10},
                     }
                 ]
@@ -1383,7 +1406,7 @@ def _scenario_row_read_of_a_note(case: Case, model: Model, row: dict[str, Any]) 
 
 
 _STORED_NOTE_READS = [[{"id": 2, "target_id": 10, "details": _STORED_PROFILE}], [{"id": 10}]]
-_NOTE_ROW = {"id": 2, "target_id": 10, "familyVariant": "VariantNote"}
+_NOTE_ROW = {"id": 2, "target_id": 10, "_type": "compatibility.overlap.VariantNote"}
 
 
 def test_a_step_row_spells_a_value_object_by_its_column(damaged_case: CaseLoader) -> None:
@@ -1569,7 +1592,12 @@ def test_a_mutate_of_an_abstract_row_copies_its_own_variant(damaged_case: CaseLo
             "on": 0,
             "set": {"tendered": "30.00"},
             "expectRows": [
-                {"id": 3, "amount": "20.00", "tendered": "30.00", "familyVariant": "CashPayment"}
+                {
+                    "id": 3,
+                    "amount": "20.00",
+                    "tendered": "30.00",
+                    "_type": "parallax.compatibility.CashPayment",
+                }
             ],
         },
     ]
@@ -2129,7 +2157,7 @@ def test_a_level_branch_spelling_the_wrong_literal_is_refused(
         damaged_case(_THREE_HOP), dialect, "'Car' family_variant", "'Bike' family_variant"
     )
 
-    with pytest.raises(CaseFailure, match="familyVariant literal 'Bike', expected .*'Car'"):
+    with pytest.raises(CaseFailure, match="family_variant literal 'Bike', expected .*'Car'"):
         assert_case_read(case, ScriptedReads(dialect=dialect, results=_chain()))
 
 
@@ -2201,7 +2229,7 @@ def test_a_level_is_graded_when_its_branches_return_no_rows(damaged_case: CaseLo
         damaged_case(_THREE_HOP), "postgres", "'Car' family_variant", "'Truck' family_variant"
     )
 
-    with pytest.raises(CaseFailure, match="familyVariant literal 'Truck'"):
+    with pytest.raises(CaseFailure, match="family_variant literal 'Truck'"):
         assert_case_read(case, ScriptedReads(results=[_TICKETS, _PARKINGS, [], _TICKETS]))
 
 

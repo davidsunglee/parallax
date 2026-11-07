@@ -52,7 +52,7 @@ def test_equal_key_roots_resolve_the_shared_child_inverse_locally(
     assert len(roots) == 2
     for root, row in zip(cast("list[Any]", roots), rows, strict=True):
         if wire:
-            assert root["familyVariant"] == row["family_variant"]
+            assert root["_type"] == row["family_variant"]
             assert root["links"][0]["parent"]["label"] == row["label"]
             assert "links" not in root["links"][0]["parent"]
         else:
@@ -190,14 +190,14 @@ def test_public_wire_deeper_inverse_reuses_each_broad_child_on_a_live_database(
         roots = db.wire.find(query).results()
     (owner,) = roots
     parents = cast("list[dict[str, Any]]", owner["parents"])
-    assert {(parent["id"], parent["familyVariant"]) for parent in parents} == {
+    assert {(parent["id"], parent["_type"]) for parent in parents} == {
         (1, "InverseAlpha"),
         (2, "InverseBeta"),
     }
     for parent in parents:
         (link,) = parent["links"]
         assert link["parent"]["id"] == parent["id"]
-        assert link["parent"]["familyVariant"] == parent["familyVariant"]
+        assert link["parent"]["_type"] == parent["_type"]
         assert link["parent"]["label"] == parent["label"]
         assert "links" not in link["parent"]
     assert observation.database_calls == 3
@@ -235,7 +235,7 @@ def test_public_broad_to_one_child_reuses_the_root_link_as_its_inverse(
         roots = db.wire.find(query).results() if wire else db.find(query).results()
     (link,) = cast("list[Any]", roots)
     if wire:
-        assert link["parent"]["familyVariant"] == "InverseAlpha"
+        assert link["parent"]["_type"] == "InverseAlpha"
         assert link["parent"]["links"] == [{"id": 11, "parentId": 1}]
     else:
         assert isinstance(link.parent, InverseAlpha)

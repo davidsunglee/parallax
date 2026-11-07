@@ -22,11 +22,13 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from jsonschema import Draft202012Validator
 
 from reference_harness.case import (
@@ -77,6 +79,7 @@ from reference_harness.predicate_validate import validate_query_predicate
 from reference_harness.relationship import (
     MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES,
 )
+from reference_harness.schema_validate import _validate_models
 from reference_harness.schemas import build_registry, load_schemas
 from reference_harness.storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -343,6 +346,38 @@ def _dormant_tpcs_position(members: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_DECLARATION_ROUTES = [
+    pytest.param(_standalone_ticket, id="standalone"),
+    pytest.param(_concrete_dog, id="participant"),
+    pytest.param(_dormant_tph_position, id="dormant-tph"),
+    pytest.param(_dormant_tpcs_position, id="dormant-tpcs"),
+]
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param(
+            {"attributes": [{"name": "marker", "type": "string", "column": "_type"}]},
+            id="attribute-column",
+        ),
+        pytest.param(
+            {"valueObjects": [{"name": "profile", "column": "_type", "attributes": _LABELLED}]},
+            id="value-object-column",
+        ),
+    ],
+)
+@pytest.mark.parametrize("descriptor_of", _DECLARATION_ROUTES)
+def test_no_entity_may_declare_the_type_column(
+    members: dict[str, Any], descriptor_of: Callable[[dict[str, Any]], dict[str, Any]]
+) -> None:
+    descriptor = descriptor_of(members)
+
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_MATERIALIZATION_KEY_COLLISION
+
+
 @pytest.mark.parametrize(
     "members",
     [
@@ -366,23 +401,39 @@ def _dormant_tpcs_position(members: dict[str, Any]) -> dict[str, Any]:
         pytest.param({"relationships": [{"name": "familyVariant"}]}, id="relationship"),
     ],
 )
-@pytest.mark.parametrize(
-    "descriptor_of",
-    [
-        pytest.param(_standalone_ticket, id="standalone"),
-        pytest.param(_concrete_dog, id="participant"),
-        pytest.param(_dormant_tph_position, id="dormant-tph"),
-        pytest.param(_dormant_tpcs_position, id="dormant-tpcs"),
-    ],
-)
-def test_no_entity_may_declare_the_variant_spelling(
+@pytest.mark.parametrize("descriptor_of", _DECLARATION_ROUTES)
+def test_the_family_variant_spelling_is_ordinary(
     members: dict[str, Any], descriptor_of: Callable[[dict[str, Any]], dict[str, Any]]
 ) -> None:
-    descriptor = descriptor_of(members)
+    validate_family(descriptor_of(members))
 
-    with pytest.raises(RejectionError) as exc:
-        validate_family(descriptor)
-    assert exc.value.rule == INHERITANCE_MATERIALIZATION_KEY_COLLISION
+
+def test_an_evolution_endpoint_may_not_declare_the_type_column(tmp_path: Path) -> None:
+    # An endpoint is a corpus model, and the static inventory is what accepts one.
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "later.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "entity": {
+                    "name": "Ticket",
+                    "table": "ticket",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "primaryKey": True},
+                        {"name": "marker", "type": "string", "column": "_type"},
+                    ],
+                }
+            }
+        )
+    )
+    errors: list[str] = []
+    _validate_models(tmp_path, load_schemas(Path(__file__))["metamodel.schema.json"], errors)
+    assert len(errors) == 1
+    assert INHERITANCE_MATERIALIZATION_KEY_COLLISION in errors[0]
+
+
+def test_no_member_name_can_spell_the_type_key() -> None:
+    schema = load_schemas(Path(__file__))["metamodel.schema.json"]
+    assert re.fullmatch(schema["$defs"]["identifier"]["pattern"], "_type") is None
 
 
 def test_independent_families_in_one_descriptor_are_accepted() -> None:

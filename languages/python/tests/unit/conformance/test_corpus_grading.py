@@ -109,7 +109,7 @@ def test_a_step_graph_rejects_a_missing_node() -> None:
 def test_a_narrowed_view_node_losing_its_variant_fails_the_graph_grade() -> None:
     expected, kinds = _authored_graph("m-inheritance-065")
     observed = copy.deepcopy(expected)
-    cast("dict[str, Any]", observed["Person"][0]["pets[Dog]"][0]).pop("familyVariant")
+    cast("dict[str, Any]", observed["Person"][0]["pets[Dog]"][0]).pop("_type")
     with pytest.raises(AssertionError):
         compare_graph(observed, expected, kinds)
 
@@ -119,9 +119,37 @@ def test_a_concrete_read_row_losing_its_variant_fails_the_row_grade() -> None:
         "list[dict[str, Any]]", case_document(corpus_case("m-inheritance-001"))["then"]["rows"]
     )
     observed = copy.deepcopy(expected)
-    observed[0].pop("familyVariant")
+    observed[0].pop("_type")
     with pytest.raises(AssertionError):
         compare_rows(observed, expected)
+
+
+@pytest.mark.parametrize("stated", ["Dog", "parallax.compatibility.Cat"])
+def test_a_narrowed_view_node_naming_the_wrong_type_fails_the_graph_grade(stated: str) -> None:
+    expected, kinds = _authored_graph("m-inheritance-065")
+    observed = copy.deepcopy(expected)
+    cast("dict[str, Any]", observed["Person"][0]["pets[Dog]"][0])["_type"] = stated
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)
+
+
+@pytest.mark.parametrize("stated", ["CardPayment", "parallax.compatibility.CashPayment"])
+def test_a_concrete_read_row_naming_the_wrong_type_fails_the_row_grade(stated: str) -> None:
+    expected = cast(
+        "list[dict[str, Any]]", case_document(corpus_case("m-inheritance-001"))["then"]["rows"]
+    )
+    observed = copy.deepcopy(expected)
+    observed[0]["_type"] = stated
+    with pytest.raises(AssertionError):
+        compare_rows(observed, expected)
+
+
+def test_a_node_outside_a_family_gaining_a_type_fails_the_graph_grade() -> None:
+    expected, kinds = _authored_graph("m-inheritance-065")
+    observed = copy.deepcopy(expected)
+    cast("dict[str, Any]", observed["Person"][0])["_type"] = "parallax.compatibility.Person"
+    with pytest.raises(AssertionError):
+        compare_graph(observed, expected, kinds)
 
 
 def test_a_child_node_padded_with_a_sibling_member_fails_the_graph_grade() -> None:

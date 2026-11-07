@@ -26,7 +26,7 @@ from ._statement_bind_inference import (
 )
 from .case import Case, Entity
 from .case_assertions import CaseFailure
-from .inheritance import Family
+from .inheritance import TYPE_KEY, Family
 from .predicate_paths import (
     ElementScope,
     EntityScope,
@@ -757,10 +757,10 @@ def _expected_entity_row(
     row: Mapping[str, object],
     where: str,
 ) -> None:
-    variant = row.get("familyVariant")
-    if isinstance(variant, str):
+    node_type = row.get(TYPE_KEY)
+    if isinstance(node_type, str):
         try:
-            entity = case.model.entity(variant)
+            entity = case.model.entity(node_type)
         except KeyError:
             pass
     _entity_row(case, entity, row, where, canonical=True)

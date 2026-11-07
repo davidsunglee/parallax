@@ -1,5 +1,8 @@
 # A node's shape says what it is, not how it was read
 
+Superseded in part by [ADR 0090](0090-a-family-nodes-type-is-its-canonical-name.md),
+which replaces the tag's spelling and its reservation.
+
 A Wire node of an inheritance participant carries `familyVariant` whatever read
 delivered it, and every node in a `then.graph` holds only its own concrete variant's
 members, at every level. Before this, the contract tied both to the read: a concrete

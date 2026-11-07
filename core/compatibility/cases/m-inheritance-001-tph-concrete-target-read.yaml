@@ -14,6 +14,6 @@ then:
       binds: [card]
   referenceSql: select id, amount, card_network from payment where kind = 'card'
   rows:
-    - { id: 1, amount: "100.00", card_network: Visa, familyVariant: CardPayment }
-    - { id: 2, amount: "50.00", card_network: Amex, familyVariant: CardPayment }
+    - { id: 1, amount: "100.00", card_network: Visa, _type: parallax.compatibility.CardPayment }
+    - { id: 2, amount: "50.00", card_network: Amex, _type: parallax.compatibility.CardPayment }
   databaseCalls: 1

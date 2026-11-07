@@ -26,15 +26,15 @@ then:
     Keeper:
       - id: 1
         name: Rae
-        familyVariant: Ranger
+        _type: parallax.compatibility.Ranger
         charges:
           - id: 11
             keeperId: 1
             label: north
-            "keeper[Ranger,Warden]": { id: 1, name: Rae, familyVariant: Ranger }
+            "keeper[Ranger,Warden]": { id: 1, name: Rae, _type: parallax.compatibility.Ranger }
       - id: 2
         name: Vera
-        familyVariant: Vet
+        _type: parallax.compatibility.Vet
         charges:
           - id: 12
             keeperId: 2
@@ -42,10 +42,10 @@ then:
             "keeper[Ranger,Warden]": null
       - id: 3
         name: Wes
-        familyVariant: Warden
+        _type: parallax.compatibility.Warden
         charges:
           - id: 13
             keeperId: 3
             label: gate
-            "keeper[Ranger,Warden]": { id: 3, name: Wes, familyVariant: Warden }
+            "keeper[Ranger,Warden]": { id: 3, name: Wes, _type: parallax.compatibility.Warden }
   databaseCalls: 2

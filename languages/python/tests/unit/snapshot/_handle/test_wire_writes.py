@@ -1776,7 +1776,7 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
         "id": 9,
         "amount": "10.00",
         "cardNetwork": "Visa",
-        "familyVariant": "CardPayment",
+        "_type": "parallax.compatibility.CardPayment",
     }
     assert read_evidence_of(opened[0]) is None
     assert stored_provenance_of(opened[0]) is None

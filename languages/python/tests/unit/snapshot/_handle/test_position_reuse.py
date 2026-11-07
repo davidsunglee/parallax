@@ -245,8 +245,8 @@ def _typed_row(root: Any) -> tuple[str, int, str]:
 
 
 def _wire_row(node: Any, read: _Read) -> tuple[str, int, str]:
-    standalone = str(read.wire["target"]).rpartition(".")[2]
-    return node.get("familyVariant", standalone), node["id"], node["note"]["text"]
+    concrete = str(node.get("_type", read.wire["target"])).rpartition(".")[2]
+    return concrete, node["id"], node["note"]["text"]
 
 
 def _sorted(rows: Sequence[tuple[str, int, str]]) -> tuple[tuple[str, int, str], ...]:

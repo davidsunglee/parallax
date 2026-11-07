@@ -515,7 +515,7 @@ def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity)
     of that question and not a later one: `Dog` has `Pet`'s `licenseId` as plainly
     as its own `barkVolume`, so both are here. A key a read publishes BESIDE the
     members is absent by construction — an
-    inheritance participant's synthetic `familyVariant` names no member of any
+    inheritance participant's synthetic `_type` names no member of any
     ancestor, so it is no more assignable than a name the model never heard of,
     however plainly the materialized node carries it.
     """
@@ -555,7 +555,7 @@ def _edited_node_identity(
 
     An abstract-target read materializes COMPLETE CONCRETE instances
     (`m-case-format`), so a node published under an abstract `Animal` carries
-    `Dog`'s own members and the `familyVariant` spelling saying which concrete it
+    `Dog`'s own members and the `_type` saying which concrete it
     is. An edit resolves against THAT Entity: its applicable members — the ones
     it declares and the ones it inherits alike — are the vocabulary an authored
     name resolves in (:func:`_applicable_member_names`), and their declared types
@@ -564,26 +564,24 @@ def _edited_node_identity(
     the read because one read answers many concretes at once; only a step holding
     exactly one node has a concrete to name.
 
-    ``familyVariant`` is always provenance, because `m-inheritance` reserves the
-    spelling from every Entity's declared members; a node without it stands at
-    ``target``.
+    ``_type`` is always provenance, because no member or Column can spell it; a
+    node without it stands at ``target``.
 
-    A variant spelling naming no concrete subtype of ``target`` is refused rather
-    than fallen back on: falling back would resolve a subtype member against the
+    A type naming no concrete subtype of ``target`` is refused rather than fallen
+    back on: falling back would resolve a subtype member against the
     abstract position again, which is the hole this resolution exists to close.
     """
-    variant = node.get(inheritance.FAMILY_VARIANT_KEY)
-    if not isinstance(variant, str):
+    node_type = node.get(inheritance.WIRE_TYPE_KEY)
+    if not isinstance(node_type, str):
         return target
-    facet = inheritance.view(model)
-    position = facet.entity(target)
+    position = inheritance.view(model).entity(target)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return target
     for concrete in position.concrete_subtypes:
-        if inheritance.family_variant_name(facet, concrete) == variant:
+        if concrete.canonical == node_type:
             return concrete
     raise EngineError(
-        f"{case.path.name}: the view holds a {variant!r} node, which is no concrete subtype "
+        f"{case.path.name}: the view holds a {node_type!r} node, which is no concrete subtype "
         f"of {target.name} — an edit resolves against the Entity its node IS"
     )
 
@@ -688,7 +686,7 @@ def _edited_copy(
     nowhere to land: a case the verb cannot perform, not a mutation it silently
     drops. The MODEL is what that gate asks, rather than the materialized
     mapping's own keys: an inheritance participant's node publishes the synthetic
-    `familyVariant` beside its members, and that key is read-time provenance no
+    `_type` beside its members, and that key is read-time provenance no
     edit authors. The source's members and what survives both
     are decoded together by the conformance case ingress into managed values, and
     nothing is judged: `m-case-format` makes a `set` naming an unassignable member or a

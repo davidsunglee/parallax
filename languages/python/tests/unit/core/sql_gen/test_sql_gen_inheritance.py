@@ -5,7 +5,7 @@ for table-per-concrete-subtype) are the byte-exact acceptance surface
 (`test_compile_sweep` / `test_run_sweep`); these unit tests pin the seams the
 corpus alone would not isolate as clearly: each tag-predicate bucket in
 isolation, bind order, grouping, superset ordering, the two strategies'
-familyVariant asymmetry, and the per-branch alias/bind state a
+family_variant asymmetry, and the per-branch alias/bind state a
 table-per-concrete-subtype `union all` restarts.
 """
 

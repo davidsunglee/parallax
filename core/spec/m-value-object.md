@@ -99,7 +99,7 @@ canonical name, not its storage override. Therefore a document storage column
 may equal a relationship's local name when the occurrence's canonical name is
 different; relationship attachment MUST preserve both values. Collisions among
 the keys that actually render on one node, and the storage column spelling
-`m-inheritance` reserves on every Entity, are formation errors under
+`m-inheritance` refuses on every Entity, are formation errors under
 `m-inheritance`'s `inheritance-materialization-key-collision` rule.
 
 On read, that Structured Column is raw occurrence input rather than an already

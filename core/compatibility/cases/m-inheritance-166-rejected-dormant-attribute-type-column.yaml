@@ -1,5 +1,5 @@
 model: models/dormant-position-layout-twin-columns.yaml
-tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, familyVariant, dormant, slice-snapshot-1]
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, type-key, dormant, slice-snapshot-1]
 shape: rejected
 when:
   model:
@@ -17,6 +17,6 @@ when:
         namespace: parallax.compatibility
         inheritance: { role: abstract-subtype, parent: parallax.compatibility.Gadget }
         attributes:
-          - { name: familyVariant, type: string, maxLength: 16, nullable: true, column: prototype_kind }
+          - { name: prototypeKind, type: string, maxLength: 16, nullable: true, column: _type }
 then:
   rejectedRule: inheritance-materialization-key-collision

@@ -44,7 +44,7 @@ class _Coordinate:
 
 @dataclass(frozen=True, slots=True)
 class _VariantLiteral:
-    """A union branch's `familyVariant` subtype-name literal."""
+    """A union branch's `family_variant` subtype-name literal."""
 
 
 _VARIANT_LITERAL: Final = _VariantLiteral()
@@ -169,7 +169,7 @@ class SelectListBuilder:
         )
 
     def emit_variant(self, variant: str) -> None:
-        """A union branch's `familyVariant` literal.
+        """A union branch's `family_variant` literal.
 
         The settled TPH/TPCS asymmetry: a union projects the variant NAME per
         branch directly, since there is no discriminator slot to derive it from.

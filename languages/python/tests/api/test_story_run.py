@@ -46,7 +46,7 @@ from parallax.conformance.read_models import (
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
-from parallax.core import LATEST, DomainModel, ObjectQuery, Pin
+from parallax.core import LATEST, DomainModel, Entity, ObjectQuery, Pin
 from parallax.core._execution._options import (
     OMITTED,
     Omitted,
@@ -55,7 +55,7 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.entity._model import model_of
+from parallax.core.entity._model import class_index, model_of
 from parallax.core.execution import RetryPolicy, TransactionTimePinReadOnlyError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery import InvalidData, InvalidDataError
@@ -101,6 +101,14 @@ def _scenario_finds(case_id: str) -> list[dict[str, Any]]:
 def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
     """The last scenario find step's ``expectRows`` — the story's returned oracle."""
     return cast("list[dict[str, Any]]", _scenario_finds(case_id)[-1]["expectRows"])
+
+
+def _canonical_name(model: DomainModel, instance: Entity) -> str:
+    index = class_index(model)
+    assert index is not None, model
+    identity = index.identity_of(type(instance))
+    assert identity is not None, instance
+    return identity.canonical
 
 
 def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
@@ -1440,7 +1448,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # per-case function. Grading is the case's own `then.rows` (order-insensitive,#
 # exact-typed, physical-column-keyed — `instance_row`, never the canonical    #
 # camelCase `orderedOn` spelling `then.rows` never uses) plus `then.databaseCalls`#
-# when the case declares it. `familyVariant` is reported only for a case whose #
+# when the case declares it. `_type` is reported only for a case whose #
 # own oracle rows declare it (an abstract-root inheritance read) — the        #
 # API-suite's own polymorphism observation (`queries-and-results.md`:         #
 # `type(node)`"), not a field the developer surface itself exposes.           #
@@ -1537,9 +1545,13 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_r
         snapshot = db.find(story.build())
     then = cast("dict[str, Any]", case_document(corpus_case(story.case_id))["then"])
     expected_rows = cast("list[dict[str, Any]]", then["rows"])
-    expects_variant = any("familyVariant" in row for row in expected_rows)
+    expects_type = any("_type" in row for row in expected_rows)
     observed_rows = [
-        instance_row(instance, family_variant=expects_variant) for instance in snapshot.results()
+        instance_row(
+            instance,
+            wire_type=_canonical_name(meta, instance) if expects_type else None,
+        )
+        for instance in snapshot.results()
     ]
     compare_rows(observed_rows, expected_rows)
     expected_database_calls = then.get("databaseCalls")

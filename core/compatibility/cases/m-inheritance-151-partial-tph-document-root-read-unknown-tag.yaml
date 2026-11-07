@@ -1,5 +1,5 @@
 model: models/composed-beast-document-reader.yaml
-tags: [m-inheritance, m-storage-layout, m-sql, m-read-delivery, m-document-codec, table-per-hierarchy, document-layout, stored-data, familyVariant, graph, instance-form, partial-composition, slice-snapshot-1]
+tags: [m-inheritance, m-storage-layout, m-sql, m-read-delivery, m-document-codec, table-per-hierarchy, document-layout, stored-data, type-key, graph, instance-form, partial-composition, slice-snapshot-1]
 shape: read
 given:
   provisioningModel: models/composed-beast-document-provisioning.yaml
@@ -18,8 +18,8 @@ then:
         mariadb: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 order by t0.id asc
   graph:
     Beast:
-      - { id: 1, name: Akela, leaderId: null, howl: aroo, familyVariant: Wolf }
-      - { id: 2, name: Bruno, leaderId: null, brush: red, familyVariant: Fox }
+      - { id: 1, name: Akela, leaderId: null, howl: aroo, _type: parallax.compatibility.Wolf }
+      - { id: 2, name: Bruno, leaderId: null, brush: red, _type: parallax.compatibility.Fox }
       - null
   storedDataIssues:
     - ordinal: 2

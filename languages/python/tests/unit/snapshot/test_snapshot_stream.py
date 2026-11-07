@@ -588,7 +588,7 @@ def test_a_streamed_unknown_child_tag_arrives_as_a_record_in_both_namespaces() -
     assert isinstance(typed[0], Keeper)
     assert [beast.name for beast in typed[0].beasts] == ["Akela"]
     (akela,) = cast("tuple[WireEntity, ...]", _entity(wired[0])["beasts"])
-    assert akela["familyVariant"] == "Wolf"
+    assert akela["_type"] == "parallax.compatibility.Wolf"
     for record in (typed[1], wired[1]):
         assert isinstance(record, InvalidData)
         assert record.data is None

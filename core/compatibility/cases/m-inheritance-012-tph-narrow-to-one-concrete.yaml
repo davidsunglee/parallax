@@ -1,7 +1,7 @@
 # Table-per-hierarchy narrow to ONE concrete subtype with a concrete-subtype predicate
 # (m-inheritance, m-object-query, m-predicate, m-sql).
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, type-key, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -19,5 +19,5 @@ then:
       binds: [3, dog]
   referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where bark_volume > 3 and kind = 'dog'
   rows:
-    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, familyVariant: Dog }
+    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, _type: parallax.compatibility.Dog }
   databaseCalls: 1

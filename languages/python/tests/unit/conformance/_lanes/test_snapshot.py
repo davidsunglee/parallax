@@ -304,14 +304,14 @@ _ANIMAL_IDENTITY = model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibilit
 def _abstract_read_of_a_dog(**overrides: object) -> Any:
     # What an ABSTRACT-target read publishes: one complete concrete instance —
     # Dog's own `barkVolume` beside the root's members — plus the framework's
-    # `familyVariant` provenance key, all under the query's abstract target.
+    # `_type` provenance key, all under the query's abstract target.
     node: dict[str, object] = {
         "id": 1,
         "name": "Rex",
         "ownerId": 10,
         "licenseId": "L-100",
         "barkVolume": 7,
-        "familyVariant": "Dog",
+        "_type": "parallax.compatibility.Dog",
     }
     return _scenario_result(node | overrides, identity=_ANIMAL_IDENTITY)
 
@@ -324,11 +324,11 @@ def _edited_animal(authored: Mapping[str, object], source: Any) -> Any:
 
 
 def test_edited_copy_refuses_an_assignment_to_read_time_provenance() -> None:
-    # `familyVariant` is a key the read publishes, not a member anything on the
+    # `_type` is a key the read publishes, not a member anything on the
     # node's ancestry declares, so a gate asking the materialized mapping would
     # accept it and carry a node claiming to be a `Cat`. The gate asks the model.
     with pytest.raises(EngineError, match="Dog has no assignable member of"):
-        _edited_animal({"familyVariant": "Cat"}, _abstract_read_of_a_dog())
+        _edited_animal({"_type": "parallax.compatibility.Cat"}, _abstract_read_of_a_dog())
 
 
 def test_edited_copy_refuses_a_sibling_branchs_member() -> None:
@@ -356,7 +356,9 @@ def test_edited_copy_refuses_a_variant_naming_no_concrete_subtype() -> None:
     # against the abstract target instead is exactly the hole the resolution
     # closes, so it may not be the failure mode when resolution fails.
     with pytest.raises(EngineError, match="no concrete subtype of Animal"):
-        _edited_animal({"name": "Rexy"}, _abstract_read_of_a_dog(familyVariant="Unicorn"))
+        _edited_animal(
+            {"name": "Rexy"}, _abstract_read_of_a_dog(_type="parallax.compatibility.Unicorn")
+        )
 
 
 def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> None:
@@ -365,7 +367,8 @@ def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> No
     dog = model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
     step = {"action": "mutate", "on": 0, "set": {"barkVolume": 9}}
     source = _scenario_result(
-        {"id": 1, "name": "Rex", "barkVolume": 7, "familyVariant": "Dog"}, identity=dog
+        {"id": 1, "name": "Rex", "barkVolume": 7, "_type": "parallax.compatibility.Dog"},
+        identity=dog,
     )
     copy = snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source

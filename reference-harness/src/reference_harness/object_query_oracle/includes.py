@@ -36,6 +36,7 @@ from ..case_assertions import CaseFailure, coerce_identity_key
 from ..inheritance import (
     STRATEGY_TPCS,
     STRATEGY_TPH,
+    TYPE_KEY,
     Family,
     inheritance_of,
     is_abstract,
@@ -269,12 +270,13 @@ class FetchStep:
         hop_key: HopKey,
         view_key: str,
         effective_set: list[str] | None,
+        view_types: tuple[str, ...],
         is_narrowed: bool,
         root_guard: tuple[str, ...] | None,
         tag_column: str | None,
         tag_binds: list[Any],
         polymorphic: bool,
-        variant_map: dict[Any, str],
+        type_map: dict[Any, str],
         union_set: list[str] | None,
         back_reference: bool,
     ) -> None:
@@ -289,12 +291,13 @@ class FetchStep:
         self.hop_key = hop_key
         self.view_key = view_key
         self.effective_set = effective_set
+        self.view_types = view_types
         self.is_narrowed = is_narrowed
         self.root_guard = root_guard
         self.tag_column = tag_column
         self.tag_binds = tag_binds
         self.polymorphic = polymorphic
-        self.variant_map = variant_map
+        self.type_map = type_map
         self.union_set = union_set
         self.back_reference = back_reference
 
@@ -307,11 +310,11 @@ class FetchStep:
         return self.cardinality == "one-to-many"
 
     @property
-    def sole_variant(self) -> str | None:
-        """The spelling of the one concrete a family hop reads without a carrier."""
-        if self.effective_set is None or self.polymorphic or self.union_set is not None:
+    def sole_type(self) -> str | None:
+        """The ``_type`` of the one concrete a family hop reads without a carrier."""
+        if not self.view_types or self.polymorphic or self.union_set is not None:
             return None
-        return self.effective_set[0]
+        return self.view_types[0]
 
     @property
     def branch_count(self) -> int:
@@ -332,7 +335,7 @@ def fetch_steps(model: Model, query: dict[str, Any]) -> list[FetchStep]:
     position alike.
     """
     family = Family(model.entity_defs)
-    variant_map = tag_value_to_subtype(model.entity_defs)
+    type_map = tag_value_to_subtype(model.entity_defs)
     root_position = deepfetch_root_position(query)
     root_full_set = resolve_root_source_set(family, root_position, {})
     steps: list[FetchStep] = []
@@ -354,7 +357,7 @@ def fetch_steps(model: Model, query: dict[str, Any]) -> list[FetchStep]:
                         model,
                         family,
                         hop,
-                        variant_map,
+                        type_map,
                         root_guard=guard if index == 0 else None,
                     )
                 )
@@ -366,7 +369,7 @@ def _step_of(
     model: Model,
     family: Family,
     hop: _ResolvedHop,
-    variant_map: dict[Any, str],
+    type_map: dict[Any, str],
     *,
     root_guard: tuple[str, ...] | None,
 ) -> FetchStep:
@@ -423,12 +426,13 @@ def _step_of(
         hop_key=hop.key,
         view_key=view_key,
         effective_set=hop.effective_set,
+        view_types=tuple(family.defs.canonical_key(name) for name in hop.effective_set or ()),
         is_narrowed=hop.is_narrowed,
         root_guard=root_guard,
         tag_column=tag_column,
         tag_binds=tag_binds,
         polymorphic=bool(polymorphic),
-        variant_map=variant_map,
+        type_map=type_map,
         union_set=union_set,
         back_reference=is_back_reference(
             model, None if hop.key.parent is None else hop.key.parent.rel_ref, rel_ref
@@ -465,20 +469,20 @@ def guarded_parents(
     it selects which already-fetched ROOT objects the hop starts from, so the hop's
     child statement is keyed by exactly those objects' gathered keys. Selection is
     by the root row's own concrete subtype, which every family participant carries
-    as ``familyVariant``, so a root read carrying no variant cannot be guarded at all.
+    as ``_type``, so a root read carrying no variant cannot be guarded at all.
     """
     if step.root_guard is None:
         return list(parents)
-    admitted = set(step.root_guard)
+    admitted = {case.model.entity(name).canonical_name for name in step.root_guard}
     for row in parents:
-        if "familyVariant" not in row:
+        if TYPE_KEY not in row:
             raise CaseFailure(
                 f"{case.path.name}: the path-root guard {list(step.root_guard)!r} on "
                 f"{step.rel_ref} cannot select root objects — the root read carries no "
-                f"`familyVariant`, so it reads no inheritance family "
+                f"`_type`, so it reads no inheritance family "
                 f"(m-inheritance / m-read-planning)."
             )
-    return [row for row in parents if row["familyVariant"] in admitted]
+    return [row for row in parents if row[TYPE_KEY] in admitted]
 
 
 # --- the order a to-many level must have returned ---------------------------
@@ -609,10 +613,7 @@ def _fetched_objects_in_view(
     step: FetchStep, fetched: Sequence[materialize.PublishedRow]
 ) -> list[materialize.PublishedRow]:
     """The already-fetched rows back-reference *step* selects, by their own variant."""
-    view_concretes = step.effective_set or []
-    return [
-        row for row in fetched if not step.is_narrowed or row.get("familyVariant") in view_concretes
-    ]
+    return [row for row in fetched if not step.is_narrowed or row.get(TYPE_KEY) in step.view_types]
 
 
 def _branch_bind_groups(label: str, step: FetchStep, authored: Sequence[Any]) -> list[list[Any]]:
@@ -837,8 +838,8 @@ def execute_fetch_levels(
             child_rows,
             view_key=step.view_key,
             tag_column=step.tag_column if step.polymorphic else None,
-            sole_variant=step.sole_variant,
-            variant_map=step.variant_map,
+            sole_type=step.sole_type,
+            type_map=step.type_map,
             union=None
             if step.union_set is None
             else tpcs.LevelUnion(

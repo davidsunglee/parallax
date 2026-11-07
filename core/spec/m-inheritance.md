@@ -188,7 +188,7 @@ physically nullable so sibling rows can omit it, while Entity-level validation
 retains its declared nullability. The `tag` column is **framework-owned
 metadata, not a declared attribute**: a concrete-subtype read injects
 `t0.<tag> = ?` (its `tagValue`); an abstract-target read projects the tag column
-raw so `familyVariant` can be materialized (`m-sql` / `m-case-format`). `m-sql`
+raw so `_type` can be materialized (`m-sql` / `m-case-format`). `m-sql`
 fixes the tag-filter golden SQL.
 
 **Table-per-concrete-subtype.** Each concrete subtype maps to its **own table**;
@@ -265,14 +265,16 @@ materialized Entity node has four provenance-bearing contributor categories:
    when their document storage columns differ;
 3. loaded relationships render under their canonical local relationship names,
    or under a narrowed-view key; and
-4. an inheritance participant renders the synthetic `familyVariant` key.
+4. an inheritance participant renders the synthetic `_type` key.
 
-`familyVariant` says what a node is, not how it was read. Wire has no class to
+`_type` says what a node is, not how it was read. Wire has no class to
 answer that, so every Wire node of an inheritance participant carries it, whatever
 read reached the node: abstract or concrete target, broad or narrowed view, root or
-included level, eager or streamed. Its value is the variant spelling of the node's
-concrete Entity (*Abstract-position reads*), so a concrete read projects no tag
-column for it. A Typed result has no such key, because its class already answers.
+included level, eager or streamed. Its value is the canonical name of the node's
+concrete Entity, so a concrete read projects no tag column for it, and no change
+to the family's other members alters it. A node of an Entity outside a family
+carries no such key, because its query or relationship already names its type. A
+Typed result has no such key, because its class already answers.
 
 Those categories stay distinct in the rendered node. In
 particular, a Value Object document column whose physical name equals a
@@ -285,12 +287,12 @@ Every key that can coexist on one concrete node MUST nevertheless be distinct in
 the rendered mapping. Formation rejects an Attribute physical column that equals
 an applicable Value Object occurrence name or broad relationship name. It also
 reserves every `<relationshipName>[` prefix from applicable Attribute physical
-columns because narrowed views occupy that derived-key namespace. No Entity,
-inheritance participant or not, may declare an Attribute, Attribute physical
-column, Value Object occurrence, Value Object storage column, or relationship
-spelled `familyVariant`, so that key always means the synthetic variant; whether a
-node carries it still depends on participation. These ambiguities are
-`inheritance-materialization-key-collision`; a materializer MUST NOT choose a
+columns because narrowed views occupy that derived-key namespace. A member name
+begins with a lowercase letter (`m-metamodel`), so no member can spell `_type`, and
+no Entity, inheritance participant or not, may store an Attribute or a Value Object
+in a Column spelled `_type`. That key therefore always means the node's concrete
+Entity; whether a node carries it still depends on participation. These ambiguities
+are `inheritance-materialization-key-collision`; a materializer MUST NOT choose a
 winner. Foundational canonical member-name collisions remain
 `metamodel-local-member-collision`, and duplicate physical contributors remain
 `storage-layout-column-collision` (`m-storage-layout`).
@@ -350,14 +352,9 @@ The four consumers add only their own surrounding behavior:
 
 A read targeting an abstract position (the root or an abstract subtype,
 optionally narrowed by the query's `narrowTo`) is a **discriminated-union read**: it returns every
-concrete variant the position resolves to, each tagged by `familyVariant` (the
-concrete subtype's **variant spelling**, materialized from the tag metadata —
-never an authored column, `m-sql` / `m-case-format`). The variant spelling is the
-bare local Entity name when that name is unique among the family's concrete
-subtypes; when two concrete subtypes in one family share a local name across
-namespaces, each such subtype uses its canonical qualified Entity spelling. Thus
-existing families retain `Dog`, while duplicate local names render, for example,
-`catalog.SharedVariant` and `archive.SharedVariant`. Beyond that tag, every node
+concrete variant the position resolves to, each tagged by `_type` (the concrete
+subtype's canonical Entity name, materialized from the tag metadata — never an
+authored column, `m-sql` / `m-case-format`). Beyond that tag, every node
 of the read, at every level, is a **complete concrete instance** in the
 ordinary sense — only its own branch's inherited-plus-own members, never a
 sibling's null-padded column. Inheritance resolves one effective concrete set and
@@ -366,6 +363,15 @@ asserts that read, the flat row included, is
 `m-case-format`'s (*Read result form*). This is the read-side counterpart of *Concrete-
 subtype writes*, below: a discriminated union at both boundaries, with family
 semantics retained here and result projection retained by SQL.
+
+A concrete subtype's **variant spelling** names it where a statement or a view key
+states it, never on a node: a narrowed view key (`m-read-planning`) and a
+table-per-concrete-subtype branch literal (`m-sql`). It is the bare local Entity
+name when that name is unique among the family's concrete subtypes; when two
+concrete subtypes in one family share a local name across namespaces, each such
+subtype uses its canonical qualified Entity spelling. Thus `Dog` stays bare, while
+duplicate local names render, for example, `catalog.SharedVariant` and
+`archive.SharedVariant`.
 
 ### Partially composed families
 
@@ -434,7 +440,7 @@ escaping the queried position is `narrow-outside-position`.
 
 What the root position does **not** do is change the read. The guard selects
 which already-resolved root objects a path traverses from, so the read's own
-effective concrete set, its projection superset, and its `familyVariant` tagging
+effective concrete set, its projection superset, and its `_type` tagging
 are exactly what they would be with no path authored at all. Relationship
 identity is likewise unchanged: a relationship declared on an ancestor is
 inherited by every concrete descendant under the **ancestor's** identity, so a
@@ -465,9 +471,9 @@ case with a `then.rejectedRule` (`m-case-format`). `m-sql` fixes the resulting D
   exist. What such a name is instead is a question for the surface that admitted
   it, not for this protocol.
 - **Metadata is framework-owned, never authored.** A payload **MUST NOT** carry the
-  `tag` column, `tag`, `tagValue`, or `familyVariant`. Under table-per-hierarchy the
+  `tag` column, `tag`, `tagValue`, or `_type`. Under table-per-hierarchy the
   write **derives** the tag column from the concrete subtype's `tagValue` (exactly as
-  a version bump or a milestone bound is derived, `m-sql`); `familyVariant` is a
+  a version bump or a milestone bound is derived, `m-sql`); `_type` is a
   read-time materialization, not an input (resolved Q6). Authoring any of these is
   `subtype-write-metadata-field`.
 - **Writes are concrete-subtype only.** A create / update / delete / terminate
@@ -631,12 +637,12 @@ owns the complete code-set declaration; this module owns each code's meaning.
   one structural Table, then checks every physical Column claim within the
   uniquely owned boundary.
 - **Materialized field keys do not collide** — the scalar-column, canonical
-  Value Object, relationship/narrowed-view, and synthetic `familyVariant`
+  Value Object, relationship/narrowed-view, and synthetic `_type`
   keyspaces described under *Materialized field keys* remain unambiguous on
   every concrete node (`inheritance-materialization-key-collision`). Value Object
   storage keys retain provenance and therefore do not collide merely because a
-  relationship has the same local name; only `familyVariant` is reserved from them,
-  on every Entity.
+  relationship has the same local name; only `_type` is refused to them, on every
+  Entity.
 
 ## The Inheritance Facet
 

@@ -41,7 +41,6 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import _layout as entity_layout
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel
@@ -1054,11 +1053,38 @@ def test_overlapping_guards_preserve_continuations_and_mixed_many_values() -> No
     rex_owner = _mapping({root["name"]: root for root in projected}["Rex"]["owner"])
     pets = [_mapping(value) for value in _sequence(rex_owner["pets"])]
     dogs = [_mapping(value) for value in _sequence(rex_owner["pets[Dog]"])]
-    assert [pet["familyVariant"] for pet in pets] == ["Dog", "Cat"]
+    assert [pet["_type"] for pet in pets] == [
+        "parallax.compatibility.Dog",
+        "parallax.compatibility.Cat",
+    ]
     assert [dog["name"] for dog in dogs] == ["Rex"]
 
 
-def test_an_inheritance_participant_publishes_its_family_variant() -> None:
+def test_only_the_family_nodes_of_a_read_carry_a_type() -> None:
+    query = Animal.where(Animal.all).include(
+        Animal.owner.pets,
+        Pet.owner.pets.narrow(Dog),
+    )
+    projected, _direct = _guarded_publications(
+        query,
+        [
+            _GUARDED_ANIMALS,
+            _GUARDED_OWNERS,
+            _GUARDED_OWNERS[:2],
+            _GUARDED_ANIMALS[:3],
+            _GUARDED_ANIMALS[:2],
+        ],
+    )
+
+    assert all(str(root["_type"]).startswith("parallax.compatibility.") for root in projected)
+    owner = _mapping({root["name"]: root for root in projected}["Rex"]["owner"])
+    assert "_type" not in owner
+    pets = [_mapping(value) for value in _sequence(owner["pets"])]
+    assert pets
+    assert all(str(pet["_type"]).startswith("parallax.compatibility.") for pet in pets)
+
+
+def test_an_inheritance_participant_publishes_its_type() -> None:
     port = QueuePort(
         [
             [
@@ -1077,35 +1103,8 @@ def test_an_inheritance_participant_publishes_its_family_variant() -> None:
     root = _entity(
         own_root(Database.connect(port, ANIMAL)).using_database_login().wire.find(query).result()
     )
-    assert root["familyVariant"] == "Dog"
+    assert root["_type"] == "parallax.compatibility.Dog"
     assert root["barkVolume"] == 3
-
-
-def test_a_wire_read_publishes_the_variant_its_prepared_layout_fixed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The spelling is fixed once, where the selection's catalog lays out the
-    # concrete; a delivery reads it off the layout and derives none of its own,
-    # so after the model is prepared no read reaches the inheritance spelling.
-    row = {
-        "id": 1,
-        "kind": "dog",
-        "name": "Rex",
-        "owner_id": None,
-        "license_id": "L",
-        "bark_volume": 3,
-    }
-    port = QueuePort([[row], [row]])
-    database = own_root(Database.connect(port, ANIMAL)).using_database_login()
-    query = deserialize_query({"target": "Animal", "predicate": {"true": {}}})
-
-    def refusing_variant(*args: object) -> str:
-        raise AssertionError("a Wire read derived a family variant of its own")
-
-    monkeypatch.setattr(entity_layout, "family_variant_name", refusing_variant)
-    first = _entity(database.wire.find(query).result())
-    second = _entity(database.wire.find(query).result())
-    assert first["familyVariant"] == second["familyVariant"] == "Dog"
 
 
 def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes_nothing() -> None:
@@ -1294,7 +1293,7 @@ def test_a_value_object_publishes_by_its_declared_name_beside_the_variant() -> N
     )
     assert root == {
         "id": 1,
-        "familyVariant": "SharedVariant",
+        "_type": "archive.SharedVariant",
         "mailingAddress": {"label": "mail"},
         "archiveProfile": {"label": "archive"},
     }
