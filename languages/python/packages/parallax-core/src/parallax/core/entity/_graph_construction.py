@@ -25,8 +25,7 @@ from parallax.core.entity._instance_state import PublicationPlan, plan_of
 from parallax.core.entity._instance_state import relationship as relationship_state
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import ClassIndex
-from parallax.core.entity._row_fill import EntityFacts, OccurrenceFacts
-from parallax.core.entity._row_fill import publish as publish_graph
+from parallax.core.entity._row_fill import EntityFacts, OccurrenceFacts, publish_graph
 from parallax.core.metamodel import (
     EntityIdentity,
     MemberIdentity,

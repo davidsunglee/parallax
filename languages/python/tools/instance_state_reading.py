@@ -43,7 +43,7 @@ from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
 from parallax.snapshot._publication._root_publication import publish_roots
-from parallax.snapshot._publication._wire import shared_wire_encoder
+from parallax.snapshot._publication._wire import wire_scalar_cache
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 from production_origins import loaded_origins, require_source_origins
 
@@ -345,7 +345,7 @@ def direct_wire_result(
     edition: str,
 ) -> Snapshot[Any]:
     """One direct publication as the public envelope both callers inspect."""
-    encoder = shared_wire_encoder()
+    encoder = wire_scalar_cache()
     try:
         encoder.begin_page()
         roots = tuple(

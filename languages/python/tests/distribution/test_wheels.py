@@ -180,7 +180,7 @@ def test_snapshot_wheel_ships_only_its_private_packages(wheelhouse: Wheelhouse) 
     ) == {
         "parallax/snapshot/_publication/__init__.py",
         "parallax/snapshot/_publication/_classify.py",
-        "parallax/snapshot/_publication/_root.py",
+        "parallax/snapshot/_publication/_graph_view.py",
         "parallax/snapshot/_publication/_root_publication.py",
         "parallax/snapshot/_publication/_typed.py",
         "parallax/snapshot/_publication/_wire.py",

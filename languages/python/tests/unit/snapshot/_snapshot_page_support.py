@@ -207,8 +207,8 @@ class RecordingObserver:
     def states_decoded(self) -> None:
         self.events.append(("states_decoded", 1))
 
-    def states_shared(self) -> None:
-        self.events.append(("states_shared", 1))
+    def states_reused(self) -> None:
+        self.events.append(("states_reused", 1))
 
     def root_published(self, ordinal: int) -> None:
         self.events.append(("root_published", ordinal))

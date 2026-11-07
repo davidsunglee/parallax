@@ -19,14 +19,14 @@ from parallax.core.read_delivery._page import (
     stored_data_refusal,
 )
 from parallax.core.temporal_read import Edge, Pin, TemporalShape
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 
 __all__ = ["milestone_pin", "publication_issue", "publish_roots", "require_publishable"]
 
 _NO_READ_EVIDENCE: Final[Mapping[int, ReadEvidence]] = MappingProxyType({})
 
 
-def publication_issue(root: RootView) -> StoredDataIssueInput | None:
+def publication_issue(root: GraphView) -> StoredDataIssueInput | None:
     """The first stored-data finding ``root`` publishes, in node order after
     its own unreadable identity."""
     if not root.has_issues:
@@ -41,7 +41,7 @@ def publication_issue(root: RootView) -> StoredDataIssueInput | None:
     raise AssertionError("an issue-bearing Root View has no issue")  # pragma: no cover
 
 
-def require_publishable(root: RootView) -> None:
+def require_publishable(root: GraphView) -> None:
     """Refuse an issue-bearing root before identity or object derivation."""
     issue = publication_issue(root)
     if issue is not None:
@@ -60,7 +60,7 @@ def milestone_pin(edge: Edge) -> Pin:
 
 def publish_roots[T](
     page: Page,
-    publish_root: Callable[[RootView, int], tuple[T, ...]],
+    publish_root: Callable[[GraphView, int], tuple[T, ...]],
     model: Metamodel,
     *,
     atomic: bool = False,
@@ -85,8 +85,8 @@ def publish_roots[T](
     rows = page_rows(page)
     observer = page_cadence(page)
     schedule = page_schedule(page, model, atomic=atomic)
-    root = RootView(rows, schedule, read_evidence=read_evidence)
-    resolve = root._resolve_root  # pyright: ignore[reportPrivateUsage] - the pass owns re-pointing
+    root = GraphView(rows, schedule, read_evidence=read_evidence)
+    resolve = root.resolve_root
     edges = page_edges(page, milestones)
     if atomic:
         prepared: list[T] = []

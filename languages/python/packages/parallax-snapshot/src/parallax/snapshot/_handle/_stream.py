@@ -119,7 +119,7 @@ class _StreamWireProjection:
             self._reader = reader
         if self._renderer is None:
             if self._encoder is None:
-                self._encoder = wire_materialize.shared_wire_encoder()
+                self._encoder = wire_materialize.wire_scalar_cache()
                 self._encoder.begin_page()
             reader = self._reader
             assert reader is not None

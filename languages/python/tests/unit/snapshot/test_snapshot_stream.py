@@ -793,7 +793,7 @@ def test_unused_typed_delivery_constructs_no_projection_working_state(
         raise AssertionError("unused Typed delivery constructed projection state")
 
     monkeypatch.setattr(wire_materialize, "InstanceReader", forbidden)
-    monkeypatch.setattr(wire_materialize, "shared_wire_encoder", forbidden)
+    monkeypatch.setattr(wire_materialize, "wire_scalar_cache", forbidden)
     monkeypatch.setattr(stream_module, "WeakIdentityMemo", forbidden)
 
     with _orders(ScriptedAdapter(Read(rows=[_order_row(1)]))).stream(
@@ -886,7 +886,7 @@ def _observe_wire_encoders(
     monkeypatch: pytest.MonkeyPatch,
 ) -> list[weakref.ReferenceType[object]]:
     created: list[weakref.ReferenceType[object]] = []
-    factory = wire_materialize.shared_wire_encoder
+    factory = wire_materialize.wire_scalar_cache
 
     class ObservedEncoder:
         def __init__(self) -> None:
@@ -906,7 +906,7 @@ def _observe_wire_encoders(
         created.append(weakref.ref(encoder))
         return encoder
 
-    monkeypatch.setattr(wire_materialize, "shared_wire_encoder", observed_encoder)
+    monkeypatch.setattr(wire_materialize, "wire_scalar_cache", observed_encoder)
     return created
 
 

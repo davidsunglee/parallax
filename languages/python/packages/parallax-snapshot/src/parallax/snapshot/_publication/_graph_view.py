@@ -31,7 +31,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan import ObjectKey
 
-__all__ = ["RootView", "SnapshotConsistencyError"]
+__all__ = ["GraphView", "SnapshotConsistencyError"]
 
 SNAPSHOT_FETCHED_ROW_CONFLICT = "snapshot-fetched-row-conflict"
 
@@ -60,7 +60,7 @@ class SnapshotConsistencyError(RuntimeError):
         self.fetched_rows = fetched_rows
 
 
-class RootView:
+class GraphView:
     """One result root's borrowed reach over a sealed Page: its nodes, their
     Page-owned states, their carried relationship views, and their Read Evidence.
 
@@ -86,6 +86,7 @@ class RootView:
         "_last_view_layout",
         "_layouts",
         "_member_rows",
+        "_node_rows",
         "_pin",
         "_proved_levels",
         "_reached",
@@ -95,7 +96,6 @@ class RootView:
         "_rows",
         "_view_layouts",
         "_view_rows",
-        "_winner",
     )
 
     def __init__(
@@ -114,7 +114,7 @@ class RootView:
         self._every_level_proved = all(self._proved_levels)
         self._read_evidence = read_evidence
         self._pin = rows.pin
-        self._winner: list[int] = []
+        self._node_rows: list[int] = []
         self._resolved: dict[int, int] = {}
         self._layouts: list[EntityLayout] = []
         self._member_rows: list[tuple[object, ...]] = []
@@ -130,7 +130,7 @@ class RootView:
 
     def __len__(self) -> int:
         """The nodes in this root's segment: none for an invalid root."""
-        return len(self._winner)
+        return len(self._node_rows)
 
     @property
     def invalid_root(self) -> InvalidRootInput | None:
@@ -154,8 +154,8 @@ class RootView:
         return self._reached
 
     def layout(self, node: int) -> EntityLayout:
-        """The member layout ``node``'s state is read against — the canonical
-        fetched row's own, and therefore its resolved concrete Entity's."""
+        """The member layout ``node``'s state is read against — its node row's
+        own, and therefore its resolved concrete Entity's."""
         return self._layouts[node]
 
     def member_values(self, node: int) -> tuple[object, ...]:
@@ -216,12 +216,12 @@ class RootView:
         return self._view_rows[node][slot]
 
     def read_evidence(self, node: int) -> ReadEvidence | None:
-        """The Read Evidence ``node``'s canonical fetched row carries, captured
-        only for a root publishing no finding."""
+        """The Read Evidence ``node``'s node row carries, captured only for a
+        root publishing no finding."""
         values = self._read_evidence_values
         return values[node] if values else None
 
-    def _resolve_root(self, position: int, pin: Pin) -> None:
+    def resolve_root(self, position: int, pin: Pin) -> None:
         """Re-point this view at the root at ``position``, published at ``pin``.
 
         The stored values of every fetched row of one logical row the root
@@ -233,7 +233,7 @@ class RootView:
         rows = self._rows
         root = rows.roots[position]
         self._pin = pin
-        self._winner.clear()
+        self._node_rows.clear()
         self._resolved.clear()
         self._layouts.clear()
         self._member_rows.clear()
@@ -261,21 +261,21 @@ class RootView:
         ):
             self._allocate_per_fetched_row(rows, reached, judging)
         else:
-            self._allocate_merged(rows, reached, judging)
+            self._allocate_per_logical_row(rows, reached, judging)
         _notify(rows.observer, "fetched_rows_reached", len(reached))
         findings = self._findings
         if not judging:
-            for winner in self._winner:
-                self._judge(rows, winner)
+            for node_row in self._node_rows:
+                self._judge(rows, node_row)
         if any(findings):
             if len(findings) > 1:
-                self._realize()
+                self._compact_to_view_reach()
             self._has_issues = any(findings)
         else:
             self._has_issues = False
         if not self._has_issues:
             evidence = self._read_evidence
-            self._read_evidence_values = [evidence.get(winner) for winner in self._winner]
+            self._read_evidence_values = [evidence.get(node_row) for node_row in self._node_rows]
 
     def _judge(self, rows: PageRows, fetched_row: int) -> None:
         """Append ``fetched_row``'s Entity State: the one recording judged on a
@@ -302,7 +302,7 @@ class RootView:
         logical row this root reaches, and then carry its view values into that
         node."""
         resolved = self._resolved
-        winner = self._winner
+        node_rows = self._node_rows
         member_rows = self._member_rows
         findings = self._findings
         proved = self._proved_levels
@@ -322,8 +322,8 @@ class RootView:
                         state = entity_state(rows, fetched_row)
                     member_rows.append(state.member_row)
                     findings.append(state.findings)
-            resolved[fetched_row] = len(winner)
-            winner.append(fetched_row)
+            resolved[fetched_row] = len(node_rows)
+            node_rows.append(fetched_row)
             self._allocated(rows, fetched_row)
         view_rows = self._view_rows
         for fetched_row in reached:
@@ -343,12 +343,12 @@ class RootView:
     # Called once per root by the pass's per-root resolution, which the Snapshot
     # materialization instruments measure; every split, including sharing the
     # view-carry loop with `_allocate_per_fetched_row`, adds a call to that loop.
-    def _allocate_merged(  # noqa: C901
+    def _allocate_per_logical_row(  # noqa: C901
         self, rows: PageRows, reached: Sequence[int], judging: bool
     ) -> None:
         """Allocate one node per logical row the reached fetched rows belong to,
-        won by its canonical fetched row. Once every reached fetched row
-        resolves to its node, carry each one's view values into that node."""
+        read from its node row. Once every reached fetched row resolves to its
+        node, carry each one's view values into that node."""
         local_rows: dict[int, int | list[int]] = {}
         for fetched_row in reached:
             logical = rows.logical_rows[fetched_row]
@@ -364,15 +364,15 @@ class RootView:
         # conflict raises before this root decodes a state.
         for logical, merged in local_rows.items():
             if not isinstance(merged, int):
-                local_rows[logical] = self._canonical(merged)
+                local_rows[logical] = self._node_row_or_conflict(merged)
         table: dict[int, int] = {}
-        for logical, canonical in local_rows.items():
-            winner = cast("int", canonical)
+        for logical, chosen in local_rows.items():
+            node_row = cast("int", chosen)
             if judging:
-                self._judge(rows, winner)
-            table[logical] = len(self._winner)
-            self._winner.append(winner)
-            self._allocated(rows, winner)
+                self._judge(rows, node_row)
+            table[logical] = len(self._node_rows)
+            self._node_rows.append(node_row)
+            self._allocated(rows, node_row)
         resolved = self._resolved
         for fetched_row in reached:
             resolved[fetched_row] = table[rows.logical_rows[fetched_row]]
@@ -391,8 +391,8 @@ class RootView:
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                     carried_views[root_view_slot] = self._allocation(value, targets[slot], table)
 
-    def _allocated(self, rows: PageRows, winner: int) -> None:
-        layout = rows.layouts[winner]
+    def _allocated(self, rows: PageRows, node_row: int) -> None:
+        layout = rows.layouts[node_row]
         self._layouts.append(layout)
         view_layout = self._last_view_layout
         if layout is not self._last_layout or view_layout is None:
@@ -404,37 +404,37 @@ class RootView:
             cast("list[object]", [ABSENT] * len(view_layout.slots)) if view_layout.slots else ()
         )
 
-    def _realize(self) -> None:
-        """Compact the segment to the nodes the root's carried views reach.
+    def _compact_to_view_reach(self) -> None:
+        """Compact the segment to the nodes the root's relationship views reach.
 
         An overwritten relationship value or a merged fetched row's losing slot
         extends Page reach without being carried, so it is judged and compared but published
-        nowhere; the realized nodes keep their allocation order, node 0 first.
+        nowhere; the remaining nodes keep their allocation order, node 0 first.
         """
         view_rows = self._view_rows
-        kept = _carried_reach(view_rows)
+        kept = _view_reach(view_rows)
         if len(kept) == len(view_rows):
             return
         nodes = sorted(kept)
         renumbered = {node: index for index, node in enumerate(nodes)}
-        self._winner[:] = [self._winner[node] for node in nodes]
+        self._node_rows[:] = [self._node_rows[node] for node in nodes]
         self._layouts[:] = [self._layouts[node] for node in nodes]
         self._member_rows[:] = [self._member_rows[node] for node in nodes]
         self._findings[:] = [self._findings[node] for node in nodes]
         self._view_layouts[:] = [self._view_layouts[node] for node in nodes]
         self._view_rows[:] = [_renumbered(view_rows[node], renumbered) for node in nodes]
 
-    def _canonical(self, fetched_rows: Sequence[int]) -> int:
+    def _node_row_or_conflict(self, fetched_rows: Sequence[int]) -> int:
         rows = self._rows
         if len(fetched_rows) == 2 and same_stored_values(rows, fetched_rows[0], fetched_rows[1]):
             _notify(rows.observer, "stored_values_compared", 1)
-            rows.decoders.settle(fetched_rows[1])
+            rows.decoders.retire(fetched_rows[1])
             return fetched_rows[0]
         first, *remaining = fetched_rows
         if all(same_stored_values(rows, first, candidate) for candidate in remaining):
             _notify(rows.observer, "stored_values_compared", len(remaining))
             for candidate in remaining:
-                rows.decoders.settle(candidate)
+                rows.decoders.retire(candidate)
             return first
         canonical, *candidates = sorted(
             fetched_rows,
@@ -510,8 +510,9 @@ class RootView:
         """Translate one view value against only this root's allocations:
         fetched rows when ``targets`` is ``None``, otherwise a back-reference's
         logical rows, the first of which this root reached as one of
-        ``targets`` wins. ``table`` is the merged allocator's logical-to-node
-        allocation, and ``None`` from the per-fetched-row allocator."""
+        ``targets`` wins. ``table`` is :meth:`_allocate_per_logical_row`'s
+        logical-to-node allocation, and ``None`` from
+        :meth:`_allocate_per_fetched_row`."""
         if value is None:
             return None
         if targets is None:
@@ -597,8 +598,8 @@ def _member_order(
     )
 
 
-def _carried_reach(view_rows: Sequence[Sequence[object]]) -> set[int]:
-    """Every node node 0's carried views reach, itself included."""
+def _view_reach(view_rows: Sequence[Sequence[object]]) -> set[int]:
+    """Every node node 0's relationship views reach, itself included."""
     kept = {0}
     pending = [0]
     while pending:

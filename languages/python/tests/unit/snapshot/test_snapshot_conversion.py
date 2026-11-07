@@ -87,7 +87,7 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from tests._support.model_capabilities import graph_construction_for, prepared_view_keys_for
@@ -905,7 +905,7 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
         prepared_view_keys_for(vo_models.CUSTOMER_MODEL),
     )
 
-    def publish_root(view: RootView, ordinal: int) -> tuple[object, ...]:
+    def publish_root(view: GraphView, ordinal: int) -> tuple[object, ...]:
         assert view.invalid_root is None
         return publisher(view, ordinal)
 

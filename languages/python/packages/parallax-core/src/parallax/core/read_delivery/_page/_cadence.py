@@ -23,7 +23,7 @@ class MaterializationObserver(Protocol):
 
     def states_decoded(self) -> None: ...
 
-    def states_shared(self) -> None: ...
+    def states_reused(self) -> None: ...
 
     def root_published(self, ordinal: int) -> None: ...
 
@@ -48,7 +48,7 @@ class _InertObserver:
     def states_decoded(self) -> None:
         pass
 
-    def states_shared(self) -> None:
+    def states_reused(self) -> None:
         pass
 
     def root_published(self, ordinal: int) -> None:

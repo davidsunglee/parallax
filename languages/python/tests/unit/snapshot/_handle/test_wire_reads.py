@@ -85,11 +85,11 @@ from parallax.snapshot._publication import (
 )
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import (
-    _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _stated_wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
+    _WireScalarCache,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     read_evidence_of,
-    shared_wire_encoder,
     stored_provenance_of,
+    wire_scalar_cache,
 )
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.db_port import (
@@ -227,11 +227,11 @@ def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
 def test_shared_wire_encoding_delegates_unhashable_managed_values() -> None:
     document = {"free": [1, None]}
 
-    assert shared_wire_encoder()(JSON, cast("ManagedValue", document)) == document
+    assert wire_scalar_cache()(JSON, cast("ManagedValue", document)) == document
 
 
 def test_shared_wire_encoding_keeps_equal_json_values_of_distinct_kinds_apart() -> None:
-    encoder = shared_wire_encoder()
+    encoder = wire_scalar_cache()
     values: list[object] = [True, 1, 1.0, False, 0, 0.0, -0.0]
 
     spelled = [json.dumps(encoder(JSON, cast("ManagedValue", value))) for value in values]
@@ -241,8 +241,8 @@ def test_shared_wire_encoding_keeps_equal_json_values_of_distinct_kinds_apart() 
 
 def test_wire_encoding_reuse_is_scoped_to_one_encoder() -> None:
     instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    first_encoder = shared_wire_encoder()
-    second_encoder = shared_wire_encoder()
+    first_encoder = wire_scalar_cache()
+    second_encoder = wire_scalar_cache()
 
     first = first_encoder(TIMESTAMP, instant)
     reused = first_encoder(TIMESTAMP, instant)
@@ -263,7 +263,7 @@ def test_wire_encoding_retains_only_the_current_and_preceding_page(
         return Encoded()
 
     monkeypatch.setattr(wire_materialize, "encode_managed_wire", encoded)
-    encoder = _SharedWireEncoder()
+    encoder = _WireScalarCache()
     first_value = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     second_value = dt.datetime(2024, 1, 2, tzinfo=dt.UTC)
 
@@ -289,7 +289,7 @@ def test_an_eager_wire_publication_releases_its_encoder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created: list[weakref.ReferenceType[object]] = []
-    factory = wire_materialize.shared_wire_encoder
+    factory = wire_materialize.wire_scalar_cache
 
     class ObservedEncoder:
         def __init__(self) -> None:
@@ -309,7 +309,7 @@ def test_an_eager_wire_publication_releases_its_encoder(
         created.append(weakref.ref(encoder))
         return encoder
 
-    monkeypatch.setattr(wire_materialize, "shared_wire_encoder", observed_encoder)
+    monkeypatch.setattr(wire_materialize, "wire_scalar_cache", observed_encoder)
     root = (
         _wire_database(QueuePort([[_order_row()]]))
         .wire.find(deserialize_query({"target": "Order", "predicate": {"true": {}}}))

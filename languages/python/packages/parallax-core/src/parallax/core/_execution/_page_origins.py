@@ -8,7 +8,7 @@ from parallax.core._execution._retention import (
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery._page import Page, hydrates, page_rows, shared_entity_state
+from parallax.core.read_delivery._page import Page, hydrates, judged_entity_state, page_rows
 
 __all__ = ["ReadEvidenceCollector"]
 
@@ -42,7 +42,7 @@ class ReadEvidenceCollector(RecordedFetchedRows):
         rows = page_rows(page)
 
         def admitted(node: int) -> tuple[EntityLayout, tuple[object, ...]] | None:
-            state = None if rows.keys[node] is None else shared_entity_state(rows, node)
+            state = None if rows.keys[node] is None else judged_entity_state(rows, node)
             # Invalid roots suppress their complete origin map before this callback.
             if state is None or not hydrates(state.findings):  # pragma: no cover
                 return None

@@ -313,7 +313,7 @@ admission stay outside the cache.
               │   a milestone root's pin comes from its own edge
               ▼
  publish_roots: one pass per Page                                       _root_publication
-              │   page_schedule and page_edges once; one RootView for the pass
+              │   page_schedule and page_edges once; one GraphView for the pass
               │   each root: resolve logical rows, states, carried views and, for a
               │              root publishing no finding, its Read Evidence
               │              → release the Page rows it finished with
@@ -372,14 +372,14 @@ are already published into Wire form in memory, with no further read.
 - `parallax.core.read_delivery._page._rows:page_schedule`
 - `parallax.core.read_delivery._page._rows:page_edges`
 - `parallax.core.read_delivery._page._rows:release_finished_rows`
-- `parallax.snapshot._publication._root:RootView`
+- `parallax.snapshot._publication._graph_view:GraphView`
 - `parallax.snapshot._publication._typed:TypedRootPublisher`
 - `parallax.snapshot._publication._wire_render:WireRootPublisher`
 - `parallax.snapshot._publication._classify:classify_root`
 - `parallax.snapshot._publication._wire_render:WireRenderer`
 - `parallax.core._execution._planning:wire_model_facts`
 - `parallax.snapshot._publication._wire:WireEntity`
-- `parallax.snapshot._publication._wire:shared_wire_encoder`
+- `parallax.snapshot._publication._wire:wire_scalar_cache`
 - `parallax.core.read_delivery._page._stored_data:InvalidData`
 - `parallax.core.read_delivery._page._stored_data:InvalidDataError`
 - `parallax.snapshot._handle._read:Snapshot`

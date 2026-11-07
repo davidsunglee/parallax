@@ -64,7 +64,7 @@ from parallax.snapshot._publication._classify import (
     NonConformingRoot,
     classify_root,
 )
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -105,7 +105,7 @@ def _classify(
     number of nodes its publication segment holds."""
     model = model_of(ENCODED_ORDERS)
 
-    def classified(root: RootView, ordinal: int) -> tuple[ConformingRoot | NonConformingRoot, int]:
+    def classified(root: GraphView, ordinal: int) -> tuple[ConformingRoot | NonConformingRoot, int]:
         return classify_root(root, model, concurrency_view(model), ordinal=offset + ordinal), len(
             root
         )
@@ -398,7 +398,7 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
     def undiscoverable(_attribute: object) -> object:
         raise AssertionError("classification discovered the key among declarations")
 
-    def classified(view: RootView, ordinal: int) -> ConformingRoot | NonConformingRoot:
+    def classified(view: GraphView, ordinal: int) -> ConformingRoot | NonConformingRoot:
         monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
         return classify_root(view, model, cast("ConcurrencyFacet", versions), ordinal=ordinal)
 

@@ -87,8 +87,8 @@ from parallax.snapshot import (
     pin_of,
     view,
 )
-from parallax.snapshot._publication._root import (
-    RootView,
+from parallax.snapshot._publication._graph_view import (
+    GraphView,
     _member_order,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.snapshot._publication._root_publication import publication_issue, require_publishable
@@ -279,7 +279,7 @@ def _publication_issues(page: Page, model: Metamodel) -> list[tuple[object, obje
     """Each root's publication issue beside the first finding it carries
     itself, its own identity's before its nodes' in node order."""
 
-    def issues(root: RootView, _ordinal: int) -> tuple[object, object]:
+    def issues(root: GraphView, _ordinal: int) -> tuple[object, object]:
         invalid = root.invalid_root
         carried = (
             invalid.issues
@@ -314,7 +314,7 @@ def test_publication_issue_reads_the_first_node_issue_in_node_order() -> None:
 
 def test_a_discarded_relationship_values_finding_is_no_publication_issue() -> None:
     # An arm the root's carried views discard publishes nowhere, so its finding
-    # neither classifies nor refuses the realized graph.
+    # neither classifies nor refuses the compacted graph.
     fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
     order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
     discarded = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "code_hex": "not-hex"})
@@ -334,7 +334,7 @@ def test_an_issue_bearing_root_view_is_refused_with_its_first_issue() -> None:
     )
     first = cast("StoredDataIssueInput", first)
 
-    def refusal(root: RootView, _ordinal: int) -> object:
+    def refusal(root: GraphView, _ordinal: int) -> object:
         with pytest.raises(StoredDataDecodingError) as refused:
             require_publishable(root)
         return (refused.value.entity, refused.value.member)
@@ -1345,7 +1345,7 @@ def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call(
     ]
     fixture.attach(order, _ENCODED_ITEMS, (first, second))
 
-    def answers_identically(root: RootView, _ordinal: int) -> tuple[object, ...]:
+    def answers_identically(root: GraphView, _ordinal: int) -> tuple[object, ...]:
         if root.invalid_root is not None:
             assert root.invalid_root is root.invalid_root
             return (len(root), root.invalid_root.ordinal)

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotMaterializationError
 from parallax.snapshot._inspection import SnapshotInspectionError
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import WireEntity
@@ -330,7 +330,7 @@ def _project_eager_values(
     *,
     reader: InstanceReader | None = None,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    from parallax.snapshot._publication._wire import InstanceReader, shared_wire_encoder
+    from parallax.snapshot._publication._wire import InstanceReader, wire_scalar_cache
     from parallax.snapshot._publication._wire_memo import InstanceIdentityMemo
     from parallax.snapshot._publication._wire_render import WireRenderer
 
@@ -362,7 +362,7 @@ def _project_eager_values(
                     entity=concrete,
                 )
             if renderer is None:
-                encoder = shared_wire_encoder()
+                encoder = wire_scalar_cache()
                 encoder.begin_page()
                 renderer = WireRenderer(
                     reader,
@@ -596,7 +596,7 @@ def typed_publication(
         del includes
         publisher = TypedRootPublisher(model.meta, construction, view_keys)
 
-        def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
+        def publish_root(root: GraphView, ordinal: int) -> tuple[object, ...]:
             # Stored state contradicting the model is no failure here: it was
             # classified before construction and publishes in band, so what
             # reaches this boundary is only a defect in building the Entity
@@ -633,9 +633,9 @@ def wire_publication(
     publication's one delivery-scoped reuse state is the scalar encoder.
     """
 
-    from parallax.snapshot._publication._wire import shared_wire_encoder
+    from parallax.snapshot._publication._wire import wire_scalar_cache
 
-    encode: _DeliveryWireEncoder | None = shared_wire_encoder()
+    encode: _DeliveryWireEncoder | None = wire_scalar_cache()
     released = False
 
     def release() -> None:
