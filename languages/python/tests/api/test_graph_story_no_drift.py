@@ -73,7 +73,14 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.core.unit_work import Clock
-from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, is_view_loaded
+from parallax.snapshot import (
+    Database,
+    ScopedDatabase,
+    SharingScope,
+    Snapshot,
+    TxnContext,
+    is_view_loaded,
+)
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
@@ -804,8 +811,14 @@ class _RecordingDatabase(ScopedDatabase):
         object.__setattr__(self, "reads", [])
         object.__setattr__(self, "_group_finds", group_finds)
 
-    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
-        return self.record_find(query, super().find, participating=False)
+    def find[S](
+        self, query: ObjectQuery[Any, S], *, sharing_scope: SharingScope = "root"
+    ) -> Snapshot[S]:
+        return self.record_find(
+            query,
+            lambda read: super(_RecordingDatabase, self).find(read, sharing_scope=sharing_scope),
+            participating=False,
+        )
 
     def record_find[S](
         self,

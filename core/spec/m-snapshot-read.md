@@ -24,7 +24,8 @@ root's reachable fetched rows through its Root View, checking them for
 consistency, classifying the root, recording each value's publication
 provenance, and attaching Read Evidence to the eligible values a writable
 transaction attempt's read publishes (`m-unit-work` *Write value provenance*) —
-and composes the eager result envelope from those roots. Stored-data
+and composes the eager result envelope from those roots. A page-scope read may
+resolve a Page's roots together instead (*Node sharing*). Stored-data
 judgement and its vocabulary, the Page, whole-result atomicity, the Continuation
 Order, page bounds, and the connection a delivery holds are `m-read-delivery`'s
 and apply to every snapshot read unchanged; the Snapshot surface names its
@@ -162,11 +163,59 @@ Within **one Root View**, one row key is **one node**:
   objects even when they reach the same Entity State. No node is
   interned beyond its Root View, and eager and streamed delivery therefore make
   the same identity promise. A caller that needs to know two roots reached one
-  logical row compares their identities.
+  logical row compares their identities. The one exception is a page-scope read,
+  where compatible nodes may be shared across a Page's roots (*Node sharing*); a
+  caller must not rely on whether they were.
 - A **value object** (`m-value-object`) is not a node: it has no identity, adds
   no relationship hop, and materializes *with* its owning entity as a plain
   nested value carrying the members *What a materialized value carries* fixes
   above.
+
+## Node sharing
+
+**Node sharing** is published nodes reused across result roots, governed by a
+read's **Sharing Scope**. Entity State sharing is unconditional and independent
+of it, so `root` does not mean that nothing is shared. Under `root`, the default,
+no node is shared beyond one Root View. Under `page`, a read may publish a
+**Shared Graph**: the one graph a page-scope read publishes for a Page's valid
+roots when they overlap and are compatible. Its nodes are one per logical row. It
+does not outlive the Page's delivery.
+
+The Page is the sharing boundary, so sharing never crosses a Page or a read. A
+Page with no logical row reached from two roots has nothing to share, a diamond
+within one root being no overlap. A milestone read never shares, because its
+roots stand at their own pins. Sharing is opportunistic: two roots reaching one
+logical row are not promised one object, so a caller must not rely on it.
+
+Nodes are **compatible** when all of these hold:
+
+| Part | Rule |
+|---|---|
+| Temporal coordinates | They are part of the row key, so differing coordinates are different logical rows and stay different nodes |
+| Stored state | Every fetched row of the logical row holds equal stored values |
+| Concrete Entity | Stored-values equality, which includes the resolved concrete |
+| Relationship views | A view loaded at two positions names the same nodes in the same order. A view loaded at one position and unloaded at another is compatible. A back-reference naming several coordinate-distinct logical rows is not, because it resolves among what each root reached |
+| Validity | A classified root never joins a Shared Graph |
+| Publication provenance | One Page has one attempt and one pin, and a shared node reads its provenance and Read Evidence from one **node row**: the first of its logical row's fetched rows in the walk from the Shared Graph's roots. Stored rows decide the node, so nothing merges by comparing evidence |
+
+Compatibility is judged over every logical row the Page's roots reach, which is
+broader than any one Root View, and it never reads the isolation level. A
+**conflict** and **incompatible** are different outcomes: a Snapshot Fetched Row
+Conflict is a failure within one Root View, and incompatible only means a Page
+does not share. An incompatible Page publishes each root through its own Root
+View, exactly as `root` does, which raises a real conflict and lets differences
+across roots coexist. So does a Page whose attempt to share fails in any way
+before its first root is delivered. Page scope therefore adds no read failure and
+never chooses between two observations. Validity and conflicts are still decided
+per Root View, even on a Page that shares.
+
+One node may therefore hold the union of the relationships its positions loaded.
+A Typed value publishes one instance per node, so it can gain a relationship
+nobody requested at one of its positions, and a back-reference can close a true
+cycle. A Wire value renders only what its own position requested, so a position
+gains no key from a union, and a Typed-to-Wire projection renders through the
+read's include shape in the same way. A node's members and `_type` follow from
+its concrete, so a union cannot change them.
 
 ## The whole-graph pin
 

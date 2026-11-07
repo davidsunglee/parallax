@@ -8,7 +8,12 @@ from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, T
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.snapshot._handle._read import Snapshot, typed_publication_for
+from parallax.snapshot._handle._read import (
+    SharingScope,
+    Snapshot,
+    typed_publication_builder,
+    typed_publication_for,
+)
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
     TypedInstanceTargetWriteAdapter,
@@ -381,7 +386,9 @@ class TxnContext:
         coverage outside that window survive."""
         self._attempt.keyed_write(TypedKeyedWriteSource(node_or_instance), "terminate", until=until)
 
-    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+    def find[S](
+        self, query: ObjectQuery[Any, S], *, sharing_scope: SharingScope = "root"
+    ) -> Snapshot[S]:
         """Run a participating read for ``query`` and return ``Snapshot[S]``:
         force-flushes pending writes first (read-your-own-writes), and renders
         the read-lock suffix per materialized level from that level's OWN target
@@ -411,7 +418,9 @@ class TxnContext:
         write may address.
         """
         return self._attempt.read(
-            query, convert_query=typed_read_query, build_publication=typed_publication_for
+            query,
+            convert_query=typed_read_query,
+            build_publication=typed_publication_builder(sharing_scope),
         )
 
     @property
@@ -541,12 +550,16 @@ class ReadOnlyTxnContext:
         """
         return self._attempt.options
 
-    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+    def find[S](
+        self, query: ObjectQuery[Any, S], *, sharing_scope: SharingScope = "root"
+    ) -> Snapshot[S]:
         """Run ``query`` inside this transaction and return ``Snapshot[S]``,
         taking no participation lock and retaining no Read Evidence. Otherwise
         identical to :meth:`TxnContext.find`."""
         return self._attempt.read(
-            query, convert_query=typed_read_query, build_publication=typed_publication_for
+            query,
+            convert_query=typed_read_query,
+            build_publication=typed_publication_builder(sharing_scope),
         )
 
     def stream[S](

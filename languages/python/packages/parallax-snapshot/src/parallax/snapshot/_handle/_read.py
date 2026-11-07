@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from parallax.core import read_planning
 from parallax.core._execution._unit_work.evidence import ReadEvidence
@@ -28,7 +28,7 @@ from parallax.core._execution._publication import SelectedReadModel
 from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotMaterializationError
 from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot._publication._graph_view import GraphView
-from parallax.snapshot._publication._root_publication import publish_roots
+from parallax.snapshot._publication._root_publication import publish_roots, publish_shared_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import WireEntity
 from parallax.snapshot._publication._wire_render import WireRootPublisher
@@ -36,15 +36,31 @@ from parallax.snapshot._publication._wire_render import WireRootPublisher
 __all__ = [
     "CheckedSnapshot",
     "NoResultFound",
+    "PublicationBuilder",
+    "SharingScope",
     "Snapshot",
     "SnapshotPublication",
     "TooManyResultsFound",
+    "check_sharing_scope",
     "typed_publication",
+    "typed_publication_builder",
     "typed_publication_for",
+    "typed_shared_publication_for",
     "wire_position",
     "wire_publication",
     "wire_publication_for",
 ]
+
+
+type SharingScope = Literal["root", "page"]
+"""How far a read may share published nodes: within one result root, or across
+the roots of one Page."""
+
+
+def check_sharing_scope(sharing_scope: SharingScope) -> None:
+    """Refuse anything but a :data:`SharingScope` at the call that named it."""
+    if sharing_scope not in ("root", "page"):
+        raise ValueError(f"sharing_scope requires 'root' or 'page' (got {sharing_scope!r})")
 
 
 class NoResultFound(RuntimeError):
@@ -468,7 +484,9 @@ class SnapshotPublication:
     find and a milestone-set find each publish one Page, while a streamed read
     publishes one bounded Page at a time. Each Page's one Root View is re-pointed
     at every root in turn, which keeps result scope a property of the root being
-    published rather than a mode the materializer is told about.
+    published rather than a mode the materializer is told about; a page-scope
+    publication may instead resolve a Page's roots together, and otherwise ends
+    in that same per-root pass.
     :meth:`from_find` and :meth:`from_history` are the two eager
     compositions over it, so neither is an independent conversion that could
     drift from the streamed one.
@@ -543,10 +561,30 @@ def _release_nothing() -> None:
     pass
 
 
-def typed_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
-    """The Typed publication of a read served under ``selected``.
+type PublicationBuilder = Callable[[SelectedReadModel], SnapshotPublication]
+"""What an entrypoint hands read execution to build its one publication."""
 
-    A Typed publication needs the graph construction, so this is where a
+
+def typed_publication_builder(sharing_scope: SharingScope) -> PublicationBuilder:
+    """The builder of a Typed read at ``sharing_scope``, refusing any other value."""
+    check_sharing_scope(sharing_scope)
+    return typed_publication_for if sharing_scope == "root" else typed_shared_publication_for
+
+
+def typed_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
+    """The Typed publication of a read served under ``selected``."""
+    return _typed_publication_at(selected, "root")
+
+
+def typed_shared_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
+    """:func:`typed_publication_for` at page scope."""
+    return _typed_publication_at(selected, "page")
+
+
+def _typed_publication_at(
+    selected: SelectedReadModel, sharing_scope: SharingScope
+) -> SnapshotPublication:
+    """A Typed publication needs the graph construction, so this is where a
     selection that can materialize no Snapshot at all refuses a Typed read —
     before the query is judged, before a participating read's force-flush, and
     before any I/O. The publication carries the selection's edition, so every
@@ -559,7 +597,12 @@ def typed_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication
             "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
         )
     return typed_publication(
-        selected.model, construction, selected.wire, selected.narrowed_view_keys, selected.edition
+        selected.model,
+        construction,
+        selected.wire,
+        selected.narrowed_view_keys,
+        selected.edition,
+        sharing_scope=sharing_scope,
     )
 
 
@@ -578,6 +621,8 @@ def typed_publication(
     wire: WireModelFacts,
     view_keys: read_planning.NarrowedViewKeys,
     edition: str,
+    *,
+    sharing_scope: SharingScope = "root",
 ) -> SnapshotPublication:
     """Publish through the typed materializer: frozen Entity instances, each
     result retaining ``wire`` for its later Wire projection and each node with
@@ -610,6 +655,18 @@ def typed_publication(
                     cause=exc,
                 ) from exc
 
+        if sharing_scope == "page":
+            yield from publish_shared_roots(
+                page,
+                publish_root,
+                publisher.publish_shared_graph,
+                model.meta,
+                atomic=atomic,
+                ordinal_offset=ordinal_offset,
+                milestones=milestones,
+                read_evidence=origins,
+            )
+            return
         yield from publish_roots(
             page,
             publish_root,

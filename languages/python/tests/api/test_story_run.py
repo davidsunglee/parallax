@@ -28,6 +28,7 @@ from parallax.conformance.composed_beast_models import Beast, Keeper, Wolf
 from parallax.conformance.dormant_position_models import Prototype, Workbench
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
+    GraphStory,
     a_finite_transaction_time_pinned_view_is_read_only,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
@@ -62,6 +63,7 @@ from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
+    SharingScope,
     Snapshot,
     TxnContext,
     WireEntity,
@@ -207,8 +209,12 @@ class _CountingDatabase(ScopedDatabase):
         finally:
             self.database_calls.append(self.observation.database_calls - mark)
 
-    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
-        return self._counted(lambda: super(_CountingDatabase, self).find(query))
+    def find[S](
+        self, query: ObjectQuery[Any, S], *, sharing_scope: SharingScope = "root"
+    ) -> Snapshot[S]:
+        return self._counted(
+            lambda: super(_CountingDatabase, self).find(query, sharing_scope=sharing_scope)
+        )
 
     def transact[T](
         self,
@@ -230,6 +236,74 @@ class _CountingDatabase(ScopedDatabase):
 
 def _counting_connect(adapter: Any, model: Any, *, clock: Any = None) -> _CountingDatabase:
     return _CountingDatabase(adapter, model, clock)
+
+
+class _PageScopeTransaction:
+    """A ``TxnContext`` façade reading every ``find`` as :class:`_PageScopeDatabase`
+    does; every other verb passes straight through."""
+
+    __slots__ = ("_compared", "_tx")
+
+    def __init__(self, tx: TxnContext, compared: list[object]) -> None:
+        self._tx = tx
+        self._compared = compared
+
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+        snapshot = self._tx.find(query, sharing_scope="page")
+        _assert_projects_as_direct_wire(snapshot, self._tx.wire.find(query))
+        self._compared.append(query)
+        return snapshot
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._tx, name)
+
+
+class _PageScopeDatabase(_CountingDatabase):
+    """Reads every ``find`` at page scope and holds its projection to direct Wire
+    at root scope, so a story's own reads state what page scope must not change."""
+
+    __slots__ = ("compared",)
+    compared: list[object]
+
+    def __init__(self, adapter: Any, model: Any, clock: Any = None) -> None:
+        super().__init__(adapter, model, clock)
+        object.__setattr__(self, "compared", [])
+
+    def find[S](
+        self, query: ObjectQuery[Any, S], *, sharing_scope: SharingScope = "page"
+    ) -> Snapshot[S]:
+        snapshot = super().find(query, sharing_scope=sharing_scope)
+        _assert_projects_as_direct_wire(snapshot, self.wire.find(query))
+        self.compared.append(query)
+        return snapshot
+
+    def transact[T](
+        self,
+        fn: Callable[[TxnContext], T],
+        *,
+        retry: RetryPolicy | Omitted = OMITTED,
+        concurrency: ConcurrencyPreference | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
+    ) -> T:
+        return super().transact(
+            lambda tx: fn(cast("TxnContext", _PageScopeTransaction(tx, self.compared))),
+            retry=retry,
+            concurrency=concurrency,
+            isolation=isolation,
+        )
+
+
+def _assert_projects_as_direct_wire(snapshot: Snapshot[Any], direct: Snapshot[WireEntity]) -> None:
+    assert snapshot.wire().checked().results() == direct.checked().results()
+
+
+@pytest.mark.parametrize("story", GRAPH_STORIES, ids=[story.case_id for story in GRAPH_STORIES])
+def test_a_graph_story_reads_the_same_at_page_scope(story: GraphStory, profile_run: Any) -> None:
+    meta = _reset_for(story.case_id, profile_run)
+    clock = story.clock() if story.clock is not None else None
+    db = _PageScopeDatabase(profile_run.port, meta, clock)
+    story.run(db)
+    assert db.compared
 
 
 def _kind_runs(db: _CountingDatabase) -> list[tuple[str, int]]:

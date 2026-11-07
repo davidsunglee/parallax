@@ -1,5 +1,5 @@
 """Entity Graph Construction: the per-model facts a node-indexed graph publishes
-against, derived and proved once, and the one entry point that publishes it.
+against, derived and proved once, and the entry points that publish it.
 
 The loops that allocate, fill and attach run in
 :mod:`~parallax.core.entity._row_fill`; this module keeps what is derived once
@@ -354,6 +354,15 @@ class EntityGraphConstruction:
         refusal or such an exception attaches no lifecycle state to any node,
         and cannot revoke an instance the callback was handed and kept.
         """
+        return publish_graph(self._facts, graph, lifecycle_states)[0]
+
+    def publish_nodes(
+        self,
+        graph: IndexedGraph,
+        lifecycle_states: Callable[[Sequence[object]], Sequence[object]],
+    ) -> tuple[object, ...]:
+        """Publish ``graph`` as :meth:`publish` does and answer every node's
+        instance in node order, for a graph with more than one root."""
         return publish_graph(self._facts, graph, lifecycle_states)
 
     @property

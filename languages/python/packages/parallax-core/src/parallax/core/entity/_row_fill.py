@@ -261,8 +261,8 @@ def publish_graph(
     facts: Mapping[EntityIdentity, EntityFacts],
     graph: IndexedGraph,
     lifecycle_states: Callable[[Sequence[object]], Sequence[object]],
-) -> object:
-    """``graph``'s root instance, published with every node of its graph.
+) -> tuple[object, ...]:
+    """Every node of ``graph`` published together, its instances in node order.
 
     ``lifecycle_states`` is called once, with every filled instance in node
     order, and answers one opaque state per node. Exceptions raised by the
@@ -307,7 +307,7 @@ def publish_graph(
         )
     for instance, state in zip(shells, buffered, strict=True):
         attach_lifecycle_state(instance, state)
-    return instances[0]
+    return instances
 
 
 def _related_many(

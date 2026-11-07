@@ -8,6 +8,7 @@ from parallax.snapshot._handle._errors import (
 from parallax.snapshot._handle._read import (
     CheckedSnapshot,
     NoResultFound,
+    SharingScope,
     Snapshot,
     TooManyResultsFound,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "NoResultFound",
     "ReadOnlyTxnContext",
     "ScopedDatabase",
+    "SharingScope",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotConsistencyError",
