@@ -958,21 +958,27 @@ def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
 
 def test_a_standalone_failure_escaping_a_callback_keeps_the_edition_that_read_adopted() -> None:
     # The nested read names its own edition, and the invocation around it adds no
-    # second wrapper, so what escapes names the execution that failed rather than
-    # the one that merely enclosed it.
+    # second wrapper, so what escapes is the failure that read raised, naming the
+    # execution that failed rather than the one that merely enclosed it.
     serving = ServingModel(_A)
     failure = DatabaseError(category="uniqueViolation", native_code="23505", message="duplicate")
     port = ScriptedAdapter(Transact(Read(raises=failure)))
     db = scope(port, serving)
+    nested: list[ExecutionFailure] = []
 
     def body(_tx: TxnAttempt) -> None:
         serving.publish(_B, expected=_A)
-        WireDatabaseView(db).find(_account_seven())
+        try:
+            WireDatabaseView(db).find(_account_seven())
+        except ExecutionFailure as raised:
+            nested.append(raised)
+            raise
 
     with raises_contextualized(DatabaseError) as failed:
         db.transact(body, itself)
     assert failed.edition == "b"
     assert failed.value is failure
+    assert failed.failure is nested[0]
 
 
 def test_a_failed_rollback_keeps_both_errors_inside_the_contextualized_cause() -> None:
