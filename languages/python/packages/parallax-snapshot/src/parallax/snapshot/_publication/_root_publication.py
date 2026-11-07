@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from array import array
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from types import MappingProxyType
-from typing import Final
+from typing import Final, NamedTuple
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.metamodel import Metamodel
@@ -21,9 +21,25 @@ from parallax.core.read_delivery._page import (
 from parallax.core.temporal_read import Edge, Pin, TemporalShape
 from parallax.snapshot._publication._graph_view import GraphView
 
-__all__ = ["milestone_pin", "publication_issue", "publish_roots", "require_publishable"]
+__all__ = [
+    "SharedGraph",
+    "milestone_pin",
+    "publication_issue",
+    "publish_roots",
+    "publish_shared_roots",
+    "require_publishable",
+]
 
 _NO_READ_EVIDENCE: Final[Mapping[int, ReadEvidence]] = MappingProxyType({})
+
+
+class SharedGraph[T](NamedTuple):
+    """One Page's published Shared Graph: its ``view``, the value of each valid
+    root in result order, and the positions that publish alone."""
+
+    view: GraphView
+    roots: tuple[T, ...]
+    invalid: frozenset[int]
 
 
 def publication_issue(root: GraphView) -> StoredDataIssueInput | None:
@@ -108,4 +124,77 @@ def publish_roots[T](
         resolve(position, rows.pin if edge is None else milestone_pin(edge))
         release_finished_rows(page, schedule, position, root.reached)
         yield from publish_root(root, ordinal_offset + position)
+        observer.root_published(ordinal_offset + position)
+
+
+def publish_shared_roots[T](
+    page: Page,
+    publish_root: Callable[[GraphView, int], tuple[T, ...]],
+    publish_shared_graph: Callable[[GraphView, Sequence[int]], tuple[T, ...]],
+    model: Metamodel,
+    *,
+    atomic: bool = False,
+    ordinal_offset: int = 0,
+    milestones: TemporalShape | None = None,
+    read_evidence: Mapping[int, ReadEvidence] = _NO_READ_EVIDENCE,
+) -> Iterator[T]:
+    """Publish ``page``'s roots as one Shared Graph through
+    ``publish_shared_graph``, or through :func:`publish_roots` when the Page has
+    nothing to share, cannot share, or fails in the attempt.
+
+    A ``milestones`` read skips the attempt, because each of its roots stands at
+    its own pin.
+    """
+    shared = (
+        None
+        if milestones is not None
+        else _attempt_shared_graph(page, publish_shared_graph, model, read_evidence)
+    )
+    if shared is None:
+        yield from publish_roots(
+            page,
+            publish_root,
+            model,
+            atomic=atomic,
+            ordinal_offset=ordinal_offset,
+            milestones=milestones,
+            read_evidence=read_evidence,
+        )
+        return
+    yield from _deliver_in_result_order(page, shared, ordinal_offset)
+
+
+def _attempt_shared_graph[T](
+    page: Page,
+    publish_shared_graph: Callable[[GraphView, Sequence[int]], tuple[T, ...]],
+    model: Metamodel,
+    read_evidence: Mapping[int, ReadEvidence],
+) -> SharedGraph[T] | None:
+    """``page``'s Shared Graph, or ``None`` for the per-root pass.
+
+    The schedule is the one without last uses: the Page stays whole until the
+    publish, and computing last uses walks every root's reach, which is the cost
+    sharing removes. A failure here releases nothing, so it resurfaces at the same
+    root when the per-root pass meets it.
+    """
+    rows = page_rows(page)
+    view = GraphView(rows, page_schedule(page, model, atomic=False), read_evidence=read_evidence)
+    try:
+        invalid = view.resolve_shared_roots()
+        if invalid is None:
+            return None
+        positions = [position for position in range(len(rows.roots)) if position not in invalid]
+        return SharedGraph(view, publish_shared_graph(view, positions), invalid)
+    except Exception:
+        return None
+
+
+def _deliver_in_result_order[T](
+    page: Page, shared: SharedGraph[T], ordinal_offset: int
+) -> Iterator[T]:
+    """Release ``page``, whose values are all prepared, and hand over each root."""
+    observer = page_cadence(page)
+    release_page_rows(page)
+    for position, root in enumerate(shared.roots):
+        yield root
         observer.root_published(ordinal_offset + position)

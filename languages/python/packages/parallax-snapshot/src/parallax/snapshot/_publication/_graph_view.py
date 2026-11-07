@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import cast
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
@@ -24,6 +24,7 @@ from parallax.core.read_delivery._page import (
     entity_state,
     exact_stored_equal,
     layout_order_key,
+    overlapping_reach,
     reach_into,
     same_stored_values,
     stored_order_key,
@@ -60,15 +61,24 @@ class SnapshotConsistencyError(RuntimeError):
         self.fetched_rows = fetched_rows
 
 
+class _RowsIncompatible(Exception):
+    """A logical row's fetched rows hold unequal stored values, so its roots
+    cannot share one node."""
+
+
 class GraphView:
-    """One result root's borrowed reach over a sealed Page: its nodes, their
-    Page-owned states, their carried relationship views, and their Read Evidence.
+    """A borrowed reach over a sealed Page: its nodes, their Page-owned states,
+    their carried relationship views, and their Read Evidence.
 
     A publication pass forms one and re-points it at each root in turn, so it is
     valid only inside the ``publish_root`` call that received it: kept beyond
     that call, it answers for whichever root the pass resolved last. Node 0 is
     the root, and the nodes are the finalized publication segment, which
     excludes an issue-bearing allocation the root's carried views never reach.
+
+    A page-scope attempt instead resolves the Page's roots together, once:
+    :meth:`resolve_shared_roots` makes the nodes one Shared Graph, and
+    :meth:`root_node` answers where each root sits in it.
 
     A fetched row of a level the Page's schema proves records each row key at
     most once is its own logical row, judged when it was recorded, so its state
@@ -261,7 +271,7 @@ class GraphView:
         ):
             self._allocate_per_fetched_row(rows, reached, judging)
         else:
-            self._allocate_per_logical_row(rows, reached, judging)
+            self._allocate_per_logical_row(rows, reached, judging, self._node_row_or_conflict)
         _notify(rows.observer, "fetched_rows_reached", len(reached))
         findings = self._findings
         if not judging:
@@ -276,6 +286,109 @@ class GraphView:
         if not self._has_issues:
             evidence = self._read_evidence
             self._read_evidence_values = [evidence.get(node_row) for node_row in self._node_rows]
+
+    def resolve_shared_roots(self) -> frozenset[int] | None:
+        """Resolve this view over every root of the Page together, as one Shared
+        Graph, and answer the positions that must publish alone, or ``None`` when
+        the Page takes the per-root pass instead.
+
+        A Page whose roots carry no view cannot overlap, so it is not walked.
+        Any other Page shares only when two roots reach one logical row, every
+        logical row is compatible, and no reached node holds a finding, which a
+        keyless root does once it is judged. Compatibility is decided before any
+        decoding, and nothing here releases a Page row, so the per-root pass can
+        still run after any outcome.
+        """
+        rows = self._rows
+        view_rows = rows.view_rows
+        if not any(view_rows[root] for root in rows.roots):
+            return None
+        reached = overlapping_reach(rows, rows.roots)
+        if reached is None or not self._allocate_if_compatible(reached):
+            return None
+        if any(self._findings):
+            return None
+        self._capture_read_evidence()
+        return frozenset()
+
+    def root_node(self, position: int) -> int:
+        """The node the root at ``position`` resolved to in the Shared Graph."""
+        return self._resolved[self._rows.roots[position]]
+
+    def _allocate_if_compatible(self, reached: Sequence[int]) -> bool:
+        """Allocate one node per logical row ``reached`` belongs to, and judge
+        them when they prove compatible.
+
+        Every node row is judged before any duplicate retires: retiring assumes
+        its node row's state exists, and a failure part way through judging
+        leaves the per-root pass to read what is still pending.
+        """
+        try:
+            self._allocate_per_logical_row(self._rows, reached, False, self._node_row_if_equal)
+        except _RowsIncompatible:
+            return False
+        if not self._views_compatible():
+            return False
+        self._judge_node_rows()
+        self._retire_duplicates()
+        return True
+
+    def _node_row_if_equal(self, fetched_rows: Sequence[int]) -> int:
+        rows = self._rows
+        first, *others = fetched_rows
+        if not all(same_stored_values(rows, first, other) for other in others):
+            raise _RowsIncompatible
+        return first
+
+    def _views_compatible(self) -> bool:
+        """Whether every fetched row agrees with the views its node carried: one
+        slot loaded at two positions names the same nodes in the same order.
+
+        Values compare as nodes, which also unifies a forward hop's fetched rows
+        with a back-reference's logical rows on one slot. A node's carried value
+        is the first its fetched rows loaded, so only duplicates can disagree. A
+        back-reference naming several coordinate-distinct logical rows resolves
+        among what each root reached, so it cannot share on any row.
+        """
+        rows = self._rows
+        node_rows = self._node_rows
+        for fetched_row, node in self._resolved.items():
+            row = rows.view_rows[fetched_row]
+            if not row:
+                continue
+            duplicate = node_rows[node] != fetched_row
+            view_layout = self._view_layouts[node]
+            level = rows.sources[fetched_row]
+            to_root_view = view_layout.to_root_view[level]
+            targets = view_layout.targets[level]
+            carried = self._view_rows[node]
+            for slot, value in enumerate(row):
+                if value is ABSENT:
+                    continue
+                if targets[slot] is not None and isinstance(value, tuple):
+                    return False
+                if (
+                    duplicate
+                    and self._allocation(value, targets[slot], None) != carried[to_root_view[slot]]
+                ):
+                    return False
+        return True
+
+    def _judge_node_rows(self) -> None:
+        rows = self._rows
+        for node_row in self._node_rows:
+            self._judge(rows, node_row)
+
+    def _retire_duplicates(self) -> None:
+        decoders = self._rows.decoders
+        node_rows = self._node_rows
+        for fetched_row, node in self._resolved.items():
+            if node_rows[node] != fetched_row:
+                decoders.retire(fetched_row)
+
+    def _capture_read_evidence(self) -> None:
+        evidence = self._read_evidence
+        self._read_evidence_values = [evidence.get(node_row) for node_row in self._node_rows]
 
     def _judge(self, rows: PageRows, fetched_row: int) -> None:
         """Append ``fetched_row``'s Entity State: the one recording judged on a
@@ -344,11 +457,16 @@ class GraphView:
     # materialization instruments measure; every split, including sharing the
     # view-carry loop with `_allocate_per_fetched_row`, adds a call to that loop.
     def _allocate_per_logical_row(  # noqa: C901
-        self, rows: PageRows, reached: Sequence[int], judging: bool
+        self,
+        rows: PageRows,
+        reached: Sequence[int],
+        judging: bool,
+        choose_node_row: Callable[[Sequence[int]], int],
     ) -> None:
         """Allocate one node per logical row the reached fetched rows belong to,
-        read from its node row. Once every reached fetched row resolves to its
-        node, carry each one's view values into that node."""
+        read from the node row ``choose_node_row`` picks from each group of
+        several. Once every reached fetched row resolves to its node, carry each
+        one's view values into that node."""
         local_rows: dict[int, int | list[int]] = {}
         for fetched_row in reached:
             logical = rows.logical_rows[fetched_row]
@@ -364,7 +482,7 @@ class GraphView:
         # conflict raises before this root decodes a state.
         for logical, merged in local_rows.items():
             if not isinstance(merged, int):
-                local_rows[logical] = self._node_row_or_conflict(merged)
+                local_rows[logical] = choose_node_row(merged)
         table: dict[int, int] = {}
         for logical, chosen in local_rows.items():
             node_row = cast("int", chosen)
@@ -507,12 +625,11 @@ class GraphView:
         targets: frozenset[EntityIdentity] | None,
         table: Mapping[int, int] | None,
     ) -> object:
-        """Translate one view value against only this root's allocations:
+        """Translate one view value against only this view's allocations:
         fetched rows when ``targets`` is ``None``, otherwise a back-reference's
-        logical rows, the first of which this root reached as one of
-        ``targets`` wins. ``table`` is :meth:`_allocate_per_logical_row`'s
-        logical-to-node allocation, and ``None`` from
-        :meth:`_allocate_per_fetched_row`."""
+        logical rows, the first of which was reached as one of ``targets`` wins.
+        ``table`` is :meth:`_allocate_per_logical_row`'s logical-to-node
+        allocation, and ``None`` where the resolved fetched rows answer alone."""
         if value is None:
             return None
         if targets is None:
@@ -529,11 +646,11 @@ class GraphView:
         return None
 
     def _logical_row_node(self, logical: int, table: Mapping[int, int] | None) -> int | None:
-        """The node this root allocated for ``logical``, if it reached any
-        fetched row of it.
+        """The node allocated for ``logical``, if any fetched row of it was
+        reached.
 
-        Without ``table`` the root's resolved fetched rows are exactly its
-        reach. A released logical row's fetched rows and their logical rows
+        Without ``table`` the resolved fetched rows are exactly the reach. A
+        released logical row's fetched rows and their logical rows
         read ``0``, so a fetched row only counts while its logical row still
         names ``logical``.
         """

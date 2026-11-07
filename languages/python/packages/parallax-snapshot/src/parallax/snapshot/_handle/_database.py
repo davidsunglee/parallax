@@ -22,7 +22,12 @@ from parallax.core.read_delivery._read_plan import (
     check_read_plan_cache_capacity,
 )
 from parallax.snapshot._handle._errors import SnapshotConnectionError
-from parallax.snapshot._handle._read import Snapshot, typed_publication_for
+from parallax.snapshot._handle._read import (
+    SharingScope,
+    Snapshot,
+    typed_publication_builder,
+    typed_publication_for,
+)
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._transaction import (
     ReadOnlyTxnContext,
@@ -96,11 +101,15 @@ class ScopedDatabase:
     def with_routing(self, *, read_policy: RoutePolicy) -> ScopedDatabase:
         return self.create(self._execution.with_routing(read_policy=read_policy))
 
-    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+    def find[S](
+        self, query: ObjectQuery[Any, S], *, sharing_scope: SharingScope = "root"
+    ) -> Snapshot[S]:
         return cast(
             "Snapshot[S]",
             self._execution.read(
-                query, convert_query=typed_read_query, build_publication=typed_publication_for
+                query,
+                convert_query=typed_read_query,
+                build_publication=typed_publication_builder(sharing_scope),
             ),
         )
 

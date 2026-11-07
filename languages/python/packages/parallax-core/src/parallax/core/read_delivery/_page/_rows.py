@@ -42,6 +42,7 @@ __all__ = [
     "exact_stored_equal",
     "judged_entity_state",
     "layout_order_key",
+    "overlapping_reach",
     "page_edges",
     "page_rows",
     "page_schedule",
@@ -694,6 +695,36 @@ def reach_into(rows: PageRows, root: int, reached: list[int]) -> None:
         reached.append(fetched_row)
         if view_rows[fetched_row]:
             push_edges(rows, fetched_row, pending)
+
+
+def overlapping_reach(rows: PageRows, roots: Sequence[int]) -> list[int] | None:
+    """Every fetched row ``roots`` reach, each once, root by root in fetched-row
+    preorder, or ``None`` when no logical row is reached from two roots.
+
+    Each logical row is owned by the first root that reaches it, so reaching one
+    a different root owns proves overlap, and a diamond within one root does
+    not. The walk visits each fetched row once however many roots reach it.
+    """
+    logical_rows = rows.logical_rows
+    view_rows = rows.view_rows
+    owners: dict[int, int] = {}
+    seen: set[int] = set()
+    reached: list[int] = []
+    pending: list[int] = []
+    overlaps = False
+    for root in roots:
+        pending.append(root)
+        while pending:
+            fetched_row = pending.pop()
+            if owners.setdefault(logical_rows[fetched_row], root) != root:
+                overlaps = True
+            if fetched_row in seen:
+                continue
+            seen.add(fetched_row)
+            reached.append(fetched_row)
+            if view_rows[fetched_row]:
+                push_edges(rows, fetched_row, pending)
+    return reached if overlaps else None
 
 
 def release_finished_rows(

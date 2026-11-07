@@ -30,7 +30,7 @@ from parallax.snapshot import (
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
 from parallax.snapshot._publication import _graph_view, _typed, _wire_render
 from parallax.snapshot._publication._graph_view import GraphView
-from parallax.snapshot._publication._root_publication import publish_roots
+from parallax.snapshot._publication._root_publication import publish_roots, publish_shared_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from parallax.snapshot._publication._wire_render import WireRootPublisher
@@ -116,6 +116,34 @@ def _evidence(form: _Form, value: object) -> object:
         assert state is not None
         return state.provenance.read_evidence
     return read_evidence_of(cast("Any", value))
+
+
+def test_a_failed_shared_attempt_publishes_every_root_through_the_per_root_pass() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    first, second = _order(fixture, 1), _order(fixture, 2)
+    item = _item(fixture, 11)
+    fixture.attach(first, _ITEMS, (item,))
+    fixture.attach(second, _ITEMS, (item,))
+    publisher = TypedRootPublisher(
+        fixture.model,
+        graph_construction_for(ENCODED_ORDERS),
+        prepared_view_keys_for(ENCODED_ORDERS),
+    )
+
+    def failing(_view: GraphView, _positions: object) -> tuple[object, ...]:
+        raise RuntimeError("the shared publish failed")
+
+    published = cast(
+        "list[Any]",
+        list(
+            publish_shared_roots(
+                fixture.page(first, second), publisher, failing, fixture.model, atomic=True
+            )
+        ),
+    )
+
+    assert [root.id for root in published] == [1, 2]
+    assert published[0].items[0] is not published[1].items[0]
 
 
 # --------------------------------------------------------------------------- #

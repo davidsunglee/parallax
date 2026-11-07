@@ -521,6 +521,7 @@
     "NoResultFound",
     "ReadOnlyTxnContext",
     "ScopedDatabase",
+    "SharingScope",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotConsistencyError",

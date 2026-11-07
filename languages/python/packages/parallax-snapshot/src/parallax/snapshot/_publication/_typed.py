@@ -88,6 +88,17 @@ class TypedRootPublisher:
         finally:
             self._root = None
 
+    def publish_shared_graph(self, view: GraphView, positions: Sequence[int]) -> tuple[object, ...]:
+        """The instance of each root at ``positions``, from one publish of
+        ``view``'s Shared Graph, whose nodes all conform."""
+        self._root = view
+        self._conformance = RootConformance.CONFORMING
+        try:
+            instances = self._construction.publish_nodes(view, self._lifecycle_states)
+        finally:
+            self._root = None
+        return tuple([instances[view.root_node(position)] for position in positions])
+
     def _lifecycle_states(self, instances: Sequence[object]) -> list[SnapshotNodeState]:
         """Every node's Snapshot state, in node order.
 

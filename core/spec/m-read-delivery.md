@@ -195,7 +195,9 @@ is not Entity State: it belongs to whatever publishes a root, because two roots
 may have reached the same row through different requested paths. A published value
 retains only the member state and private write-origin state its lifecycle
 requires; it retains no Page, Root View, raw provider row, unused stored values, or
-other root's relationship view.
+other root's relationship view. A node a page-scope read shares across roots
+(`m-snapshot-read` *Node sharing*) may hold relationships another root loaded, and
+it still retains no Page, Root View, or raw provider row.
 
 Each **fetched row** — one database row as one statement returned it, at one
 level — has a **row identity**: its resolved concrete Entity, its
@@ -218,7 +220,10 @@ A Publication judging one root compares only the fetched rows that root reaches
 (`m-snapshot-read` *Root View*), so one root's reach never extends another's:
 unequal stored values reached only by separate roots coexist in the Page. Equal
 stored values on a Page establish one Entity State wherever they are reached, and
-its findings classify only the roots that reach it.
+its findings classify only the roots that reach it. A page-scope read also compares
+the fetched rows of the whole Page to decide whether its roots may share nodes;
+that comparison refuses nothing, and unequal stored values still coexist across
+the roots of a Page that does not share.
 
 A **Page** is the bounded result of one eager read or one streamed batch. Eager
 delivery uses one Page for its whole database-ordered result. A stream drops each
