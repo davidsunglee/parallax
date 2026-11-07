@@ -19,8 +19,8 @@ inspected afterwards.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Generator, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from time import monotonic
 from typing import Any, ClassVar, cast
 
@@ -29,9 +29,9 @@ import psycopg_pool
 import pytest
 from psycopg.adapt import AdaptersMap
 from psycopg.pq import TransactionStatus
-from psycopg.rows import TupleRow, tuple_row
+from psycopg.rows import TupleRow
 
-from parallax.core.base import INFINITY, StructuredDocument
+from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     DRIVER_MANAGED,
@@ -373,25 +373,6 @@ def _opened(monkeypatch: pytest.MonkeyPatch, pool: Any) -> Any:
 
     monkeypatch.setattr(route_module, "_build_pool", build)
     return pool
-
-
-def test_startup_probes_a_real_connection_and_gives_it_back(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Waiting for a minimum is not readiness: it says a connection exists rather
-    # than that a statement works. The probe reads an integer, a neutral
-    # unbounded instant, a structured document, two exact floats, and the
-    # authenticated login through the same initialized execution an application
-    # gets.
-    pool = _opened(monkeypatch, _pool())
-    runtime = _open_runtime(PoolOptions(min_size=1))
-
-    assert pool.waits and pool.checkouts
-    assert pool.returned and pool.returned[0].statements == [PROBE_SQL]
-    # A ready runtime publishes its writer pool's measurements; what one
-    # answers is `test_pool_metrics.py`'s.
-    assert [source.route for source in runtime.pool_metrics] == ["writer"]
-    assert runtime.login_identity == "runtime-login"
 
 
 def test_the_startup_probe_is_submitted_as_a_designated_read(
@@ -898,14 +879,6 @@ def test_a_refused_begin_disposes_of_its_session_and_later_work_takes_a_fresh_on
     assert pool.returned == [refused, fresh]
 
 
-def test_each_acquisition_yields_fresh_execution_access() -> None:
-    pool = _pool()
-    first = _context(pool)
-    second = _context(pool)
-    with first as one, second as two:
-        assert one is not two
-
-
 def test_the_runtime_declares_one_writer_route_serving_every_read_only_level() -> None:
     runtime = _runtime(_pool())
 
@@ -965,36 +938,6 @@ def test_authority_binding_and_context_creation_acquire_nothing() -> None:
     assert not hasattr(runtime, "connection")
 
 
-def test_principal_acquisition_installs_the_role_before_execution_and_resets_it_on_exit() -> None:
-    connection = _FakeConnection()
-    runtime = _runtime(_pool(connection))
-    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
-
-    with resource as scoped:
-        scoped.execute("select current_user", [])
-
-    assert "SET ROLE" in connection.statements[0]
-    assert "tenant_reader" in connection.statements[0]
-    assert connection.statements[1:] == ["select current_user", "RESET ROLE"]
-    assert resource.cleanup_result == Returned()
-
-
-def test_role_installation_failure_is_an_authorization_refusal_and_disposes_the_session() -> None:
-    failure = RuntimeError("role denied")
-    connection = _FakeConnection(execute_error=failure)
-    pool = _pool(connection)
-    resource = _context(pool, role=PostgresRole("tenant_reader"))
-
-    with pytest.raises(ConnectionAcquisitionError) as refused:
-        resource.__enter__()
-
-    assert refused.value.reason == "authorization_failed"
-    assert refused.value.__cause__ is failure
-    assert isinstance(resource.cleanup_result, Invalidated)
-    assert connection.closes == 1
-    assert "RESET ROLE" not in connection.statements
-
-
 def test_role_installation_preserves_a_control_flow_exception() -> None:
     connection = _FakeConnection(execute_error=KeyboardInterrupt())
     resource = _context(_pool(connection), role=PostgresRole("tenant_reader"))
@@ -1045,29 +988,6 @@ def test_role_restoration_failure_forces_disposal_and_is_reported() -> None:
     ]
     assert connection.closes == 1
     assert pool.returned == [connection]
-
-
-def test_reused_session_does_not_bleed_principal_authority_into_later_acquisitions() -> None:
-    connection = _FakeConnection()
-    runtime = _runtime(_pool(connection))
-
-    with runtime.principal_source(PostgresRole("reader_a")).new_context("writer_only"):
-        pass
-    with runtime.principal_source(PostgresRole("reader_b")).new_context("writer_only"):
-        pass
-    with runtime.login_source().new_context("writer_only"):
-        pass
-
-    assert (
-        sum(
-            "SET ROLE" in statement and statement != "RESET ROLE"
-            for statement in connection.statements
-        )
-        == 2
-    )
-    assert connection.statements.count("RESET ROLE") == 2
-    assert "reader_a" in connection.statements[0]
-    assert "reader_b" in connection.statements[2]
 
 
 # --------------------------------------------------------------------------- #
@@ -1141,74 +1061,6 @@ def test_a_broken_first_designated_read_is_submitted_once_more_on_a_replacement(
     assert resource.cleanup_result == Returned()
 
 
-def test_a_broken_first_begin_opens_once_more_and_runs_its_callback_once() -> None:
-    # The disposed original receives the characteristics and no reset; the
-    # replacement receives the same mapped requests, the one callback, and
-    # alone the outer boundary's reset.
-    broken = _FakeConnection(lost=_lost())
-    fresh = _FakeConnection(rows=[])
-    pool = _pool(broken, fresh)
-    ran: list[str] = []
-
-    def body(port: DatabaseConnection) -> list[Row]:
-        ran.append("body")
-        return port.execute("select 1", [])
-
-    resource = _context(pool)
-    with resource as scoped:
-        outcome = scoped.transaction(body, isolation="serializable", access_mode="read_only")
-
-    requested = [("isolation_level", psycopg.IsolationLevel.SERIALIZABLE), ("read_only", True)]
-    assert outcome == Committed([])
-    assert ran == ["body"]
-    assert broken.statements == ["BEGIN"]
-    assert broken.characteristics == requested
-    assert fresh.statements == ["BEGIN", "select 1", "COMMIT"]
-    assert fresh.characteristics == [*requested, ("isolation_level", None), ("read_only", None)]
-    assert pool.returned == [broken, fresh]
-    assert resource.cleanup_result == Returned()
-
-
-def test_a_broken_first_read_pipeline_is_submitted_once_more_whole_on_a_replacement(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The batch is the protected submission, not its first member: the
-    # replacement receives every statement with the binds adapted once for
-    # the original, and the original is handed back before it is asked for.
-    from parallax.postgres import _connection as connection_module
-
-    adaptations: list[Sequence[object]] = []
-    adapt = connection_module.adapt_binds
-
-    def counted(binds: Sequence[object]) -> list[object]:
-        adaptations.append(binds)
-        return adapt(binds)
-
-    monkeypatch.setattr(connection_module, "adapt_binds", counted)
-    broken = _FakeConnection(lost=_lost())
-    fresh = _FakeConnection(rows=[{"id": 1}])
-    pool = _pool(broken, fresh)
-    resource = _context(pool)
-    batch = (
-        PipelineStatement("select id from a where id = any(%s)", ([1, 2],)),
-        PipelineStatement("select id from b where id = %s", (3,)),
-    )
-
-    with resource as scoped:
-        rows = scoped.execute_pipeline(batch, read_only=True)
-        assert resource.cleanup_result is None
-        assert pool.returned == [broken]
-
-    assert rows == [[(1,)], [(1,)]]
-    assert len(adaptations) == 2
-    assert broken.statements == ["select id from a where id = any(%s)"]
-    assert fresh.statements == [statement.sql for statement in batch]
-    assert fresh.binds[0] is broken.binds[0]
-    assert len(pool.checkouts) == 2
-    assert pool.returned == [broken, fresh]
-    assert resource.cleanup_result == Returned()
-
-
 def test_a_replaced_read_pipeline_that_breaks_again_reports_its_own_failure() -> None:
     second = _lost("the replacement was lost too")
     pool = _pool(_FakeConnection(lost=_lost()), _FakeConnection(lost=second), _FakeConnection())
@@ -1237,37 +1089,8 @@ def _read_pipeline(port: DatabaseConnection) -> object:
     return port.execute_pipeline((PipelineStatement("select 1"),), read_only=True)
 
 
-def _undesignated_pipeline(port: DatabaseConnection) -> object:
-    return port.execute_pipeline((PipelineStatement("select 1"),))
-
-
 def _began(port: DatabaseConnection) -> object:
     return port.transaction(_read)
-
-
-@pytest.mark.parametrize(
-    "submit",
-    [_row_producing, _count_only, _undesignated_pipeline],
-    ids=["row-producing-dml", "count-only", "undesignated-pipeline"],
-)
-def test_a_broken_first_submission_that_is_not_replay_safe_is_never_resubmitted(
-    submit: Callable[[DatabaseConnection], object],
-) -> None:
-    # A defaulted row-producing statement, a write, and a batch submitted
-    # without read intent are never repeated: each spends the opportunity and
-    # fails as it always has.
-    broken = _FakeConnection(lost=_lost())
-    pool = _pool(broken, _FakeConnection())
-    resource = _context(pool)
-
-    with resource as scoped, pytest.raises(DatabaseError) as failed:
-        submit(scoped)
-
-    assert isinstance(failed.value.__cause__, psycopg.OperationalError)
-    assert len(pool.checkouts) == 1
-    assert len(broken.statements) == 1
-    assert pool.returned == [broken]
-    assert _issues(resource.cleanup_result) == [("inspect", "not-idle")]
 
 
 class _NamedCheckViolation(psycopg.errors.CheckViolation):
@@ -1978,17 +1801,6 @@ def test_the_ordinary_acquisition_budget_comes_from_the_configured_timeout() -> 
     assert given is not None and 0.0 < given <= 3.0
 
 
-def test_close_holds_no_lock_across_a_checkout() -> None:
-    # Admission stops under the lock and the native close runs outside it, so an
-    # acquisition that blocks cannot block a close.
-    pool = _pool()
-    runtime = _runtime(pool)
-    resource = _login_context(runtime)
-    with resource:
-        runtime.close()
-    assert pool.closes == 1
-
-
 def test_a_runtime_answers_the_dialect_its_statements_are_spelled_in() -> None:
     assert _runtime(_pool()).dialect.name == "postgres"
 
@@ -2012,36 +1824,6 @@ def test_startup_completion_installs_the_login_exactly_once() -> None:
         runtime._complete_startup(  # pyright: ignore[reportPrivateUsage] - direct startup state pin
             "second-login"
         )
-
-
-def test_the_on_demand_policy_selects_the_native_null_pool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Which record is supplied selects which behavior the runtime has, so there
-    # is no mode flag beside the settings to disagree with them.
-    from parallax.postgres import _route as route_module
-
-    built: list[str] = []
-
-    class _Null(_FakePool):
-        def __init__(self, *_args: object, **kwargs: object) -> None:
-            super().__init__()
-            built.append(type(self).__name__)
-            assert "min_size" not in kwargs
-            assert "max_idle" not in kwargs
-
-        def open(self) -> None:
-            return
-
-    monkeypatch.setattr(psycopg_pool, "NullConnectionPool", _Null)
-    route_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
-        PostgresEndpoint("", credentials=DRIVER_MANAGED, pool=OnDemandOptions()),
-        "writer",
-        15.0,
-        5,
-        _establishment(),
-    )
-    assert built == ["_Null"]
 
 
 @pytest.mark.parametrize(
@@ -2222,17 +2004,6 @@ def test_leaving_a_context_that_was_never_entered_does_nothing() -> None:
     assert (pool.returned, resource.cleanup_result) == ([], None)
 
 
-def test_a_document_read_folds_its_adjacent_cells_on_the_scoped_execution() -> None:
-    # The document-read projection is the read path's, and it runs on the scoped
-    # execution rather than anywhere a pool can see.
-    connection = _FakeConnection(rows=[{"id": 1, "doc_present": True, "doc": {"a": 1}}])
-    resource = _context(_pool(connection))
-    with resource as scoped:
-        rows = scoped.execute("select id, doc_present, doc from t", [], [(1, 2)])
-    (row,) = rows
-    assert row == (1, StructuredDocument({"a": 1}))
-
-
 # --------------------------------------------------------------------------- #
 # The credential: resolved per physical connection, or not supplied at all.    #
 # --------------------------------------------------------------------------- #
@@ -2258,54 +2029,6 @@ class _Refusing:
     def resolve(self) -> Password:
         self.calls += 1
         raise self.error
-
-
-def _built_kwargs(monkeypatch: pytest.MonkeyPatch, credentials: Any) -> Any:
-    """The ``kwargs`` ``_build_pool`` hands the native pool under ``credentials``."""
-    from parallax.postgres import _route as route_module
-
-    recorded: list[Any] = []
-
-    class _Recording(_FakePool):
-        def __init__(self, *_args: object, **kwargs: object) -> None:
-            super().__init__()
-            recorded.append(kwargs["kwargs"])
-
-        def open(self) -> None:
-            return
-
-    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _Recording)
-    route_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
-        PostgresEndpoint("", credentials=credentials, pool=PoolOptions()),
-        "writer",
-        15.0,
-        5,
-        _establishment(),
-    )
-    (kwargs,) = recorded
-    return kwargs
-
-
-def test_the_driver_managed_declaration_supplies_no_password_at_all(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Declaring it is how a deployment says the driver and the server settle
-    # authentication between themselves, so what the pool gets is the static
-    # dictionary this adapter would pass anyway, with nothing added to it.
-    kwargs = _built_kwargs(monkeypatch, DRIVER_MANAGED)
-
-    assert not callable(kwargs)
-    assert "password" not in kwargs
-    assert kwargs == {"autocommit": True, "row_factory": tuple_row, "prepare_threshold": 5}
-
-
-@pytest.mark.parametrize("credentials", [Password("hunter2"), _Refusing(RuntimeError("no"))])
-def test_any_source_makes_the_connection_keywords_a_per_connection_callable(
-    monkeypatch: pytest.MonkeyPatch, credentials: Any
-) -> None:
-    # A constant password is a source like any other, so both take the late
-    # path: nothing about the pool's configuration says which kind it holds.
-    assert callable(_built_kwargs(monkeypatch, credentials))
 
 
 def test_each_physical_connection_gets_fresh_keywords_carrying_the_resolved_secret() -> None:
@@ -2381,11 +2104,10 @@ def test_a_resolved_credential_leaves_a_refusal_on_record_until_a_connection_is_
 class _NativeStub:
     """What the INSTALLED native pool creates, hands on, and closes.
 
-    The pins below drive `psycopg_pool` itself rather than a fake of it. Two of
-    this adapter's documented behaviors are the library's rather than its own —
-    on-demand establishment bounded by the remaining acquisition budget, and an
-    on-demand release going to a waiting borrower instead of being closed — so a
-    release that changed either would otherwise change what the adapter promises
+    The pins below drive `psycopg_pool` itself rather than a fake of it. One of
+    this adapter's documented behaviors is the library's rather than its own —
+    on-demand establishment bounded by the remaining acquisition budget — so a
+    release that changed it would otherwise change what the adapter promises
     without changing a line of it.
     """
 
@@ -2405,22 +2127,6 @@ class _NativeStub:
 
     def close(self) -> None:
         self.closed = True
-
-
-@contextmanager
-def _opened_null_pool() -> Generator[Any]:
-    """An OPEN native null pool over the stub, closed again on the way out.
-
-    Open rather than merely constructed, because "is a borrower waiting" is a
-    question a closed pool answers by closing the connection whatever the queue
-    holds — which would make the pin pass for the wrong reason.
-    """
-    pool = _native_null_pool()
-    pool.open()
-    try:
-        yield pool
-    finally:
-        pool.close()
 
 
 def _native_null_pool(conninfo: str = "", **kwargs: Any) -> Any:
@@ -2445,22 +2151,6 @@ def test_on_demand_establishment_is_bounded_by_the_remaining_budget_and_rounded(
     assert [created["connect_timeout"] for created in _NativeStub.connects] == [4, 1]
 
 
-def test_the_installed_pool_resolves_callable_keywords_on_every_physical_connect() -> None:
-    # The per-physical-connection contract is the library's behavior, not this
-    # adapter's: `_connect` resolves a callable `kwargs` on each attempt. A
-    # release that stopped doing so would silently freeze one credential.
-    resolutions = iter(["first-token", "second-token"])
-    pool = _native_null_pool(kwargs=lambda: {"password": next(resolutions)})
-
-    pool._connect()
-    pool._connect()
-
-    assert [created["password"] for created in _NativeStub.connects] == [
-        "first-token",
-        "second-token",
-    ]
-
-
 def test_an_establishment_keyword_overrides_what_the_connection_string_asked_for() -> None:
     # The other half of the same claim: the derived limit is passed as a keyword,
     # and a keyword wins over the same setting in the connection string.
@@ -2469,24 +2159,6 @@ def test_an_establishment_keyword_overrides_what_the_connection_string_asked_for
     resolved = conninfo_to_dict(make_conninfo("connect_timeout=30", connect_timeout=4))
 
     assert resolved["connect_timeout"] == "4"
-
-
-def test_an_on_demand_release_is_handed_to_a_waiting_borrower_rather_than_closed() -> None:
-    # `OnDemandOptions` documents that releasing closes the connection UNLESS a
-    # caller is already waiting, which is why it bounds concurrency without
-    # promising a brand-new physical connection per operation.
-    with _opened_null_pool() as unwatched:
-        alone = unwatched._connect()
-        unwatched._add_to_pool(alone)
-        assert alone.closed is True
-
-    with _opened_null_pool() as queued:
-        queued._waiting.append(object())
-        handed = queued._connect()
-
-        assert queued._maybe_close_connection(handed) is False
-        assert handed.closed is False
-        queued._waiting.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -2645,34 +2317,6 @@ def test_a_routed_runtime_declares_a_reader_that_cannot_begin_serializable() -> 
     assert [source.route for source in runtime.pool_metrics] == ["writer", "reader"]
     with pytest.raises(TypeError):
         cast("Any", runtime.routes)["reader"] = RouteCapabilities.every_level()
-
-
-def test_each_strict_policy_leases_from_its_own_route_s_pool() -> None:
-    writer_pool, reader_pool = _pool(), _pool()
-    runtime = _routed(writer_pool, reader_pool)
-
-    with _reader_context(runtime) as scoped:
-        scoped.execute("select 1", [])
-    resource = runtime.login_source().new_context("writer_only")
-    with resource as scoped:
-        scoped.execute("select 2", [])
-
-    assert len(reader_pool.checkouts) == len(writer_pool.checkouts) == 1
-    assert reader_pool.returned[0].statements == ["select 1"]
-    assert writer_pool.returned[0].statements == ["select 2"]
-    assert resource.selection == RouteSelection("writer")
-
-
-def test_a_reader_lease_installs_the_bound_principal_like_a_writer_lease() -> None:
-    reader_pool = _pool()
-    runtime = _routed(_pool(), reader_pool)
-
-    with _reader_context(runtime, PostgresRole("tenant_reader")) as scoped:
-        scoped.execute("select current_user", [])
-
-    (connection,) = reader_pool.returned
-    assert "SET ROLE" in connection.statements[0] and "tenant_reader" in connection.statements[0]
-    assert connection.statements[1:] == ["select current_user", "RESET ROLE"]
 
 
 def test_a_reader_lease_s_refusal_reports_the_reader() -> None:

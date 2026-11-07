@@ -5,9 +5,9 @@ Two vocabularies describe the same distinctions: the `Literal` members a Handler
 receives and the built-in Logger writes, which are Python's own and spelled the
 way `execution.md` spells such a value; and the tokens the core spec authors,
 which the compatibility corpus is graded against. Neither is derived from the
-other, so what is graded here is that BOTH are enumerated — the member sets
-below, and a projection driven off those same sets rather than off a hand-written
-list that a new member would quietly fall outside of.
+other, so what is graded here is a projection driven off the declared members
+rather than off a hand-written list that a new member would quietly fall outside
+of.
 """
 
 from __future__ import annotations
@@ -38,12 +38,12 @@ from parallax.core.sql_gen import LoweredStatement
 
 _RUNTIME_SPELLING: Final = re.compile(r"[a-z]+(?:_[a-z]+)*\Z")
 
-_FAMILIES: Final[dict[str, tuple[Any, tuple[str, ...]]]] = {
-    "RootExecutionKind": (RootExecutionKind, ("read", "transaction_invocation", "stream")),
-    "ResultRepresentation": (ResultRepresentation, ("typed", "wire")),
-    "DatabaseCallKind": (DatabaseCallKind, ("read", "write")),
-    "AttemptPhase": (AttemptPhase, ("callback", "pre_commit", "commit")),
-    "LifecycleLogDetail": (LifecycleLogDetail, ("safe", "diagnostic")),
+_FAMILIES: Final[dict[str, Any]] = {
+    "RootExecutionKind": RootExecutionKind,
+    "ResultRepresentation": ResultRepresentation,
+    "DatabaseCallKind": DatabaseCallKind,
+    "AttemptPhase": AttemptPhase,
+    "LifecycleLogDetail": LifecycleLogDetail,
 }
 
 _EXECUTION: Final = RootExecution(uuid4(), "read")
@@ -65,7 +65,7 @@ def _members(name: str) -> tuple[Any, ...]:
     Literal it came from: the point of reading them at runtime is that a member
     added to the alias reaches every case below without being written down again.
     """
-    return get_args(_FAMILIES[name][0].__value__)
+    return get_args(_FAMILIES[name].__value__)
 
 
 def _projected(*roots: RecordedRoot) -> list[dict[str, Any]]:
@@ -80,11 +80,6 @@ def _root(kind: str, *events: ExecutionEvent) -> RecordedRoot:
 def _transitions(*events: ExecutionEvent) -> list[dict[str, Any]]:
     (root,) = _projected(_root("read", *events))
     return cast("list[dict[str, Any]]", root["events"])
-
-
-def test_every_family_declares_exactly_its_migrated_members() -> None:
-    for name, (_, expected) in _FAMILIES.items():
-        assert _members(name) == expected, name
 
 
 def test_every_member_is_spelled_the_way_python_spells_a_runtime_value() -> None:

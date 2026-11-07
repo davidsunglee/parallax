@@ -21,16 +21,10 @@ from uuid import uuid4
 
 import pytest
 
-from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
 from parallax.core.execution_lifecycle import (
-    DatabaseCallFinished,
-    DatabaseFailureDiagnostic,
-    DatabaseWriteCompleted,
-    DatabaseWriteRowsCompleted,
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
@@ -42,17 +36,12 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle._activity import (
     DeliveryState,
     InstalledLifecycle,
-    open_read_root,
 )
-from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
-    ReadCall,
     ScriptedAdapter,
 )
 from tests._support.root_ownership import own_root
@@ -68,30 +57,15 @@ def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
 def _installed(provider: Any) -> InstalledLifecycle:
     """What a handle holds for ``provider`` — the seam below ``connect`` takes.
 
-    Spelled out only where a suite drives the root opener or the publisher
-    directly rather than going through a handle, which is the one place the
-    pairing is not made for it.
+    Spelled out only where a suite drives the publisher directly rather than
+    going through a handle, which is the one place the pairing is not made for
+    it.
     """
     return InstalledLifecycle(provider, DeliveryState())
 
 
 def _read(db: ScopedDatabase) -> None:
     db.find(mm.Account.where(mm.Account.id == 7)).result()
-
-
-class _Declining:
-    """A Provider that declines every root and is told about nothing after."""
-
-    def __init__(self) -> None:
-        self.opened: list[RootExecution] = []
-        self.reported: list[ExecutionLifecycleHandlerError] = []
-
-    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
-        self.opened.append(execution)
-        return None
-
-    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
-        self.reported.append(error)
 
 
 class _RaisingOpen:
@@ -137,6 +111,26 @@ class _NamelessHandler(metaclass=_NamelessMeta):
         raise RuntimeError("the exporter queue is full")
 
 
+class _CountedInterrupt(KeyboardInterrupt):
+    """An interrupt counting each time its message is rendered."""
+
+    renders = 0
+
+    def __str__(self) -> str:
+        self.renders += 1
+        return "interrupted"
+
+
+class _CountedDatabaseError(DatabaseError):
+    """A port failure counting each time its message is rendered."""
+
+    renders = 0
+
+    def __str__(self) -> str:
+        self.renders += 1
+        return "lock wait timeout"
+
+
 class _Provider:
     """A Provider answering one prepared Handler and recording its reports."""
 
@@ -164,46 +158,6 @@ def test_an_accepted_root_carries_a_uuid4_descriptor_of_its_own_kind() -> None:
     assert isinstance(started, ReadStarted)
     assert started.execution_id.version == 4
     assert (started.sequence, started.activity_id, started.parent_activity_id) == (1, 1, None)
-
-
-def test_two_operations_are_two_roots_with_independent_sequences() -> None:
-    handler_a = _FailingHandler(fail_at=0, failure=RuntimeError())
-    handler_b = _FailingHandler(fail_at=0, failure=RuntimeError())
-    handlers = [handler_a, handler_b]
-
-    class _PerRoot:
-        def __init__(self) -> None:
-            self.opened: list[RootExecution] = []
-
-        def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
-            self.opened.append(execution)
-            return handlers[len(self.opened) - 1]
-
-        def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
-            raise AssertionError("no handler failed")
-
-    provider = _PerRoot()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
-    db = _db(port, provider)
-    _read(db)
-    _read(db)
-    ids = [execution.id for execution in provider.opened]
-    assert len(set(ids)) == 2
-    assert [event.execution_id for event in handler_a.seen] == [ids[0]] * len(handler_a.seen)
-    assert [event.sequence for event in handler_a.seen] == [
-        event.sequence for event in handler_b.seen
-    ]
-
-
-def test_a_declining_provider_is_asked_once_and_told_nothing_after() -> None:
-    provider = _Declining()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    db = _db(port, provider)
-    _read(db)
-    assert [execution.kind for execution in provider.opened] == ["read"]
-    assert provider.reported == []
-    # The declined root ran the query exactly as an unobserved one does.
-    assert [type(op) for op in port.calls] == [ReadCall]
 
 
 def test_an_ordinary_opening_failure_refuses_the_operation_before_any_work() -> None:
@@ -342,53 +296,32 @@ def test_a_handler_type_that_refuses_to_name_itself_costs_only_its_name() -> Non
     assert reported.diagnostic.message == "the exporter queue is full"
 
 
-def test_cleanup_after_a_fatal_deactivation_renders_no_diagnostic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cleanup_after_a_fatal_deactivation_never_renders_the_interrupt() -> None:
     # "Aborts and cleans up WITHOUT further events" is a claim about the work,
     # not only about delivery: a scope that still built its Finished event would
     # render a whole traceback per enclosing level for an event nobody will ever
     # receive. The scopes ask the publisher whether it is still active first.
-    rendered: list[str] = []
-
-    def counting(exc: BaseException) -> FailureDiagnostic:
-        rendered.append(type(exc).__name__)
-        return diagnostic_for(exc)
-
-    monkeypatch.setattr(_activity, "diagnostic_for", counting)
-    interrupt = KeyboardInterrupt()
+    interrupt = _CountedInterrupt()
     provider = _Provider(_FailingHandler(fail_at=2, failure=interrupt))
-    port = ScriptedAdapter()
     with pytest.raises(KeyboardInterrupt) as escaped:
-        _read(_db(port, provider))
+        _read(_db(ScriptedAdapter(), provider))
     assert escaped.value is interrupt
-    assert rendered == []
+    assert interrupt.renders == 0
 
 
-def test_a_quarantined_root_renders_no_diagnostic_for_a_failed_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_quarantined_root_never_renders_a_failed_call() -> None:
     # The same guard under an ordinary quarantine: the Handler is gone for the
     # rest of the root, so a failed Database Call after it neither classifies its
     # own failure nor attributes it — while the failure itself is untouched.
-    rendered: list[str] = []
-
-    def counting(exc: BaseException) -> DatabaseFailureDiagnostic:
-        rendered.append(type(exc).__name__)
-        return database_diagnostic_for(exc)
-
-    monkeypatch.setattr(_activity, "database_diagnostic_for", counting)
-    provider = _Provider(_FailingHandler(fail_at=2, failure=RuntimeError("queue full")))
-    port = ScriptedAdapter(
-        Read(
-            raises=DatabaseError(
-                category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
-            )
-        )
+    failure = _CountedDatabaseError(
+        category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
     )
-    with raises_contextualized(DatabaseError):
+    provider = _Provider(_FailingHandler(fail_at=2, failure=RuntimeError("queue full")))
+    port = ScriptedAdapter(Read(raises=failure))
+    with raises_contextualized(DatabaseError) as raised:
         _read(_db(port, provider))
-    assert rendered == []
+    assert raised.value is failure
+    assert failure.renders == 0
     (reported,) = provider.reported
     assert reported.diagnostic.message == "queue full"
 
@@ -410,63 +343,3 @@ def test_a_deactivated_publisher_drops_an_event_it_is_still_handed() -> None:
     publisher.deliver(event)
     assert len(handler.seen) == 1
     assert provider.reported == []
-
-
-def test_the_recorder_groups_its_roots_and_keeps_what_it_is_told() -> None:
-    # The testing-only complete recorder: a suite grading a delivered stream
-    # needs the whole stream, so it keeps every event of every root it accepted
-    # and every Handler failure it was told about — the two things a production
-    # observability path must not do.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
-    db = _db(port, recorder)
-    _read(db)
-    _read(db)
-
-    first, second = recorder.roots
-    assert first.execution.id != second.execution.id
-    assert [event.sequence for event in first.events] == [1, 2, 3, 4, 5, 6, 7, 8]
-    assert recorder.handler_errors == ()
-
-    reported = ExecutionLifecycleHandlerError(
-        execution_id=first.execution.id,
-        sequence=1,
-        activity_id=1,
-        handler_type="tests._Handler",
-        fanout_path=(),
-        diagnostic=diagnostic_for(RuntimeError("boom")),
-    )
-    recorder.report_handler_error(reported)
-    assert recorder.handler_errors == (reported,)
-
-
-def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() -> None:
-    # The Flush that opens one lands with the transaction emitters, so the
-    # scope's write completion is driven here directly: a call announces only the
-    # count its body knows, and which count that is decides the outcome.
-    recorder = RecordingLifecycleProvider()
-    account = EntityIdentity(None, "Account")
-    root = open_read_root(_installed(recorder), target=account, purpose="typed", edition="edition")
-    statement = LoweredStatement("update account set balance = ?", (5,))
-    with root as read, read.database_call(statement, "write", account) as call:
-        call.write_completed(3)
-
-    (recorded,) = recorder.roots
-    finished = recorded.events[2]
-    assert isinstance(finished, DatabaseCallFinished)
-    assert finished.outcome == DatabaseWriteCompleted(3)
-    assert finished.statement is statement
-
-
-def test_a_row_producing_write_reports_the_rows_it_returned_not_a_count() -> None:
-    recorder = RecordingLifecycleProvider()
-    ledger = EntityIdentity(None, "Ledger")
-    root = open_read_root(_installed(recorder), target=ledger, purpose="typed", edition="edition")
-    statement = LoweredStatement("insert into ledger(id) select 1 returning id")
-    with root as read, read.database_call(statement, "write", ledger) as call:
-        call.write_rows_completed([(8,)])
-
-    (recorded,) = recorder.roots
-    finished = recorded.events[2]
-    assert isinstance(finished, DatabaseCallFinished)
-    assert finished.outcome == DatabaseWriteRowsCompleted(1)

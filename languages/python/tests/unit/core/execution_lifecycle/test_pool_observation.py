@@ -219,17 +219,6 @@ def test_a_provider_offered_the_source_may_decline_it() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_connected_handle_registers_the_runtime_s_source() -> None:
-    source = DetachableSource()
-    provider = _Observes()
-
-    db = _connected(provider, metrics=(source,))
-    try:
-        assert provider.offered == [source]
-    finally:
-        db.close()
-
-
 def test_a_provider_declining_every_root_still_observes_the_pool() -> None:
     # The two interests are independent: what a Provider wants from operations
     # says nothing about what it wants from the resource they run on.

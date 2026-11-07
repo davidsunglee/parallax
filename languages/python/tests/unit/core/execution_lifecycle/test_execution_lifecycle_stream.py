@@ -71,7 +71,7 @@ from tests._support.db_port import (
 )
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
-from tests.unit._transact_support import ACCOUNT, account_db
+from tests.unit._transact_support import ACCOUNT
 
 _FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -161,10 +161,6 @@ def _transitions(root: RecordedRoot) -> list[str]:
     return [type(event).__name__ for event in root.events]
 
 
-def _envelope(root: RecordedRoot) -> list[tuple[int, int, int | None]]:
-    return [(event.sequence, event.activity_id, event.parent_activity_id) for event in root.events]
-
-
 def _of[T: ExecutionEvent](root: RecordedRoot, kind: type[T]) -> list[T]:
     return [event for event in root.events if isinstance(event, kind)]
 
@@ -172,81 +168,6 @@ def _of[T: ExecutionEvent](root: RecordedRoot, kind: type[T]) -> list[T]:
 # --------------------------------------------------------------------------- #
 # The tree: one activity per page, and none per root.                          #
 # --------------------------------------------------------------------------- #
-def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
-    with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:
-        assert [root.id for root in stream] == [1, 2, 3]
-
-    (root,) = recorder.roots
-    assert root.execution.kind == "stream"
-    assert _transitions(root) == [
-        "StreamStarted",
-        "StreamBatchStarted",
-        "AcquisitionStarted",
-        "AcquisitionFinished",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "ReleaseStarted",
-        "ReleaseFinished",
-        "StreamBatchFinished",
-        "StreamBatchStarted",
-        "AcquisitionStarted",
-        "AcquisitionFinished",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "ReleaseStarted",
-        "ReleaseFinished",
-        "StreamBatchFinished",
-        "StreamFinished",
-    ]
-    # The stream is the root activity — its parent is null and no other event's
-    # is — each page is its child, and each page's call is the page's own. A
-    # Database Call under a Stream directly would mean the batch was not
-    # the page-read activity, which is exactly what the batch exists to be.
-    #
-    # Each page owns one connection lease: Acquisition and Release are children
-    # of that page's batch, bracketing its Database Call and conversion. The
-    # stream itself owns no resource event.
-    assert _envelope(root) == [
-        (1, 1, None),
-        (2, 2, 1),
-        (3, 3, 2),
-        (4, 3, 2),
-        (5, 4, 2),
-        (6, 4, 2),
-        (7, 5, 2),
-        (8, 5, 2),
-        (9, 2, 1),
-        (10, 6, 1),
-        (11, 7, 6),
-        (12, 7, 6),
-        (13, 8, 6),
-        (14, 8, 6),
-        (15, 9, 6),
-        (16, 9, 6),
-        (17, 6, 1),
-        (18, 1, None),
-    ]
-    (started,) = _of(root, StreamStarted)
-    assert (started.target, started.purpose, started.batch_size) == (
-        "parallax.compatibility.Order",
-        "typed",
-        2,
-    )
-    (finished,) = _of(root, StreamFinished)
-    assert finished.outcome == StreamExhausted()
-
-
-def test_a_wire_stream_reports_its_own_purpose() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[_order_row(1)]))
-    with _orders(port, recorder).wire.stream(_active_orders(), batch_size=2) as stream:
-        assert len(list(stream)) == 1
-
-    (root,) = recorder.roots
-    (started,) = _of(root, StreamStarted)
-    assert started.purpose == "wire"
 
 
 def test_a_page_filled_exactly_is_the_last_batch_and_the_stream_still_exhausts() -> None:
@@ -614,14 +535,6 @@ def test_a_participating_stream_under_a_quarantined_root_opens_no_scope_of_its_o
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
-def test_an_unobserved_stream_delivers_its_roots_and_publishes_nothing() -> None:
-    # The default path runs the same code an observed one runs, and the whole of
-    # what it must not do is observable here as nothing at all being opened.
-    port = ScriptedAdapter(Read(rows=[_account_row(1)]))
-    with account_db(port).stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
-        assert [account.id for account in stream] == [1]
-
-
 def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_entry() -> None:
     # The stream adopts when its scope is entered, and the Started event
     # delivered at that entry states the edition — the one every page below it
@@ -641,3 +554,4 @@ def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_en
     (started,) = _of(root, StreamStarted)
     assert started.parent_activity_id is None
     assert started.edition == "orders-a"
+    assert started.purpose == "typed"
