@@ -767,12 +767,13 @@ class _MaterializedKeyClaims:
 
 
 def _reject_the_type_column(definition: dict[str, Any]) -> None:
-    """Reject a member *definition* stores in a Column spelled ``_type``.
+    """Reject a member or tag *definition* stores in a Column spelled ``_type``.
 
     The refusal binds what an Entity declares, so it does not depend on any node
     rendering it, and the key only ever means the node's concrete Entity.
     """
     entity = definition["name"]
+    block = inheritance_of(definition) or {}
     declared = [
         *(
             (f"Attribute {entity}.{item['name']}", effective_column(item))
@@ -782,6 +783,7 @@ def _reject_the_type_column(definition: dict[str, Any]) -> None:
             (f"Value Object {entity}.{item['name']}", item.get("column"))
             for item in _declared(definition, "valueObjects")
         ),
+        (f"the tag of {entity}", (block.get("tag") or {}).get("column")),
     ]
     for contributor, column in declared:
         if column == TYPE_KEY:

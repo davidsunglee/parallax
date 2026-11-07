@@ -21,8 +21,14 @@ flat row is keyed by Column. So no Entity may store an Attribute or a Value Obje
 Column spelled `_type`, whether or not it is in a family. That costs almost nothing now,
 means no such Column can block an Entity from joining a family later, and keeps `_type`
 on every node possible. It does stop a model from mapping an existing Column of that
-name. Neither a tag Column nor a shared Structured Column renders under its own
-spelling, so neither is refused.
+name.
+
+A family may not name its tag Column `_type` either. A tag Column renders no key, but a
+read carries its raw value under that name until the row is tagged, so one key would
+hold a stored tag at one moment and a concrete Entity at the next. Discriminators are
+plausibly spelled this way, so the refusal may reach real schemas, which must name the
+tag Column something else. A shared Structured Column is not refused: nothing reads it
+as a key once its document is decoded.
 
 The variant spelling stays where it is not a node's type: in narrowed view keys such as
 `pets[Cat,Dog]`, and in the `family_variant` literal of a table-per-concrete-subtype
