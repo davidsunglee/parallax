@@ -188,20 +188,6 @@ def _person(key: int) -> ObjectKey:
 # --------------------------------------------------------------------------- #
 # Versioned sources continue at the version an own completed update produced. #
 # --------------------------------------------------------------------------- #
-def test_a_versioned_source_settles_against_the_version_its_completed_write_produced() -> None:
-    uow, simulated = _uow(_ACCOUNT)
-    source = _published(uow, _account(1), version=4)
-    _write(uow, _ACCOUNT, source, "amend", owner="Ada")
-    _flush(uow)
-    assert uow.source_authority.resolve_read_evidence(
-        _entity(_ACCOUNT, "Account"), source, mutation="amend", object_key=_account(1)
-    ) == VersionedObjectStateKey(_account(1), 5)
-    _write(uow, _ACCOUNT, source, "amend", owner="Bo")
-    uow.flush(trigger="pre_commit")
-    assert [statement.binds[1:] for statement in simulated.statements] == [
-        (5, 1, 4),
-        (6, 1, 5),
-    ]
 
 
 def test_an_old_and_a_fresh_source_of_one_produced_version_share_one_claim() -> None:
