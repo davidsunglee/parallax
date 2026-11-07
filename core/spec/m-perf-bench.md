@@ -60,6 +60,16 @@ is absent. The fixture fixes the scale; the recipe fixes the shape and values.
   zero-based `offset`: `id` is `favoriteId + offset`, `ownerId` is the
   Owner ID, `label` is `node-<index>-<offset>`, and `tags` is empty. Offsets
   below `2` are Alpha and the rest Beta; offset `0` is the favorite.
+- `customer-locations` emits Customers for `id = 1..rows`: `name` is
+  `customer-<id>` and `address` is null. Each Customer emits `fanout`
+  Locations and `fanout` Depots in parent-then-child order, each Entity with
+  independently sequential IDs and the parent `customerId`, for zero-based
+  `offset`. A Location's `label` is `location-<offset>` and its `address` is
+  `{street: <id> Quay, city: Oslo, geo: null, phones: []}`, except that a
+  Location whose ID is a multiple of 10 omits `street`, which its model
+  requires, so every tenth Location is stored data a read classifies as
+  invalid. A Depot's `label` is `depot-<offset>` and its `address` is
+  `{line: line-<offset>, postcode: "0150"}`.
 
 ## Measurement ownership
 

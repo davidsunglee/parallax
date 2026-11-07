@@ -51,6 +51,7 @@ from parallax.conformance.budget import (
 )
 from parallax.conformance.cost_envelope import CostReportEnvelope, validate
 from snapshot_delivery_overhead import (
+    WIDE_FANOUT_GROUP,
     ChildReading,
     addresses,
     build_envelope,
@@ -58,6 +59,7 @@ from snapshot_delivery_overhead import (
     expanded_cells,
     expected_readings,
     is_memory_cell,
+    is_publication_cell,
     scalar_cells,
     unit,
 )
@@ -1483,7 +1485,18 @@ def test_diagnostic_options_are_fenced_from_verification_and_collection(
 # --------------------------------------------------------------------------- #
 # Required members: a member held to the exact matrix its owner declares      #
 # --------------------------------------------------------------------------- #
+def _without_publication(snapshot: dict[str, Any]) -> None:
+    for field in ("readings", "comparisons"):
+        documents = cast("list[dict[str, Any]]", snapshot[field])
+        documents[:] = [
+            d
+            for d in documents
+            if d["workload"] != WIDE_FANOUT_GROUP and not is_publication_cell(str(d["cell"]))
+        ]
+
+
 def _without_scalar_types(snapshot: dict[str, Any]) -> None:
+    _without_publication(snapshot)
     readings = cast("list[dict[str, Any]]", snapshot["readings"])
     readings[:] = [
         r for r in readings if not str(r["workload"]).startswith(("scalar-", "live-read-"))
@@ -1622,6 +1635,24 @@ def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_cur
         "missing CPython"
     )
     assert "control-" in snapshot_failure
+
+
+def test_a_capture_without_the_publication_cells_verifies_but_cannot_be_required_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    snapshot = _snapshot_of(document)
+    comparisons = cast("list[dict[str, Any]]", snapshot["comparisons"])
+    publication = [c for c in comparisons if is_publication_cell(str(c["cell"]))]
+    _without_publication(snapshot)
+    assert verify(document) == []
+    (snapshot_failure,) = verify(document, required=["snapshot-delivery"])
+    assert "missing CPython" in snapshot_failure
+    assert "wide-fanout" in snapshot_failure
+    comparisons.append(publication[0])
+    assert any("comparison matrix is not exact" in error for error in verify(document))
 
 
 def test_requiring_instance_state_holds_it_to_its_owners_complete_matrix(
@@ -2252,6 +2283,8 @@ def test_live_read_matrix_rejects_partial_or_duplicate_additions_but_reads_old_c
     readings[:] = [
         reading for reading in readings if not reading["workload"].startswith("live-read-")
     ]
+    assert any("matrix is not exact" in error for error in verify(document))
+    _without_publication(_snapshot_of(document))
     assert verify(document) == []
     assert any(
         "matrix is not exact" in error for error in verify(document, required=["snapshot-delivery"])

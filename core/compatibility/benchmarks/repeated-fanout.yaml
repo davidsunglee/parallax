@@ -1,0 +1,16 @@
+tags: [m-perf-bench, m-snapshot-read, repeated-fanout]
+model: models/orders.yaml
+dataset:
+  generate:
+    rows: 100
+    recipe: orders-tree
+    fanout: 10
+objectQuery:
+  target: parallax.compatibility.OrderItem
+  predicate: { "true": {} }
+  includes:
+    - segments:
+        - rel: parallax.compatibility.OrderItem.order
+        - rel: parallax.compatibility.Order.items
+delivery:
+  pageSizes: [128]

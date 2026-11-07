@@ -16,6 +16,8 @@ import pytest
 
 import snapshot_delivery_reading
 from parallax.conformance.budget import BudgetContract
+from parallax.conformance.story_models import ORDERS_MODEL
+from parallax.conformance.vo_models import CUSTOMER_MODEL
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
 from parallax.core.base import INT64
 from parallax.core.db_port import ArrayBind
@@ -23,18 +25,24 @@ from parallax.core.entity._authored_resolver import object_query_node
 from parallax.snapshot import Database
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,
+    INVALID_ROOTS_ID,
     PLAN_METRICS,
+    REPEATED_FANOUT_ID,
     CatalogPort,
     ColdPlan,
     _control,  # pyright: ignore[reportPrivateUsage] - the control readings are under test
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is under test
     _last_streamed,  # pyright: ignore[reportPrivateUsage] - drain protocol is under test
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is under test
+    _publication,  # pyright: ignore[reportPrivateUsage] - the publication readings are under test
     _scalar_read,  # pyright: ignore[reportPrivateUsage] - the scalar-type reading is under test
     _timed,  # pyright: ignore[reportPrivateUsage] - sampling protocol is under test
     _traced,  # pyright: ignore[reportPrivateUsage] - instrument boundary under test
+    _wide_fanout,  # pyright: ignore[reportPrivateUsage] - the wide fan-out reading is under test
     geometry_address,
+    invalid_roots_query,
     plan_address,
+    repeated_fanout_query,
     scalar_address,
 )
 from tests._support.root_ownership import own_root
@@ -205,6 +213,8 @@ print(" ".join(sorted(
         ),
         ("stress-columns", "stress.maxUsPerProjection", "_snapshot_materialization_support"),
         ("conventional-fanout", "providerFreeCpu.eager.maxMs", ""),
+        ("repeated-fanout", "publication.wire.page.maxMs", ""),
+        ("wide-fanout", "typed.page.maxMs", ""),
     ],
 )
 def test_a_reading_child_runs_only_the_support_module_its_address_reads(
@@ -506,6 +516,49 @@ def test_the_guarded_workload_widens_one_relationship_key_by_guarded_positions()
         assert len(typed) == roots
     with pytest.raises(ValueError, match="not a guard width"):
         control_support.guarded_query(4)
+
+
+def test_the_typed_repeated_fanout_query_canonicalizes_to_its_fixture() -> None:
+    catalog()[REPEATED_FANOUT_ID].validate_class_backed(ORDERS_MODEL, repeated_fanout_query())
+
+
+def test_the_typed_invalid_roots_query_canonicalizes_to_its_fixture() -> None:
+    catalog()[INVALID_ROOTS_ID].validate_class_backed(CUSTOMER_MODEL, invalid_roots_query())
+
+
+@pytest.mark.parametrize(
+    ("workload", "cell", "nodes"),
+    [
+        (REPEATED_FANOUT_ID, "publication.typed.root.uniqueNodes", 11_000),
+        (REPEATED_FANOUT_ID, "publication.typed.page.uniqueNodes", 1_100),
+        (REPEATED_FANOUT_ID, "publication.wire.root.uniqueNodes", 12_000),
+        (REPEATED_FANOUT_ID, "publication.wire.page.uniqueNodes", 2_100),
+        (INVALID_ROOTS_ID, "publication.typed.root.uniqueNodes", 12_000),
+        (INVALID_ROOTS_ID, "publication.typed.page.uniqueNodes", 3_200),
+        (INVALID_ROOTS_ID, "publication.wire.root.uniqueNodes", 12_000),
+        (INVALID_ROOTS_ID, "publication.wire.page.uniqueNodes", 3_200),
+    ],
+)
+def test_a_publication_cell_reads_at_the_scope_it_names(
+    workload: str, cell: str, nodes: int
+) -> None:
+    measured = BudgetContract.load().timing_measured
+    value, reading_unit, samples = _publication(
+        catalog()[workload],
+        cell,
+        warmups=0,
+        measured=measured,
+        collect_at_page_boundary=False,
+    )
+    assert (value, reading_unit) == (nodes, "nodes")
+    assert samples == (nodes,) * measured
+
+
+def test_the_wide_fanout_cell_shares_every_item_of_its_one_order() -> None:
+    value, reading_unit, _samples = _wide_fanout(
+        catalog()[REPEATED_FANOUT_ID], "typed.page.uniqueNodes", warmups=0, measured=1
+    )
+    assert (value, reading_unit) == (1_001, "nodes")
 
 
 @in_a_child_interpreter

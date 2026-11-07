@@ -52,6 +52,7 @@ from snapshot_delivery_overhead import (
     GEOMETRY_GROUP,
     PLAN_GROUP,
     SCALAR_GROUP,
+    WIDE_FANOUT_GROUP,
     selected_addresses,
     workload_names,
     workload_selection,
@@ -142,6 +143,11 @@ def test_the_plan_splits_snapshot_by_workload_heaviest_first_and_keeps_the_other
         ("snapshot-conventional-fanout", SNAPSHOT.subject, frozenset({"conventional-fanout"})),
         ("snapshot-bitemporal-current", SNAPSHOT.subject, frozenset({"bitemporal-current"})),
         ("snapshot-versioned-document", SNAPSHOT.subject, frozenset({"versioned-document"})),
+        (
+            "snapshot-page-sharing",
+            SNAPSHOT.subject,
+            frozenset({"repeated-fanout", "invalid-roots", WIDE_FANOUT_GROUP}),
+        ),
         ("snapshot-controls", SNAPSHOT.subject, frozenset({CONTROL_GROUP})),
         ("snapshot-live-reads", SNAPSHOT.subject, frozenset({"live-reads"})),
         (
@@ -178,9 +184,17 @@ def test_the_plan_covers_every_snapshot_address_on_every_supported_minor_exactly
         workload_names(contract)
     )
     assert shard_arguments(SHARDS[0]) == [cost_report.WORKLOAD_OPTION, "duplicate-include"]
-    assert shard_arguments(SHARDS[5]) == [cost_report.WORKLOAD_OPTION, CONTROL_GROUP]
-    assert shard_arguments(SHARDS[6]) == [cost_report.WORKLOAD_OPTION, "live-reads"]
-    assert shard_arguments(SHARDS[7]) == [
+    assert shard_arguments(SHARDS[5]) == [
+        cost_report.WORKLOAD_OPTION,
+        "invalid-roots",
+        cost_report.WORKLOAD_OPTION,
+        "repeated-fanout",
+        cost_report.WORKLOAD_OPTION,
+        WIDE_FANOUT_GROUP,
+    ]
+    assert shard_arguments(SHARDS[6]) == [cost_report.WORKLOAD_OPTION, CONTROL_GROUP]
+    assert shard_arguments(SHARDS[7]) == [cost_report.WORKLOAD_OPTION, "live-reads"]
+    assert shard_arguments(SHARDS[8]) == [
         cost_report.WORKLOAD_OPTION,
         GEOMETRY_GROUP,
         cost_report.WORKLOAD_OPTION,

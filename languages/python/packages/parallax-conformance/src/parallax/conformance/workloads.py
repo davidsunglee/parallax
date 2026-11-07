@@ -31,12 +31,15 @@ __all__ = [
     "ANCESTOR_LEVEL_IDS",
     "GEOMETRY_LEVELS",
     "PLAN_LEVEL_IDS",
+    "PUBLICATION_PREFIX",
     "READ_GEOMETRY_ROOTS",
     "SCALAR_CONTROL_TYPE_ID",
     "SCALAR_TYPE_IDS",
     "SCALAR_TYPE_LEVEL_ID",
     "SCALAR_TYPE_RUNTIMES",
     "STRUCTURAL_LAYOUTS",
+    "WIDE_FANOUT_CELLS",
+    "WIDE_FANOUT_WORKLOAD",
     "GeometryLevel",
     "ScriptedRows",
     "Workload",
@@ -62,6 +65,15 @@ STRUCTURAL_LAYOUTS: Final = ("columns", "document")
 
 READ_GEOMETRY_ROOTS: Final = 32
 """Root rows one provider-free geometry read materializes."""
+
+WIDE_FANOUT_WORKLOAD: Final = "wide-fanout"
+"""The one Order whose items all reach each other, read outside the catalog: a
+fixture at its fan-out would generate a row per fan-out squared at every root."""
+
+WIDE_FANOUT_CELLS: Final = ("typed.page.maxMs", "typed.page.uniqueNodes")
+
+PUBLICATION_PREFIX: Final = "publication."
+"""The Budget Contract cell prefix of a sharing-scope publication reading."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +536,8 @@ def _generated(recipe: str, roots: int, fanout: int) -> ScriptedRows:
         return _bitemporal_current(roots)
     if recipe == "materialization-stress":
         return _materialization_stress(roots, fanout)
+    if recipe == "customer-locations":
+        return _customer_locations(roots, fanout)
     raise ValueError(f"unknown benchmark dataset recipe {recipe!r}")
 
 
@@ -661,6 +675,53 @@ def _materialization_stress(roots: int, fanout: int) -> ScriptedRows:
             "snapshot.materialization.Beta": tuple(beta),
         },
         "snapshot.materialization.Owner",
+        roots,
+        fanout,
+    )
+
+
+_CUSTOMER: Final = "parallax.compatibility.Customer"
+_LOCATION: Final = "parallax.compatibility.Location"
+_DEPOT: Final = "parallax.compatibility.Depot"
+_INVALID_LOCATION_EVERY: Final = 10
+
+
+def _customer_locations(roots: int, fanout: int) -> ScriptedRows:
+    def customer_at(offset: int) -> RowDocument:
+        customer_id = offset + 1
+        return {
+            "id": customer_id + _GENERATED_KEY_OFFSET,
+            "name": f"customer-{customer_id}",
+            "address": None,
+        }
+
+    def location_at(offset: int) -> RowDocument:
+        location_id = offset + 1
+        address: dict[str, object] = {"city": "Oslo", "geo": None, "phones": []}
+        if location_id % _INVALID_LOCATION_EVERY:
+            address = {"street": f"{location_id} Quay", **address}
+        return {
+            "id": location_id + _GENERATED_KEY_OFFSET,
+            "customerId": offset // fanout + 1 + _GENERATED_KEY_OFFSET,
+            "label": f"location-{offset % fanout}",
+            "address": address,
+        }
+
+    def depot_at(offset: int) -> RowDocument:
+        return {
+            "id": offset + 1 + _GENERATED_KEY_OFFSET,
+            "customerId": offset // fanout + 1 + _GENERATED_KEY_OFFSET,
+            "label": f"depot-{offset % fanout}",
+            "address": {"line": f"line-{offset % fanout}", "postcode": "0150"},
+        }
+
+    return ScriptedRows(
+        {
+            _CUSTOMER: _GeneratedRows(roots, customer_at),
+            _LOCATION: _GeneratedRows(roots * fanout, location_at),
+            _DEPOT: _GeneratedRows(roots * fanout, depot_at),
+        },
+        _CUSTOMER,
         roots,
         fanout,
     )

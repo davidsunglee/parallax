@@ -126,6 +126,7 @@ def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> Non
         + len(plan_cells())
         + len(control_cells(contract))
         + len(live_read_cells())
+        + len(report.wide_fanout_cells())
     )
     assert len(set(expected)) == len(expected)
     assert {
@@ -353,6 +354,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
             *((SCALAR_GROUP,) if runtime == "3.15" else ()),
             PLAN_GROUP,
             CONTROL_GROUP,
+            report.WIDE_FANOUT_GROUP,
         )
     ]
     assert all(span.labels["member"] == report.SUBJECT for span in spans.spans)
@@ -418,6 +420,7 @@ def test_workload_selection_names_exact_contract_ids_and_the_groups() -> None:
         PLAN_GROUP,
         CONTROL_GROUP,
         report.LIVE_READ_GROUP,
+        report.WIDE_FANOUT_GROUP,
     )
 
 

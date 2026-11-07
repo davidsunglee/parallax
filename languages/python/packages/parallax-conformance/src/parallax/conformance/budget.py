@@ -383,11 +383,11 @@ class MemoryGates:
                     if (
                         isinstance(max_bytes, bool)
                         or not isinstance(max_bytes, int)
-                        or max_bytes <= 0
+                        or max_bytes < 0
                     ):
                         raise ValueError(
                             f"{resolved}: {subject} {workload}.{cell}: "
-                            "maxBytes is not a positive integer"
+                            "maxBytes is not a non-negative integer"
                         )
                     yield MemoryGate(subject, workload, cell, unit, max_bytes)
 

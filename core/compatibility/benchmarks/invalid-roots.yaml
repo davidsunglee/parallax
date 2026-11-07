@@ -1,0 +1,16 @@
+tags: [m-perf-bench, m-snapshot-read, stored-data, invalid-roots]
+model: models/customer.yaml
+dataset:
+  generate:
+    rows: 100
+    recipe: customer-locations
+    fanout: 10
+objectQuery:
+  target: parallax.compatibility.Location
+  predicate: { "true": {} }
+  includes:
+    - segments:
+        - rel: parallax.compatibility.Location.customer
+        - rel: parallax.compatibility.Customer.depots
+delivery:
+  pageSizes: [128]
