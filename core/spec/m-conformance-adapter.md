@@ -514,6 +514,14 @@ which is the `query-result-dependent` criterion, so the adapter answers the
 defined `status: "run-only"` envelope for one exactly as it does for a deep
 fetch.
 
+### Sharing scope (`when.sharingScope`)
+
+A `read` case carrying `when.sharingScope` (`m-case-format` *Sharing scope twins*)
+is satisfied by the implementation's own read at that scope, and by nothing else.
+Running the read at another scope is a conformance failure even where every
+observation matches: a case's statements and graph are the same at both scopes, so
+nothing but the adapter's read makes the case mean what it declares.
+
 ### Execution lifecycle (`executionLifecycle`)
 
 A case may author the `m-execution-lifecycle` oracle

@@ -20,7 +20,7 @@ class WireMemo(Protocol[Node]):
 
 
 class NodeIndexMemo:
-    """One root's completed Root View outputs keyed by node and token."""
+    """One root's or one Shared Graph's completed outputs keyed by node and token."""
 
     __slots__ = ("_entries",)
 

@@ -7,6 +7,7 @@ from typing import cast
 from parallax.conformance import case_format
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.concurrency import ConcurrencyPreference
+from parallax.snapshot import SharingScope
 
 __all__ = [
     "RunOnly",
@@ -15,6 +16,7 @@ __all__ = [
     "eligibility",
     "has_action_step",
     "scenario_steps",
+    "sharing_scope",
     "unit_fate",
     "when",
     "write_sequence_entries",
@@ -122,6 +124,12 @@ def batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:
             f"`stream.batchSize` (got {size!r})"
         )
     return int(size)
+
+
+def sharing_scope(case: case_format.Case) -> SharingScope:
+    """The Sharing Scope the case's read declares (`m-case-format` *Sharing scope
+    twins*), which is `root` where it declares none."""
+    return cast("SharingScope", when(case).get("sharingScope", "root"))
 
 
 def has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:

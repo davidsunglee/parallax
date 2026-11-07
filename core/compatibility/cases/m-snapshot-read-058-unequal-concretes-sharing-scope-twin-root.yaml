@@ -1,0 +1,61 @@
+# Separate roots reaching unequal concretes on one key, at both Sharing Scopes
+# (m-snapshot-read *Node sharing*): table-per-concrete-subtype keys are per table, so
+# Folder 100's Invoice 1 and Folder 102's Memo 1 are one logical row with two concretes.
+# The narrows keep Folder 100's Receipt 1 out, which would be a conflict within one
+# root. The Page is incompatible, so it does not share and each root keeps its document.
+model: models/document.yaml
+tags: [m-snapshot-read, m-inheritance, sharing-scope, table-per-concrete-subtype, narrow, to-many, relationship, graph, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the Folder.documents IN-list binds are the folder ids gathered from the root query result, so the child emissions depend on a query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Folder
+    predicate:
+      in:
+        path: parallax.compatibility.Folder.id
+        values:
+          - 100
+          - 102
+    orderBy:
+      - attr: parallax.compatibility.Folder.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Folder.documents
+            narrowTo: [parallax.compatibility.Invoice]
+      - segments:
+          - rel: parallax.compatibility.Folder.documents
+            narrowTo: [parallax.compatibility.Memo]
+  sharingScope: root
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from folder t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc
+      binds: [[100, 102]]
+    - sql:
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0 where t0.folder_id = any(cast(? as bigint[]))
+      binds: [[100, 102]]
+    - sql:
+        postgres: select t0.id, t0.title, t0.folder_id, t0.body, not t0.annotation is null, t0.annotation from memo t0 where t0.folder_id = any(cast(? as bigint[]))
+      binds: [[100, 102]]
+  graph:
+    Folder:
+      - id: 100
+        name: Alpha
+        "documents[Invoice]":
+          - { id: 1, title: Invoice-A, folderId: 100, currency: USD, amountDue: "120.00", _type: parallax.compatibility.Invoice }
+        "documents[Memo]": []
+      - id: 102
+        name: Gamma
+        "documents[Invoice]": []
+        "documents[Memo]":
+          - id: 1
+            title: Memo-A
+            folderId: 102
+            body: Reminder
+            _type: parallax.compatibility.Memo
+            annotation: { author: Ada, priority: high }
+  databaseCalls: 3
