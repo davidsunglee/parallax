@@ -23,7 +23,7 @@
 # LoanRate stays a single fully-Latest rectangle (valid [2024-01-01, infinity),
 # transaction [2024-01-01, infinity)) — an abstract read pinned Valid-Time-past 2024-06-01 /
 # Transaction-Time Latest returns both branches' current rows, each carrying its per-branch
-# familyVariant literal (DepositRate / LoanRate).
+# family_variant literal (DepositRate / LoanRate).
 parallax.compatibility.DepositRate:
   - id: 1
     amount: "2.25"

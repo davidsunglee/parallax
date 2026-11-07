@@ -105,7 +105,7 @@ def test_editable_data_leaves_derived_variant_metadata_out() -> None:
         node = tx.wire.find(
             {"target": "Payment", "predicate": {"eq": {"path": "Payment.id", "value": 4}}}
         ).result()
-        assert node["familyVariant"] == "CardPayment"
+        assert node["_type"] == "parallax.compatibility.CardPayment"
         assert tx.wire.editable_data(node) == {"id": 4, "amount": "1.00", "cardNetwork": "visa"}
 
     db_for(PAYMENT, port).transact(fn)

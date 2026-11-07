@@ -294,8 +294,8 @@ class ReadResultContract:
     has one: a tag map, a union's variant literal, or an identity fixed when the
     read was compiled. A fixed identity — a standalone read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose position
-    resolved to a single concrete — has no carrier to materialize `familyVariant`
-    from. The document entries are the projection's decision alone: a
+    resolved to a single concrete — has no carrier to read the row's concrete
+    Entity from. The document entries are the projection's decision alone: a
     read fills them when it projected a document, however its rows are named.
 
     ``entity_sources`` covers every Entity this read's rows can name: the
@@ -778,7 +778,7 @@ class TpcsUnionReadPlan:
     branch per concrete in canonical order, every branch restarting its own
     alias at `t0` and projecting the same stable superset with `cast(null as
     <type>)` placeholders for columns it does not own, plus its own
-    `familyVariant` subtype-name literal.
+    `family_variant` subtype-name literal.
 
     The read's predicate is the SAME for every branch — each branch lowers it
     against its own fresh context, which is what restarts the aliases and keeps
@@ -934,7 +934,7 @@ def _plan_single_table_read(
         # carries no tag predicate at all.
         if narrowed or not isinstance(entity.inheritance, AbstractRoot):
             tag_guard = TagPredicate(tag_col, concretes)
-        # `familyVariant` rides the SAME condition as the discriminator
+        # The row's concrete identity rides the SAME condition as the discriminator
         # projection: a tag identity reads the column this read projects. A
         # heterogeneous shared document is keyed by the concretes whose shapes
         # it holds, so the two agree on one pairing.
@@ -992,7 +992,7 @@ def _plan_tpcs_union_read(
 ) -> TpcsUnionReadPlan:
     """Table-per-concrete-subtype over several concretes (m-sql "Inheritance —
     table-per-concrete-subtype lowering"). Unlike table-per-hierarchy, the
-    single-vs-several split is the ONLY thing that decides the `familyVariant` literal here —
+    single-vs-several split is the ONLY thing that decides the `family_variant` literal here —
     there is no table-per-concrete-subtype analogue of the abstract-`target`
     slot-2 rule, because a resolved single concrete has no shared table to
     discriminate and no sibling branch to distinguish it from (m-sql, explicit).

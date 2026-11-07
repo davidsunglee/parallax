@@ -3622,6 +3622,19 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "compatibility.overlap.GradedNote": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "compatibility.overlap.GradedRecord": {
+      "attribute": {
+        "familyVariant": "grade",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
     "compatibility.overlap.ProfileOwner": {
       "attribute": {
         "id": "id",

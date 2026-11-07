@@ -64,7 +64,7 @@ _ORDER_ROWS: list[dict[str, Any]] = [
     },
 ]
 
-# The shared Table `payment` carries the raw tag column `kind`; `familyVariant` is
+# The shared Table `payment` carries the raw tag column `kind`; `_type` is
 # derived from the tag metadata map and never projected.
 _PAYMENT_ROWS: list[dict[str, Any]] = [
     {
@@ -138,12 +138,25 @@ def _tpcs_rows(case: Case) -> list[dict[str, Any]]:
 
     A table-per-concrete-subtype position has no tag column: each branch projects
     the concrete subtype NAME as a literal aliased to `family_variant`, and the
-    oracle renames it to `familyVariant`.
+    oracle resolves it to `_type`.
     """
     return [
-        {("family_variant" if key == "familyVariant" else key): value for key, value in row.items()}
+        {
+            **{key: value for key, value in row.items() if key != "_type"},
+            "family_variant": row["_type"].rpartition(".")[2],
+        }
         for row in case.expected_rows
     ]
+
+
+def test_a_golden_stating_a_type_on_a_row_outside_a_family_fails(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_ORDER_BY_LIMIT)
+    case.then["rows"][0]["_type"] = "parallax.compatibility.Order"
+
+    with pytest.raises(CaseFailure, match="rows != then.rows"):
+        assert_case_read(case, ScriptedReads(results=[_ORDER_ROWS, _ORDER_ROWS]))
 
 
 def test_a_read_whose_golden_returns_the_authored_rows_passes(corpus_case: CaseLoader) -> None:
@@ -293,7 +306,7 @@ def test_a_string_column_spelled_like_a_bytes_cell_compares_exactly(
         assert_case_read(case, reads)
 
 
-def test_an_abstract_target_read_materializes_family_variant_from_the_raw_tag(
+def test_an_abstract_target_read_materializes_the_type_from_the_raw_tag(
     corpus_case: CaseLoader,
 ) -> None:
     case = corpus_case(_TPH_ABSTRACT_ROOT)
@@ -351,7 +364,7 @@ def test_an_abstract_read_dropping_the_tag_column_from_its_golden_fails(
         assert_case_read(case, reads)
 
 
-def test_a_table_per_concrete_subtype_read_renames_the_branch_literal(
+def test_a_table_per_concrete_subtype_read_resolves_the_branch_literal(
     corpus_case: CaseLoader,
 ) -> None:
     case = corpus_case(_TPCS_ABSTRACT_ROOT)

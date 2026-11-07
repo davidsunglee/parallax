@@ -489,7 +489,7 @@ def test_the_guarded_workload_widens_one_relationship_key_by_guarded_positions()
         assert len(object_query_node(query, control_support.GUARDED_MODEL).includes) == width
         published = database.wire.find(query).results()
         assert len(published) == roots
-        by_variant = {node["familyVariant"]: node for node in published}
+        by_variant = {str(node["_type"]).rpartition(".")[2]: node for node in published}
         assert set(by_variant) == {"Dog", "Cat", "WildBoar"}
         guarded = ("Dog", "Cat", "WildBoar")[:width]
         for variant, node in by_variant.items():
@@ -497,7 +497,7 @@ def test_the_guarded_workload_widens_one_relationship_key_by_guarded_positions()
                 owner = cast("Mapping[str, Any]", node["owner"])
                 assert set(owner) == {"id", "name", "pets[Cat]"}
                 assert all(
-                    cast("Mapping[str, Any]", pet)["familyVariant"] == "Cat"
+                    str(cast("Mapping[str, Any]", pet)["_type"]).endswith(".Cat")
                     for pet in cast("list[object]", owner["pets[Cat]"])
                 )
             else:

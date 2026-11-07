@@ -33,7 +33,7 @@ from parallax.core.entity._instance_state import (
     relationship as relationship_state,
 )
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.inheritance import FAMILY_VARIANT_KEY
+from parallax.core.inheritance import WIRE_TYPE_KEY
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -789,8 +789,8 @@ def opened_wire_entity(
             )
             continue
         _put(rendered, name, _stated_occurrence(value, binding, occurrences))
-    if layout.family_variant is not None:
-        _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
+    if layout.wire_type is not None:
+        _put(rendered, WIRE_TYPE_KEY, layout.wire_type)
     node = _frozen_mapping(_WireAuthoringNode, rendered)
     object.__setattr__(node, "_provenance", NodeProvenance(entity, None))
     object.__setattr__(node, "_authoring", authority)

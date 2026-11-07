@@ -288,7 +288,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         lambda: CardPayment.where(CardPayment.all),
         "query = CardPayment.where(CardPayment.all)",
     ),
-    # `m-inheritance-003` (Payment abstract-root, familyVariant),
+    # `m-inheritance-003` (Payment abstract-root, `_type`),
     # `m-inheritance-013`/`-015` (Animal narrowed to Pet / an OR of Dog+Cat
     # branches), and `m-inheritance-052` (Document narrowed to
     # FinancialDocument) are DELIBERATELY absent: every one resolves to a

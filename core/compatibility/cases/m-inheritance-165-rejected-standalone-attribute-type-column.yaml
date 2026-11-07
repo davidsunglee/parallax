@@ -1,0 +1,13 @@
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, type-key, standalone, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Ticket
+      table: ticket
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: ticketKind, type: string, column: _type }
+then:
+  rejectedRule: inheritance-materialization-key-collision

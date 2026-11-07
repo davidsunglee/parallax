@@ -1,5 +1,5 @@
 model: models/predicate-traversal.yaml
-tags: [m-snapshot-read, m-object-query, m-read-planning, m-inheritance, m-sql, table-per-concrete-subtype, union-all, deep-fetch, multi-hop, to-one, relationship, familyVariant, graph, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, m-inheritance, m-sql, table-per-concrete-subtype, union-all, deep-fetch, multi-hop, to-one, relationship, type-key, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
@@ -45,7 +45,7 @@ then:
             maker: Volvo
             dealerId: 40
             seats: 4
-            familyVariant: Car
+            _type: parallax.compatibility.Car
             dealer: { id: 40, name: Nordic }
       - id: 51
         parkingId: 31
@@ -57,7 +57,7 @@ then:
             maker: Trek
             dealerId: 41
             gears: 21
-            familyVariant: Bike
+            _type: parallax.compatibility.Bike
             dealer: { id: 41, name: Velo }
       - id: 52
         parkingId: 32
@@ -72,7 +72,7 @@ then:
             maker: Saab
             dealerId: null
             seats: null
-            familyVariant: Car
+            _type: parallax.compatibility.Car
             dealer: null
       - id: 54
         parkingId: null

@@ -8,3 +8,5 @@ archive.SharedVariant:
   - { id: 3, variantMarker: archive-marker, archiveLabel: archived }
 catalog.SharedVariant:
   - { id: 4, variantMarker: catalog-marker, catalogLabel: current }
+compatibility.overlap.GradedNote:
+  - { id: 1, familyVariant: gold }

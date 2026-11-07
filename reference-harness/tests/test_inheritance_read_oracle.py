@@ -3,7 +3,7 @@
 The read-side counterpart of the write-derivation oracle (m-inheritance / m-sql,
 resolved Q6): from the descriptor alone the harness derives a narrow's effective
 concrete-subtype set and its validity, the abstract-read projection superset, and
-the per-row `familyVariant` (`tagValue` -> concrete subtype name). These tests
+the per-row `_type` (`tagValue` -> concrete subtype name). These tests
 exercise that derivation with no database:
 
 * the narrow four-step validation ACCEPTS a valid / redundant narrow and RAISES the
@@ -11,7 +11,7 @@ exercise that derivation with no database:
   concrete-subtype attribute used outside a compatible narrowing scope;
 * the family-variant map and the concrete superset are derived from the ancestry;
 * an accepted read observed through ``assert_case_read`` publishes the derived
-  `familyVariant` in place of the raw tag column or the per-branch literal, and
+  `_type` in place of the raw tag column or the per-branch literal, and
   FAILS loudly when the golden projection omits a superset column, the tag
   column, or the `union all` shape the position's concrete set requires.
 
@@ -42,6 +42,7 @@ from reference_harness.inheritance import (
     SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE,
     SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
     Family,
+    concrete_target_type,
     query_position,
     reads_no_concrete,
     tag_value_to_subtype,
@@ -699,14 +700,52 @@ def test_run_case_validates_a_deep_fetch_reads_positions_before_any_sql() -> Non
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 
-# --- familyVariant + projection superset derivation -------------------------
+# --- _type + projection superset derivation -------------------------
+
+
+def test_a_family_gaining_a_concrete_of_the_same_local_name_keeps_every_nodes_type() -> None:
+    root = {
+        "name": "Record",
+        "namespace": "catalog",
+        "table": "record",
+        "inheritance": {
+            "role": "root",
+            "strategy": "table-per-hierarchy",
+            "tag": {"column": "kind"},
+        },
+    }
+
+    def concrete(namespace: str, tag_value: str) -> dict[str, Any]:
+        return {
+            "name": "SharedVariant",
+            "namespace": namespace,
+            "inheritance": {
+                "role": "concrete-subtype",
+                "parent": "catalog.Record",
+                "tagValue": tag_value,
+            },
+        }
+
+    before = [root, concrete("catalog", "current")]
+    after = [*before, concrete("archive", "archived")]
+    query = {"target": "catalog.SharedVariant"}
+
+    assert tag_value_to_subtype(before) == {"current": "catalog.SharedVariant"}
+    assert tag_value_to_subtype(after) == {
+        "current": "catalog.SharedVariant",
+        "archived": "archive.SharedVariant",
+    }
+    assert concrete_target_type(query, before) == "catalog.SharedVariant"
+    assert concrete_target_type(query, after) == "catalog.SharedVariant"
+    assert Family(before).variant_spelling("catalog.SharedVariant") == "SharedVariant"
+    assert Family(after).variant_spelling("catalog.SharedVariant") == "catalog.SharedVariant"
 
 
 def test_tag_value_to_subtype_map() -> None:
     assert tag_value_to_subtype(_animal_defs()) == {
-        "dog": "Dog",
-        "cat": "Cat",
-        "boar": "WildBoar",
+        "dog": "parallax.compatibility.Dog",
+        "cat": "parallax.compatibility.Cat",
+        "boar": "parallax.compatibility.WildBoar",
     }
 
 
@@ -813,7 +852,7 @@ def test_tpcs_single_concrete_position_projection_is_its_own_table() -> None:
     )
 
 
-# --- the derived familyVariant, observed through the read seam ---------------
+# --- the derived _type, observed through the read seam ---------------
 
 
 # The full Animal-family concrete superset projected with the raw tag column
@@ -855,7 +894,7 @@ def _dog_row() -> dict[str, Any]:
     }
 
 
-def test_materialize_replaces_tag_with_family_variant() -> None:
+def test_materialize_replaces_tag_with_type() -> None:
     case = _read_case(
         "Animal",
         rows=[
@@ -867,7 +906,7 @@ def test_materialize_replaces_tag_with_family_variant() -> None:
                 "bark_volume": 7,
                 "indoor": None,
                 "tusk_length": None,
-                "familyVariant": "Dog",
+                "_type": "parallax.compatibility.Dog",
             }
         ],
     )
@@ -878,7 +917,7 @@ def test_a_concrete_target_read_takes_its_variant_from_the_model() -> None:
     # A concrete read projects no tag column, so nothing the database returned
     # can have named the variant the row carries.
     stored = {"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}
-    case = _read_case("Dog", rows=[stored | {"familyVariant": "Dog"}])
+    case = _read_case("Dog", rows=[stored | {"_type": "parallax.compatibility.Dog"}])
     assert_case_read(case, _Reads([stored]))
 
 
@@ -890,7 +929,7 @@ def test_a_concrete_target_golden_omitting_its_variant_fails() -> None:
 
 def test_a_concrete_target_golden_naming_another_variant_fails() -> None:
     stored = {"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}
-    case = _read_case("Dog", rows=[stored | {"familyVariant": "Cat"}])
+    case = _read_case("Dog", rows=[stored | {"_type": "parallax.compatibility.Cat"}])
     with pytest.raises(CaseFailure, match="rows != then.rows"):
         assert_case_read(case, _Reads([stored]))
 
@@ -930,7 +969,7 @@ def test_materialize_reads_the_narrowed_projection_through_a_deep_fetch() -> Non
                 "owner_id": 10,
                 "license_id": "L-100",
                 "bark_volume": 7,
-                "familyVariant": "Dog",
+                "_type": "parallax.compatibility.Dog",
             }
         ],
     )
@@ -1004,7 +1043,7 @@ def test_materialize_zero_row_correct_golden_passes() -> None:
 # The TPCS counterpart of the TPH projection-shape check: from the descriptor alone
 # the harness recomputes the `union all` branch count/order (the effective concrete
 # set in ALPHABETICAL order by entity name), the stable superset projection every
-# branch shares, and each branch's `familyVariant` subtype-name LITERAL (the settled
+# branch shares, and each branch's `family_variant` subtype-name LITERAL (the settled
 # TPCS asymmetry — TPCS projects the variant literal per branch, TPH derives it from
 # the raw tag).
 
@@ -1067,9 +1106,9 @@ def test_document_effective_sets_and_canonical_order() -> None:
     assert family.strategy_of("Document") == "table-per-concrete-subtype"
 
 
-def test_tpcs_materialize_renames_family_variant_literal() -> None:
+def test_tpcs_materialize_resolves_the_family_variant_literal() -> None:
     # The DB projects the per-branch literal under `family_variant`; the oracle
-    # renames it to `familyVariant` (no raw tag column exists to map).
+    # renames it to `_type` (no raw tag column exists to map).
     invoice_row = {
         "id": 1,
         "title": "Invoice-A",
@@ -1089,7 +1128,7 @@ def test_tpcs_materialize_renames_family_variant_literal() -> None:
                 "amount_due": 120,
                 "paid_amount": None,
                 "body": None,
-                "familyVariant": "Invoice",
+                "_type": "parallax.compatibility.Invoice",
             }
         ],
     )
@@ -1198,7 +1237,12 @@ def _stored_document(variant: str, scalar: str | None, occurrence: Any) -> dict[
 
 
 def _stated_document(variant: str, annotation: str | None) -> dict[str, Any]:
-    return {"id": 1, "title": variant, "annotation": annotation, "familyVariant": variant}
+    return {
+        "id": 1,
+        "title": variant,
+        "annotation": annotation,
+        "_type": f"parallax.compatibility.{variant}",
+    }
 
 
 @pytest.mark.parametrize(
@@ -1278,10 +1322,10 @@ def test_a_flat_row_pads_a_siblings_document_member_and_never_its_own() -> None:
 
 
 def test_tpcs_wrong_variant_literal_is_rejected() -> None:
-    # A branch whose familyVariant literal is not its concrete subtype name.
+    # A branch whose family_variant literal is not its concrete subtype name.
     golden = _DOCUMENT_ROOT_UNION.replace("'Memo' family_variant", "'Note' family_variant")
     case = _document_case("Document", golden)
-    with pytest.raises(CaseFailure, match="familyVariant literal"):
+    with pytest.raises(CaseFailure, match="family_variant literal"):
         assert_case_read(case, _Reads([]))
 
 
@@ -1292,7 +1336,7 @@ def test_tpcs_concrete_target_takes_its_variant_from_the_model() -> None:
     case = _document_case(
         "Invoice",
         "select t0.id, t0.amount_due from invoice t0",
-        rows=[stored | {"familyVariant": "Invoice"}],
+        rows=[stored | {"_type": "parallax.compatibility.Invoice"}],
     )
     assert_case_read(case, _Reads([stored]))
 
@@ -1328,7 +1372,7 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
                 "currency": None,
                 "amount_due": None,
                 "body": "Reminder",
-                "familyVariant": "Memo",
+                "_type": "parallax.compatibility.Memo",
             }
         ],
     )

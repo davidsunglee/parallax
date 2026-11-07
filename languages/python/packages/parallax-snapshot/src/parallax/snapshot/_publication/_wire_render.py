@@ -5,7 +5,7 @@ from typing import Any, Final, cast
 
 from parallax.core import concurrency, temporal_read
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
-from parallax.core.inheritance import FAMILY_VARIANT_KEY
+from parallax.core.inheritance import WIRE_TYPE_KEY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, InvalidData
 from parallax.core.read_planning import IncludeTree, PositionId, RelationshipViewKey, RenderToken
@@ -246,8 +246,8 @@ class WireRenderer[Node]:
                 )
             else:
                 rendered[key] = _scalars(value, neutral_type, encoding, encode)
-        if facts.family_variant is not None:
-            rendered[FAMILY_VARIANT_KEY] = facts.family_variant
+        if facts.wire_type is not None:
+            rendered[WIRE_TYPE_KEY] = facts.wire_type
         if facts.occurrences:
             record_values = self._record_values
             for (key, occurrence), value in zip(facts.occurrences, values, strict=True):

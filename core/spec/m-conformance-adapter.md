@@ -679,7 +679,7 @@ whose case declares no `expectGraph` omits it, and every existing `run` output
 stays valid unchanged.
 
 Each observed row and each `graph` node of an inheritance participant additionally
-carries the **`familyVariant`** key (`m-inheritance` *Materialized field keys*),
+carries the **`_type`** key (`m-inheritance` *Materialized field keys*),
 concrete-target reads included. It rides inside the already-open `rows` / `graph`
 observation objects, so the adapter output gains no field for it.
 

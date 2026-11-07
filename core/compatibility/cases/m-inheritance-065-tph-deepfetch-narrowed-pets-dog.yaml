@@ -29,11 +29,11 @@ then:
       - id: 10
         name: Alice
         "pets[Dog]":
-          - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, familyVariant: Dog }
+          - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, _type: parallax.compatibility.Dog }
       - id: 11
         name: Bob
         "pets[Dog]":
-          - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, familyVariant: Dog }
+          - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, _type: parallax.compatibility.Dog }
       - id: 12
         name: Carol
         "pets[Dog]": []

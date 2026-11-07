@@ -2,7 +2,7 @@
 # its primary key comes from the family root (m-snapshot-read, m-object-query's
 # positional rule, m-inheritance).
 model: models/animal.yaml
-tags: [m-snapshot-read, m-object-query, m-inheritance, m-sql, table-per-hierarchy, narrow, stream, streamed-delivery, orderBy, ordering, nullable, familyVariant, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-inheritance, m-sql, table-per-hierarchy, narrow, stream, streamed-delivery, orderBy, ordering, nullable, type-key, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
@@ -36,11 +36,11 @@ then:
         ownerId: 10
         licenseId: L-100
         barkVolume: 7
-        familyVariant: Dog
+        _type: parallax.compatibility.Dog
       - id: 2
         name: Fido
         ownerId: 11
         licenseId: L-101
         barkVolume: 3
-        familyVariant: Dog
+        _type: parallax.compatibility.Dog
   databaseCalls: 2

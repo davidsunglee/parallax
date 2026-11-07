@@ -1597,7 +1597,7 @@ def position_projection(
     `Discriminator` tier rather than after the scalars; a cross-table
     table-per-concrete-subtype position instead follows its one logical
     contributor sequence (`PositionLayoutView.column_spellings`). Result aliases,
-    typed `NULL` placeholders, and ``familyVariant`` are SQL renderings and never
+    typed `NULL` placeholders, and the ``family_variant`` literal are SQL renderings and never
     appear here.
     """
     view = position_view(layout, family, effective_set)

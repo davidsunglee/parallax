@@ -197,7 +197,7 @@ For each physical branch, SQL selects from the layout values as follows:
    `m-core` `DocumentRead` to `m-document-codec`, which classifies the top-level
    occurrence.
 4. A table-per-concrete-subtype abstract read appends the SQL-owned
-   `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
+   `family_variant` literal to each branch. It is not a layout slot. Typed `NULL`
    placeholders and collision-safe aliases are likewise SQL renderings over a
    branch's absent slot entries.
 5. Under Relational Document Layout, the shared Structured Column slot is
@@ -294,7 +294,7 @@ temporal-end slots: DML never targets a layout whose key combines independent
 Entity mappings that can supply only disjoint subsets.
 
 The predicate order and bind order specified by each DML template below remain
-normative even when they differ from complete table order. `familyVariant`, SQL
+normative even when they differ from complete table order. `_type`, SQL
 aliases, and typed `NULL` expressions never become DML slots.
 
 ### Document-resident assignments
@@ -1008,7 +1008,7 @@ per level**. Under
 `table-per-hierarchy` the child level is the shared-table `IN` read with the
 effective set's tag predicate appended after the `IN` list (`… where t0.owner_id in
 (?, …) and t0.kind in (?, …)`); a polymorphic view projects the raw tag column so
-`familyVariant` can be materialized, a single-concrete narrowed view projects only
+`_type` can be materialized, a single-concrete narrowed view projects only
 that concrete's columns. Only an authored narrowing that resolves to one concrete
 subtype makes that subtype the child level's target. An unnarrowed hop keeps its
 declared target even when its effective set holds a single composed concrete: an
@@ -1017,7 +1017,7 @@ column, so the child level admits and classifies exactly the rows a root read of
 that target would. Under `table-per-concrete-subtype` the child level is a
 single **`union all`** statement whose branches — one per effective concrete
 subtype in canonical alphabetical order (`m-inheritance`) — share the **same**
-parent-id `IN` list (the stable superset projection + per-branch `familyVariant`
+parent-id `IN` list (the stable superset projection + per-branch `family_variant`
 literal of the abstract-read lowering below); the hop remains one statement,
 preserving `1 + L`. A hop over a relationship declaring `orderBy` applies the
 declared keys as *Ordered or limited abstract read* applies Sort Keys: it wraps
@@ -1653,7 +1653,7 @@ A single narrow to one concrete subtype with a branch predicate needs no groupin
 `narrow[Dog] & barkVolume>5` lowers to `t0.bark_volume > ? and t0.kind = ?` with
 binds `[5, 'dog']`.
 
-#### Abstract-read projection and `familyVariant`
+#### Abstract-read projection and `_type`
 
 An **abstract-target** read must materialize complete concrete instances, so its
 projection selects the complete Position Layout superset reachable from the
@@ -1670,15 +1670,12 @@ because an abstract target must materialize each concrete variant:
     postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
 ```
 
-`familyVariant` is **not projected as SQL**. It is materialized from the tag
-metadata map (`tagValue` -> concrete subtype **variant spelling**) at row construction — the
-same independent, metadata-derived recomputation as the as-of and PK-allocation
-oracles. The variant spelling is the bare local name when family-unique and the
-canonical qualified Entity spelling when duplicate local concrete names make the
-bare spelling ambiguous (`m-inheritance`). It is a Wire result key
-(`m-inheritance`), never a statement column. A **concrete-target** read needs no tag
+`_type` is **not projected as SQL**. It is materialized from the tag metadata map
+(`tagValue` -> canonical Entity name) at row construction — the same independent,
+metadata-derived recomputation as the as-of and PK-allocation oracles. It is a Wire
+result key (`m-inheritance`), never a statement column. A **concrete-target** read needs no tag
 in its projection, because its target already names the concrete Entity the
-result's `familyVariant` comes from: it projects the concrete instance's own columns
+result's `_type` comes from: it projects the concrete instance's own columns
 and injects `t0.kind = ?`.
 
 The independent `then.referenceSql` oracle for a tag-filtered read spells the
@@ -1700,7 +1697,8 @@ A read whose queried position resolves to a **single** concrete subtype is an
 **ordinary single-table read** of that subtype's table — no tag predicate, no
 `union all`. The subtype is selected by *which* table is queried. The projection is
 the applicable slots from its Entity Layout view, and it projects **no
-`familyVariant` literal**, because the queried concrete Entity supplies the result's:
+`family_variant` literal**, because the queried concrete Entity supplies the result's
+`_type`:
 
 ```yaml
 # target: Invoice — ordinary single-table read of the concrete table:
@@ -1723,7 +1721,7 @@ Every branch projects the **same stable Position Layout sequence**. Declaration-
 backed contributors follow `Identity`, `Domain`, `Temporal`, `Audit`, then
 `Document` tier order (there is no physical discriminator), with root-first
 ancestry, local declaration order, and canonical concrete order stable within
-each tier. The SQL-owned **`familyVariant`** literal follows those contributors.
+each tier. The SQL-owned **`family_variant`** literal follows those contributors.
 
 Result aliases for the declaration-backed contributors are allocated
 hygienically in that Position Layout order. Before allocation, the complete
@@ -1751,13 +1749,14 @@ resolve deterministically rather than defaulting to an untyped `NULL`. The cast
 [`m-dialect` placeholder cast form](m-dialect.md#placeholder-cast-form-m-sql-inheritance-union-all)
 owns it for every declared column type.
 
-Because nothing else identifies a row's source table after the union, `familyVariant`
-is projected **as a subtype variant-spelling string literal per branch** (the
-family-unique bare name or ambiguity-required canonical qualified spelling, not
-the physical `tagValue` — there is none). This is the settled
-asymmetry with table-per-hierarchy: TPH projects the raw tag column and derives
-`familyVariant` at materialization (resolved Q6), whereas TPCS projects the variant
-literal directly:
+Because nothing else identifies a row's source table after the union, each branch
+projects `family_variant` **as a subtype variant-spelling string literal** (the
+family-unique bare name or ambiguity-required canonical qualified spelling,
+`m-inheritance`, not the physical `tagValue` — there is none). Reading a row maps
+that literal to its branch's concrete Entity, whose canonical name is the result's
+`_type`. This is the settled asymmetry with table-per-hierarchy: TPH projects the raw
+tag column and derives `_type` from it at materialization (resolved Q6), whereas TPCS
+projects the variant literal directly:
 
 ```yaml
 # target: Record (abstract root over two canonically qualified SharedVariant
@@ -1772,7 +1771,7 @@ The equivalent authored spellings of a narrowing collapse to the same lowering: 
 `narrowTo` naming an abstract subtype and one naming that subtype's explicit concrete
 list produce the same effective set and therefore the same branches, in canonical
 alphabetical order, regardless of the authored order. The projected `family_variant`
-literal is the statement's carrier for the result's `familyVariant`.
+literal is the statement's carrier for the result's `_type`.
 
 #### Ordered or limited abstract read
 
@@ -1850,7 +1849,7 @@ answer (*Correlated scalar subqueries*).
 
 A create / update / delete of an inheritance participant is a **concrete-subtype
 write** (`m-inheritance`): the payload's accepted fields are exactly the target's
-ancestry chain, `tag` / `tagValue` / `familyVariant` are never authored, and the
+ancestry chain, `tag` / `tagValue` / `_type` are never authored, and the
 target is a concrete subtype (an abstract-target or keyless set-based write is
 refused pre-SQL, `m-case-format`). The DML shape depends on the strategy.
 
@@ -1979,7 +1978,7 @@ A temporal **abstract-target** read composes the injected as-of predicate
 `table-per-hierarchy` it is the single shared-table select of the abstract-read
 lowering above with the injected as-of predicate appended after the tag predicate
 (or, for an abstract-**root** read, after the projection with no tag predicate); the
-raw tag column is still projected so `familyVariant` materializes (`m-inheritance-092`).
+raw tag column is still projected so `_type` materializes (`m-inheritance-092`).
 Under `table-per-concrete-subtype` it is the `union all` of the abstract-read
 lowering, and the injected as-of predicate is applied **per branch**: every branch
 carries its own as-of `where` fragment over its own alias, in the same
@@ -1999,7 +1998,7 @@ the per-branch as-of binds repeated in **alphabetical branch order**:
 
 The witness is `m-inheritance-093`. As with any abstract read, the projection is the
 stable superset (here the interval columns are part of the inherited chain) plus the
-per-branch `familyVariant` literal; a column not applicable to a branch is the
+per-branch `family_variant` literal; a column not applicable to a branch is the
 `cast(null as <type>)` placeholder in that dialect's type (`m-dialect`).
 
 ### valueObject — structured-column read and filter

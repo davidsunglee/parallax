@@ -112,7 +112,7 @@ def test_a_narrow_selects_a_concrete_root_by_the_concrete_it_was_read_at(
     attached = _attached_to_a_concrete_root(
         "Ranger", [_rel("Ranger"), _rel("Warden")], damaged_case(_NARROWED_BACK_REFERENCE)
     )
-    assert attached == {1: [{"id": 1, "name": "Rae", "familyVariant": "Ranger"}]}
+    assert attached == {1: [{"id": 1, "name": "Rae", "_type": "parallax.compatibility.Ranger"}]}
 
 
 def test_a_narrow_leaves_out_a_concrete_root_of_another_concrete(
@@ -128,4 +128,4 @@ def test_a_broad_polymorphic_view_tags_a_concrete_root(
     damaged_case: Callable[[str], Case],
 ) -> None:
     attached = _attached_to_a_concrete_root("Ranger", None, damaged_case(_NARROWED_BACK_REFERENCE))
-    assert attached == {1: [{"id": 1, "name": "Rae", "familyVariant": "Ranger"}]}
+    assert attached == {1: [{"id": 1, "name": "Rae", "_type": "parallax.compatibility.Ranger"}]}

@@ -800,7 +800,7 @@ def _assert_bare_row_members_declared(case: Case, entity: Entity, row: dict[str,
 
     Asked AFTER the concrete-subtype protocol, which `m-inheritance` orders first and
     which owns the family-specific names a row may not carry: the tag column and the
-    ``tag`` / ``tagValue`` / ``familyVariant`` handles are
+    ``tag`` / ``tagValue`` / ``_type`` handles are
     ``subtype-write-metadata-field``, and a sibling branch's attribute is
     ``subtype-write-sibling-attribute``. Those are classified rules, so they must not
     be reported as authoring defects.

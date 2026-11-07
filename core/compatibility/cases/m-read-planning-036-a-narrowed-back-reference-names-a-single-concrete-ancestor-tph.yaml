@@ -35,12 +35,12 @@ then:
         "crew[Cook]":
           id: 1
           name: Cal
-          familyVariant: Cook
+          _type: parallax.compatibility.Cook
           tasks:
             - id: 21
               crewId: 1
               label: galley
-              "crew[Cook,Pilot]": { id: 1, name: Cal, familyVariant: Cook }
+              "crew[Cook,Pilot]": { id: 1, name: Cal, _type: parallax.compatibility.Cook }
       - id: 22
         crewId: 2
         label: triage

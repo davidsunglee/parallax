@@ -67,13 +67,15 @@ _STORAGE_LAYOUT_CONTRACT_CASES = {
 _MATERIALIZATION_KEY_CASES = {
     "core/compatibility/cases/m-inheritance-115-rejected-attribute-relationship-materialization-key-collision.yaml",
     "core/compatibility/cases/m-inheritance-116-rejected-narrowed-view-materialization-key-collision.yaml",
-    "core/compatibility/cases/m-inheritance-117-rejected-family-variant-materialization-key-collision.yaml",
+    "core/compatibility/cases/m-inheritance-117-rejected-attribute-type-column.yaml",
     "core/compatibility/cases/m-inheritance-118-value-object-relationship-name-overlap-graph.yaml",
     "core/compatibility/cases/m-inheritance-119-rejected-value-object-column-materialization-key-collision.yaml",
     "core/compatibility/cases/m-inheritance-120-qualified-duplicate-local-variants-graph.yaml",
     "core/compatibility/cases/m-inheritance-164-value-object-storage-column-family-graph.yaml",
-    "core/compatibility/cases/m-inheritance-165-rejected-standalone-family-variant-materialization-key-collision.yaml",
-    "core/compatibility/cases/m-inheritance-166-rejected-dormant-family-variant-materialization-key-collision.yaml",
+    "core/compatibility/cases/m-inheritance-165-rejected-standalone-attribute-type-column.yaml",
+    "core/compatibility/cases/m-inheritance-166-rejected-dormant-attribute-type-column.yaml",
+    "core/compatibility/cases/m-inheritance-167-rejected-standalone-value-object-type-column.yaml",
+    "core/compatibility/cases/m-inheritance-168-rejected-dormant-value-object-type-column.yaml",
 }
 
 

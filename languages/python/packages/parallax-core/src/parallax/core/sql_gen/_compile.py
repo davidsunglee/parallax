@@ -149,7 +149,7 @@ class CompiledRead:
 
     ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits
-    no `familyVariant` column at all, so this is what still names the row's own
+    no `family_variant` column at all, so this is what still names the row's own
     concrete identity. A deep-fetch CHILD level's narrow is its own planned child
     query's.
 

@@ -27,7 +27,7 @@ then:
     Crew:
       - id: 1
         name: Cal
-        familyVariant: Cook
+        _type: parallax.compatibility.Cook
         tasks:
           - id: 21
             crewId: 1
@@ -35,18 +35,18 @@ then:
             "crew[Medic,Pilot]": null
       - id: 2
         name: Mia
-        familyVariant: Medic
+        _type: parallax.compatibility.Medic
         tasks:
           - id: 22
             crewId: 2
             label: triage
-            "crew[Medic,Pilot]": { id: 2, name: Mia, familyVariant: Medic }
+            "crew[Medic,Pilot]": { id: 2, name: Mia, _type: parallax.compatibility.Medic }
       - id: 3
         name: Pat
-        familyVariant: Pilot
+        _type: parallax.compatibility.Pilot
         tasks:
           - id: 23
             crewId: 3
             label: approach
-            "crew[Medic,Pilot]": { id: 3, name: Pat, familyVariant: Pilot }
+            "crew[Medic,Pilot]": { id: 3, name: Pat, _type: parallax.compatibility.Pilot }
   databaseCalls: 2

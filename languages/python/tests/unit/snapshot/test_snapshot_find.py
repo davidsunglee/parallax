@@ -4,7 +4,7 @@ Exercises the ONE per-level loop against a fake, canned-response `m-db-port`
 (no Docker): Database Call accounting (one statement per non-empty level), the
 empty-level short-circuit (no child statement issued, gathered from `then`'s
 own contract in `m-read-planning`), a back-reference level's zero-statement
-resolution, `familyVariant` materialization flowing through the executor
+resolution, `_type` materialization flowing through the executor
 (`m-sql` applied to child-level rows), and the milestone-set `find_history`
 edge-grouping/ordering.
 """
@@ -681,7 +681,7 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
     assert child_sql.endswith(f" order by {term}")
 
 
-def test_find_materializes_family_variant_on_child_level_rows() -> None:
+def test_find_materializes_the_type_on_child_level_rows() -> None:
     port = QueuePort(
         [
             [{"id": 10, "name": "Alice"}],
@@ -777,7 +777,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     # A table-per-concrete-subtype abstract root narrowed to exactly one
     # concrete compiles to an ordinary
     # single-table read (`m-sql`'s `_render_single_table_read`) — the statement
-    # projects no `familyVariant`. `CompiledRead.narrow_to` is what lets the converted
+    # projects no `family_variant`. `CompiledRead.narrow_to` is what lets the converted
     # row still name the row's own concrete identity, rather than the abstract
     # queried `target`.
     port = QueuePort(

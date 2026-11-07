@@ -31,10 +31,10 @@ then:
     UuidLeaf:
       - id: '00000000-0000-0000-0000-000000000001'
         label: inherited
-        familyVariant: UuidLeaf
+        _type: parallax.compatibility.UuidLeaf
         children:
           - id: '00000000-0000-0000-0000-000000000002'
             parentId: '00000000-0000-0000-0000-000000000001'
             label: child
-            parent: {id: '00000000-0000-0000-0000-000000000001', label: inherited, familyVariant: UuidLeaf}
+            parent: {id: '00000000-0000-0000-0000-000000000001', label: inherited, _type: parallax.compatibility.UuidLeaf}
   databaseCalls: 2

@@ -2,7 +2,7 @@
 # developer-surface per-variant node shape (m-inheritance, m-predicate,
 # m-case-format, m-sql).
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, type-key, graph, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -19,7 +19,7 @@ then:
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume from animal where kind in ('cat', 'dog')
   graph:
     Animal:
-      - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, familyVariant: Dog }
-      - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, familyVariant: Dog }
-      - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, familyVariant: Cat }
+      - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, _type: parallax.compatibility.Dog }
+      - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, _type: parallax.compatibility.Dog }
+      - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, _type: parallax.compatibility.Cat }
   databaseCalls: 1

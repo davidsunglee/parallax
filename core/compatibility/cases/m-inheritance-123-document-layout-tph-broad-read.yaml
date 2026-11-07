@@ -1,7 +1,7 @@
 # A broad table-per-hierarchy instance read resolves the raw tag before decoding
 # the shared heterogeneous document (m-inheritance, m-storage-layout, m-sql).
 model: models/document-layout.yaml
-tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, familyVariant, graph, instance-form, slice-snapshot-1]
+tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, type-key, graph, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -15,6 +15,6 @@ then:
         mariadb: select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0
   graph:
     Payment:
-      - { id: 1, detail: visa-4242, authorizationCode: AUTH-7, familyVariant: CardPayment }
-      - { id: 2, detail: "12.50", familyVariant: CashPayment }
+      - { id: 1, detail: visa-4242, authorizationCode: AUTH-7, _type: parallax.compatibility.CardPayment }
+      - { id: 2, detail: "12.50", _type: parallax.compatibility.CashPayment }
   databaseCalls: 1

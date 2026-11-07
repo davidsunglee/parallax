@@ -1,7 +1,7 @@
 # Table-per-concrete-subtype ABSTRACT-ROOT read: the whole Document family via
 # `union all` (m-inheritance, m-sql).
 model: models/document.yaml
-tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1]
+tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, type-key, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -14,8 +14,8 @@ then:
         postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as varchar(64)) body, cast(null as decimal(18, 2)) paid_amount, false, cast(null as jsonb) annotation, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, not t0.annotation is null, t0.annotation, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as varchar(64)) body, t0.paid_amount, false, cast(null as jsonb) annotation, 'Receipt' family_variant from receipt t0
         mariadb: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, cast(null as char(64)) body, cast(null as decimal(18, 2)) paid_amount, false, cast(null as char) annotation, 'Invoice' family_variant from invoice t0 union all select t0.id, t0.title, t0.folder_id, cast(null as char(3)) currency, cast(null as decimal(18, 2)) amount_due, t0.body, cast(null as decimal(18, 2)) paid_amount, not t0.annotation is null, t0.annotation, 'Memo' family_variant from memo t0 union all select t0.id, t0.title, t0.folder_id, t0.currency, cast(null as decimal(18, 2)) amount_due, cast(null as char(64)) body, t0.paid_amount, false, cast(null as char) annotation, 'Receipt' family_variant from receipt t0
   rows:
-    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: "120.00", body: null, paid_amount: null, familyVariant: Invoice }
-    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: "80.00", body: null, paid_amount: null, familyVariant: Invoice }
-    - { id: 1, title: Memo-A, folder_id: 102, currency: null, amount_due: null, body: Reminder, paid_amount: null, familyVariant: Memo }
-    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, amount_due: null, body: null, paid_amount: "120.00", familyVariant: Receipt }
+    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: "120.00", body: null, paid_amount: null, _type: parallax.compatibility.Invoice }
+    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: "80.00", body: null, paid_amount: null, _type: parallax.compatibility.Invoice }
+    - { id: 1, title: Memo-A, folder_id: 102, currency: null, amount_due: null, body: Reminder, paid_amount: null, _type: parallax.compatibility.Memo }
+    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, amount_due: null, body: null, paid_amount: "120.00", _type: parallax.compatibility.Receipt }
   databaseCalls: 1

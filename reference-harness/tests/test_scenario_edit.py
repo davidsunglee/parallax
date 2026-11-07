@@ -262,10 +262,10 @@ def test_a_refusal_no_narrowing_can_fix_is_reported_from_the_concrete_that_has_i
 
 
 def test_read_time_provenance_names_no_member_of_any_concrete() -> None:
-    # `familyVariant` is the key an abstract-target read publishes beside the node's
+    # `_type` is the key an abstract-target read publishes beside the node's
     # members, and no concrete declares it.
-    assert _edit("models/animal.yaml", _ANIMAL, {"familyVariant": "Cat"}) == [
-        "probe: `mutate` set Cat.familyVariant: names no assignable attribute or value "
+    assert _edit("models/animal.yaml", _ANIMAL, {"_type": "Cat"}) == [
+        "probe: `mutate` set Cat._type: names no assignable attribute or value "
         "object — no concrete the edited node may be (Cat, Dog, WildBoar) admits the "
         "whole set"
     ]

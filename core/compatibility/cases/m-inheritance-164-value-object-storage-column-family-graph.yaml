@@ -2,7 +2,7 @@
 # occurrence name because a graph renders it by that name: both the `profile` document
 # and the exact concrete variant must survive one abstract-family read.
 model: models/materialization-key-compatibility.yaml
-tags: [m-inheritance, m-value-object, m-sql, m-api-conformance, table-per-hierarchy, familyVariant, graph, instance-form, materialization-key, positive, slice-snapshot-1]
+tags: [m-inheritance, m-value-object, m-sql, m-api-conformance, table-per-hierarchy, type-key, graph, instance-form, materialization-key, positive, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -17,5 +17,5 @@ then:
   referenceSql: select id, kind from variant_record
   graph:
     VariantRecord:
-      - { id: 2, profile: { label: variant-profile }, familyVariant: VariantNote }
+      - { id: 2, profile: { label: variant-profile }, _type: compatibility.overlap.VariantNote }
   databaseCalls: 1

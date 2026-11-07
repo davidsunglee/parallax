@@ -2,7 +2,7 @@
 # an abstract TPCS read must emit and materialize each exact qualified identity, preserve
 # branch-specific values, and never collapse either row to a bare ambiguous local name.
 model: models/materialization-key-compatibility.yaml
-tags: [m-inheritance, m-sql, m-api-conformance, table-per-concrete-subtype, union-all, familyVariant, graph, instance-form, entity-identity, positive, slice-snapshot-1]
+tags: [m-inheritance, m-sql, m-api-conformance, table-per-concrete-subtype, union-all, type-key, graph, instance-form, entity-identity, positive, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -16,6 +16,6 @@ then:
         mariadb: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as char(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as char(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
   graph:
     Record:
-      - { id: 3, variantMarker: archive-marker, archiveLabel: archived, familyVariant: archive.SharedVariant }
-      - { id: 4, variantMarker: catalog-marker, catalogLabel: current, familyVariant: catalog.SharedVariant }
+      - { id: 3, variantMarker: archive-marker, archiveLabel: archived, _type: archive.SharedVariant }
+      - { id: 4, variantMarker: catalog-marker, catalogLabel: current, _type: catalog.SharedVariant }
   databaseCalls: 1

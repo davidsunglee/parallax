@@ -18,7 +18,7 @@ from .._grouped_effects import GroupedEffectShapeError, ungrouped_effect
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure, write_value_equal
 from ..ddl_builder import quote_identifier
-from ..inheritance import STRATEGY_TPCS, Family, query_position
+from ..inheritance import STRATEGY_TPCS, TYPE_KEY, Family, query_position
 from ..keyed_write_validate import KeyedWriteApplicabilityError, validate_keyed_write
 from ..sql_normalize import normalize
 from ..temporality import temporal_axes
@@ -54,9 +54,9 @@ from .compile import (
 from .report import reported_against
 
 # The projected output column that carries the table-per-concrete-subtype
-# `familyVariant` literal per `union all` branch (the settled TPCS asymmetry,
+# `family_variant` literal per `union all` branch (the settled TPCS asymmetry,
 # m-sql): unlike table-per-hierarchy — which projects the RAW tag column and
-# derives `familyVariant` at materialization — TPCS has no tag column, so each
+# derives `_type` at materialization — TPCS has no tag column, so each
 # branch projects a subtype-name literal aliased to this column. A settled write's
 # find observed its rows under that spelling, so matching one back to its variant
 # reads it here.
@@ -650,17 +650,17 @@ def _settled_observed_row(
 
 
 def _origin_variant_columns(case: Case, origin: _SettledOn) -> tuple[str, ...]:
-    """The fields of *origin*'s observed rows that state a row's variant SPELLING, in
+    """The fields of *origin*'s observed rows that state a row's concrete Entity, in
     precedence order — empty when that read is not discriminated.
 
     Only a read whose queried position is ABSTRACT is discriminated: it resolves over
     more than one concrete subtype, so `m-sql` gives its result a variant tag —
-    materialized as ``familyVariant`` in the compatibility rows (`m-case-format`),
-    and, under table-per-concrete-subtype before that materialization, carried by the
-    projected per-branch ``family_variant`` literal. The materialized spelling leads,
-    because a materialized row carries BOTH: alias remapping restores an authored
-    physical column its own spelling, so `family_variant` beside `familyVariant` is
-    the model's own column beside the read's answer.
+    materialized as ``_type`` in the compatibility rows (`m-case-format`), and, under
+    table-per-concrete-subtype before that materialization, carried by the projected
+    per-branch ``family_variant`` literal. The materialized key leads, because a
+    materialized row carries BOTH: alias remapping restores an authored physical
+    column its own spelling, so `family_variant` beside `_type` is the model's own
+    column beside the read's answer.
 
     A **concrete-target** read is not discriminated: every row it returns is the
     queried subtype's, so its variant separates nothing and neither spelling needs
@@ -678,8 +678,8 @@ def _origin_variant_columns(case: Case, origin: _SettledOn) -> tuple[str, ...]:
     if position is None:
         return ()
     if position.strategy == STRATEGY_TPCS:
-        return ("familyVariant", _TPCS_VARIANT_COLUMN)
-    return ("familyVariant",)
+        return (TYPE_KEY, _TPCS_VARIANT_COLUMN)
+    return (TYPE_KEY,)
 
 
 def _row_is_variant_of(
@@ -705,8 +705,10 @@ def _row_is_variant_of(
         return write_value_equal(row[discriminator[0]], discriminator[1])
     for column in variant_columns:
         if column in row:
-            return row[column] == Family(case.model.entity_defs).variant_spelling(
+            return row[column] == (
                 entity.canonical_name
+                if column == TYPE_KEY
+                else Family(case.model.entity_defs).variant_spelling(entity.canonical_name)
             )
     return True
 

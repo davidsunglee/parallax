@@ -41,7 +41,7 @@ then:
   graph:
     Beast:
       - null
-      - { id: 2, name: Bruno, leaderId: null, brush: red, familyVariant: Fox, followers: [] }
+      - { id: 2, name: Bruno, leaderId: null, brush: red, _type: parallax.compatibility.Fox, followers: [] }
   storedDataIssues:
     - ordinal: 0
       hydrated: false

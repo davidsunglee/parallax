@@ -100,7 +100,7 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
 
     # The seam derives the whole logical result from the physical rows: the
     # Relational Document Layout fan-out under the names a Column of each would
-    # have had (m-storage-layout / m-sql), and `familyVariant` from the tag
+    # have had (m-storage-layout / m-sql), and `_type` from the tag
     # metadata map rather than from any projected column (m-inheritance / m-sql,
     # resolved Q6).
     golden_rows = materialize.scalar_columns(
@@ -204,7 +204,7 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
     steps = includes.fetch_steps(case.model, query)
 
     # Level 0: the root query. An abstract-target root resolves each row's own
-    # concrete subtype into `familyVariant` exactly as a flat abstract read does —
+    # concrete subtype into `_type` exactly as a flat abstract read does —
     # both because the graph's root nodes carry it and because a path-root guard
     # selects the participating roots by it.
     root_rows = materialize.materialize_read(
@@ -278,7 +278,7 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
 
     A milestone is a whole object at an instant, so its roots are materialized by
     the same seam every other terminal's are: an abstract-target milestone read
-    publishes each milestone's own ``familyVariant`` and its Structured Column's
+    publishes each milestone's own ``_type`` and its Structured Column's
     members, never the storage they were derived from. Its NODES are then narrowed
     per variant exactly as a single-statement graph's are, a declared graph being
     the same member either way; the roots themselves stay unnarrowed,
@@ -333,7 +333,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
       rather than through a deep fetch. A no-op for an entity that declares no
       value objects.
     * **An abstract-target inheritance read** (m-inheritance): additionally
-      materializes ``familyVariant`` through the same oracle the flat path
+      materializes ``_type`` through the same oracle the flat path
       uses, and each node narrows to its own concrete variant's declared
       columns — the per-variant node shape, distinct from ``then.rows``'s
       unnarrowed superset. A no-op for a concrete-target read.
@@ -370,7 +370,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
         identity_rows = [materialize.reference_identity_row(row) for row in rows]
         # An abstract-target inheritance read's naive reference SQL projects the
         # RAW tag column too (it is an independently-formulated but otherwise
-        # equivalent selection); materialize familyVariant on it the same way,
+        # equivalent selection); materialize `_type` on it the same way,
         # so this identity check compares apples to apples (m-inheritance).
         reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)

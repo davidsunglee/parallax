@@ -107,11 +107,11 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     assert driver_binds == ["city", "Oslo"]
 
 
-def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> None:
+def test_run_read_case_materializes_the_type_from_the_tph_tag_column() -> None:
     # m-inheritance-003 (Payment root, table-per-hierarchy): the compiled SELECT
-    # projects the raw `kind` tag column; run_read_case materializes `familyVariant`
+    # projects the raw `kind` tag column; run_read_case materializes `_type`
     # from the tag metadata map at row construction and never leaves the raw tag key
-    # on the wire row (m-case-format: an abstract-target row carries `familyVariant`,
+    # on the wire row (m-case-format: an abstract-target row carries `_type`,
     # never the framework-owned tag).
     port = FakeDbPort(
         [
@@ -131,12 +131,12 @@ def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> 
             "amount": "100.00",
             "card_network": "Visa",
             "tendered": None,
-            "familyVariant": "CardPayment",
+            "_type": "parallax.compatibility.CardPayment",
         }
     ]
 
 
-def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column() -> None:
+def test_run_read_case_materializes_the_type_from_the_tpcs_literal_column() -> None:
     # m-inheritance-050 (Document root, table-per-concrete-subtype): the compiled
     # union-all projects the `family_variant` literal per branch; run_read_case just
     # renames the wire key, no tag map involved.
@@ -155,17 +155,22 @@ def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column(
         ]
     )
     _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-050"), port)
-    assert rows[0]["familyVariant"] == "Invoice"
+    assert rows[0]["_type"] == "parallax.compatibility.Invoice"
     assert "family_variant" not in rows[0]
 
 
-def test_run_read_case_concrete_target_read_carries_its_family_variant() -> None:
+def test_run_read_case_concrete_target_read_carries_its_type() -> None:
     # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
     # projects a tag/literal column, so the variant is the node's concrete Entity.
     port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
     _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-001"), port)
     assert rows == [
-        {"id": 1, "amount": "100.00", "card_network": "Visa", "familyVariant": "CardPayment"}
+        {
+            "id": 1,
+            "amount": "100.00",
+            "card_network": "Visa",
+            "_type": "parallax.compatibility.CardPayment",
+        }
     ]
 
 

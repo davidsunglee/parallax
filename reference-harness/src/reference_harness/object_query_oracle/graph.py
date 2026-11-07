@@ -32,7 +32,7 @@ from ..case_assertions import (
     scalars_equal,
 )
 from ..document_codec import DocumentEncodingError
-from ..inheritance import Family, resolve_root_source_set
+from ..inheritance import TYPE_KEY, Family, resolve_root_source_set
 from ..multiset import multiset_matches
 from . import includes, materialize
 
@@ -77,7 +77,7 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     attribute half is renamed here. Value Object occurrences and relationship
     views are already name-keyed by
     :func:`..materialize.materialize_variant_owner_node` and the assembly, and a
-    participant's `familyVariant` names no declared member, so both pass through.
+    participant's `_type` names no declared member, so both pass through.
 
     Both the occurrence decode and the rename map come from the node's OWN
     concrete Entity where the row states one: an abstract-root read narrows each
@@ -264,7 +264,7 @@ class _GraphAssembly:
                 children.append(node)
                 continue
             self._unavailable.add(ordinal)
-            tag = row.get("familyVariant")
+            tag = row.get(TYPE_KEY)
             if isinstance(tag, materialize.UnknownFamilyTag) and tag not in self._reached[ordinal]:
                 self._reached[ordinal].add(tag)
                 self.issues[ordinal].extend(materialize.family_tag_issues(row))

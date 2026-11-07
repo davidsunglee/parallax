@@ -16,7 +16,7 @@
 # leaves `tendered` null and vice-versa). The `kind` tag column is framework-owned
 # metadata, NOT a declared attribute: a concrete-subtype read injects `t0.kind = ?`
 # (its tagValue) and an abstract-target read projects the tag column raw so
-# familyVariant can be materialized (m-sql / m-case-format, resolved Q6).
+# _type can be materialized (m-sql / m-case-format, resolved Q6).
 #
 # table-per-leaf and table-per-class are NOT legal strategies (m-inheritance): the
 # strategy enum rejects both, proven by the harness metamodel-extension tests.

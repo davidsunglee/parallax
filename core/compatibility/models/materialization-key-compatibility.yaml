@@ -41,6 +41,19 @@ entities:
   - name: VariantMemo
     namespace: compatibility.overlap
     inheritance: { role: concrete-subtype, parent: compatibility.overlap.VariantRecord, tagValue: memo }
+  - name: GradedRecord
+    namespace: compatibility.overlap
+    table: graded_record
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: familyVariant, type: string, maxLength: 16, column: grade }
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag: { column: kind }
+  - name: GradedNote
+    namespace: compatibility.overlap
+    inheritance: { role: concrete-subtype, parent: compatibility.overlap.GradedRecord, tagValue: graded }
   - name: Record
     namespace: catalog
     attributes:

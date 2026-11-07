@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Final
 
-from parallax.core.inheritance._facet import FAMILY_VARIANT_KEY, INHERITANCE_MODULE
+from parallax.core.inheritance._facet import INHERITANCE_MODULE, WIRE_TYPE_KEY
 from parallax.core.inheritance._table_groups import (
     AncestryResolution,
     CyclicAncestry,
@@ -138,8 +138,9 @@ MATERIALIZATION_KEY_COLLISION: Final[IssueCode] = "inheritance-materialization-k
 
 Scalar fields render by physical column, Value Objects and relationships by
 canonical member name, narrowed relationships under a derived bracketed key,
-and inheritance participants under the synthetic ``familyVariant`` key. That
-spelling is reserved on every Entity, so the key only ever means the variant.
+and inheritance participants under the synthetic ``_type`` key. No member name
+can spell that key, and no Entity may store a member in a Column of that
+spelling, so it only ever means the node's concrete Entity.
 """
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
@@ -263,23 +264,21 @@ def _storage_names(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelL
         yield occurrence.storage.name, _occurrence_location(declaration, occurrence.name)
 
 
-def _family_variant_reservation_issues(declaration: EntityDeclaration) -> list[MetamodelIssue]:
-    """The members ``declaration`` spells ``familyVariant``, by name or by Column.
+def _type_column_issues(declaration: EntityDeclaration) -> list[MetamodelIssue]:
+    """The members ``declaration`` stores in a Column spelled ``_type``.
 
-    The reservation binds what an Entity declares, so it does not depend on any
-    node rendering it.
+    The refusal binds what an Entity declares, so it does not depend on any node
+    rendering it.
     """
-    spelled = (*_local_members(declaration), *_storage_names(declaration))
     return [
         MetamodelIssue(
             MATERIALIZATION_KEY_COLLISION,
             location,
             (EntityLocation(declaration.identity),),
-            message=f"materialized field key {FAMILY_VARIANT_KEY!r} is reserved",
+            message=f"Column {WIRE_TYPE_KEY!r} spells the materialized field key of a node's type",
         )
-        for location in dict.fromkeys(
-            location for name, location in spelled if name == FAMILY_VARIANT_KEY
-        )
+        for name, location in _storage_names(declaration)
+        if name == WIRE_TYPE_KEY
     ]
 
 
@@ -608,10 +607,8 @@ def _record_materialization_issues(
 
 def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
     """Every family or materialization-key defect, reported rather than the first."""
-    reservation_issues = [
-        issue
-        for declaration in candidate.entities
-        for issue in _family_variant_reservation_issues(declaration)
+    type_column_issues = [
+        issue for declaration in candidate.entities for issue in _type_column_issues(declaration)
     ]
     materialization_issues: dict[_IssueKey, MetamodelIssue] = {}
     for declaration in candidate.entities:
@@ -621,7 +618,7 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
     topology = project_topology(candidate)
     participants = topology.participants
     if not participants:
-        return (*reservation_issues, *materialization_issues.values())
+        return (*type_column_issues, *materialization_issues.values())
 
     resolutions = topology.resolutions
     issues = _cycle_issues(resolutions)
@@ -650,7 +647,7 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
         if missing_concrete is not None:
             issues.append(missing_concrete)
         issues.extend(_family_issues(family.root, family.members, family.strategy))
-    issues.extend(reservation_issues)
+    issues.extend(type_column_issues)
     issues.extend(materialization_issues.values())
     return tuple(issues)
 

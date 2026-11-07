@@ -221,10 +221,10 @@ def test_a_find_whose_reference_oracle_disagrees_is_refused(corpus_case: CaseLoa
         assert_unit_work_scenario(case, ScriptedProvider(script=[Affected(2), *_rows([], other)]))
 
 
-def test_an_abstract_target_step_publishes_familyVariant_not_the_raw_tag(
+def test_an_abstract_target_step_publishes_type_not_the_raw_tag(
     corpus_case: CaseLoader,
 ) -> None:
-    """The golden projects `kind`; the step's `expectRows` states `familyVariant: Car`."""
+    """The golden projects `kind`; the step's `expectRows` states `_type: Car`."""
     observed = [{"id": 1, "kind": "car", "name": "Sedan", "version": 5, "doors": 4, "axles": None}]
     renamed = [{"id": 1, "name": "Coupe", "version": 6, "doors": 4}]
     case = corpus_case(_ABSTRACT_FIND)
@@ -332,8 +332,8 @@ def _as_published(row: dict[str, Any]) -> dict[str, Any]:
         for key, value in row.items()
         if key not in _UNPUBLISHED_COLUMNS
     }
-    published = kept | {"familyVariant": row["family_variant"]}
-    if published["familyVariant"] == "Memo":
+    published = kept | {"_type": f"parallax.compatibility.{row['family_variant']}"}
+    if row["family_variant"] == "Memo":
         published["annotation"] = _DECLARED_ANNOTATION
     return published
 

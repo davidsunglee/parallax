@@ -13,7 +13,7 @@ from reference_harness.case import Case, Model
 from reference_harness.object_query_oracle import execute, graph, row
 
 
-def test_rows_compare_reused_sibling_members_by_family_variant(
+def test_rows_compare_reused_sibling_members_by_type(
     corpus_case: Callable[[str], Case],
 ) -> None:
     case = corpus_case("m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml")
@@ -23,13 +23,13 @@ def test_rows_compare_reused_sibling_members_by_family_variant(
             "id": 1,
             "detail": "visa-4242",
             "authorization_code": "AUTH-7",
-            "familyVariant": "CardPayment",
+            "_type": "parallax.compatibility.CardPayment",
         },
         {
             "id": 2,
             "detail": Decimal("12.50"),
             "authorization_code": None,
-            "familyVariant": "CashPayment",
+            "_type": "parallax.compatibility.CashPayment",
         },
     ]
     expected = [
@@ -37,20 +37,20 @@ def test_rows_compare_reused_sibling_members_by_family_variant(
             "id": 1,
             "detail": "visa-4242",
             "authorization_code": "AUTH-7",
-            "familyVariant": "CardPayment",
+            "_type": "parallax.compatibility.CardPayment",
         },
         {
             "id": 2,
             "detail": "12.50",
             "authorization_code": None,
-            "familyVariant": "CashPayment",
+            "_type": "parallax.compatibility.CashPayment",
         },
     ]
 
     assert row.rows_equal(actual, expected, case.model, entity)
 
 
-def test_graphs_compare_reused_sibling_members_by_family_variant(
+def test_graphs_compare_reused_sibling_members_by_type(
     corpus_case: Callable[[str], Case],
 ) -> None:
     case = corpus_case("m-inheritance-123-document-layout-tph-broad-read.yaml")
@@ -60,12 +60,12 @@ def test_graphs_compare_reused_sibling_members_by_family_variant(
                 "id": 1,
                 "detail": "visa-4242",
                 "authorizationCode": "AUTH-7",
-                "familyVariant": "CardPayment",
+                "_type": "parallax.compatibility.CardPayment",
             },
             {
                 "id": 2,
                 "detail": Decimal("12.50"),
-                "familyVariant": "CashPayment",
+                "_type": "parallax.compatibility.CashPayment",
             },
         ]
     }
@@ -75,12 +75,12 @@ def test_graphs_compare_reused_sibling_members_by_family_variant(
                 "id": 1,
                 "detail": "visa-4242",
                 "authorizationCode": "AUTH-7",
-                "familyVariant": "CardPayment",
+                "_type": "parallax.compatibility.CardPayment",
             },
             {
                 "id": 2,
                 "detail": "12.50",
-                "familyVariant": "CashPayment",
+                "_type": "parallax.compatibility.CashPayment",
             },
         ]
     }

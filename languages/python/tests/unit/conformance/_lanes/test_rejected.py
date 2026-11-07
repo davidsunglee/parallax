@@ -90,6 +90,18 @@ def test_a_bare_row_carries_the_shared_observation_control_key() -> None:
     )
 
 
+def test_a_write_authoring_the_type_key_is_refused_as_family_metadata() -> None:
+    row: dict[str, object] = {
+        "id": 1,
+        "amount": "10.00",
+        "_type": "parallax.compatibility.CardPayment",
+    }
+    assert (
+        rejected.run_rejected_case(_synthetic_bare_row(row, "models/payment.yaml"))
+        == "subtype-write-metadata-field"
+    )
+
+
 def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_claim() -> None:
     # `tagValue` names no declared member either, but `m-inheritance` orders the
     # payload-shape rules first and gives it a rule of its own. Asking member honesty

@@ -35,6 +35,6 @@ then:
     postgres: select id, kind, payload from payment_document where kind = 'card' and payload ->> 'detail' = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and (payload ->> 'detail')::decimal(18,2) > 10.00
     mariadb: select id, kind, payload from payment_document where kind = 'card' and json_value(payload, '$.detail') = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and cast(json_value(payload, '$.detail') as decimal(18,2)) > 10.00
   rows:
-    - { id: 1, detail: visa-4242, authorization_code: AUTH-7, familyVariant: CardPayment }
-    - { id: 2, detail: "12.50", authorization_code: null, familyVariant: CashPayment }
+    - { id: 1, detail: visa-4242, authorization_code: AUTH-7, _type: parallax.compatibility.CardPayment }
+    - { id: 2, detail: "12.50", authorization_code: null, _type: parallax.compatibility.CashPayment }
   databaseCalls: 1

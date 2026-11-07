@@ -33,8 +33,8 @@ then:
       - id: 10
         name: Mowgli
         beasts:
-          - { id: 1, name: Akela, keeperId: 10, howl: aroo, familyVariant: Wolf }
-          - { id: 3, name: Raksha, keeperId: 10, howl: yip, familyVariant: Wolf }
+          - { id: 1, name: Akela, keeperId: 10, howl: aroo, _type: parallax.compatibility.Wolf }
+          - { id: 3, name: Raksha, keeperId: 10, howl: yip, _type: parallax.compatibility.Wolf }
       - null
       - id: 12
         name: Kaa

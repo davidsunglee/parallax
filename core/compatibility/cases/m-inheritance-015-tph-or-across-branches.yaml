@@ -1,6 +1,6 @@
 # Table-per-hierarchy OR across two concrete-subtype branches (m-inheritance, m-predicate, m-sql).
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, type-key, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -29,6 +29,6 @@ then:
       binds: [5, dog, true, cat]
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
   rows:
-    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
-    - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
+    - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, _type: parallax.compatibility.Dog }
+    - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, _type: parallax.compatibility.Cat }
   databaseCalls: 1

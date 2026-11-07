@@ -441,14 +441,14 @@ declared Entity of the case's model, or the canonical `<namespace>.<Entity>` —
 and resolves by the same rule.
 
 This is addressing vocabulary. It is distinct from the *result* vocabulary a
-case asserts — `then.graph` root keys, narrowed-view keys, and `familyVariant` —
+case asserts — `then.graph` root keys, narrowed-view keys, and `_type` —
 which names what a read materialized rather than what it addressed, and keeps
-its own ambiguity-sensitive rule stated with each. The two are spelled
-differently on purpose, and a `then.graph` root key is where that is easiest to
+its own rule stated with each. The two are spelled differently on purpose, and a `then.graph` root key is where that is easiest to
 get wrong: it is the queried Entity's **local** name, derived by resolving the
 query's own `target` and taking the resolved Entity's local name, never the
-canonical spelling `target` itself now carries. `familyVariant` is what
-disambiguates inside a graph whose family shares a local name across namespaces.
+canonical spelling `target` itself now carries. `_type` is what disambiguates
+inside a graph whose family shares a local name across namespaces: it always states
+the node's canonical Entity name.
 
 #### Read targeting (`objectQuery.target`)
 
@@ -492,20 +492,20 @@ An abstract-target read (an abstract `target`, or an abstract position constrain
 by the query's `narrowTo` clause) materializes complete concrete
 instances. Every leaf stating an inheritance participant, whatever its target — a
 `then.rows` entry, an `expectRows` entry, or a graph node — carries the
-**`familyVariant`** key (`m-inheritance` *Materialized field keys*). It is **not
+**`_type`** key (`m-inheritance` *Materialized field keys*). It is **not
 projected as SQL**: under `table-per-hierarchy` an abstract target's golden SQL
 projects the **raw tag column** (`m-sql`, resolved Q6) and the harness materializes
-`familyVariant` from the tag metadata map (`tagValue` -> subtype name) — an
+`_type` from the tag metadata map (`tagValue` -> canonical Entity name) — an
 independent, metadata-derived recomputation like the as-of and PK-allocation
 oracles. A **concrete-target** read projects only that concrete instance's columns,
-and the harness derives its `familyVariant` from the target Entity. Every Subtype
+and the harness derives its `_type` from the target Entity. Every Subtype
 Selection a query carries is validated pre-SQL against the family's effective
 concrete-subtype set (`m-inheritance`); an invalid selection is a `rejected` case
 (see the narrow rules in *Rejected cases*).
 
 **A "complete concrete instance" reads differently through each result
 member** (*Read result form*, below), so what ELSE a leaf carries beyond
-`familyVariant` diverges by assertion over one and the same read:
+`_type` diverges by assertion over one and the same read:
 
 - **`then.rows`** is the flat view of the read's scalar columns: every leaf carries
   the full non-Document **Position Layout** sequence in table-wide semantic tier
@@ -735,7 +735,7 @@ by the name the model declares, never the physical column it is stored under —
 every leaf is that member's canonical Wire Value (`m-wire`). A Value Object
 occurrence appears under its own declared name at every depth, a relationship under
 its local name (or its narrowed view key), and an inheritance participant
-additionally carries `familyVariant`.
+additionally carries `_type`, and a node of any other Entity carries no such key.
 
 A snapshot graph is a plain-value tree, but an included **back-reference** can
 reach a node already on the current path — `[items, items.order]` navigates
@@ -2555,9 +2555,9 @@ checked payload-shape-first then target-validity):
   concrete-subtype write is keyed (the tag guard rides with the identity predicates,
   `m-sql`), so a keyless write is an unsupported **set-based** inheritance write.
 - `subtype-write-metadata-field` — a payload carries **framework-owned metadata**:
-  the tag column, `tag`, `tagValue`, or `familyVariant`. A concrete-subtype write
+  the tag column, `tag`, `tagValue`, or `_type`. A concrete-subtype write
   derives the tag from the subtype's `tagValue` and never accepts it (or the
-  read-time `familyVariant`) as input.
+  read-time `_type`) as input.
 - `subtype-write-sibling-attribute` — a payload carries an attribute declared on a
   **sibling** / unrelated concrete branch, so no single concrete subtype in the
   target's effective set accepts every field. The accepted fields are exactly the
@@ -2724,7 +2724,7 @@ the full-document grading above.
 
 That ordering only works because the two checks divide the names between them
 rather than both claiming every name. The Subtype-write rules are about names the
-**family declares**: the tag column and the `tag` / `tagValue` / `familyVariant`
+**family declares**: the tag column and the `tag` / `tagValue` / `_type`
 handles are `subtype-write-metadata-field`, and a member declared on a sibling or
 unrelated branch is `subtype-write-sibling-attribute`. A name the family declares
 **nowhere** sits on no branch at all, so it is no part of the sibling comparison —

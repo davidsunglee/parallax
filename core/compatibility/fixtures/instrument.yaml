@@ -11,7 +11,7 @@
 #
 # Each instrument is a single fully-Latest rectangle (valid [2024-01-01, infinity),
 # transaction [2024-01-01, infinity)), so a read pinned Valid-Time-past 2024-06-01 /
-# Transaction-Time Latest returns both, each carrying its familyVariant (bond -> Bond,
+# Transaction-Time Latest returns both, each carrying its _type (bond -> Bond,
 # stock -> Stock). Inner subtype columns not applicable to a row load as null.
 parallax.compatibility.Bond:
   - id: 1

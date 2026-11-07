@@ -30,10 +30,10 @@ then:
     StringLeaf:
       - id: inherited-A
         label: inherited
-        familyVariant: StringLeaf
+        _type: parallax.compatibility.StringLeaf
         children:
           - id: link-A
             parentId: inherited-A
             label: child
-            parent: {id: inherited-A, label: inherited, familyVariant: StringLeaf}
+            parent: {id: inherited-A, label: inherited, _type: parallax.compatibility.StringLeaf}
   databaseCalls: 2

@@ -227,27 +227,26 @@ def compare_rows_in_order(observed: list[dict[str, Any]], expected: list[dict[st
         assert _row_equal(left, right), (index, left, right)
 
 
-def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str, Any]:
+def instance_row(instance: Entity, *, wire_type: str | None = None) -> dict[str, Any]:
     """Render one materialized entity instance's OWN scalar/value-object
     members to a PHYSICAL-COLUMN-keyed row — the same key convention
     ``then.rows`` / ``expectRows`` use (`m-case-format` "Triple equivalence":
     a case's expected row is asserted against the golden SQL's OWN projected
     column names, e.g. ``ordered_on``, never the canonical camelCase wire
     name ``orderedOn`` a write row is keyed by).
-    ``family_variant=True``
-    additionally reports ``familyVariant`` as ``type(instance).__name__`` —
-    the API-suite's own observation of polymorphism (`queries-and-results.md`: "every
-    materialized node is an instance of its concrete entity class, so the
-    corpus's `familyVariant` is observable as `type(node)`"), needed only when
-    grading a case whose rows state that key.
+    ``wire_type`` additionally reports ``_type``, the canonical name of
+    ``type(instance)`` — the API-suite's own observation of polymorphism
+    (`queries-and-results.md`: "every materialized node is an instance of its concrete
+    entity class, so the corpus's `_type` is observable as `type(node)`"), needed only
+    when grading a case whose rows state that key.
     """
     from parallax.core.entity._declaration import wire_names_of
 
     names = wire_names_of(type(instance))
     column_by_py = {py_name: column for column, py_name in names.column_to_py.items()}
     row = {column_by_py[py_name]: getattr(instance, py_name) for py_name in names.py_to_name}
-    if family_variant:
-        row["familyVariant"] = type(instance).__name__
+    if wire_type is not None:
+        row["_type"] = wire_type
     return row
 
 

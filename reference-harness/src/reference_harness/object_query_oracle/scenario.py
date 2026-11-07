@@ -58,7 +58,7 @@ class ScenarioRowObservations:
         each page observes the writes the group buffered before it.
 
         A delivery hands back roots it has ALREADY materialized — fanned out of a
-        Relational Document Layout and carrying ``familyVariant`` in place of the
+        Relational Document Layout and carrying ``_type`` in place of the
         raw tag — beside the node it graded each one as, so an include-free step
         retains those nodes. An Include Path's node carries the views the page
         attached to it, which a retained Wire value does not.

@@ -204,7 +204,7 @@ def test_accepts_dml_with_bare_columns() -> None:
 # `union all` over the effective concrete tables is a NEW canonical SQL surface
 # (m-sql). It must be a normalization fixed point: each branch's alias scheme and
 # column qualification (rule 1) apply PER BRANCH, branch order is preserved, and the
-# NULL-placeholder casts + `familyVariant` string literals it introduces survive.
+# NULL-placeholder casts + `family_variant` string literals it introduces survive.
 
 _TPCS_ROOT_UNION = (
     "select t0.id, t0.title, t0.currency, t0.amount_due, "
@@ -1008,7 +1008,7 @@ def test_union_all_rejects_inline_literal_in_a_branch() -> None:
 
 
 # --- string literals + NULL-placeholder casts (the union-all projection) -----
-# String literals (the `familyVariant` branch literal) and cast(null as <type>)
+# String literals (the `family_variant` branch literal) and cast(null as <type>)
 # NULL placeholders appear in canonical m-sql only via the TPCS lowering. The
 # literal keeps its single quotes and case; a parametrized type binds its length
 # list tight (`decimal(18, 2)`, not `decimal (18, 2)`).

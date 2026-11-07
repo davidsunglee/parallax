@@ -1,0 +1,7 @@
+model: models/payment.yaml
+tags: [m-inheritance, table-per-hierarchy, tag, type-key, write, slice-snapshot-1]
+shape: rejected
+when:
+  write: { id: 10, amount: 200.00, _type: parallax.compatibility.CardPayment }
+then:
+  rejectedRule: subtype-write-metadata-field

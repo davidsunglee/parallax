@@ -508,19 +508,17 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-116-rejected-narrowed-view-materialization-key-collision": (
         MATERIALIZATION_KEY_COLLISION
     ),
-    "m-inheritance-117-rejected-family-variant-materialization-key-collision": (
-        MATERIALIZATION_KEY_COLLISION
-    ),
+    "m-inheritance-117-rejected-attribute-type-column": (MATERIALIZATION_KEY_COLLISION),
     "m-inheritance-119-rejected-value-object-column-materialization-key-collision": (
         MATERIALIZATION_KEY_COLLISION
     ),
     "m-inheritance-122-rejected-layout-declared-on-descendant": LAYOUT_NOT_ROOT_OWNED,
-    "m-inheritance-165-rejected-standalone-family-variant-materialization-key-collision": (
+    "m-inheritance-165-rejected-standalone-attribute-type-column": (MATERIALIZATION_KEY_COLLISION),
+    "m-inheritance-166-rejected-dormant-attribute-type-column": (MATERIALIZATION_KEY_COLLISION),
+    "m-inheritance-167-rejected-standalone-value-object-type-column": (
         MATERIALIZATION_KEY_COLLISION
     ),
-    "m-inheritance-166-rejected-dormant-family-variant-materialization-key-collision": (
-        MATERIALIZATION_KEY_COLLISION
-    ),
+    "m-inheritance-168-rejected-dormant-value-object-type-column": (MATERIALIZATION_KEY_COLLISION),
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 
@@ -1074,9 +1072,9 @@ def test_attribute_column_cannot_occupy_a_narrowed_relationship_namespace() -> N
     assert issues[0].related == (RelationshipLocation(RelationshipIdentity(owner, "details")),)
 
 
-def test_family_variant_is_reserved_from_a_value_object_storage_column() -> None:
+def test_the_type_column_is_refused_for_a_value_object_storage_column() -> None:
     profile = ValueObjectOccurrenceDeclaration(
-        name="profile", storage=Column("familyVariant"), shape=_shape("label")
+        name="profile", storage=Column("_type"), shape=_shape("label")
     )
     issues = _rule_issues(
         Declaration(
@@ -1099,8 +1097,18 @@ _RESERVED_TARGET = identity("ReservedTarget")
 _DORMANT = identity("Draft")
 
 
-def _spelled_like_the_variant(owner: EntityIdentity, contributor: str) -> dict[str, Any]:
-    """*owner*'s members declaring *contributor* under the reserved spelling."""
+def _stored_in_the_type_column(owner: EntityIdentity, contributor: str) -> dict[str, Any]:
+    """*owner*'s members storing *contributor* in the Column spelled ``_type``."""
+    if contributor == "attribute-column":
+        return {"attributes": (attribute(owner, "marker", type=STRING, column="_type"),)}
+    occurrence = ValueObjectOccurrenceDeclaration(
+        name="profile", storage=Column("_type"), shape=_shape("label")
+    )
+    return {"value_objects": (occurrence,)}
+
+
+def _spelled_family_variant(owner: EntityIdentity, contributor: str) -> dict[str, Any]:
+    """*owner*'s members declaring *contributor* under the spelling ``familyVariant``."""
     match contributor:
         case "attribute":
             return {"attributes": (attribute(owner, "familyVariant", type=STRING),)}
@@ -1125,7 +1133,9 @@ def _spelled_like_the_variant(owner: EntityIdentity, contributor: str) -> dict[s
             }
 
 
-_RESERVED_CONTRIBUTORS = (
+_TYPE_COLUMN_CONTRIBUTORS = ("attribute-column", "value-object-column")
+
+_FAMILY_VARIANT_CONTRIBUTORS = (
     "attribute",
     "attribute-column",
     "value-object",
@@ -1134,10 +1144,8 @@ _RESERVED_CONTRIBUTORS = (
 )
 
 
-@pytest.mark.parametrize("contributor", _RESERVED_CONTRIBUTORS)
-def test_a_standalone_entity_may_not_declare_the_family_variant_spelling(contributor: str) -> None:
-    members = _spelled_like_the_variant(_ROOT, contributor)
-    issues = _rule_issues(
+def _standalone(members: dict[str, Any]) -> tuple[Declaration, ...]:
+    return (
         Declaration(
             identity=_ROOT,
             container=Table("ledger"),
@@ -1147,8 +1155,18 @@ def test_a_standalone_entity_may_not_declare_the_family_variant_spelling(contrib
         ),
         Declaration(identity=_RESERVED_TARGET, attributes=(key(_RESERVED_TARGET),)),
     )
+
+
+@pytest.mark.parametrize("contributor", _TYPE_COLUMN_CONTRIBUTORS)
+def test_a_standalone_entity_may_not_declare_the_type_column(contributor: str) -> None:
+    issues = _rule_issues(*_standalone(_stored_in_the_type_column(_ROOT, contributor)))
     assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+@pytest.mark.parametrize("contributor", _FAMILY_VARIANT_CONTRIBUTORS)
+def test_a_standalone_entity_may_spell_a_member_family_variant(contributor: str) -> None:
+    assert _rule_issues(*_standalone(_spelled_family_variant(_ROOT, contributor))) == ()
 
 
 def _table_per_concrete_subtype_family() -> tuple[Declaration, ...]:
@@ -1162,28 +1180,44 @@ def _table_per_concrete_subtype_family() -> tuple[Declaration, ...]:
     )
 
 
-@pytest.mark.parametrize(
-    "family",
-    [
-        pytest.param(lambda: (_hierarchy(), _concrete(_LEAF)), id="table-per-hierarchy"),
-        pytest.param(_table_per_concrete_subtype_family, id="table-per-concrete-subtype"),
-    ],
-)
-@pytest.mark.parametrize("contributor", _RESERVED_CONTRIBUTORS)
-def test_a_dormant_position_may_not_declare_the_family_variant_spelling(
-    contributor: str, family: Callable[[], tuple[Declaration, ...]]
-) -> None:
-    issues = _rule_issues(
-        *family(),
+_FAMILIES = [
+    pytest.param(lambda: (_hierarchy(), _concrete(_LEAF)), id="table-per-hierarchy"),
+    pytest.param(_table_per_concrete_subtype_family, id="table-per-concrete-subtype"),
+]
+
+
+def _dormant_position(members: dict[str, Any]) -> tuple[Declaration, ...]:
+    return (
         Declaration(
             identity=_DORMANT,
             inheritance=AbstractSubtype(ExactEntityReference(_ROOT)),
-            **_spelled_like_the_variant(_DORMANT, contributor),
+            **members,
         ),
         Declaration(identity=_RESERVED_TARGET, attributes=(key(_RESERVED_TARGET),)),
     )
+
+
+@pytest.mark.parametrize("family", _FAMILIES)
+@pytest.mark.parametrize("contributor", _TYPE_COLUMN_CONTRIBUTORS)
+def test_a_dormant_position_may_not_declare_the_type_column(
+    contributor: str, family: Callable[[], tuple[Declaration, ...]]
+) -> None:
+    issues = _rule_issues(
+        *family(), *_dormant_position(_stored_in_the_type_column(_DORMANT, contributor))
+    )
     assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].related == (EntityLocation(_DORMANT),)
+
+
+@pytest.mark.parametrize("family", _FAMILIES)
+@pytest.mark.parametrize("contributor", _FAMILY_VARIANT_CONTRIBUTORS)
+def test_a_dormant_position_may_spell_a_member_family_variant(
+    contributor: str, family: Callable[[], tuple[Declaration, ...]]
+) -> None:
+    issues = _rule_issues(
+        *family(), *_dormant_position(_spelled_family_variant(_DORMANT, contributor))
+    )
+    assert issues == ()
 
 
 def test_a_dormant_position_keeps_every_other_materialized_key() -> None:
@@ -1204,7 +1238,23 @@ def test_a_dormant_position_keeps_every_other_materialized_key() -> None:
     assert issues == ()
 
 
-def test_a_participant_attribute_may_not_take_the_family_variant_name() -> None:
+def test_a_participant_attribute_may_not_store_in_the_type_column() -> None:
+    marker = attribute(_ROOT, "marker", type=STRING, column="_type")
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            container=Table("ledger"),
+            attributes=(key(_ROOT), marker),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        _concrete(_LEAF),
+    )
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].location == AttributeLocation(marker.identity)
+    assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+def test_a_participant_may_spell_a_member_family_variant() -> None:
     issues = _rule_issues(
         Declaration(
             identity=_ROOT,
@@ -1214,27 +1264,7 @@ def test_a_participant_attribute_may_not_take_the_family_variant_name() -> None:
         ),
         _concrete(_LEAF),
     )
-    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
-    assert issues[0].related == (EntityLocation(_ROOT),)
-
-
-def test_family_variant_is_reserved_from_rendered_member_names() -> None:
-    profile = ValueObjectOccurrenceDeclaration(
-        name="familyVariant", storage=Column("profile"), shape=_shape("label")
-    )
-    issues = _rule_issues(
-        Declaration(
-            identity=_ROOT,
-            container=Table("ledger"),
-            attributes=(key(_ROOT),),
-            value_objects=(profile,),
-            inheritance=AbstractRoot(TablePerHierarchy("kind")),
-        ),
-        _concrete(_LEAF),
-    )
-    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
-    assert issues[0].location == ValueObjectLocation(ValueObjectIdentity(_ROOT, ("familyVariant",)))
-    assert issues[0].related == (EntityLocation(_ROOT),)
+    assert issues == ()
 
 
 def test_a_shared_tag_value_is_reported_against_the_later_claimant() -> None:

@@ -1,5 +1,5 @@
 model: models/composed-beast-reader.yaml
-tags: [m-inheritance, m-sql, m-read-delivery, m-snapshot-read, table-per-hierarchy, stored-data, familyVariant, graph, partial-composition, slice-snapshot-1]
+tags: [m-inheritance, m-sql, m-read-delivery, m-snapshot-read, table-per-hierarchy, stored-data, type-key, graph, partial-composition, slice-snapshot-1]
 shape: read
 given:
   provisioningModel: models/composed-beast-provisioning.yaml
@@ -19,9 +19,9 @@ then:
   referenceSql: select id, kind, name, keeper_id, howl from beast
   graph:
     Beast:
-      - { id: 1, name: Akela, keeperId: 10, howl: aroo, familyVariant: Wolf }
+      - { id: 1, name: Akela, keeperId: 10, howl: aroo, _type: parallax.compatibility.Wolf }
       - null
-      - { id: 3, name: Raksha, keeperId: 10, howl: yip, familyVariant: Wolf }
+      - { id: 3, name: Raksha, keeperId: 10, howl: yip, _type: parallax.compatibility.Wolf }
   storedDataIssues:
     - ordinal: 1
       hydrated: false

@@ -2070,6 +2070,14 @@ def test_a_keyless_keyed_inheritance_row_is_rejected() -> None:
     assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
+def test_a_wire_row_authoring_the_type_key_is_rejected_as_family_metadata() -> None:
+    row = {"id": 10, "amount": 200.00, "_type": "parallax.compatibility.CardPayment"}
+    keyed = wi.deserialize({"mutation": "insert", "entity": "CardPayment", "rows": [row]})
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_wire_write(keyed, write_preparation_of(_PAYMENT), authored_members=row.keys())
+    assert caught.value.rule == "subtype-write-metadata-field"
+
+
 def test_a_keyed_row_authoring_framework_owned_inheritance_metadata_is_rejected() -> None:
     # m-inheritance-087's own payload: an authored `tagValue`.
     keyed = wi.deserialize(

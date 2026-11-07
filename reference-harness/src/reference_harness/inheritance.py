@@ -116,6 +116,8 @@ INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED = "inheritance-persistence-not-root-owned
 INHERITANCE_LAYOUT_NOT_ROOT_OWNED = "inheritance-layout-not-root-owned"
 INHERITANCE_MATERIALIZATION_KEY_COLLISION = "inheritance-materialization-key-collision"
 
+TYPE_KEY = "_type"
+
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
         INHERITANCE_UNKNOWN_PARENT,
@@ -323,13 +325,12 @@ class Family:
         return key if len(local_matches) > 1 else local_name
 
     def variant_spelling(self, name: str) -> str:
-        """The ``familyVariant`` spelling of the entity *name* names (m-inheritance).
+        """The variant spelling of the entity *name* names (m-inheritance).
 
         The bare local Entity name where it is unique among the family's concrete
         subtypes, and the canonical qualified spelling where two namespaces declare
-        the same local name — the one spelling a discriminated-union read tags its
-        rows with, whether it is materialized from a table-per-hierarchy tag value or
-        projected as a table-per-concrete-subtype per-branch literal.
+        the same local name — the one spelling a narrowed view key segment and a
+        table-per-concrete-subtype per-branch literal state.
         """
         return self._render_key(self.defs.canonical_key(name))
 
@@ -561,9 +562,9 @@ def query_position(query: Any, entity_defs: list[dict[str, Any]]) -> QueryPositi
     return QueryPosition(family, target, family.strategy_of(target))
 
 
-def concrete_target_variant(query: Any, entity_defs: list[dict[str, Any]]) -> str | None:
-    """The ``familyVariant`` every row of a concrete-target *query* carries, or
-    ``None`` where its target is abstract or participates in no family.
+def concrete_target_type(query: Any, entity_defs: list[dict[str, Any]]) -> str | None:
+    """The ``_type`` every row of a concrete-target *query* carries, or ``None``
+    where its target is abstract or participates in no family.
 
     The model alone answers it: such a read's statement projects no carrier, so
     nothing it returned is consulted (`m-inheritance` *Materialized field keys*).
@@ -574,7 +575,7 @@ def concrete_target_variant(query: Any, entity_defs: list[dict[str, Any]]) -> st
     family = Family(entity_defs)
     if target not in family.defs or role_of(family.defs[target]) != ROLE_CONCRETE:
         return None
-    return family.variant_spelling(target)
+    return family.defs.canonical_key(target)
 
 
 def reads_no_concrete(query: Any, entity_defs: list[dict[str, Any]]) -> bool:
@@ -765,32 +766,29 @@ class _MaterializedKeyClaims:
         self._claimed[key] = contributor
 
 
-def _reject_the_family_variant_spelling(definition: dict[str, Any]) -> None:
-    """Reject a member *definition* spells ``familyVariant``, by name or by Column.
+def _reject_the_type_column(definition: dict[str, Any]) -> None:
+    """Reject a member *definition* stores in a Column spelled ``_type``.
 
-    The reservation binds what an Entity declares, so it does not depend on any
-    node rendering it, and the key only ever means the variant.
+    The refusal binds what an Entity declares, so it does not depend on any node
+    rendering it, and the key only ever means the node's concrete Entity.
     """
     entity = definition["name"]
     declared = [
         *(
-            (f"Attribute {entity}.{item['name']}", {item["name"], effective_column(item)})
+            (f"Attribute {entity}.{item['name']}", effective_column(item))
             for item in _declared(definition, "attributes")
         ),
         *(
-            (f"Value Object {entity}.{item['name']}", {item["name"], item.get("column")})
+            (f"Value Object {entity}.{item['name']}", item.get("column"))
             for item in _declared(definition, "valueObjects")
         ),
-        *(
-            (f"Relationship {entity}.{item['name']}", {item["name"]})
-            for item in _declared(definition, "relationships")
-        ),
     ]
-    for contributor, spellings in declared:
-        if "familyVariant" in spellings:
+    for contributor, column in declared:
+        if column == TYPE_KEY:
             raise RejectionError(
                 INHERITANCE_MATERIALIZATION_KEY_COLLISION,
-                f"materialized key 'familyVariant' is reserved, and {contributor} claims it",
+                f"Column {TYPE_KEY!r} spells the materialized type key, and {contributor} "
+                f"claims it",
             )
 
 
@@ -863,7 +861,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     root never answers for another's.
     """
     for definition in entity_defs:
-        _reject_the_family_variant_spelling(definition)
+        _reject_the_type_column(definition)
         if inheritance_of(definition) is None:
             _validate_materialization_keys([definition])
 
@@ -1427,15 +1425,15 @@ def _check_attribute_position(family: Family, current_set: list[str], attr_ref: 
     )
 
 
-# --- abstract-read materialization oracle (familyVariant + projection) ---------
+# --- abstract-read materialization oracle (_type + projection) -----------------
 
 
 def tag_value_to_subtype(entity_defs: list[dict[str, Any]]) -> dict[Any, str]:
-    """Map each concrete subtype's ``tagValue`` to its NAME (the ``familyVariant``).
+    """Map each concrete subtype's ``tagValue`` to its canonical name (the ``_type``).
 
     The table-per-hierarchy materialization map (resolved Q6): a returned row's raw
-    tag value resolves to the concrete subtype name the harness reports as
-    ``familyVariant``. Non-inheritance and table-per-concrete-subtype entities
+    tag value resolves to the canonical Entity name the harness reports as
+    ``_type``. Non-inheritance and table-per-concrete-subtype entities
     contribute nothing.
     """
     family = Family(entity_defs)
@@ -1445,5 +1443,5 @@ def tag_value_to_subtype(entity_defs: list[dict[str, Any]]) -> dict[Any, str]:
             continue
         block = inheritance_of(definition)
         if block and block.get("role") == ROLE_CONCRETE and block.get("tagValue") is not None:
-            mapping[block["tagValue"]] = family.variant_spelling(family.key_of(definition))
+            mapping[block["tagValue"]] = family.key_of(definition)
     return mapping

@@ -49,7 +49,7 @@ def flat_rows(
     projection is the position's fixed superset rather than the addressed
     position's applicable members: each row carries every column the superset
     places, ``null`` where the row's own branch contributes none, plus the
-    ``familyVariant`` the node itself publishes (`m-case-format` *Read
+    ``_type`` the node itself publishes (`m-case-format` *Read
     targeting*). Rendering the branch's members alone would DROP what the read
     published; rendering the raw tag column would report a storage value no node
     carries, which is exactly why the format names the variant instead. A concrete
@@ -94,12 +94,12 @@ def _projected_row(
     ``superset`` holds an abstract position's superset columns, each ``null``
     until the node fills it, and is ``None`` for a concrete read. A sibling's
     column reusing a member name renders nothing here: the node's own member
-    stands at that name, and it is a Value Object the row leaves out. Every Entity
-    reserves the synthetic variant's spelling, so a node carrying that key is a
+    stands at that name, and it is a Value Object the row leaves out. No member or
+    Column can spell the synthetic type key, so a node carrying it is a
     participant's.
     """
-    variant = node.get(inheritance.FAMILY_VARIANT_KEY)
-    selected = _variant_members(model, node) if superset is not None and node else None
+    node_type = node.get(inheritance.WIRE_TYPE_KEY)
+    selected = _concrete_members(model, node) if superset is not None and node else None
     published: dict[str, object] = {}
     for name, value in node.items():
         options = columns.get(name, ())
@@ -109,7 +109,7 @@ def _projected_row(
             continue
         if len(options) != 1:
             raise EngineError(
-                f"{variant!r} does not select one declaration for published member {name!r}"
+                f"{node_type!r} does not select one declaration for published member {name!r}"
             )
         column, member = options[0]
         if value is None:
@@ -121,22 +121,22 @@ def _projected_row(
     if not node:
         return published
     if superset is not None:
-        return {**superset, **published, inheritance.FAMILY_VARIANT_KEY: variant}
-    if variant is not None:
-        published[inheritance.FAMILY_VARIANT_KEY] = variant
+        return {**superset, **published, inheritance.WIRE_TYPE_KEY: node_type}
+    if node_type is not None:
+        published[inheritance.WIRE_TYPE_KEY] = node_type
     return published
 
 
-def _variant_members(
+def _concrete_members(
     model: AcceptedMetamodel, node: Mapping[str, object]
 ) -> frozenset[MemberIdentity]:
-    variant = node.get(inheritance.FAMILY_VARIANT_KEY)
-    if not isinstance(variant, str):
+    node_type = node.get(inheritance.WIRE_TYPE_KEY)
+    if not isinstance(node_type, str):
         raise EngineError(
             "an abstract-position read publishes a concrete node carrying "
-            f"`familyVariant`; this one published {sorted(node)}"
+            f"`_type`; this one published {sorted(node)}"
         )
-    entity = case_entity(model, variant)
+    entity = case_entity(model, node_type)
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - every accepted Entity has a view
         raise EngineError(f"{entity.identity.canonical}: no inheritance position")

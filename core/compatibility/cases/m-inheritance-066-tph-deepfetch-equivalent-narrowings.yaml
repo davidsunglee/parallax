@@ -1,7 +1,7 @@
 # Deep fetch of EQUIVALENT authored narrowings that derive the SAME view key
 # (m-read-planning, m-inheritance).
 model: models/animal.yaml
-tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1]
+tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, type-key, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
@@ -35,12 +35,12 @@ then:
       - id: 10
         name: Alice
         "pets[Cat,Dog]":
-          - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, familyVariant: Dog }
-          - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, familyVariant: Cat }
+          - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, _type: parallax.compatibility.Dog }
+          - { id: 3, name: Whiskers, ownerId: 10, licenseId: L-200, indoor: true, _type: parallax.compatibility.Cat }
       - id: 11
         name: Bob
         "pets[Cat,Dog]":
-          - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, familyVariant: Dog }
+          - { id: 2, name: Fido, ownerId: 11, licenseId: L-101, barkVolume: 3, _type: parallax.compatibility.Dog }
       - id: 12
         name: Carol
         "pets[Cat,Dog]": []

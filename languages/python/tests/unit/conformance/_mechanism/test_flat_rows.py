@@ -69,7 +69,7 @@ _PUBLISHED_CAR: MappingRow = {
     "name": "Sedan",
     "version": 5,
     "doors": 4,
-    "familyVariant": "Car",
+    "_type": "parallax.compatibility.Car",
 }
 
 _THING = "parallax.compatibility.ScalarThing"
@@ -194,7 +194,7 @@ def test_an_abstract_position_pads_its_superset_and_states_the_variant() -> None
     # What an abstract step's `expectRows` state is the projection the published
     # node OCCUPIES (m-case-format "Read targeting"): every column the position's
     # superset places, `null` where the row's own branch contributes none, and the
-    # `familyVariant` the node carries. Rendering the ADDRESSED position's
+    # `_type` the node carries. Rendering the ADDRESSED position's
     # applicable members instead drops `doors` — a value the read published — and
     # reports no variant, which is a node no case could state.
     case = _case("m-inheritance-130")
@@ -213,7 +213,7 @@ def test_an_abstract_position_pads_its_superset_and_states_the_variant() -> None
             "version": 5,
             "doors": 4,
             "axles": None,
-            "familyVariant": "Car",
+            "_type": "parallax.compatibility.Car",
         }
     ]
 
@@ -231,17 +231,29 @@ def test_a_narrowed_abstract_position_pads_only_what_it_selects() -> None:
         model_facts.load_case_metamodel(case), query, [dict(_PUBLISHED_CAR)], value_objects=False
     )
 
-    assert rows == [{"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}]
+    assert rows == [
+        {"id": 1, "name": "Sedan", "version": 5, "doors": 4, "_type": "parallax.compatibility.Car"}
+    ]
 
 
 def test_a_concrete_target_of_a_family_states_its_variant_and_no_sibling() -> None:
     rows = _rendered(
         "vehicle",
         "parallax.compatibility.Car",
-        [{"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}],
+        [
+            {
+                "id": 1,
+                "name": "Sedan",
+                "version": 5,
+                "doors": 4,
+                "_type": "parallax.compatibility.Car",
+            }
+        ],
     )
 
-    assert rows == [{"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}]
+    assert rows == [
+        {"id": 1, "name": "Sedan", "version": 5, "doors": 4, "_type": "parallax.compatibility.Car"}
+    ]
 
 
 def test_a_reused_member_name_resolves_at_each_published_variant() -> None:
@@ -256,9 +268,9 @@ def test_a_reused_member_name_resolves_at_each_published_variant() -> None:
                 "id": 1,
                 "detail": "visa-4242",
                 "authorizationCode": "AUTH-7",
-                "familyVariant": "CardPayment",
+                "_type": "parallax.compatibility.CardPayment",
             },
-            {"id": 2, "detail": "12.50", "familyVariant": "CashPayment"},
+            {"id": 2, "detail": "12.50", "_type": "parallax.compatibility.CashPayment"},
         ],
         value_objects=True,
     )
@@ -268,13 +280,13 @@ def test_a_reused_member_name_resolves_at_each_published_variant() -> None:
             "id": 1,
             "detail": "visa-4242",
             "authorization_code": "AUTH-7",
-            "familyVariant": "CardPayment",
+            "_type": "parallax.compatibility.CardPayment",
         },
         {
             "id": 2,
             "detail": "12.50",
             "authorization_code": None,
-            "familyVariant": "CashPayment",
+            "_type": "parallax.compatibility.CashPayment",
         },
     ]
 
@@ -284,9 +296,9 @@ def test_an_abstract_position_refuses_a_node_publishing_no_variant() -> None:
     # variant is a lane that resolved nothing rather than a row to render: which
     # branch its columns belong to would have to be guessed.
     case = _case("m-inheritance-130")
-    node = {key: value for key, value in _PUBLISHED_CAR.items() if key != "familyVariant"}
+    node = {key: value for key, value in _PUBLISHED_CAR.items() if key != "_type"}
 
-    with pytest.raises(EngineError, match="familyVariant"):
+    with pytest.raises(EngineError, match="_type"):
         flat_rows(
             model_facts.load_case_metamodel(case),
             _abstract_step_query("m-inheritance-130"),

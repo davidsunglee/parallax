@@ -9983,6 +9983,43 @@
         0
       ]
     },
+    "graded_record": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "compatibility.overlap.GradedNote"
+          ],
+          "column": "id",
+          "contributor": "attribute:compatibility.overlap.GradedRecord.id",
+          "declaringOwner": "compatibility.overlap.GradedRecord",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "compatibility.overlap.GradedNote"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:compatibility.overlap.GradedRecord",
+          "declaringOwner": "compatibility.overlap.GradedRecord",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "compatibility.overlap.GradedNote"
+          ],
+          "column": "grade",
+          "contributor": "attribute:compatibility.overlap.GradedRecord.familyVariant",
+          "declaringOwner": "compatibility.overlap.GradedRecord",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
     "profile_owner": {
       "columns": [
         {

@@ -3,7 +3,7 @@
 # select expands the document read pair against the union alias (m-inheritance,
 # m-storage-layout, m-sql, m-object-query, m-dialect, m-document-codec).
 model: models/document-layout.yaml
-tags: [m-inheritance, m-storage-layout, m-sql, m-object-query, m-dialect, m-document-codec, table-per-concrete-subtype, document-layout, union-all, root, orderBy, ordering, directive, familyVariant, graph, instance-form, slice-snapshot-1]
+tags: [m-inheritance, m-storage-layout, m-sql, m-object-query, m-dialect, m-document-codec, table-per-concrete-subtype, document-layout, union-all, root, orderBy, ordering, directive, type-key, graph, instance-form, slice-snapshot-1]
 shape: read
 when:
   objectQuery:
@@ -24,6 +24,6 @@ then:
   referenceSql: select id, payload, 'Film' as family_variant from publication_film union all select id, payload, 'Book' as family_variant from publication_book
   graph:
     Publication:
-      - { id: 10, title: Systems, detail: ISBN-10, pages: 320, familyVariant: Book }
-      - { id: 20, title: Frames, detail: 850, minutes: 95, familyVariant: Film }
+      - { id: 10, title: Systems, detail: ISBN-10, pages: 320, _type: parallax.compatibility.Book }
+      - { id: 20, title: Frames, detail: 850, minutes: 95, _type: parallax.compatibility.Film }
   databaseCalls: 1

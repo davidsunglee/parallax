@@ -2680,6 +2680,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "a family Value Object stored apart from its occurrence name is exercised by the "
         "compile and database-backed run lanes; no separate idiomatic API story is needed"
     ),
+    "m-inheritance-170": (
+        "a family Attribute named like the retired variant key is exercised by the compile "
+        "and database-backed run lanes; no separate idiomatic API story is needed"
+    ),
     "m-inheritance-120": (
         "qualified duplicate-local variant identity and scalar-alias preservation are "
         "exercised by the compile and database-backed run lanes; no separate idiomatic API "
@@ -2752,6 +2756,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-131": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-087": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,
+    "m-inheritance-169": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,
     "m-inheritance-089": _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` descriptor rejects (unreachable) -------- #
     "m-inheritance-020": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
@@ -2779,6 +2784,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-165": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-166": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-167": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-168": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` formation reject (unreachable) ---------- #
     "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #

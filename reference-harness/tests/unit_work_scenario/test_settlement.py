@@ -303,13 +303,13 @@ def test_a_write_is_not_settled_by_a_sibling_variants_row() -> None:
 
 
 def test_variant_resolution_reads_the_finds_own_discriminator() -> None:
-    # `family_variant` and `familyVariant` are the spellings a DISCRIMINATED read states
+    # `family_variant` and `_type` are the spellings a DISCRIMINATED read states
     # its variant in, and both are equally legal PHYSICAL spellings for a model to author
     # (the corpus maps `catalog.Record.variantMarker` to the column `family_variant`). So
     # what a field of either spelling means is the origin read's question, not the field's:
     # a concrete-target find carries no discriminator at all (m-sql), so its row's
     # `family_variant` is the model's own column and says nothing about the variant; an
-    # abstract find's materialized `familyVariant` is its answer, and the physical column
+    # abstract find's materialized `_type` is its answer, and the physical column
     # remapped back beside it is not. Reading the physical column as the tag refuses the
     # first two settlements outright and, worse, lets a domain value equal to a variant
     # spelling overrule the read's own answer and license the sibling's rectangle.
@@ -322,13 +322,19 @@ def test_variant_resolution_reads_the_finds_own_discriminator() -> None:
     assert_judged(
         _physical_variant_column_settled_case(
             target="parallax.compatibility.Rate",
-            discriminators={"family_variant": "catalog-marker", "familyVariant": "DepositRate"},
+            discriminators={
+                "family_variant": "catalog-marker",
+                "_type": "parallax.compatibility.DepositRate",
+            },
         )
     )
 
     overruled = _physical_variant_column_settled_case(
         target="parallax.compatibility.Rate",
-        discriminators={"family_variant": "DepositRate", "familyVariant": "LoanRate"},
+        discriminators={
+            "family_variant": "DepositRate",
+            "_type": "parallax.compatibility.LoanRate",
+        },
     )
     with pytest.raises(CaseFailure, match="observed 0 row"):
         assert_unit_work_scenario(overruled, RefusingProvider())
@@ -547,7 +553,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                     "objectQuery": {"target": "parallax.compatibility.Animal"},
                     "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": _ANIMAL_FIND}, "binds": []}],
-                    "expectRows": [{"id": 1, "name": "Rex", "familyVariant": "Dog"}],
+                    "expectRows": [{"id": 1, "name": "Rex", "_type": "parallax.compatibility.Dog"}],
                 },
                 {
                     "uow": "shared-table",

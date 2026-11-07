@@ -40,8 +40,8 @@ then:
         prototype: null
         prototypes: []
         gadgets:
-          - { id: 1, label: Cog, workbenchId: 1, spin: 3, familyVariant: Widget }
-          - { id: 2, label: Gear, workbenchId: 1, spin: null, familyVariant: Widget }
+          - { id: 1, label: Cog, workbenchId: 1, spin: 3, _type: parallax.compatibility.Widget }
+          - { id: 2, label: Gear, workbenchId: 1, spin: null, _type: parallax.compatibility.Widget }
       - id: 2
         name: Shed
         prototypeId: 9

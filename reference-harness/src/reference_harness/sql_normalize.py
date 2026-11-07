@@ -109,7 +109,7 @@ _KEYWORD_VARS = frozenset({"SHARE", "OF", "NULLS", "LAST"})
 # String-literal tokens keep their (case-sensitive) text but tokenize with the
 # surrounding quotes STRIPPED; the renderer re-wraps them in single quotes so a
 # canonical string literal survives normalization unchanged. A string literal
-# appears in canonical m-sql only as the table-per-concrete-subtype ``familyVariant``
+# appears in canonical m-sql only as the table-per-concrete-subtype ``family_variant``
 # branch literal (``'Dog'``, ``'Cat'``, …) — every caller-supplied value is a ``?``
 # bind (rule 4), so this path is exercised solely by the inheritance ``union all``
 # lowering.

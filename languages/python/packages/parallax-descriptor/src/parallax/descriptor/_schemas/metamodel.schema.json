@@ -542,7 +542,7 @@
           "minLength": 1
         },
         "tag": {
-          "description": "table-per-hierarchy ROOT only: the discriminator column in the shared table distinguishing concrete subtypes. Declared once on the root (not repeated on descendants) and FORBIDDEN under table-per-concrete-subtype (no shared table). It is a framework-owned metadata column, NOT a declared entity attribute — abstract-target reads project it raw and materialize `familyVariant` from it (m-sql / m-case-format, resolved Q6).",
+          "description": "table-per-hierarchy ROOT only: the discriminator column in the shared table distinguishing concrete subtypes. Declared once on the root (not repeated on descendants) and FORBIDDEN under table-per-concrete-subtype (no shared table). It is a framework-owned metadata column, NOT a declared entity attribute — abstract-target reads project it raw and materialize `_type` from it (m-sql / m-case-format, resolved Q6).",
           "type": "object",
           "additionalProperties": false,
           "required": ["column"],
