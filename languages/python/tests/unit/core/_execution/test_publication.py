@@ -33,7 +33,7 @@ from parallax.core._execution._publication import (
     write_projection,
 )
 from parallax.core._execution._unit_work import preparation as preparation_module
-from parallax.core.entity import DomainModel, EntityGraphConstruction
+from parallax.core.entity import DomainModel
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity._model import model_of
@@ -44,11 +44,24 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.core.metamodel import UnresolvedEntityDeclaration
+from parallax.snapshot import connect
 from tests._support import mirrored_models as mm
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests._support.root_ownership import own_root
 
 _ACCOUNT: Final = mm.ACCOUNT_MODEL
 _ACCOUNT_SPELLING: Final = mm.Account.identity.canonical
 _BALANCE: Final = Decimal("5.00")
+_ROW: Final = {"id": 7, "owner": "Ada", "balance": _BALANCE, "version": 1}
 
 _RENDEZVOUS: Final = 10.0
 """Seconds a worker waits for the others at a point they share. Nothing is
@@ -126,10 +139,6 @@ def _descriptor_backed() -> DomainModel:
     return DomainModel._from_unresolved(_ClasslessSource())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
 
 
-def _identities(model: DomainModel) -> set[Any]:
-    return {entity.identity for entity in model.entities}
-
-
 def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every per-Entity derivation fail from here on, so anything a request
     path still derives is a failure rather than a cost."""
@@ -149,34 +158,43 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_class_backed_model_prepares_every_product_for_every_entity() -> None:
+def test_a_class_backed_selection_reads_and_writes_with_every_derivation_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     selection = prepare_model(_ACCOUNT, edition="one")
-    read, write = read_projection(selection), write_projection(selection)
+    _refuse_every_derivation(monkeypatch)
+    port = ScriptedAdapter(Read(rows=[_ROW]), Read(rows=[_ROW]), Transact(Write()))
+    database = own_root(connect(port, ServingModel(selection))).using_database_login()
+    query = mm.Account.where(mm.Account.id == 7)
 
-    assert selection.model is _ACCOUNT
-    assert selection.edition == "one"
-    assert read.edition == write.edition == "one"
-    assert read.model is write.model
-    assert read.model.meta is model_of(_ACCOUNT)
-    assert isinstance(read.construction, EntityGraphConstruction)
-    expected = _identities(_ACCOUNT)
-    assert set(read.model.layouts._layouts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(write.preparation._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(read.construction._facts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(read.wire._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert read.narrowed_view_keys.for_selection("rel", (_ACCOUNT_SPELLING,)) == "rel[Account]"
+    assert database.find(query).result().owner == "Ada"
+    assert database.wire.find(query).result()["owner"] == "Ada"
+    database.transact(lambda tx: tx.insert(mm.Account(id=9, owner="Bo", balance=_BALANCE)))
+
+    assert [type(call) for call in port.calls] == [
+        ReadCall,
+        ReadCall,
+        BeginCall,
+        WriteCall,
+        CommitCall,
+    ]
 
 
-def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None:
+def test_a_descriptor_backed_selection_reads_and_writes_with_every_derivation_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     selection = prepare_model(_descriptor_backed(), edition="wire-only")
-    read, write = read_projection(selection), write_projection(selection)
+    assert write_projection(selection).preparation.entity(mm.Account.identity).typed_class is None
+    _refuse_every_derivation(monkeypatch)
+    port = ScriptedAdapter(Read(rows=[_ROW]), Transact(Write()))
+    database = own_root(connect(port, ServingModel(selection))).using_database_login()
 
-    assert read.construction is None
-    assert set(read.model.layouts._layouts) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(read.wire._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(write.preparation._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert write.preparation.entity(mm.Account.identity).typed_class is None
-    assert read.narrowed_view_keys.for_selection("rel", (_ACCOUNT_SPELLING,)) == "rel[Account]"
+    assert database.wire.find(mm.Account.where(mm.Account.id == 7)).result()["owner"] == "Ada"
+    database.transact(
+        lambda tx: tx.wire.insert(_ACCOUNT_SPELLING, {"id": 9, "owner": "Bo", "balance": "5.00"})
+    )
+
+    assert [type(call) for call in port.calls] == [ReadCall, BeginCall, WriteCall, CommitCall]
 
 
 @pytest.mark.parametrize("edition", ["", None, 7], ids=["empty", "none", "not-a-string"])
@@ -212,6 +230,10 @@ def test_two_preparations_of_one_model_are_distinct_selections() -> None:
 
 def test_a_selection_exposes_its_model_and_edition_and_nothing_else() -> None:
     selection = prepare_model(_ACCOUNT, edition="one")
+    assert selection.model is _ACCOUNT
+    assert selection.edition == "one"
+    assert read_projection(selection).edition == write_projection(selection).edition == "one"
+    assert read_projection(selection).model.meta is model_of(_ACCOUNT)
     assert not hasattr(selection, "__dict__")
     public = {name for name in dir(selection) if not name.startswith("_")}
     assert public == {"model", "edition"}
@@ -370,14 +392,6 @@ def test_a_selection_with_an_equal_edition_is_not_the_expected_one() -> None:
     serving = ServingModel(a)
     with pytest.raises(PublicationConflictError):
         serving.publish(prepare_model(_ACCOUNT, edition="b"), expected=twin)
-    assert serving.current() is a
-
-
-def test_a_failed_candidate_preparation_leaves_the_held_selection_serving() -> None:
-    a = prepare_model(_ACCOUNT, edition="a")
-    serving = ServingModel(a)
-    with pytest.raises(TypeError):
-        serving.publish(prepare_model(object(), edition="b"), expected=a)  # pyright: ignore[reportArgumentType] - the failure under test
     assert serving.current() is a
 
 

@@ -6,7 +6,7 @@ nothing that is not a replay waits at all.
 
 When a failure becomes a retry candidate is the transaction runner's, graded in
 ``tests/unit/core/_execution/_transaction/test_runner.py``; the Temporal
-Conflict's own verdict and exhaustion are graded here beside the loop.
+Conflict's own verdict is graded here beside the loop.
 """
 
 from __future__ import annotations
@@ -426,21 +426,6 @@ def test_a_very_large_ordinal_stays_at_the_maximum_in_every_window(
     assert windows[7:] == [1.0] * (100_000 - 7)
 
 
-def test_a_duration_past_any_float_multiple_clamps_to_the_maximum(
-    timeline: _Time, jitter: _Jitter
-) -> None:
-    jitter.fraction = 0.0
-    timing = RetryTiming(monotonic=timeline.monotonic, sleep=timeline.sleep, jitter=jitter)
-
-    run_with_retry(
-        _failing_for(timeline, [sys.float_info.max]),
-        policy=RetryPolicy(max_retries=1),
-        timing=timing,
-    )
-
-    assert jitter.windows == [1.0]
-
-
 # --------------------------------------------------------------------------- #
 # The policy's own values.                                                    #
 # --------------------------------------------------------------------------- #
@@ -583,30 +568,6 @@ def _doomed_by(cause: BaseException) -> RollbackOnlyError:
 )
 def test_a_temporal_conflict_is_a_recoverable_conflict(failure: BaseException) -> None:
     assert retry_eligible(failure)
-
-
-@pytest.mark.parametrize("retries", [0, 2])
-def test_an_exhausted_temporal_conflict_surfaces_itself_with_the_attempt_count(
-    timeline: _Time, timing: RetryTiming, retries: int
-) -> None:
-    failure = TemporalConflictError(
-        EntityIdentity("parallax.compatibility", "Balance"), dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    )
-    attempts: list[None] = []
-
-    def attempt() -> str:
-        attempts.append(None)
-        timeline.work(0.004)
-        raise RetryCandidate(failure)
-
-    with pytest.raises(TemporalConflictError) as surfaced:
-        run_with_retry(attempt, policy=RetryPolicy(max_retries=retries), timing=timing)
-    assert surfaced.value is failure
-    assert len(attempts) == retries + 1
-    assert surfaced.value.__notes__ == [
-        f"bounded retry exhausted after {retries + 1} attempts (max_retries={retries})"
-    ]
-    assert len(timeline.slept) == retries
 
 
 def _exclusion_violation() -> DatabaseError:

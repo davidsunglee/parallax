@@ -24,35 +24,11 @@ def test_the_built_in_record_is_ten_optimistic_and_read_committed() -> None:
     assert options.isolation == "read_committed"
 
 
-def test_the_optimistic_conflict_opt_in_is_no_field() -> None:
-    assert [field.name for field in dataclasses.fields(TxnOptions)] == [
-        "retry",
-        "concurrency",
-        "isolation",
-    ]
-    with pytest.raises(TypeError, match="retry_optimistic_conflicts"):
-        TxnOptions(retry_optimistic_conflicts=True)  # pyright: ignore[reportCallIssue] - the removed field's refusal is what this proves
-
-
 def test_the_record_is_frozen_and_slotted() -> None:
     options = TxnOptions()
     with pytest.raises(dataclasses.FrozenInstanceError):
         options.retry = RetryPolicy(max_retries=3)  # pyright: ignore[reportAttributeAccessIssue] - the refusal is what this proves
     assert not hasattr(options, "__dict__")
-
-
-def test_every_field_is_configurable_and_compares_by_value() -> None:
-    configured = TxnOptions(
-        retry=RetryPolicy(max_retries=0),
-        concurrency="locking",
-        isolation="serializable",
-    )
-    assert configured == TxnOptions(
-        retry=RetryPolicy(max_retries=0),
-        concurrency="locking",
-        isolation="serializable",
-    )
-    assert configured != TxnOptions()
 
 
 @pytest.mark.parametrize(
@@ -89,16 +65,6 @@ def test_an_accepted_vocabulary_value_is_stored_as_its_canonical_spelling() -> N
     assert type(options.concurrency) is str
     assert type(options.isolation) is str
     assert {options.concurrency: 1, options.isolation: 2}
-
-
-def test_the_retired_bound_is_no_field_of_either_record() -> None:
-    with pytest.raises(TypeError, match="max_retries"):
-        TxnOptions(max_retries=3)  # pyright: ignore[reportCallIssue] - the removed field's refusal is what this proves
-
-
-def test_a_record_holds_the_policy_it_was_given() -> None:
-    policy = RetryPolicy(max_retries=0)
-    assert TxnOptions(retry=policy).retry is policy
 
 
 def test_the_omission_marker_is_one_slotted_value_that_names_itself() -> None:

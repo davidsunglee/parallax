@@ -1,36 +1,29 @@
 """Write-DML lowering unit tests (execution's lowering seam, m-sql write DML).
 
-``parallax.core._execution._write_lowering.lowered`` is the single
-write-lowering seam each Planned Step lowers through alone, whichever path
-reaches it. These tests pin its byte-exact non-temporal keyed emissions against
-the corpus goldens (``m-unit-work-001/003/005``, ``m-concurrency-002/005/006/013``,
-``m-inheritance-007/008/009/010/084/104``, ``m-pk-gen-001``), compose it with the
-Write Planner for the coalescing / mixed-flush / cancellation cases
-(``-008/-009/-010``), pin the ``m-concurrency`` version gate/advance/shortfall
-policy (observation-required for BOTH update and delete, gate-optimistic-only, a
-row-carried version value refused outright, the derived initial version), the
-inheritance tag derivation/guard/opt-lock composition, and the pk-gen
-``max``/``increment`` marker lowering. The temporal keyed forms—close-and-chain,
-the rectangle split, the per-axis close address, the observed-``in_z`` gate, and
-the settled ``StaleWrite`` versus ``OptimisticConflict`` shortfall tag—are pinned
-in ``tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py``. The
-predicate-selected and multi-row batch forms use the same lowering seam. Planning
-refuses a materializing predicate write that reaches it, a mixed-shape multi-row
-instruction, and a milestone verb on a non-temporal entity with a loud
+``parallax.core._execution._write_lowering.lowered`` lowers each Planned Step
+alone, whichever path reaches it. The corpus goldens own the byte-exact emissions
+of the shapes they author; these tests pin what no golden reaches: the
+``m-concurrency`` version gate and shortfall policy (observation-required for
+BOTH update and delete, a row-carried version value refused outright, the derived
+initial version), the layout-order rules on rows a corpus case never authors, the
+pk-gen ``max``/``increment`` marker lowering, and dialects binding no arrays. The
+temporal keyed forms are pinned in
+``tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py``. Planning
+refuses a materializing predicate write that reaches lowering, a mixed-shape
+multi-row instruction, and a milestone verb on a non-temporal entity with a loud
 ``WritePlanningError``, preparation refuses an unsupported DB-computed marker
 before anything is buffered, and payload preparation refuses a target with no
-effective table the same way — each a forward-error posture, never a wrong
+effective table the same way: each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
 
 A later section pins the halves the non-temporal insert family crosses
 separately: the Write Planner settling an instruction into finalized steps, and
-the shared lowering path preparing and rendering a step built by hand — proving
+the shared lowering path preparing and rendering a step built by hand, proving
 that lowering answers a purely physical question and never re-derives a semantic
-one — and the private SQL compiler refusing a payload that was not prepared from
-the step it renders.
-The composed emissions above are the byte-exact evidence; these are the seam
-itself. The last section pins the insert compiler's entry-atomic appends and the
-order in which a logical insert's preparation and validation refusals win.
+one, and the private SQL compiler refusing a payload that was not prepared from
+the step it renders. The last section pins the insert compiler's entry-atomic
+appends and the order in which a logical insert's preparation and validation
+refusals win.
 """
 
 from __future__ import annotations
@@ -58,7 +51,6 @@ from parallax.core import (
     temporal_read,
 )
 from parallax.core import predicate as oa
-from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     InstructionRejectedError,
     WriteInstruction,
@@ -93,7 +85,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
-from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
@@ -106,7 +97,6 @@ from parallax.core.unit_work import (
     PredicateWriteInstruction,
     UnitOfWork,
     WriteAssignment,
-    WritePlanningRequest,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
@@ -153,14 +143,11 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.descriptor import _records
-from tests._support.clock_probes import inert_instant
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests._support.row_slots import observed_slots
 from tests._support.write_preparation import write_preparation_of
-from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, document_model
@@ -198,30 +185,6 @@ def _array_values(statement: LoweredStatement) -> tuple[list[object], ...]:
     return tuple(cast("ArrayBind", bind).values for bind in statement.binds)
 
 
-def _flush_and_lower(
-    buffer: list[KeyedWriteInstruction],
-    model: Metamodel,
-    *,
-    concurrency: ConcurrencyPreference = "locking",
-    observations: Mapping[ObjectKey, StateObservation] | None = None,
-) -> list[LoweredStatement]:
-    instant = inert_instant()
-    plan = build_write_planner(model).finalize(
-        WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant,
-            preference=concurrency,
-            composed_writes=observed_buffer(buffer, model, observations),
-        )
-    )
-    return [
-        statement
-        for _step, statement in lowered_steps(
-            plan_steps(plan), LayoutPayloadPreparer(model), model, POSTGRES
-        )
-    ]
-
-
 def _layout_columns(model: Metamodel, entity_name: str) -> tuple[str, ...]:
     """The target Entity's applicable Table Layout slots, in canonical order."""
     metadata = entity_by_name(model, entity_name)
@@ -248,76 +211,6 @@ def test_non_temporal_write_requires_an_effective_table() -> None:
             ),
             malformed,
         )
-
-
-def test_insert_projects_every_present_column_in_column_order() -> None:
-    # m-unit-work-001 step 0.
-    statement = _lower(
-        KeyedWriteInstruction(
-            "insert",
-            "Account",
-            ({"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1},),
-        ),
-        ACCOUNT,
-    )[0]
-    assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
-    assert statement.binds == (7, "Newton", 5.00, 1)
-
-
-def test_insert_omits_an_absent_nullable_column() -> None:
-    # m-unit-work-003 step 1: OrderItem's nullable shipped_on is absent from the write
-    # input, so the INSERT is narrower (4 of 5 columns) — never an explicit NULL bind.
-    statement = _lower(
-        KeyedWriteInstruction(
-            "insert", "OrderItem", ({"id": 200, "orderId": 100, "sku": "X-1", "quantity": 3},)
-        ),
-        ORDERS,
-    )[0]
-    assert (
-        statement.sql == "insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)"
-    )
-    assert statement.binds == (200, 100, "X-1", 3)
-
-
-def test_insert_orders_columns_by_column_order_not_row_order() -> None:
-    # m-unit-work-003 step 0: the row is authored id..orderedOn; the emission follows
-    # the Entity Layout's slots (orderedOn -> ordered_on last among Order's scalars).
-    row = {
-        "orderedOn": dt.date(2024, 7, 1),
-        "id": 100,
-        "name": "Hopper",
-        "sku": "X-1",
-        "qty": 1,
-        "price": Decimal("9.99"),
-        "active": True,
-    }
-    statement = _lower(KeyedWriteInstruction("insert", "Order", (row,)), ORDERS)[0]
-    assert statement.sql == (
-        "insert into orders(id, name, sku, qty, price, active, ordered_on) "
-        "values (?, ?, ?, ?, ?, ?, ?)"
-    )
-    assert statement.binds == (100, "Hopper", "X-1", 1, Decimal("9.99"), True, dt.date(2024, 7, 1))
-
-
-def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
-    # m-unit-work-005 step 1: the version advances from this unit of work's own
-    # recorded observation (`m-concurrency`), never a row-carried value.
-    statement = _lower(
-        KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
-        ACCOUNT,
-        observation=VersionObservation(observed_version=1),
-    )[0]
-    assert statement.sql == "update account set balance = ?, version = ? where id = ?"
-    assert statement.binds == (175.00, 2, 1)
-
-
-def test_delete_is_keyed_by_the_primary_key() -> None:
-    # m-unit-work-007's own delete shape: a NON-versioned entity's keyed delete
-    # is a bare `delete ... where <pk> = ?`, no opt-lock participation at all
-    # (the versioned delete's own observation requirement is pinned below).
-    statement = _lower(KeyedWriteInstruction("delete", "OrderItem", ({"id": 200},)), ORDERS)[0]
-    assert statement.sql == "delete from order_item where id = ?"
-    assert statement.binds == (200,)
 
 
 def test_value_object_document_binds_as_one_json_document_in_column_order() -> None:
@@ -477,30 +370,6 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
 # --------------------------------------------------------------------------- #
 # m-concurrency: the version gate / advance / conflict policy.                    #
 # --------------------------------------------------------------------------- #
-def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
-    # locking mode: version = observed + 1 in the SET, no gate.
-    update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
-    statement = _lower(
-        update, ACCOUNT, observation=VersionObservation(observed_version=3), concurrency="locking"
-    )[0]
-    assert statement.sql == "update account set balance = ?, version = ? where id = ?"
-    assert statement.binds == (50.00, 4, 1)
-
-
-def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> None:
-    # optimistic mode: SAME advance, plus `and version = ?` binding the observed
-    # value LAST.
-    update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
-    statement = _lower(
-        update,
-        ACCOUNT,
-        observation=VersionObservation(observed_version=3),
-        concurrency="optimistic",
-    )[0]
-    assert (
-        statement.sql == "update account set balance = ?, version = ? where id = ? and version = ?"
-    )
-    assert statement.binds == (50.00, 4, 1, 3)
 
 
 def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
@@ -577,93 +446,6 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
     assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
     assert statement.binds == (9, "Noether", 5.00, concurrency.INITIAL_VERSION)
     assert concurrency.INITIAL_VERSION == 1
-
-
-# --------------------------------------------------------------------------- #
-# Inheritance-family keyed writes — tag derivation, tag guard, opt-lock        #
-# composition (m-inheritance x m-sql x m-concurrency).                            #
-# --------------------------------------------------------------------------- #
-def test_tph_insert_derives_the_tag_at_its_columnorder_position() -> None:
-    # m-inheritance-007.
-    insert = KeyedWriteInstruction(
-        "insert",
-        "CardPayment",
-        ({"id": 10, "amount": Decimal("200.00"), "cardNetwork": "Mastercard"},),
-    )
-    statement = _lower(insert, PAYMENT)[0]
-    assert (
-        statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
-    )
-    assert statement.binds == (10, "card", 200.00, "Mastercard")
-
-
-def test_tph_update_of_a_root_declared_attribute_is_tag_guarded() -> None:
-    # m-inheritance-008.
-    update = KeyedWriteInstruction(
-        "amend", "CardPayment", ({"id": 1, "amount": Decimal("130.00")},)
-    )
-    statement = _lower(update, PAYMENT)[0]
-    assert statement.sql == "update payment set amount = ? where id = ? and kind = ?"
-    assert statement.binds == (130.00, 1, "card")
-
-
-def test_tph_delete_is_tag_guarded() -> None:
-    # m-inheritance-009.
-    delete = KeyedWriteInstruction("delete", "CardPayment", ({"id": 2},))
-    statement = _lower(delete, PAYMENT)[0]
-    assert statement.sql == "delete from payment where id = ? and kind = ?"
-    assert statement.binds == (2, "card")
-
-
-def test_tpcs_insert_targets_the_concretes_own_table_no_tag() -> None:
-    # m-inheritance-010.
-    insert = KeyedWriteInstruction(
-        "insert",
-        "Invoice",
-        ({"id": 10, "title": "Invoice-C", "currency": "USD", "amountDue": Decimal("300.00")},),
-    )
-    statement = _lower(insert, DOCUMENT)[0]
-    assert (
-        statement.sql == "insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)"
-    )
-    assert statement.binds == (10, "Invoice-C", "USD", 300.00)
-
-
-def test_tpcs_delete_targets_the_concretes_own_table_no_tag() -> None:
-    # m-inheritance-085.
-    delete = KeyedWriteInstruction("delete", "Invoice", ({"id": 1},))
-    statement = _lower(delete, DOCUMENT)[0]
-    assert statement.sql == "delete from invoice where id = ?"
-    assert statement.binds == (1,)
-
-
-def test_tph_optlock_composition_tag_rides_identity_gate_binds_last() -> None:
-    # m-inheritance-084: the bind order end to end — pk, tag guard,
-    # THEN the version gate (no inheritance exception to "the gate binds last").
-    update = KeyedWriteInstruction("amend", "Car", ({"id": 1, "name": "Coupe"},))
-    statement = _lower(
-        update,
-        VEHICLE,
-        observation=VersionObservation(observed_version=5),
-        concurrency="optimistic",
-    )[0]
-    assert statement.sql == (
-        "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?"
-    )
-    assert statement.binds == ("Coupe", 6, 1, "car", 5)
-
-
-def test_tpcs_optlock_composition_no_tag_guard_gate_binds_last() -> None:
-    # m-inheritance-104: the TPCS analogue — no shared table, no tag, own table.
-    update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))
-    statement = _lower(
-        update,
-        APPLIANCE,
-        observation=VersionObservation(observed_version=5),
-        concurrency="optimistic",
-    )[0]
-    assert statement.sql == "update fridge set name = ?, version = ? where id = ? and version = ?"
-    assert statement.binds == ("Chill", 6, 1, 5)
 
 
 # --------------------------------------------------------------------------- #
@@ -750,76 +532,6 @@ def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Composed with the planner — coalescing / mixed flush / cancellation.         #
-# --------------------------------------------------------------------------- #
-def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
-    # m-unit-work-008: buffered insert + update of the same new object -> ONE insert.
-    statements = _flush_and_lower(
-        [
-            KeyedWriteInstruction(
-                "insert",
-                "Account",
-                ({"id": 8, "owner": "Turing", "balance": Decimal("1.00"), "version": 1},),
-            ),
-            KeyedWriteInstruction("amend", "Account", ({"id": 8, "balance": Decimal("99.00")},)),
-        ],
-        ACCOUNT,
-    )
-    assert len(statements) == 1
-    assert (
-        statements[0].sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
-    )
-    assert statements[0].binds == (8, "Turing", 99.00, 1)
-
-
-def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
-    # m-unit-work-009's canonical combined order: three objects, one flush. BOTH
-    # the update's and the delete's version (m-concurrency's own prior-observation
-    # requirement) come from the observation each write carries — never a
-    # row-carried value. `_flush_and_lower`'s own `locking` preference
-    # resolves Account to the Locking strategy, under which neither renders a
-    # gate.
-    statements = _flush_and_lower(
-        [
-            KeyedWriteInstruction(
-                "insert",
-                "Account",
-                ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 1},),
-            ),
-            KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("20.00")},)),
-            KeyedWriteInstruction("delete", "Account", ({"id": 3},)),
-        ],
-        ACCOUNT,
-        observations={
-            corpus_object_key("Account", ("id", 1)): VersionObservation(observed_version=1),
-            corpus_object_key("Account", ("id", 3)): VersionObservation(observed_version=1),
-        },
-    )
-    assert [(s.sql, s.binds) for s in statements] == [
-        (
-            "insert into account(id, owner, balance, version) values (?, ?, ?, ?)",
-            (9, "Noether", 5.00, 1),
-        ),
-        ("update account set balance = ?, version = ? where id = ?", (20.00, 2, 1)),
-        ("delete from account where id = ?", (3,)),
-    ]
-
-
-def test_insert_then_delete_cancels_to_no_dml() -> None:
-    # m-unit-work-010: the cancelled flush emits nothing.
-    statements = _flush_and_lower(
-        [
-            KeyedWriteInstruction(
-                "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
-            ),
-            KeyedWriteInstruction("delete", "Account", ({"id": 9},)),
-        ],
-        ACCOUNT,
-    )
-    assert statements == []
-
-
-# --------------------------------------------------------------------------- #
 # Forward-error posture — every not-yet-lowered form refused loudly.           #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
@@ -882,34 +594,6 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
         _lower(mixed, WALLET)
 
 
-def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
-    # The temporal milestone verb set (terminate / *Until) stays refused on a
-    # NON-temporal entity — permanently: `Account` has no Transaction-/Valid-Time
-    # axis to close, so a milestone verb aimed at it is never sensible.
-    with pytest.raises(ValueError, match="do not support 'terminate'"):
-        _lower(KeyedWriteInstruction("terminate", "Account", ({"id": 1},)), ACCOUNT)
-
-
-def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None:
-    # m-batch-write-001's own insert entry: the multi-row INSERT collapse
-    # renders ONE statement binding one array per Column, each in row order —
-    # the m-batch-write set-based flush's own multi-entry insert.
-    insert = KeyedWriteInstruction(
-        "insert",
-        "Wallet",
-        (
-            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
-            {"id": 11, "owner": "Omar", "balance": Decimal("20.00")},
-        ),
-    )
-    statement = _lower(insert, WALLET)[0]
-    assert statement.sql == (
-        "insert into wallet(id, owner, balance) select * from "
-        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
-    )
-    assert _array_values(statement) == ([10, 11], ["Mira", "Omar"], [100.00, 20.00])
-
-
 def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
     # the multi-entry insert's versioned-entity behavior mirrors the single-row
     # insert's: every collapsed row derives the SAME `concurrency.INITIAL_VERSION` at
@@ -938,21 +622,6 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
         [10.00, 20.00],
         [concurrency.INITIAL_VERSION, concurrency.INITIAL_VERSION],
     )
-
-
-def test_batched_update_collapses_to_one_statement_binding_its_keys_as_one_array() -> None:
-    # m-batch-write-001's own update entry: a UNIFORM-value multi-row UPDATE
-    # collapses to one statement whose keys bind as one array, so its text and
-    # bind count follow the key Columns rather than the keys.
-    update = KeyedWriteInstruction(
-        "amend",
-        "Wallet",
-        ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
-    )
-    statement = _lower(update, WALLET)[0]
-    assert statement.sql == "update wallet set balance = ? where id = any(cast(? as bigint[]))"
-    assert statement.binds == (500.00, ArrayBind(INT64, [10, 11]))
-    assert statement.wire_binds() == ("500.00", [10, 11])
 
 
 def test_a_dialect_binding_no_arrays_lists_a_collapsed_updates_keys() -> None:
@@ -986,17 +655,11 @@ def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> Non
     assert second.binds == (222.00, 11)
 
 
-def test_multi_row_delete_collapses_to_one_statement_binding_its_keys_as_one_array() -> None:
-    # m-batch-write-003: a non-versioned target's multi-row DELETE collapses
-    # to one statement over one array of its keys.
+def test_a_dialect_binding_no_arrays_lists_a_collapsed_deletes_keys() -> None:
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}, {"id": 3}))
-    statement = _lower(delete, WALLET)[0]
-    assert statement.sql == "delete from wallet where id = any(cast(? as bigint[]))"
-    assert statement.binds == (ArrayBind(INT64, [1, 2, 3]),)
-
-    expanded = _lower(delete, WALLET, dialect=_EXPANDING)[0]
-    assert expanded.sql == "delete from wallet where id in (?, ?, ?)"
-    assert expanded.binds == (1, 2, 3)
+    statement = _lower(delete, WALLET, dialect=_EXPANDING)[0]
+    assert statement.sql == "delete from wallet where id in (?, ?, ?)"
+    assert statement.binds == (1, 2, 3)
 
 
 def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard() -> None:
@@ -1027,34 +690,6 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     expanded = _lower(update, PAYMENT, dialect=_EXPANDING)[0]
     assert expanded.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
     assert expanded.binds == (5.00, 1, 2, "card")
-
-
-# A COMPOSITE-key entity: the corpus declares none, but a composite primary key
-# is an ordinary well-formed model, and a multi-key target renders it as a
-# row-constructor IN-list rather than the single-column form.
-_LEDGER = _records.Metamodel(
-    entities=(
-        _records.Entity(
-            name="LedgerEntry",
-            table="ledger_entry",
-            attributes=(
-                _records.Attribute(name="bookId", type="int64", column="book_id", primary_key=True),
-                _records.Attribute(name="lineNo", type="int64", column="line_no", primary_key=True),
-                _records.Attribute(name="amount", type="decimal(18,2)", column="amount"),
-            ),
-        ),
-    )
-)
-
-
-def test_a_composite_primary_key_does_not_form() -> None:
-    # The accepted Metamodel admits exactly one primary-key Attribute per
-    # standalone Entity (m-metamodel `metamodel-primary-key-multiple`), so a
-    # composite-key entity never forms and never reaches finalization — the
-    # `(<pk1>, <pk2>) in (...)` row-constructor branch lowering keeps is
-    # defensive under that contract.
-    with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
-        formed(_LEDGER)
 
 
 def _two_column_key_delete() -> PlannedDelete:
@@ -1114,42 +749,6 @@ def test_a_collapsed_targets_text_and_bind_count_follow_its_key_columns_alone() 
     ]
 
 
-def test_readless_predicate_delete_lowers_to_one_statement() -> None:
-    # m-batch-write-005: an unversioned, non-temporal target's predicate
-    # delete is readless — one statement, no materialization, unaliased
-    # predicate rendering (contrast the resolving read's `t0`-aliased form).
-    predicate = PredicateWriteInstruction(
-        "delete",
-        PredicateSelection(
-            "Wallet",
-            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"),
-        ),
-    )
-    statement = _lower(predicate, WALLET)[0]
-    assert statement.sql == "delete from wallet where balance < ?"
-    assert statement.binds == (200.00,)
-
-
-def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
-    # m-batch-write-006: reversed authored assignments (balance then owner)
-    # still emit the Entity Layout's slot order (owner then balance) —
-    # assignment binds in emitted column order, predicate binds after.
-    predicate = PredicateWriteInstruction(
-        "amend",
-        PredicateSelection(
-            "Wallet",
-            oa.Comparison(op="lessThan", subject=oa.FieldSubject("Wallet.balance"), value="200.00"),
-        ),
-        assignments=(
-            WriteAssignment(attr="Wallet.balance", value=Decimal("150.00")),
-            WriteAssignment(attr="Wallet.owner", value="Updated"),
-        ),
-    )
-    statement = _lower(predicate, WALLET)[0]
-    assert statement.sql == "update wallet set owner = ?, balance = ? where balance < ?"
-    assert statement.binds == ("Updated", 150.00, 200.00)
-
-
 def test_a_readless_predicate_update_through_a_shared_join_is_one_key_selecting_statement() -> None:
     # The selection's join and predicate binds follow the assignment's, in text order.
     predicate = PredicateWriteInstruction(
@@ -1196,22 +795,6 @@ def test_a_readless_predicate_replacement_lowers_its_completed_state_as_an_updat
         "where t1.name = ?)"
     )
     assert statement.binds == (1, "Z", 9, None, "Ada")
-
-
-def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
-    # A DB-computed marker is a SCALAR cell's shape. A value-object member
-    # resolves to its own Value Object identity, so its whole-document mapping is
-    # never offered to the marker classification at all — it still lowers to one
-    # StructuredDocument bind, marker-shaped or not.
-    insert = KeyedWriteInstruction(
-        "insert",
-        "Customer",
-        ({"id": 5, "name": "Vera", "address": {"street": "3 Main", "city": "Berlin"}},),
-    )
-    statement = _lower(insert, CUSTOMER)[0]
-    assert statement.binds[-1] == StructuredDocument(
-        {"street": "3 Main", "city": "Berlin", "phones": []}
-    )
 
 
 # --------------------------------------------------------------------------- #

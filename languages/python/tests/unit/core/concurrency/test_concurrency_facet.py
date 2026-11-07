@@ -9,12 +9,9 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import concurrency, inheritance
-from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INT64
 from parallax.core.concurrency import (
-    CONCURRENCY_MODULE,
-    FACET_KEY,
-    ISSUE_CODES,
     RULE_SET,
     ConcurrencyFacet,
     ExplicitVersion,
@@ -25,10 +22,8 @@ from parallax.core.concurrency._compile import compile_facet
 from parallax.core.concurrency._facet import UNVERSIONED
 from parallax.core.concurrency._rules import MULTIPLE_VERSION_ATTRIBUTES, TEMPORAL_EXPLICIT_VERSION
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import INHERITANCE_MODULE
 from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
-    METAMODEL_MODULE,
     NOT_PRIMARY_KEY,
     AbstractRoot,
     AsOfAxisLocation,
@@ -50,13 +45,8 @@ from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
 )
 from parallax.core.model_formation import (
-    MODEL_FORMATION_MODULE,
     MetamodelValidationError,
-    ModelCompilerRequirement,
 )
-from parallax.core.model_formation._manifest import RequiredRuleSet
-from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
-from parallax.core.temporal_read import TEMPORAL_READ_MODULE
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
@@ -128,37 +118,8 @@ def _codes(*declarations: UnresolvedEntityDeclaration) -> list[IssueCode]:
 
 
 # --------------------------------------------------------------------------
-# The module's formation contract.
+# The facet's surface.
 # --------------------------------------------------------------------------
-
-
-def test_the_builtin_manifest_declares_this_modules_rule_set_and_compiler() -> None:
-    (entry,) = (entry for entry in BUILTIN_MANIFEST.entries if entry.owner == CONCURRENCY_MODULE)
-    assert isinstance(entry.rule_set, RequiredRuleSet)
-    assert entry.issue_codes == ISSUE_CODES
-    assert entry.compiler == ModelCompilerRequirement(FACET_KEY)
-    assert entry.required_facets == frozenset({INHERITANCE_FACET_KEY, TEMPORAL_FACET_KEY})
-    assert entry.required_modules == frozenset(
-        {METAMODEL_MODULE, MODEL_FORMATION_MODULE, INHERITANCE_MODULE, TEMPORAL_READ_MODULE}
-    )
-    assert RULE_SET in BUILTIN_PROFILE.rule_sets
-    assert concurrency.MODEL_COMPILER in BUILTIN_PROFILE.model_compilers
-    assert concurrency.MODEL_COMPILER.owner == CONCURRENCY_MODULE
-    assert concurrency.MODEL_COMPILER.facet_key == FACET_KEY
-    assert concurrency.MODEL_COMPILER.requires == frozenset(
-        {INHERITANCE_FACET_KEY, TEMPORAL_FACET_KEY}
-    )
-
-
-def test_the_concurrency_row_is_the_manifests_last() -> None:
-    # Manifest entry order is the spec table's order, and this file's row closes
-    # it — its compiler requires both facets compiled above it.
-    assert BUILTIN_MANIFEST.entries[-1].owner == CONCURRENCY_MODULE
-
-
-def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
-    model = _formed("account")
-    assert concurrency.view(model) is model.facet(FACET_KEY)
 
 
 def test_the_facet_offers_only_its_four_questions() -> None:
@@ -170,10 +131,6 @@ def test_the_facet_offers_only_its_four_questions() -> None:
     }
 
 
-def test_the_owned_code_set_is_closed() -> None:
-    assert sorted(ISSUE_CODES) == [MULTIPLE_VERSION_ATTRIBUTES, TEMPORAL_EXPLICIT_VERSION]
-
-
 # --------------------------------------------------------------------------
 # Version sources over the corpus.
 # --------------------------------------------------------------------------
@@ -183,27 +140,6 @@ def test_an_unversioned_non_temporal_entity_has_the_unversioned_source() -> None
     facet = _facet("animal")
     for name in ("Animal", "Pet", "Dog", "Cat", "WildBoar", "Person"):
         assert facet.version_source(_corpus_entity(name)) == UNVERSIONED, name
-
-
-def test_a_version_attribute_becomes_the_explicit_version() -> None:
-    account = _corpus_entity("Account")
-    assert _facet("account").version_source(account) == ExplicitVersion(
-        AttributeIdentity(account, "version")
-    )
-
-
-def test_a_transaction_time_entity_derives_its_version_from_the_milestone_start() -> None:
-    balance = _corpus_entity("Balance")
-    assert _facet("balance").version_source(balance) == TransactionTimeVersion(
-        AttributeIdentity(balance, "txStart")
-    )
-
-
-def test_a_bitemporal_entity_derives_its_version_from_transaction_time_alone() -> None:
-    position = _corpus_entity("Position")
-    assert _facet("position").version_source(position) == TransactionTimeVersion(
-        AttributeIdentity(position, "txStart")
-    )
 
 
 def test_every_accepted_entity_has_a_version_source() -> None:

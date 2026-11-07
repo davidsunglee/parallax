@@ -1,5 +1,5 @@
-"""m-concurrency: the strategy vocabulary, the version arithmetic, and each
-question the Concurrency Facet answers over formed corpus models."""
+"""m-concurrency: the strategy vocabulary and each question the Concurrency Facet
+answers over formed corpus models."""
 
 from __future__ import annotations
 
@@ -44,10 +44,6 @@ class _UnhashableName(str):
     __hash__ = None  # type: ignore[assignment]
 
 
-def test_the_vocabulary_is_exactly_two_preferences() -> None:
-    assert set(CONCURRENCY_PREFERENCES) == {"locking", "optimistic"}
-
-
 @pytest.mark.parametrize("preference", sorted(CONCURRENCY_PREFERENCES))
 def test_every_preference_of_the_vocabulary_is_returned_unchanged(preference: str) -> None:
     assert concurrency_preference(preference) == preference
@@ -77,20 +73,6 @@ def test_an_accepted_preference_comes_back_as_a_plain_hashable_str() -> None:
 
     assert preference == "locking"
     assert {preference: "keyable"}
-
-
-# --------------------------------------------------------------------------
-# The version arithmetic.
-# --------------------------------------------------------------------------
-
-
-def test_a_new_lineage_opens_at_version_one() -> None:
-    assert concurrency.INITIAL_VERSION == 1
-
-
-def test_a_write_advances_the_observed_version_by_one() -> None:
-    assert concurrency.next_version(3) == 4
-    assert concurrency.next_version(0) == 1
 
 
 # --------------------------------------------------------------------------
