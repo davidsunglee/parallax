@@ -57,13 +57,8 @@ The layout is one declaration per independent mapping owner:
 - a table-per-concrete-subtype root declares one layout policy and one
   Structured Column name that every concrete Table in the family receives.
 
-An abstract or concrete descendant declares no layout of its own, even when
-repeating the root's value. That invariant is one of the root-owned family
-invariants and is reported by `m-inheritance` as
-`inheritance-layout-not-root-owned`, exactly as for temporal axes, optimistic
-locking, persistence, and the shared table. The compiler never copies the value
-onto a descendant; it reads the family root's own declared metadata and derives
-each participant's effective layout fresh.
+Who may declare a layout is `m-inheritance`'s rule
+(`inheritance-layout-not-root-owned`).
 
 Accepted metadata always carries a resolved Structured Column name under
 `Document`. A frontend may supply a conventional name the author did not write,

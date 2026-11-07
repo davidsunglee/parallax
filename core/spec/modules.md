@@ -455,11 +455,9 @@ construction it may reference any behavioral module it harnesses.
   m-document-codec`; `m-execution --> m-write-payload`.** What a planned step
   stores — each member at its slot, each document composed, patched, or compared
   as persisted state — has one assembler beside the algebra rather than inside
-  it or inside SQL lowering. The plan stays independent of storage layout: it
-  declares the preparation interface and its neutral results, and the module
-  that executes writes constructs the concrete preparer and hands it to the
-  planner it configures, so neither `m-write-plan`, `m-unit-work`, nor
-  `m-temporal-write` names this one. `m-sql` renders and binds prepared values
+  it or inside SQL lowering. The plan stays independent of storage layout, so
+  neither `m-write-plan`, `m-unit-work`, nor `m-temporal-write` depends on this
+  module. `m-sql` renders and binds prepared values
   and never assembles a payload, so it depends on the vocabulary in
   `m-write-plan` and not on this module. Placement facts stay `m-storage-layout`'s
   and encoding, patching, and exact document equality `m-document-codec`'s; this
@@ -504,8 +502,8 @@ construction it may reference any behavioral module it harnesses.
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Developer-value conversion remains governed
   by `m-core`.
-- **`m-sql --> m-read-planning`, `--> m-write-plan`, `--> m-wire`.** SQL's private
-  compilers consume resolved flat reads and planned steps. The Wire edge exists
+- **`m-sql --> m-read-planning`, `--> m-write-plan`, `--> m-wire`.** SQL lowering
+  consumes resolved flat reads and planned steps. The Wire edge exists
   for canonical document values and carrier contracts, not to authorize SQL to
   decode an authored literal; resolution and conversion have already happened.
 - **`m-execution-lifecycle --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,
@@ -578,9 +576,8 @@ construction it may reference any behavioral module it harnesses.
   the roots and attempts the lifecycle observes. `m-unit-work` takes no edge to
   any of these, so its admission, evidence, and finalization remain SQL-free and
   testable without a database.
-- **`m-execution --> m-batch-write`.** Model preparation builds the Write
-  Planner a Model Selection carries, and wires batch write's collapse
-  eligibility into it as the batching strategy `m-unit-work` declares. The edge
+- **`m-execution --> m-batch-write`.** Preparing a model fixes which writes
+  collapse into a set-based statement, which is `m-batch-write`'s rule. The edge
   is the preparation's, not a write path's: `m-batch-write --> m-unit-work`
   already runs the other way, so the unit of work cannot take it, and placing
   preparation in a lifecycle would make each lifecycle prepare models.
@@ -636,14 +633,9 @@ construction it may reference any behavioral module it harnesses.
 The coverage gate rides the DAG check: every `active` module whose coverage
 source is `cases` MUST have at least one compatibility fixture tagged to it
 (measured against the `tags` of every fixture under `core/compatibility/`, cases
-**and** benchmarks). `m-db-port` is the sole `contract`-covered module — no
-fixture maps to it; the execution port is proven by each language's
-[database-provider test contract](database-provider-test-contract.md). Run it
-with the `--coverage` flag:
-
-```sh
-uv run python -m reference_harness.dep_graph_check --coverage core/spec core/compatibility
-```
+**and** benchmarks). A `contract`-covered module maps to no fixture; the
+execution port is proven by each language's
+[database-provider test contract](database-provider-test-contract.md).
 
 ## Out of scope (round 1)
 

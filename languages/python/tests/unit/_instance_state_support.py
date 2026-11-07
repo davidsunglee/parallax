@@ -541,7 +541,7 @@ def ordinary_publication(scenario: Scenario, state: object | None) -> object:
     """
     if state is not None:
         raise ValueError(
-            "an ordinary instance has no lifecycle state to carry (spec/python.md §3), "
+            "an ordinary instance has no lifecycle state to carry (spec/declarations.md), "
             "so the ordinary variant may not be given one"
         )
     plan = scenario.plan

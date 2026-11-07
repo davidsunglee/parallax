@@ -38,8 +38,7 @@ selection follows identity selection: explicit `column=` wins, otherwise the
 portable `default_column_name` is applied to the resolved canonical name.
 Descriptor input already uses canonical names and is never reverse-converted.
 Strings in `join`, `reverse_of`, `order_by`, and `index` use Python declaration
-names, not canonical spellings. Indices name local scalar members only, in
-declared component order; inherited members and Value Object paths are excluded.
+names, not canonical spellings.
 
 Mapped names cannot shadow framework query, inspection, edit, serialization,
 Pydantic state, or object-layout members, nor any operation a member expression
@@ -58,8 +57,7 @@ the [temporal infinity](../../../core/spec/m-core.md#temporal-infinity) that is
 distinct from every finite instant and from `None`. They use ordinary
 member-name conversion and are framework-owned: direct construction and edits
 cannot author them. There is no public temporal-axis declaration or column
-override. Valid Time and Transaction
-Time are the only accepted vocabulary; no business/processing aliases exist.
+override.
 
 ## Attributes and relationships
 

@@ -151,22 +151,5 @@ observed version **plus one**, under both strategies.
 
 ## What the suite pins down
 
-The conflict-case shape (`m-case-format` *Conflict cases*) proves the Optimistic
-promise against real data: a gate binding a stale version affects zero rows
-(`m-concurrency-005`) and a fresh one exactly one (`m-concurrency-006`). The
-Locking promise for a versioned write — no gate, version still advanced — is
-`m-concurrency-002`, and the fallback under the `optimistic` preference is
-`m-concurrency-023`. The formation rules and every Facet answer are proven by
-each language's own suite over the corpus models.
-
-The golden SQL proves a locking read well-formed and result-correct on one
-connection (`m-sql` *Read-lock suffix*). The two-connection concurrency cases
-prove that the emitted lock *behaves as a lock*: it **excludes a writer**
-(`m-concurrency-050`, `error`/`concurrency`) and is **shared, not exclusive**
-(`m-concurrency-051`, whose `concurrencySuccess` shape holds two sessions, admits
-the second reader, and raises no error).
-
-Both halves are proven again for the strategy the caller never asked for: the
-unversioned Non-Temporal fallback renders the suffix under the default
-`optimistic` preference (`m-concurrency-023`), and that derived lock excludes a
-writer too (`m-concurrency-056`).
+The formation rules and every Facet answer are proven by each language's own
+suite over the corpus models.

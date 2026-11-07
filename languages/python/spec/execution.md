@@ -46,38 +46,25 @@ returns a new alias root or scope sharing the same resources; it composes in
 any order with `using_principal`, `using_database_login`, and `with_options`.
 A new outer `read_only` whose resolved isolation its strict policy's route
 cannot begin raises `ValueError` before anything is observed or acquired; a
-`"reader_only"` refusal names `with_routing(read_policy='writer_only')`, and
-under `"reader_preferred"` such an invocation requests `"writer_only"` instead.
+`"reader_only"` refusal names `with_routing(read_policy='writer_only')`.
 
-`PostgresAdapter(*, writer, reader=None, acquire_timeout=15.0,
-startup_timeout=30.0, reader_startup=OMITTED, prepare_threshold=5)` and
-`PostgresEndpoint(connection_string, *, credentials, pool=PoolOptions())` are
-frozen configuration: constructing either opens no connection, pool, or
-thread. An endpoint holds where its connections go, how its login
-authenticates, and its retention; the adapter holds the topology and the
-budgets its runtime spends, which is why the two timeouts are adapter fields
-rather than retention options. A configured `reader` is its own endpoint, with
-its own credentials and retention, and must authenticate the writer's login;
+`PostgresAdapter` and `PostgresEndpoint` are frozen configuration. An endpoint
+holds where its connections go, how its login authenticates, and its retention;
+the adapter holds the topology and the budgets its runtime spends. A configured
+`reader` is its own endpoint, with its own credentials and retention, and must
+authenticate the writer's login;
 its reader route declares Read Committed and Repeatable Read for read-only
 transactions, never Serializable. `reader_startup` is `"deferrable"` or
 `"required"`: omitted with a reader, it defers an unreachable reader, which a
 fixed `parallax.resources` warning reports; supplied without a reader, it
-raises `ValueError`. `DatabaseStartupError.route` names which route failed. A
-connect-time refusal psycopg reports with no SQLSTATE reads as
-`ConnectionAcquisitionError.reason == "authentication_refused"` where the failed
-connection reports it sent a password, and as `"unavailable"` otherwise. Among
-the refusals that sent a password, one whose libpq message ends with the
-server's exact `FATAL:  database "<name>" does not exist` reads as
-`"preparation_failed"`. Neither of those two reasons defers a reader or earns
-a preferred fallback. `reader_preferred` gives the reader at most half of
+raises `ValueError`. `DatabaseStartupError.route` names which route failed.
+`ConnectionAcquisitionError.reason` spells `m-db-port`'s acquisition reasons in
+snake_case. `reader_preferred` gives the reader at most half of
 `acquire_timeout`. While a reader is known to be unreachable, one
 `reader_preferred` acquisition at a time tries it again, which is what re-dials
-it, and the others go to the writer at once. Each `connect` opens an independent
-runtime; closing one root does not close another made from the same configuration. A
-connection string cannot contain a password. Required `credentials=` accepts
+it, and the others go to the writer at once. Required `credentials=` accepts
 `Password(...)`, a source with `resolve() -> Password`, or `DRIVER_MANAGED`,
-never `None`. Credential sources resolve when establishing connections,
-allowing credentials to expire before the pool does. `parallax-aws` supplies
+never `None`. `parallax-aws` supplies
 `RdsIamCredentials`; its optional `parallax.aws.postgres.rds_endpoint` composer
 returns a configured endpoint with the credential source and TLS mode required
 for IAM authentication, signing for its own host, which the application
@@ -85,7 +72,7 @@ composes into an adapter.
 
 `read_plan_cache_capacity` controls per-root reuse of immutable read plans. It
 must be a nonnegative exact built-in `int`; invalid values raise `ValueError`
-before the adapter runtime opens. The default is `128`, and zero disables reuse
+before the adapter runtime opens. Zero disables reuse
 between deliveries while preserving the normal planning path. A positive value
 bounds a true least-recently-used cache by entry count. Concurrent cold requests
 for the same key share one build and its success or failure; failures are not
@@ -120,17 +107,14 @@ closed vocabularies are declared by the exported record and types.
 resolves and validates them.
 
 `retry` takes a `RetryPolicy`, exported with `AdaptiveBackoff` from
-`parallax.core.execution`. Both are frozen keyword-only values that compare by
-value, and `RetryPolicy(max_retries=..., backoff=AdaptiveBackoff(base_delay=...,
-max_delay=...))` maps field for field to the portable Retry Policy
-(`m-auto-retry`). Each validates on construction and refuses with plain
+`parallax.core.execution`; together their fields map one for one to the portable
+Retry Policy (`m-auto-retry`). Each validates on construction and refuses with plain
 `ValueError` naming the field: `max_retries` is an exact built-in `int`, so `bool`
 and `int` subclasses are refused; a delay is an `int` or `float`, not `bool`, that
 converts to a finite positive `float`, and is held as that `float`. A `retry` value
 that is not a `RetryPolicy`, `None` included, raises `ValueError` where it is
 supplied: eagerly in `with_options`, and in `transact` and `read_only` after
-re-entry refusal, ahead of any join comparison. The clock, sleeper, and random
-source behind the waits are the loop's own, not options.
+re-entry refusal, ahead of any join comparison.
 
 ## The database port
 
@@ -160,18 +144,13 @@ count.
 entrypoint, callback-only on the same terms. Its callback receives a
 `ReadOnlyTxnContext`: `find`, `stream`, a `wire` that is the
 read-only `WireDatabaseView`, `edition`, and `options` — a
-`ReadOnlyTxnOptions` — and no mutation verb. Each attempt asks the port for a
-read-only boundary, and each attempt of `transact` for a read/write one; the
-access mode crosses the port as `access_mode`, `"read_only"` or `"read_write"`,
-beside `isolation`. A read-only transaction takes no participation lock, and a
-standalone read made inside either callback stays standalone.
+`ReadOnlyTxnOptions` — and no mutation verb. The access mode crosses the port as
+`access_mode`, `"read_only"` or `"read_write"`, beside `isolation`.
 
-Only omission inherits a transaction option. An outer call inherits the scope's
-effective record; a joining call inherits the active transaction's resolved
-record. Explicit `None` is invalid. `tx.options` is one resolved immutable record
-shared by all attempts and joins and remains readable after the invocation ends.
-Every attempt adopts the Serving Model before opening its boundary; `tx.edition`
-identifies that selection. Static and cross-edition write eligibility follows
+Only omission inherits a transaction option. Explicit `None` is invalid.
+`tx.options` is one resolved immutable record shared by all attempts and joins
+and remains readable after the invocation ends. `tx.edition` identifies the
+adopted selection. Static and cross-edition write eligibility follows
 the adopted model and core evidence rules, not edition inequality alone.
 
 Active transactions are thread-local. Joins must come from the same resource
@@ -186,9 +165,8 @@ joining explicit option may equal the active value but cannot renegotiate it; a
 difference raises `TransactionOptionConflictError`. Scope defaults alone do not
 conflict.
 
-Join refusal order is lifecycle re-entry, explicit option validation, root
-ownership, rollback-only state, actor equality, access mode, then explicit
-option equality. Authority, access-mode, and option preflight refusals leave a
+Lifecycle re-entry and explicit option validation precede the core join refusal
+order (`m-execution-authority` *Join authority*). Authority, access-mode, and option preflight refusals leave a
 healthy transaction usable when caught. A joined callback failure marks the
 outer transaction rollback-only before escaping; catching it cannot permit a
 commit. A failure while a flush executes — a database error or an affected-row
@@ -224,7 +202,7 @@ constraint's name rather than treating every failure of a category as its own.
 
 Constructing a `DatabaseError` directly accepts `violated_index=` as a spelling
 of `constraint_name=`, and raises `ValueError` when the two name different
-constraints. `violated_index` is derived rather than stored, so it reads `None`
+constraints. `violated_index` reads `None`
 for every category but `"uniqueViolation"` whatever the constructor received.
 
 Failed rollback after an ordinary trigger raises `TransactionRollbackError`,
@@ -317,26 +295,11 @@ members into fresh mutable mappings and lists, preserving Wire spellings and
 absent members; it queries, completes, and authorizes nothing, and records no
 edit history.
 
-A temporal milestone such a write leaves exactly as it was keeps its
-Transaction-Time start and gains no history (`m-temporal-write` *Unchanged
-milestones*). The shipped PostgreSQL adapter's dialect counts unchanged rows, so
-under Optimistic each such milestone that existed before the transaction costs
-one guarding `UPDATE` rather than a close and its successors: it fires `UPDATE`
-triggers, creates a new row version, and holds the row's write lock until the
-transaction ends, including across any later dependent read. Another
-transaction that read the same milestone can still write it once this one
-commits, where a close would have made it conflict. Under Locking, and for rows
-the transaction opened itself, nothing is written. Either way the milestone's
-sources stay as they were, so a later write through one needs no fresh read. A
-target write's guard binds its `tx_start` instead, so losing that
-milestone is still the caller's failed precondition; a versioned non-temporal
-target advances its version, equal values included.
-
 An insertion's authority (`m-unit-work` *Insertion authority*) rides its source
 privately. `tx.insert` binds it to the instance it took, beside any Snapshot
 state that instance already carries, and `edit` carries it to every value
 derived from that instance afterwards; `tx.wire.insert` answers a node carrying
-it in a slot of its own and no Read Evidence. It is no member and no mapping key:
+it and no Read Evidence. It is no member and no mapping key:
 `model_dump`, `dict(node)`, and JSON drop it, and a pickled inserted instance or
 node unpickles as plain domain data that authorizes nothing — so pickling an
 inserted instance succeeds, unlike a read's node. Inserting the same instance
@@ -379,8 +342,8 @@ with no queue, sink, or shutdown ownership. Both detail modes exclude SQL and
 binds; default `safe` excludes error messages and stacks, while `diagnostic`
 adds their bounded projections. Started and non-root Finished records use DEBUG,
 successful root summaries INFO, retry-eligible rollbacks WARNING, and failed
-roots or rollback failures ERROR. The provider checks `isEnabledFor` before
-describing an event, but summaries count transitions regardless of log level.
+roots or rollback failures ERROR. A disabled level pays for no event description,
+but summaries count transitions regardless of log level.
 Pool observation is an optional protocol on the same provider, independent of
 root acceptance; its registration stays live through runtime close and is closed
 exactly once afterward.

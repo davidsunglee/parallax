@@ -478,12 +478,9 @@ delivery is a different problem. This contract states per-page stability; what
 a level adds on top of it is `m-db-port`'s.
 
 That shared lock is nevertheless mandatory authority for every root a
-participating locking page DID read, including its lookahead. On PostgreSQL a
-continuing page whose root statement needs the two-arm NULL-tail form uses
-`m-sql`'s outer physical-identity join: both arms remain unlocked, the one outer
-base alias is joined on its complete physical key and locked with `for share`,
-and the derived capture order and cap still choose the page. It is one statement,
-not an unlocked selection followed by a resolving lock read, so the unit of work
+participating locking page DID read, including its lookahead. The lock is taken
+by the statement that selects the page, in every `m-sql` page form, rather than
+by an unlocked selection followed by a resolving lock read, so the unit of work
 may retain pessimistic write authority from the row it published.
 
 What per-page stability admits is stated against the delivery's **position** —
@@ -634,14 +631,3 @@ publishes one transient Read activity containing its Database Call children
 and nothing stands in for one. The delivered result retains no trace or lifecycle
 record. The portable `then.databaseCalls` oracle and authored statements continue
 to pin the `1 + L` ceiling independently of whether observation is installed.
-
-## What the suite pins down
-
-Delivery is graded through the read cases every Publication answers
-(`m-case-format`): golden statements and `then.databaseCalls` pin the `1 + L`
-ceiling, a streamed case's statements spell out its page partition, and a
-batch-size pair grades the invariance the page size promises.
-
-| Case | What it proves |
-|---|---|
-| whole-result delivery | an unfiltered read of every stored row returns them all from one statement, inside one standalone Read that acquires its connection before the call and releases it after |

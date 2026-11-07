@@ -146,10 +146,7 @@ Within **one Root View**, one row key is **one node**:
 
 - Two include paths that reach the same row — the diamond — materialize a
   **single** node referenced from both positions, never two equal copies. The
-  resolution key is **(entity family,
-  primary key, lowered as-of coordinate per declared axis)** — family-normalized
-  (`m-inheritance`), coordinate-aware, degrading to (family, primary key) for a
-  non-temporal entity.
+  resolution key is the row key (`m-read-delivery` *Entity State and the Page*).
 - Resolution is **projection-independent**: the key alone decides which node a
   path reaches, never the attribute set the level fetched. Levels that reach one
   node with *different* fetched attribute sets still produce **one** node, and
@@ -243,22 +240,10 @@ Calls*): at most `1 + L` statements for `L` distinct relationship hops.
 
 ## What the suite pins down
 
-Snapshot cases are **read**-shape deep-fetch cases (`m-case-format`): golden
-statements, the assembled `then.graph`, and the declared `then.databaseCalls`. A
-**streamed** case is the same shape carrying `when.stream`, so the page
-partition its statements spell out — the requested size, lookahead root
-included, the seek each later page continues from, and the page that came back
-short of it and so ended the delivery — is graded beside the delivered graph, and a **batch-size pair** grades the invariance the
-page size promises. The
-graph fixture is a tree, so the diamond's shared node appears as equal values at
-both positions, and diamond fixtures stay **projection-neutral** — every path to
-a shared row fetches the identical attribute set, so no graph expectation
-depends on which path materializes a node first; the **reference-equality** half
-of identity resolution (one node, two pointers) is asserted per-language by the
-API Conformance Suite (`m-api-conformance`), the same division of labor as
-`sameObjectAs` scenarios.
-
-| Case | What it proves |
-|---|---|
-| diamond identity resolution | two include paths reach the same rows (`Order.items` and `Order.itemsByShipDate` — one `OrderItem` row set behind two orderings); the graph carries them at both positions from one statement per level — `1 + L` Database Calls, values identical at both positions |
-| pinned graph consistency | a deep fetch pinned to a past instant materializes every temporal node at the propagated pin — a point-consistent graph containing now-superseded milestones |
+A `then.graph` fixture is a tree, so the diamond's shared node appears as equal
+values at both positions, and diamond fixtures stay **projection-neutral** —
+every path to a shared row fetches the identical attribute set, so no graph
+expectation depends on which path materializes a node first; the
+**reference-equality** half of identity resolution (one node, two pointers) is
+asserted per-language by the API Conformance Suite (`m-api-conformance`), the
+same division of labor as `sameObjectAs` scenarios.

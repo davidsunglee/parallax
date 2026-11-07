@@ -845,23 +845,12 @@ the milestone the observation names, which is the same milestone the close
 addresses, so no concurrent writer can have superseded it (`m-unit-work` *What
 licenses a Locking write*).
 
-An observation of a milestone the Transaction-Time past holds is a different
-thing and never reaches planning under either strategy: it could only come from a view
-pinned at a finite Transaction-Time instant, and mutating one is refused at the
-authoring surface by the read-only rule above.
-
 ### Address and gate are separate
 
-The rectangle an inactivation means to close and the concurrency condition that
-detects a lost update are **separate** facts (ADR 0046). The **Milestone Target**
-(`m-write-plan`) is the address: the primary key together with one write-required
-exclusive upper bound **per As-Of Axis** — the observed predecessor's Valid-Time
-end, and the invariant Transaction-Time `Infinity` that keeps an operational close
-on the **current** rectangle. It carries no axis **start**, no State Observation,
-no gate, and no Effective Concurrency Strategy, and the planner derives it
-**identically under both strategies**. Two axes are exactly why the Valid-Time end is required: a key
-plus the current Transaction-Time bound may still select several disjoint current
-rectangles.
+The address and the gate that detects a lost update are separate facts (ADR
+0046); only the gate differs between strategies. Two axes are exactly why the
+Valid-Time end is required: a key plus the current Transaction-Time bound may
+still select several disjoint current rectangles.
 
 The two ends are not interchangeable. The Transaction-Time end is invariantly
 `Infinity`, but the Valid-Time end is whatever the observed predecessor carries —
@@ -878,7 +867,7 @@ it: closed history is never mutated, and the stale gate reports the conflict
 instead (*The close addresses a Milestone Target*, above). An observation of a rectangle the Transaction-Time
 past holds never reaches planning at all, under either strategy: it could only come from
 a view pinned at a finite Transaction-Time instant, which is read-only
-under this module's finite Transaction-Time pin rule.
+(*The Transaction-Time past is never rewritten*).
 
 ## Affected-row conflict contract for closes
 

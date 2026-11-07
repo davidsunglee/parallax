@@ -17,10 +17,6 @@ the independently checked dependency/artifact topology.
 - [Execution](execution.md): model publication, root/scope composition,
   transaction options, Python failure boundaries, and observation spelling.
 
-Stable diagnostic text may still use the former monolithic section addresses.
-For navigation, §2 moved to the declarations and queries pages, §3 to the
-declarations and execution pages, §4 to queries and results, and §5 to execution.
-
 The [core module index](../../../core/spec/modules.md) routes portable semantics;
 [slices](../../../core/spec/slices.md) owns the canonical claim. Public Python
 signatures and types live in their defining modules. The [API suite](../tests/api/)
@@ -29,9 +25,8 @@ structure does not require a public binding specification change.
 
 ## Dependency and artifact contracts
 
-The following two sections remain independent specification inputs to dependency
-enforcement. Their numbering is retained for the validators and existing links.
-Changing a source boundary, an external-package grant, or a deployable artifact
+The following two sections are independent specification inputs to dependency
+enforcement. Changing a source boundary, an external-package grant, or a deployable artifact
 requires updating and validating these contracts together with implementation.
 
 ## 7. Source-enforcement topology
@@ -101,10 +96,8 @@ NARROWER grant than its parent — not because they are the only children an
 importer may reach.
 
 `parallax.core.entity._instance_state` owns the physical backing beneath a
-published Entity or Value Object — the per-class publication plan, the compact
-slot, the tuple and its presence bitmap, both Adapters, and the Pydantic root
-that answers for a value's instance state — and its grant row is what keeps that
-a deep module rather than a second declaration engine. Granted two siblings and
+published Entity or Value Object, and its grant row keeps that a deep module
+rather than a second declaration engine. Granted two siblings and
 nothing else, it can reach neither the engine that builds a class nor the graph
 construction that publishes one, so a publication plan has to ARRIVE as plain data the engine
 computed rather than be derived here from a model the scope could import.
@@ -866,13 +859,11 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
 
 uv workspace under `languages/python/`; PEP 420 namespace `parallax.*` shared
 by separately installable distributions (the dormant PyPI `parallax` SSH tool
-would collide only if co-installed; documented, accepted). Build backend:
-hatchling, except `parallax-postgres`, which builds its compiled module with
-setuptools and Cython.
+would collide only if co-installed; documented, accepted).
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic`, `pydantic-core` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `IncludePath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `TemporalBound`, and its documented errors, among them `MetamodelValidationError` for a rejected model; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContextSource`, `ConnectionContext`, `InvalidAuthorizationError`, the transaction outcomes, the ordered write transport contract — `OrderedWriteTransport`, `CanonicalWriteStatement`, its results and outcomes — `WriteResultIntegrityError` for a write result its statements contradict, `IsolationLevel`, `AccessMode`, the routing vocabulary — `Route`, `RoutePolicy`, `FallbackReason`, `RouteSelection`, `RouteCapabilities`, `RouteReadiness` — `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `ReleaseUnconfirmed`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.db_error`: exactly `DatabaseError`, `Category`, and `PhysicalIndexName`, the vocabulary for inspecting a database failure, not its classification helpers; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail`; `parallax.core.read_delivery`: `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `InvalidDataError`, `StoredDataDecodingError`, `StreamStateError`, and `StreamContinuationError`; `parallax.core.execution`: `TxnOptions`, `ReadOnlyTxnOptions`, `Principal`, `ServingModel`, `ModelSelection`, `prepare_model()`, `ExecutionFailure`, `InvalidPrincipalError`, `TransactionAuthorityError`, `TransactionOwnershipError`, `TransactionAccessModeError`, `TransactionOptionConflictError`, `TransactionRollbackError`, `PublicationConflictError`, `DeferredFeatureError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, and `TransactionTimePinReadOnlyError`; `parallax.core.unit_work`, among its named exports: `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError`, and its subtype `InstructionRejectedError`, whose `rule` is the portable pre-SQL rejection rule an instruction broke; `parallax.core.write_plan`: `ObjectKey`; `parallax.core.entity`, among its documented errors: `UnloadedRelationshipError` |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic`, `pydantic-core` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `IncludePath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, `TemporalBound`, and its documented errors, among them `MetamodelValidationError` for a rejected model; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContextSource`, `ConnectionContext`, `InvalidAuthorizationError`, the transaction outcomes, the ordered write transport contract — `OrderedWriteTransport`, `CanonicalWriteStatement`, its results and outcomes — `WriteResultIntegrityError` for a write result its statements contradict, `IsolationLevel`, `AccessMode`, the routing vocabulary — `Route`, `RoutePolicy`, `FallbackReason`, `RouteSelection`, `RouteCapabilities`, `RouteReadiness` — `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `ReleaseUnconfirmed`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.db_error`: exactly `DatabaseError`, `Category`, and `PhysicalIndexName`, the vocabulary for inspecting a database failure, not its classification helpers; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail`; `parallax.core.read_delivery`: `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `InvalidDataError`, `StoredDataDecodingError`, `StreamStateError`, and `StreamContinuationError`; `parallax.core.execution`: `TxnOptions`, `ReadOnlyTxnOptions`, `RetryPolicy`, `AdaptiveBackoff`, `Principal`, `ServingModel`, `ModelSelection`, `prepare_model()`, `ExecutionFailure`, `InvalidPrincipalError`, `TransactionAuthorityError`, `TransactionOwnershipError`, `TransactionAccessModeError`, `TransactionOptionConflictError`, `TransactionRollbackError`, `PublicationConflictError`, `DeferredFeatureError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, and `TransactionTimePinReadOnlyError`; `parallax.core.unit_work`, among its named exports: `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError`, and its subtype `InstructionRejectedError`, whose `rule` is the portable pre-SQL rejection rule an instruction broke; `parallax.core.write_plan`: `ObjectKey`; `parallax.core.entity`, among its documented errors: `UnloadedRelationshipError` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `CollidingTemporalConstraint`, `IndexPresence`, and `PhysicalLocation` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot` (with its `_publication` and `_inspection` children) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Database`, `ScopedDatabase`, `TxnContext`, `ReadOnlyTxnContext`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `WireDatabaseView`, `WireTransactionView`, `WireQuery`, `WireChanges`, `WirePredicateTarget`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotMaterializationError`, `SnapshotInspectionError` |
@@ -912,13 +903,6 @@ setuptools and Cython.
   driver arrives with it. Describing an evolution is pure, so the wheel declares
   no external runtime dependency at all — the fingerprint a schema consumer needs
   comes from the standard library.
-- **The provisioning path is the shipped generator.** The development-only
-  `parallax.conformance.provision.schema_statements` composes no DDL of its own:
-  it is `schema_delta(evolve(ABSENT, model), dialect)`, provisioning being the
-  Unilateral Evolution from the explicit absent endpoint. Every database-backed
-  Python test therefore executes the generator's own statements, and an authored
-  secondary Index exists in a test database as the separately named object a
-  violation can report.
 - **Lifecycle extension manifest proof.** `parallax-snapshot` depends only on
   `parallax-core`; the clean-install check proves no sibling lifecycle
   artifact, Descriptor Frontend, descriptor parser, schema validator, or

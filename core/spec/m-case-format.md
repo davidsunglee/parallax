@@ -2194,6 +2194,18 @@ through the outer invocation's own entrypoint. A join whose mode differs from
 the active transaction's is refused before its callback runs, as `then.outcome:
 access-mode-mismatch` states, and a `read-only` join names no `concurrency`.
 
+Boundary cases select authority independently from transaction options through
+`when.actorIdentity` and, for subject mode, `when.databaseAuthorization`
+(`m-execution-authority`). A joining boundary action may carry the same pair to
+select its own scope; absence on a joining action means reuse of the enclosing
+scope. A case naming no selector runs in database-login mode: the language
+runner selects that mode explicitly before invoking production code.
+
+The selector `{kind: subject, value: S}` requires a nonempty sibling
+`databaseAuthorization` fixture name. `{kind: database-login}` carries neither a
+value nor an authorization. The fixture name is provider-neutral test
+vocabulary; each provider owns its concrete Database Authorization values.
+
 Four elements of the grammar exist for the isolation obligations an adapter owes
 above the wire (`m-db-port` *Mapping obligations*), and all four are portable:
 

@@ -54,7 +54,7 @@ Application callers select subject mode by supplying a Principal when deriving a
 
 Infrastructure callers MAY explicitly select database-login mode when deriving a scope. The opened runtime supplies the Database Login Identity; the caller supplies neither its identity nor a Database Authorization value.
 
-Omitting a subject does not implicitly mean database-login mode in production. A caller must choose a scope-creation operation or argument that makes the mode explicit. Compatibility case documents may omit their outer selector for historical cases; the language runner interprets that absence by explicitly selecting database-login mode before invoking production code.
+Omitting a subject does not implicitly mean database-login mode in production. A caller must choose a scope-creation operation or argument that makes the mode explicit.
 
 An Execution Scope is affine to the opened Database runtime that created it. Using it with another runtime MUST be refused before checkout or callback entry. A scope captures immutable values at creation and MUST NOT observe later mutation of caller-owned inputs. Deriving a scope's transaction options or read policy (`m-execution` *Read routing*) preserves its captured authority and acquires nothing.
 
@@ -110,20 +110,6 @@ An authorization-revocation failure MUST prevent an ordinary return. The provide
 Lifecycle diagnostics MAY identify Principal mode and a safe Principal representation, and the portable routing roles an acquisition requested and landed on (`m-execution-lifecycle` *Resource events*). They MUST NOT serialize endpoints, hosts, Database Authorization values, provider credentials, role-setting SQL, authentication tokens, or secrets.
 
 Providers SHOULD expose stable, non-secret reason categories for authorization setup and revocation failures. Diagnostic rendering MUST NOT be used for Execution Actor equality.
-
-## Compatibility case selectors
-
-Boundary cases select authority independently from transaction options through `when.actorIdentity` and, for subject mode, `when.databaseAuthorization`. A joining boundary action may carry the same pair to select its own scope. Absence on a joining action means reuse of the enclosing scope.
-
-The case selector `{kind: subject, value: S}` requires a nonempty sibling `databaseAuthorization` fixture name. `{kind: database-login}` carries neither a value nor an authorization. The fixture name is provider-neutral test vocabulary; each provider owns its concrete Database Authorization values.
-
-The canonical authority cases prove:
-
-- an unqualified join and an independently scoped equal actor both join successfully;
-- equal authorization with a different Principal is refused;
-- equal Principal with different authorization is refused;
-- subject mode and database-login mode are never equal; and
-- independently selected database-login scopes for one runtime compare equal.
 
 ## Non-goals
 

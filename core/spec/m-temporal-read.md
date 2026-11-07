@@ -196,9 +196,3 @@ Now, prove boundary behavior at `start` and `end`, exercise all four Bitemporal
 coordinate combinations, propagate pins across relationships, expose finite
 milestone Edges, and verify Transaction-Time-Only and Bitemporal writes without
 changing physical columns or canonical SQL shape.
-
-The temporal specification, descriptor and query schemas, compatibility cases,
-generated artifacts, glossaries, and language specs switch to this vocabulary
-and pass their contract gates before runtime temporal behavior is changed.
-There is no temporary translation that a later dependency-inversion step must
-reinterpret.

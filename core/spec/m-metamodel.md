@@ -712,12 +712,3 @@ The Metadata Compiler may expand an already validated acyclic Value Object
 occurrence graph and build immutable local indices. It may not decide semantic
 validity, pair relationships, invert cardinalities, derive inheritance,
 classify temporal behavior, or emit issues.
-
-## Activation consistency
-
-The normalized contract is activated atomically across the module catalog,
-dependency graph, canonical descriptor schema, compatibility models and cases,
-generated artifacts, conformance tools, and every active language consumer.
-No runtime may claim this contract while those artifacts describe the previous
-descriptor-shaped metamodel. Contract artifacts become green before runtime
-behavior migrates.
