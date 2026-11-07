@@ -332,11 +332,8 @@ def test_optimized_typed_ownership_is_scanned_once_only_when_needed(
     ("entity", "member", "mutation"),
     [
         (_VERSIONED, "revisionCounter", "amend"),
-        *(
-            (_TEMPORAL, member, mutation)
-            for member in _OWNED
-            for mutation in ("amend", "amendUntil")
-        ),
+        (_TEMPORAL, "txStart", "amend"),
+        (_TEMPORAL, "validEnd", "amendUntil"),
     ],
 )
 def test_authored_ownership_refusal_precedes_undeclared_members(

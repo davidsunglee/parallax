@@ -40,7 +40,6 @@ __all__ = [
     "bind_deferred",
     "bind_held",
     "coverage_read",
-    "never_current",
     "range_bindings",
 ]
 
@@ -92,7 +91,7 @@ class HeldRows:
         return any(window.overlaps(coverage) for named in windows for window in named)
 
 
-def never_current(state: ObjectStateKey, read_at: int) -> bool:
+def _never_current(state: ObjectStateKey, read_at: int) -> bool:
     """A freshness judge answering every retained row stale."""
     del state, read_at
     return False
@@ -107,7 +106,7 @@ def range_bindings(
     stop: int,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-    current: Callable[[ObjectStateKey, int], bool] = never_current,
+    current: Callable[[ObjectStateKey, int], bool] = _never_current,
 ) -> RangeBindings:
     """The scoped binding a flush binds ``plan``'s deferred entries ``[start,
     stop)`` through, reading through ``acquire_rows`` under ``ownership``,
@@ -142,7 +141,7 @@ def bind_deferred(
     position: int = 0,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-    current: Callable[[ObjectStateKey, int], bool] = never_current,
+    current: Callable[[ObjectStateKey, int], bool] = _never_current,
 ) -> BoundRange:
     """The deferred write at ``plan``'s entry ``position`` bound alone, through
     its :func:`range_bindings`: the one write of the one Write Group they
