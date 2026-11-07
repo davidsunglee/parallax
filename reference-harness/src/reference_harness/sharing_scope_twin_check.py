@@ -9,14 +9,16 @@ and the invariance quietly gone.
 
 The arms are named ``<module>-NNN-<proof>-sharing-scope-twin-<sharingScope>.yaml``
 and paired by ``<module>-<proof>``. Each arm declares its own ``sharingScope``, and
-on everything else they must be equal, their statements included.
+on everything else they must be equal, their statements included. Only an arm may
+declare a scope, so every case is read: a declaration under any other name would
+otherwise escape the pairing that proves it.
 """
 
 from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +47,18 @@ def _declared_scope(document: Mapping[str, Any]) -> object:
     return when.get("sharingScope") if isinstance(when, Mapping) else None
 
 
+def _refuse_scopes_outside_twins(paths: Iterable[Path], errors: list[str]) -> None:
+    for path in paths:
+        if _CASE_TWIN_RE.match(path.name) is not None:
+            continue
+        document = mapping_document(path, "compatibility case", errors)
+        if document is not None and _declared_scope(document) is not None:
+            errors.append(
+                f"{path.name}: only a sharing-scope twin may declare when.sharingScope; name "
+                "the case <module>-NNN-<proof>-sharing-scope-twin-<sharingScope>.yaml"
+            )
+
+
 def sharing_scope_twin_errors(compatibility_root: Path) -> list[str]:
     """Return every sharing-scope twin inconsistency under *compatibility_root*."""
     errors: list[str] = []
@@ -52,9 +66,9 @@ def sharing_scope_twin_errors(compatibility_root: Path) -> list[str]:
         return [f"not a directory: {compatibility_root}"]
 
     modules = module_ids(compatibility_root, errors)
-    candidates = case_twin_arms(
-        yaml_paths(compatibility_root / "cases"), _CASE_TWIN_RE, modules, "sharing-scope", errors
-    )
+    paths = yaml_paths(compatibility_root / "cases")
+    _refuse_scopes_outside_twins(paths, errors)
+    candidates = case_twin_arms(paths, _CASE_TWIN_RE, modules, "sharing-scope", errors)
     for pair, arms in sorted(candidates.items()):
         if set(arms) != _SCOPES:
             errors.append(
