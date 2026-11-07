@@ -765,14 +765,38 @@ class _MaterializedKeyClaims:
         self._claimed[key] = contributor
 
 
-def _validate_materialization_keys(definitions: list[dict[str, Any]]) -> None:
-    """Reject provenance-distinct contributors that render one node key.
+def _reject_the_family_variant_spelling(definition: dict[str, Any]) -> None:
+    """Reject a member *definition* spells ``familyVariant``, by name or by Column.
 
-    ``familyVariant`` is reserved on every Entity, participant or not, and from
-    declared names as well as Columns, so the key only ever means the variant.
+    The reservation binds what an Entity declares, so it does not depend on any
+    node rendering it, and the key only ever means the variant.
     """
+    entity = definition["name"]
+    declared = [
+        *(
+            (f"Attribute {entity}.{item['name']}", {item["name"], effective_column(item)})
+            for item in _declared(definition, "attributes")
+        ),
+        *(
+            (f"Value Object {entity}.{item['name']}", {item["name"], item.get("column")})
+            for item in _declared(definition, "valueObjects")
+        ),
+        *(
+            (f"Relationship {entity}.{item['name']}", {item["name"]})
+            for item in _declared(definition, "relationships")
+        ),
+    ]
+    for contributor, spellings in declared:
+        if "familyVariant" in spellings:
+            raise RejectionError(
+                INHERITANCE_MATERIALIZATION_KEY_COLLISION,
+                f"materialized key 'familyVariant' is reserved, and {contributor} claims it",
+            )
+
+
+def _validate_materialization_keys(definitions: list[dict[str, Any]]) -> None:
+    """Reject provenance-distinct contributors that render one node key."""
     claims = _MaterializedKeyClaims()
-    claims.claim("familyVariant", "the reserved family variant")
     relationships: list[tuple[str, str]] = []
     attributes: list[tuple[str, str]] = []
     for definition in definitions:
@@ -780,13 +804,9 @@ def _validate_materialization_keys(definitions: list[dict[str, Any]]) -> None:
         for attribute in _declared(definition, "attributes"):
             contributor = f"Attribute {entity}.{attribute['name']}"
             attributes.append((effective_column(attribute), contributor))
-            if attribute["name"] == "familyVariant":
-                claims.claim("familyVariant", contributor)
         for value_object in _declared(definition, "valueObjects"):
             contributor = f"Value Object {entity}.{value_object['name']}"
             claims.claim(value_object["name"], contributor)
-            if value_object.get("column") == "familyVariant":
-                claims.claim("familyVariant", contributor)
         relationships.extend(
             (relationship["name"], f"Relationship {entity}.{relationship['name']}")
             for relationship in _declared(definition, "relationships")
@@ -843,6 +863,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     root never answers for another's.
     """
     for definition in entity_defs:
+        _reject_the_family_variant_spelling(definition)
         if inheritance_of(definition) is None:
             _validate_materialization_keys([definition])
 

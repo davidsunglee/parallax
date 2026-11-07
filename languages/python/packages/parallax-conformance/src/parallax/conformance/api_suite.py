@@ -2777,6 +2777,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-165": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-166": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` formation reject (unreachable) ---------- #
     "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #

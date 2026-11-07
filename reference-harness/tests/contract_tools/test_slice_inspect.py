@@ -73,6 +73,7 @@ _MATERIALIZATION_KEY_CASES = {
     "core/compatibility/cases/m-inheritance-120-qualified-duplicate-local-variants-graph.yaml",
     "core/compatibility/cases/m-inheritance-164-value-object-storage-column-family-graph.yaml",
     "core/compatibility/cases/m-inheritance-165-rejected-standalone-family-variant-materialization-key-collision.yaml",
+    "core/compatibility/cases/m-inheritance-166-rejected-dormant-family-variant-materialization-key-collision.yaml",
 }
 
 
