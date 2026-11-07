@@ -304,13 +304,28 @@ def wire_binds(binds: list[object]) -> list[object]:
     return [wire_value_deep(bind) for bind in binds]
 
 
+def _same_wire_value(observed: object, expected: object) -> bool:
+    """Wire equality where a boolean matches only a boolean, at any depth."""
+    if isinstance(observed, bool) or isinstance(expected, bool):
+        return observed is expected
+    if isinstance(observed, list) and isinstance(expected, list):
+        items, golden = cast("list[object]", observed), cast("list[object]", expected)
+        return len(items) == len(golden) and all(map(_same_wire_value, items, golden, strict=True))
+    if isinstance(observed, dict) and isinstance(expected, dict):
+        fields, golden = cast("dict[str, object]", observed), cast("dict[str, object]", expected)
+        return fields.keys() == golden.keys() and all(
+            _same_wire_value(value, golden[key]) for key, value in fields.items()
+        )
+    return observed == expected
+
+
 def assert_wire_binds(
     model: Metamodel, golden_sql: str, golden_binds: list[object], observed_binds: list[object]
 ) -> None:
     """Emitted binds equal the golden's in Wire form, and carry its zero sign at
     every declared float position (`m-case-format` *Canonical literal oracles*)."""
     observed, expected = wire_binds(observed_binds), wire_binds(golden_binds)
-    assert observed == expected, (golden_sql, observed, expected)
+    assert _same_wire_value(observed, expected), (golden_sql, observed, expected)
     assert_zero_signs(observed, expected, statement_bind_positions(model, golden_sql, golden_binds))
 
 

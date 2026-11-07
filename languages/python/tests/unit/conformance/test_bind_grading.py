@@ -265,6 +265,25 @@ def test_assert_wire_binds_alone_refuses_a_changed_value() -> None:
         assert_wire_binds(model, sql, golden, [2, *golden[1:]])
 
 
+@pytest.mark.parametrize(
+    ("golden", "observed"),
+    [
+        ([1], [True]),
+        ([True], [1]),
+        ([0], [False]),
+        ([[1, 2]], [[True, 2]]),
+        ([{"flag": 1}], [{"flag": True}]),
+        ([[{"flag": [0]}]], [[{"flag": [False]}]]),
+    ],
+)
+def test_assert_wire_binds_alone_refuses_a_boolean_against_a_number(
+    golden: list[object], observed: list[object]
+) -> None:
+    case, sql, _ = _read_statement("m-value-object-001")
+    with pytest.raises(AssertionError):
+        assert_wire_binds(engine.load_case_metamodel(case), sql, golden, observed)
+
+
 def test_assert_wire_binds_alone_refuses_negative_zero_at_a_declared_float() -> None:
     case, sql, golden = _golden("m-core-010")
     with pytest.raises(AssertionError, match=r"^bind 1: "):
