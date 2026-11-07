@@ -2,12 +2,14 @@
 
 `spec/memory-gates.yaml` holds one blocking ceiling per retained page and per
 high-water mark of every provider-free geometry and scalar-type read, under both
-layouts, and per retained entry and high-water mark of every cold read-plan
-compilation, derived from the retained capture the file names as its basis.
-Each family below reads its levels through the same child the report measures
-with — the geometry, scalar-type, plan, and guarded cold-plan readings of
-:mod:`snapshot_delivery_reading`, the identical port, roots, cache capacity, and
-warm-ups — and grades the peak and retained readings against their gates.
+layouts, per retained entry and high-water mark of every cold read-plan
+compilation, and per memory reading of the repeated fan-out and invalid-root
+publication cells, derived from the retained capture the file names as its
+basis. Each family below reads its levels through the same child the report
+measures with — the geometry, scalar-type, plan, guarded cold-plan, and
+publication readings of :mod:`snapshot_delivery_reading`, the identical port,
+roots, cache capacity, and warm-ups — and grades the peak and retained readings
+against their gates.
 
 Beside the gates, seeded regressions prove what each one detects. A retained
 duplication is seeded at the positional builder as a reduced dictionary kept
@@ -32,7 +34,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance.budget import BudgetContract, MemoryGates
-from parallax.conformance.workloads import plan_levels
+from parallax.conformance.workloads import PUBLICATION_PREFIX, catalog, plan_levels
 from parallax.core.base import detach_json_container
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import DecodeOutput
@@ -46,6 +48,7 @@ from snapshot_delivery_reading import (
     _cold_plan,  # pyright: ignore[reportPrivateUsage] - the cold-plan reading is what the gate grades
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is what the gate grades
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is what the gate grades
+    _publication,  # pyright: ignore[reportPrivateUsage] - the publication reading is what the gate grades
     _scalar_read,  # pyright: ignore[reportPrivateUsage] - the scalar-type reading is what the gate grades
     geometry_address,
     plan_address,
@@ -80,6 +83,16 @@ def _read(workload: str, cell: str) -> float:
     guarded cold-plan address names none, so it is resolved by the control
     support the report parses it with and read through the same cold-plan child.
     """
+    if cell.startswith(PUBLICATION_PREFIX):
+        contract = BudgetContract.load()
+        value, _unit, _samples = _publication(
+            catalog()[workload],
+            cell,
+            warmups=WARMUPS,
+            measured=MEASURED,
+            collect_at_page_boundary=contract.memory_collect_at_page_boundary,
+        )
+        return value
     geometry = geometry_address(workload, cell)
     if geometry is not None:
         level, layout, metric = geometry
@@ -216,6 +229,18 @@ globals().update(
 @in_a_child_interpreter
 def test_the_cold_read_plans_stay_within_their_memory_gates() -> None:
     _within_gates(gate_support.owner_of(test_the_cold_read_plans_stay_within_their_memory_gates))
+
+
+@in_a_child_interpreter
+def test_the_repeated_fanout_reads_stay_within_their_memory_gates() -> None:
+    _within_gates(
+        gate_support.owner_of(test_the_repeated_fanout_reads_stay_within_their_memory_gates)
+    )
+
+
+@in_a_child_interpreter
+def test_the_invalid_root_reads_stay_within_their_memory_gates() -> None:
+    _within_gates(gate_support.owner_of(test_the_invalid_root_reads_stay_within_their_memory_gates))
 
 
 @in_a_child_interpreter

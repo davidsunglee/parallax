@@ -126,3 +126,93 @@ workloads:
         transientBPerProjection: 3328
         peakFor64KiB: 425
         preparedSetKiB: 80
+  repeated-fanout:
+    fixture: benchmarks/repeated-fanout.yaml
+    cells:
+      publication:
+        typed:
+          root:
+            maxMs: 55
+            retainedKiB: 2797
+            peakKiB: 3593
+            page128: { peakKiB: 431 }
+            uniqueNodes: 11000
+          page:
+            maxMs: 10
+            retainedKiB: 393
+            peakKiB: 1866
+            page128:
+              peakKiB: 332
+              retainedKiB: 5
+              earlyClose: { retainedKiB: 0 }
+              x10:
+                peakKiB: 332
+                retainedKiB: 5
+                earlyClose: { retainedKiB: 0 }
+            uniqueNodes: 1100
+        wire:
+          root:
+            maxMs: 53
+            retainedKiB: 2634
+            peakKiB: 3448
+            page128: { peakKiB: 209 }
+            uniqueNodes: 12000
+          page:
+            maxMs: 11.5
+            retainedKiB: 581
+            peakKiB: 2347
+            page128:
+              peakKiB: 341
+              retainedKiB: 4
+              earlyClose: { retainedKiB: 0 }
+              x10:
+                peakKiB: 341
+                retainedKiB: 4
+                earlyClose: { retainedKiB: 0 }
+            uniqueNodes: 2100
+        projected:
+          page:
+            page128:
+              peakKiB: 542
+              retainedKiB: 4
+              earlyClose: { retainedKiB: 0 }
+              x10:
+                peakKiB: 542
+                retainedKiB: 4
+                earlyClose: { retainedKiB: 0 }
+  invalid-roots:
+    fixture: benchmarks/invalid-roots.yaml
+    cells:
+      publication:
+        typed:
+          root:
+            retainedKiB: 5059
+            peakKiB: 6032
+            uniqueNodes: 12000
+          page:
+            retainedKiB: 1665
+            peakKiB: 2656
+            page128:
+              peakKiB: 364
+              retainedKiB: 8
+              x10: { peakKiB: 364, retainedKiB: 8 }
+            uniqueNodes: 3200
+        wire:
+          root:
+            retainedKiB: 4824
+            peakKiB: 5806
+            uniqueNodes: 12000
+          page:
+            retainedKiB: 1630
+            peakKiB: 3022
+            page128:
+              peakKiB: 426
+              retainedKiB: 8
+              x10: { peakKiB: 426, retainedKiB: 8 }
+            uniqueNodes: 3200
+        projected:
+          page:
+            page128:
+              peakKiB: 689
+              retainedKiB: 8
+              x10: { peakKiB: 689, retainedKiB: 8 }

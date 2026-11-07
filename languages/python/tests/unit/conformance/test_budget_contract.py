@@ -26,13 +26,13 @@ from parallax.conformance.budget import (
 AFTER_PORTFOLIO = Path("languages/python/evidence/cost/structural-metadata-after/portfolio.json")
 
 
-def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
+def test_budget_contract_has_one_unique_non_negative_address_per_cell() -> None:
     contract = BudgetContract.load()
     cells = tuple(cell for workload in contract.workload_ids for cell in contract.cells(workload))
     addresses = tuple((cell.workload, cell.path) for cell in cells)
-    assert len(cells) == 90
+    assert len(cells) == 150
     assert len(addresses) == len(set(addresses))
-    assert all(cell.value > 0 for cell in cells)
+    assert all(cell.value >= 0 for cell in cells)
     assert set(contract.authority) == {"machine", "cpu", "cores", "ramGiB", "cpython", "postgres"}
     assert set(contract.sampling) == {"timing", "memory"}
     assert contract.timing_warmups == 3
@@ -161,7 +161,7 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     assert len(gates.addresses) == len(set(gates.addresses))
     for gate in gates.gates:
         assert gate.unit == basis[(gate.subject, gate.workload, gate.cell)]
-        assert gate.max_bytes > 0
+        assert gate.max_bytes >= 0
     windows = {
         str(reading.get("window"))
         for member in cast("Sequence[Mapping[str, object]]", portfolio["members"])
@@ -346,8 +346,8 @@ def test_a_scaling_domain_loads_its_order_and_its_non_increasing_cells(tmp_path:
         ),
         (
             "schemaVersion: 1\nbasis: {portfolio: p, headroom: 1.1}\nadvisory: {}\n"
-            "gates: {s: {w: {c: {unit: B, maxBytes: 0}}}}",
-            "maxBytes is not a positive integer",
+            "gates: {s: {w: {c: {unit: B, maxBytes: -1}}}}",
+            "maxBytes is not a non-negative integer",
         ),
         (
             "schemaVersion: 1\nbasis: {portfolio: p, headroom: 1.1}\nadvisory: {}\n"
@@ -400,3 +400,15 @@ def test_memory_gates_without_a_scaling_block_load_with_no_domains(tmp_path: Pat
     assert gates.gate("s", "w", "c").within(2.0)
     other = MemoryGates.from_bytes(path, document.replace("2048", "4096").encode("utf-8"))
     assert gates.digest != other.digest
+
+
+def test_a_zero_gate_loads_and_admits_no_byte(tmp_path: Path) -> None:
+    document = (
+        "schemaVersion: 1\nbasis: {portfolio: p, headroom: 1.1}\nadvisory: {}\n"
+        "gates: {s: {w: {c: {unit: KiB, maxBytes: 0}}}}\n"
+    )
+    gate = MemoryGates.from_bytes(tmp_path / "memory-gates.yaml", document.encode("utf-8")).gate(
+        "s", "w", "c"
+    )
+    assert gate.within(0.0)
+    assert not gate.within(1 / 1_024)

@@ -193,6 +193,18 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         SNAPSHOT_SUBJECT,
         _prefixed(PLAN_PREFIX, GUARDED_PREFIX),
     ),
+    GateOwner(
+        SNAPSHOT_MODULE,
+        "test_the_repeated_fanout_reads_stay_within_their_memory_gates",
+        SNAPSHOT_SUBJECT,
+        _exactly("repeated-fanout"),
+    ),
+    GateOwner(
+        SNAPSHOT_MODULE,
+        "test_the_invalid_root_reads_stay_within_their_memory_gates",
+        SNAPSHOT_SUBJECT,
+        _exactly("invalid-roots"),
+    ),
 )
 """Every memory-gate owner. Together they claim each gate exactly once, which
 ``test_memory_gate_ownership.py`` grades against the loaded gates."""

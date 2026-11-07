@@ -109,10 +109,12 @@ from snapshot_delivery_overhead import (
     LIVE_READ_GROUP,
     PLAN_GROUP,
     SCALAR_GROUP,
+    WIDE_FANOUT_GROUP,
     Selection,
     every_cell,
     expanded_cells,
     expected_readings,
+    is_publication_cell,
     is_scaling_cell,
     selected_addresses,
     window_of,
@@ -175,7 +177,7 @@ answers from a portfolio it deliberately does not validate."""
 TIMING_UNITS: Final = frozenset(
     {"ms", "roots/s", "us/projection", "projections/s", "us/row", "us", "us/root"}
 )
-COUNT_UNITS: Final = frozenset({"calls/row", "statements", "invocations", "rows"})
+COUNT_UNITS: Final = frozenset({"calls/row", "statements", "invocations", "rows", "nodes"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -441,6 +443,16 @@ def _samples(document: Document) -> tuple[float, ...]:
     return tuple(_number(value) for value in cast("Sequence[object]", document["samples"]))
 
 
+_HISTORICAL_GENERATIONS: Final = (
+    (True, True, True),
+    (False, True, True),
+    (False, True, False),
+    (False, False, False),
+)
+"""Each historical Snapshot matrix, newest first, as whether it carries live
+reads, controls, and scalar types; none carries the publication cells."""
+
+
 def validate_snapshot_matrix(
     document: Document,
     contract: BudgetContract,
@@ -453,26 +465,30 @@ def validate_snapshot_matrix(
     supported runtime among the addresses ``selected``, with comparisons of the
     selected contract cells on the authority runtime alone.
 
-    The matrix is exact at one of its historical generations: before live reads,
-    before scalar types, or before controls. Partial additions never form a
-    generation; ``current`` accepts the complete current matrix alone."""
+    The matrix is exact at one of its historical generations: before the
+    sharing-scope publication cells, and before them, live reads, scalar types,
+    or controls as well. Partial additions never form a generation; ``current``
+    accepts the complete current matrix alone."""
     scope = supported_minors() if current else _captured_runtime_scope(document)
     minors = tuple(runtimes) if runtimes is not None else scope
     expected = selected_addresses(contract, minors, selected, runtime_scope=scope)
     readings = _indexed(_readings(document), label="Snapshot reading")
+    publication = True
     if not current and set(readings) != set(expected):
-        for controls, scalars in ((True, True), (True, False), (False, False)):
+        for live_reads, controls, scalars in _HISTORICAL_GENERATIONS:
             earlier = selected_addresses(
                 contract,
                 minors,
                 selected,
                 controls=controls,
                 scalar_types=scalars,
-                live_reads=False,
+                live_reads=live_reads,
+                publication=False,
                 runtime_scope=scope,
             )
             if set(readings) == set(earlier):
                 expected = earlier
+                publication = False
                 break
     _exact(expected, readings, label="Snapshot reading")
     comparisons = _indexed(
@@ -482,6 +498,7 @@ def validate_snapshot_matrix(
         (cell.workload, cell.path): cell
         for cell in expanded_cells(contract)
         if selected(cell.workload, cell.path)
+        and (publication or not is_publication_cell(cell.path))
     }
     _exact(
         (("", workload, path) for workload, path in contract_cells),
@@ -1362,7 +1379,8 @@ def advisories(
     for comparison in cast("Sequence[Document]", snapshot.get("comparisons", ())):
         if comparison.get("outcome") == "within":
             continue
-        kind = "timing" if comparison.get("unit") in TIMING_UNITS else "memory"
+        unit = comparison.get("unit")
+        kind = "timing" if unit in TIMING_UNITS else "count" if unit in COUNT_UNITS else "memory"
         reported.append(
             f"advisory: {comparison.get('workload')}.{comparison.get('cell')} is "
             f"{comparison.get('outcome')} its {kind} ceiling"
@@ -2493,6 +2511,7 @@ SHARDS: Final[tuple[Shard, ...]] = (
     _snapshot_shard("conventional-fanout", "conventional-fanout"),
     _snapshot_shard("bitemporal-current", "bitemporal-current"),
     _snapshot_shard("versioned-document", "versioned-document"),
+    _snapshot_shard("page-sharing", "repeated-fanout", "invalid-roots", WIDE_FANOUT_GROUP),
     _snapshot_shard("controls", CONTROL_GROUP),
     _snapshot_shard("live-reads", LIVE_READ_GROUP),
     _snapshot_shard(
@@ -2508,8 +2527,9 @@ SHARDS: Final[tuple[Shard, ...]] = (
 """The partition plan, heaviest shard first so the matrix's longest job starts
 first. The Snapshot member dominates a whole-member capture, so it is split by
 workload from its measured attribution: each of its five heavy workloads, which
-cost about the same as one another, is a shard of its own, the provider-free
-control group is one more, and the small ones share one, since another runner
+cost about the same as one another, is a shard of its own, the page-sharing
+publication workloads are one more, the provider-free control group another, and
+the small ones share one, since another runner
 would cost more setup than it saves. Every other member is one whole shard. A
 split is a change to this data with its test rather than a new recipe,
 and a shard whose coverage changes takes a new id, so an old base or nightly

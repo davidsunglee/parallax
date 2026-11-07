@@ -10,10 +10,10 @@ observations: an outside reading never changes this command's exit status.
 Missing or malformed readings are explicit incompleteness and errors.
 
 ``--workload`` narrows the evidence path to named contract workloads and the
-``geometry``, ``scalar``, ``plan``, ``control``, and ``live-reads`` groups: the envelope keeps
-full provenance and completeness is judged over the addresses selected, so a
-slice of the matrix is evidence about that slice, never a diagnostic promoted
-to evidence.
+``geometry``, ``scalar``, ``plan``, ``control``, ``live-reads``, and ``wide-fanout``
+groups: the envelope keeps full provenance and completeness is judged over the
+addresses selected, so a slice of the matrix is evidence about that slice, never a
+diagnostic promoted to evidence.
 
 The ``control`` group is the before/after control matrix
 ``tests/unit/_delivery_control_support.py`` spells: unprojected Typed delivery
@@ -30,6 +30,11 @@ manifest names, whose geometry read is its String control, and only on the
 supported minors that manifest scopes the scalar-type families to. It joins the
 exact matrix as well; a capture taken before the scalar-type families existed
 remains exact without them.
+
+The ``wide-fanout`` group reads one Order of a thousand items at page scope, the
+shape where a page-scope read that walked each root's reach again would cost a
+million row visits. It is timing and a node count alone, so a nightly report shows
+that walk returning without any build failing on it.
 """
 
 from __future__ import annotations
@@ -72,7 +77,10 @@ from parallax.conformance.cost_envelope import (
 from parallax.conformance.provision import Provisioner
 from parallax.conformance.workloads import (
     GEOMETRY_LEVELS,
+    PUBLICATION_PREFIX,
     STRUCTURAL_LAYOUTS,
+    WIDE_FANOUT_CELLS,
+    WIDE_FANOUT_WORKLOAD,
     Workload,
     catalog,
     plan_levels,
@@ -125,8 +133,8 @@ RESULT_HELD_WINDOW: Final = "result-held-metadata"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     LIVE_WINDOW: "a connected Typed or Wire find or stream against PostgreSQL, parsing included",
     PROVIDER_FREE_WINDOW: (
-        "a Wire find over already-parsed provider rows through production planning, "
-        "materialization, and publication; no parsing or provider work"
+        "a Typed or Wire find or stream over already-parsed provider rows through production "
+        "planning, materialization, and publication; no parsing or provider work"
     ),
     STRESS_WINDOW: (
         "production's Page build over an already executed root statement: root row "
@@ -187,8 +195,8 @@ class ChildReading:
 
 @dataclass(frozen=True, slots=True)
 class GeometryCell:
-    """One address outside the Budget Contract: a geometry, scalar-type, plan, or
-    control or live-read workload's cell."""
+    """One address outside the Budget Contract: a geometry, scalar-type, plan,
+    control, live-read, or wide fan-out workload's cell."""
 
     workload: str
     path: str
@@ -251,6 +259,10 @@ def control_cells(contract: BudgetContract) -> tuple[GeometryCell, ...]:
 
 def live_read_cells() -> tuple[GeometryCell, ...]:
     return tuple(GeometryCell(workload, path) for workload, path in live_read_workloads.cells())
+
+
+def wide_fanout_cells() -> tuple[GeometryCell, ...]:
+    return tuple(GeometryCell(WIDE_FANOUT_WORKLOAD, path) for path in WIDE_FANOUT_CELLS)
 
 
 def control_window(workload: str, path: str) -> str:
@@ -377,6 +389,8 @@ def unit(path: str) -> str:
         return "us/root"
     if path.endswith(".elapsedUs"):
         return "us"
+    if path.endswith(".uniqueNodes"):
+        return "nodes"
     return "KiB"
 
 
@@ -456,6 +470,10 @@ def _reading(
     )
 
 
+def is_publication_cell(path: str) -> bool:
+    return path.startswith(PUBLICATION_PREFIX)
+
+
 def addresses(
     contract: BudgetContract,
     runtimes: Sequence[str],
@@ -463,23 +481,32 @@ def addresses(
     controls: bool = True,
     scalar_types: bool = True,
     live_reads: bool = True,
+    publication: bool = True,
     runtime_scope: Sequence[str] | None = None,
 ) -> tuple[Address, ...]:
     """Every (runtime, workload, cell) address a complete envelope carries,
     the scalar-type reads scoped to ``runtime_scope`` (current support by default);
-    without ``scalar_types``, the matrix a capture taken before the scalar-type
-    reads existed carries, and without ``controls`` as well, the one taken
-    before the control group existed. Those historical matrices also omit
-    ``live_reads``, which adds only elapsed readings against PostgreSQL."""
+    without ``publication``, the matrix a capture taken before the sharing-scope
+    publication cells and the wide fan-out group existed carries; without
+    ``scalar_types`` as well, the one taken before the scalar-type reads existed,
+    and without ``controls`` too, the one taken before the control group existed.
+    Those last two also omit ``live_reads``, which adds only elapsed readings
+    against PostgreSQL."""
     scalar_runtimes = scalar_type_runtimes(
         supported_minors() if runtime_scope is None else runtime_scope
     )
-    leading = (*expanded_cells(contract), *geometry_cells())
+    contract_cells = tuple(
+        cell
+        for cell in expanded_cells(contract)
+        if publication or not is_publication_cell(cell.path)
+    )
+    leading = (*contract_cells, *geometry_cells())
     scalars = scalar_cells() if scalar_types else ()
     trailing = (
         *plan_cells(),
         *(control_cells(contract) if controls else ()),
         *(live_read_cells() if live_reads else ()),
+        *(wide_fanout_cells() if publication else ()),
     )
     return tuple(
         (runtime, cell.workload, cell.path)
@@ -496,6 +523,7 @@ def selected_addresses(
     controls: bool = True,
     scalar_types: bool = True,
     live_reads: bool = True,
+    publication: bool = True,
     runtime_scope: Sequence[str] | None = None,
 ) -> tuple[Address, ...]:
     """The addresses among :func:`addresses` that ``selected`` keeps."""
@@ -507,6 +535,7 @@ def selected_addresses(
             controls=controls,
             scalar_types=scalar_types,
             live_reads=live_reads,
+            publication=publication,
             runtime_scope=runtime_scope,
         )
         if selected(address[1], address[2])
@@ -653,7 +682,15 @@ SCALAR_GROUP: Final = scalar_support.READ_GROUP
 PLAN_GROUP: Final = "plan"
 CONTROL_GROUP: Final = control_support.CONTROL_GROUP
 LIVE_READ_GROUP: Final = live_read_workloads.GROUP
-WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, SCALAR_GROUP, PLAN_GROUP, CONTROL_GROUP, LIVE_READ_GROUP)
+WIDE_FANOUT_GROUP: Final = WIDE_FANOUT_WORKLOAD
+WORKLOAD_GROUPS: Final = (
+    GEOMETRY_GROUP,
+    SCALAR_GROUP,
+    PLAN_GROUP,
+    CONTROL_GROUP,
+    LIVE_READ_GROUP,
+    WIDE_FANOUT_GROUP,
+)
 
 
 def workload_names(contract: BudgetContract) -> tuple[str, ...]:
@@ -664,10 +701,10 @@ def workload_names(contract: BudgetContract) -> tuple[str, ...]:
 
 def workload_selection(names: Iterable[str], contract: BudgetContract | None = None) -> Selection:
     """The addresses the exact workload ``names`` cover: a contract workload id
-    selects its cells, ``geometry``, ``scalar``, ``plan``, and ``control`` select
-    the provider-free groups outside the contract; ``live-reads`` selects the
-    additive PostgreSQL timing cells, and no name at all selects every cell. An
-    unknown name is a ``ValueError`` before any work starts."""
+    selects its cells, ``geometry``, ``scalar``, ``plan``, ``control``, and
+    ``wide-fanout`` select the provider-free groups outside the contract;
+    ``live-reads`` selects the additive PostgreSQL timing cells, and no name at all
+    selects every cell. An unknown name is a ``ValueError`` before any work starts."""
     active = contract if contract is not None else BudgetContract.load()
     known = workload_names(active)
     chosen = frozenset(names)
@@ -726,6 +763,7 @@ def _measure_runtime(
         (SCALAR_GROUP, scalar_cells() if reads_scalar_types(runtime) else ()),
         (PLAN_GROUP, plan_cells()),
         (CONTROL_GROUP, control_cells(contract)),
+        (WIDE_FANOUT_GROUP, wide_fanout_cells()),
     ):
         chosen = [cell for cell in group_cells if selected(cell.workload, cell.path)]
         if not chosen:
@@ -951,8 +989,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[],
         help=(
-            "an exact contract workload id or a geometry, scalar, plan, control, or live-reads "
-            "group to measure as evidence"
+            "an exact contract workload id or a geometry, scalar, plan, control, live-reads, or "
+            "wide-fanout group to measure as evidence"
         ),
     )
     parser.add_argument(

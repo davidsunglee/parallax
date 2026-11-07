@@ -1,6 +1,6 @@
 """Take one isolated Snapshot delivery reading: a Budget Contract cell, one
 provider-free geometry or scalar-type read family address, one read-plan
-compilation address, or one before/after control address.
+compilation address, one before/after control address, or one wide fan-out cell.
 
 This script is imported by nothing. It is the sole report-side reader of the
 whole-interpreter memory instruments and answers its parent with one JSON line.
@@ -16,18 +16,24 @@ import json
 import sys
 import tracemalloc
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 from types import ModuleType, TracebackType
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from parallax.conformance.budget import BudgetContract
-from parallax.conformance.story_models import ORDERS_MODEL
+from parallax.conformance.story_models import ORDERS_MODEL, OrderItem
+from parallax.conformance.vo_models import CUSTOMER_MODEL, Location
 from parallax.conformance.workloads import (
     PLAN_LEVEL_IDS,
+    PUBLICATION_PREFIX,
     READ_GEOMETRY_ROOTS,
     STRUCTURAL_LAYOUTS,
+    WIDE_FANOUT_CELLS,
+    WIDE_FANOUT_WORKLOAD,
     GeometryLevel,
+    ScriptedRows,
     Workload,
     catalog,
 )
@@ -55,13 +61,14 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import prepare_model
+from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     ReadPlan,
     ReadPlanCache,
 )
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
-from parallax.snapshot import Database, ScopedDatabase
+from parallax.snapshot import Database, ScopedDatabase, SharingScope, Snapshot, SnapshotStream
 from production_origins import ORIGINS_FIELD, loaded_origins, require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
@@ -131,6 +138,18 @@ PLAN_EDITION: Final = "snapshot-delivery-report"
 STREAMED_RETAINED_PAGE_SIZE: Final = 128
 """The page size a ``streamedMemory.retainedKiB`` reading drains at: the largest
 the contract reads, whose drain runs the fewest statements."""
+REPEATED_FANOUT_ID: Final = "repeated-fanout"
+INVALID_ROOTS_ID: Final = "invalid-roots"
+SCALED_RESULT_FACTOR: Final = 10
+"""How much larger than the fixture's own scale an ``x10`` reading's result is,
+at the same page size."""
+WIDE_FANOUT_ORDERS: Final = 1
+WIDE_FANOUT_ITEMS: Final = 1_000
+_ITEM_ENTITY: Final = "parallax.compatibility.OrderItem"
+_ORDER_ENTITY: Final = "parallax.compatibility.Order"
+_CUSTOMER_ENTITY: Final = "parallax.compatibility.Customer"
+_LOCATION_ENTITY: Final = "parallax.compatibility.Location"
+_DEPOT_ENTITY: Final = "parallax.compatibility.Depot"
 
 
 def _order_row(row: Mapping[str, object]) -> MappingRow:
@@ -153,6 +172,33 @@ def _item_row(row: Mapping[str, object]) -> MappingRow:
         "sku": row["sku"],
         "quantity": row["quantity"],
         "shipped_on": dt.date.fromisoformat(cast("str", row["shippedOn"])),
+    }
+
+
+def _root_item_row(row: Mapping[str, object]) -> MappingRow:
+    return {**_item_row(row), "parallax_seek_0": row["id"]}
+
+
+def _customer_row(row: Mapping[str, object]) -> MappingRow:
+    return {"id": row["id"], "name": row["name"], "address": row["address"]}
+
+
+def _root_location_row(row: Mapping[str, object]) -> MappingRow:
+    return {
+        "id": row["id"],
+        "customer_id": row["customerId"],
+        "label": row["label"],
+        "address": row["address"],
+        "parallax_seek_0": row["id"],
+    }
+
+
+def _depot_row(row: Mapping[str, object]) -> MappingRow:
+    return {
+        "id": row["id"],
+        "customer_id": row["customerId"],
+        "label": row["label"],
+        "address": row["address"],
     }
 
 
@@ -227,8 +273,8 @@ class _SoleRuntime:
         return
 
 
-class CatalogPort:
-    """Provider-free positional rows for the two catalog workloads that grade CPU.
+class _PagedPort:
+    """Positional rows of one generated dataset, its roots delivered page by page.
 
     One delivery consumes the root rows once; :meth:`reset` restores them for
     the next, so a root composed outside a window can serve every run inside it.
@@ -236,19 +282,23 @@ class CatalogPort:
 
     dialect: Dialect = POSTGRES
     ordered_write_transport: OrderedWriteTransport | None = None
-    __slots__ = ("_delivered", "_fanout", "_items", "_orders")
+    __slots__ = ("_delivered",)
 
-    def __init__(self, workload: Workload, total: int) -> None:
-        if workload.id not in PROVIDER_FREE_IDS:
-            raise ValueError(f"{workload.id} has no provider-free CPU cell")
-        rows = workload.rows(total)
-        self._fanout = rows.fanout
-        self._orders = rows.entity("parallax.compatibility.Order")
-        self._items = rows.entity("parallax.compatibility.OrderItem")
+    def __init__(self) -> None:
         self._delivered = 0
 
     def reset(self) -> None:
         self._delivered = 0
+
+    def _next_roots(
+        self, roots: Sequence[Mapping[str, object]], sql: str, binds: Sequence[object]
+    ) -> Sequence[Mapping[str, object]]:
+        limited = " limit " in sql
+        size = cast("int", binds[-1]) if limited else len(roots)
+        taken = min(size, len(roots) - self._delivered)
+        selected = roots[self._delivered : self._delivered + taken]
+        self._delivered += taken - 1 if taken == size and limited else taken
+        return selected
 
     def execute(
         self,
@@ -258,26 +308,7 @@ class CatalogPort:
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        del document_reads
-        if "order_item t0" in sql:
-            parents = cast("list[int]", cast("ArrayBind", binds[0]).values)
-            first_id = cast("int", self._orders[0]["id"])
-            return projected_rows(
-                sql,
-                (
-                    _item_row(row)
-                    for parent in parents
-                    for row in self._items[
-                        (parent - first_id) * self._fanout : (parent - first_id + 1) * self._fanout
-                    ]
-                ),
-            )
-        limited = " limit " in sql
-        size = cast("int", binds[-1]) if limited else len(self._orders)
-        taken = min(size, len(self._orders) - self._delivered)
-        selected = self._orders[self._delivered : self._delivered + taken]
-        self._delivered += taken - 1 if taken == size and limited else taken
-        return projected_rows(sql, (_order_row(row) for row in selected))
+        raise NotImplementedError
 
     def execute_pipeline(
         self, statements: Sequence[PipelineStatement], *, read_only: bool = False
@@ -302,6 +333,121 @@ class CatalogPort:
     ) -> TransactionOutcome[T]:
         del body, isolation, access_mode
         raise NotImplementedError
+
+
+class _ProviderFreeOrders(_PagedPort):
+    """Positional rows of one ``orders-tree`` dataset."""
+
+    __slots__ = ("_fanout", "_first_id", "_items", "_orders")
+
+    def __init__(self, rows: ScriptedRows) -> None:
+        super().__init__()
+        self._fanout = rows.fanout
+        self._orders = rows.entity(_ORDER_ENTITY)
+        self._items = rows.entity(_ITEM_ENTITY)
+        self._first_id = cast("int", self._orders[0]["id"])
+
+    def _items_of(self, parent: int) -> Sequence[Mapping[str, object]]:
+        offset = parent - self._first_id
+        return self._items[offset * self._fanout : (offset + 1) * self._fanout]
+
+
+class CatalogPort(_ProviderFreeOrders):
+    """Provider-free positional rows for the two catalog workloads that grade CPU."""
+
+    __slots__ = ()
+
+    def __init__(self, workload: Workload, total: int) -> None:
+        if workload.id not in PROVIDER_FREE_IDS:
+            raise ValueError(f"{workload.id} has no provider-free CPU cell")
+        super().__init__(workload.rows(total))
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        del document_reads
+        if "order_item t0" in sql:
+            parents = cast("list[int]", cast("ArrayBind", binds[0]).values)
+            return projected_rows(
+                sql, (_item_row(row) for parent in parents for row in self._items_of(parent))
+            )
+        return projected_rows(sql, map(_order_row, self._next_roots(self._orders, sql, binds)))
+
+
+class RepeatedFanoutPort(_ProviderFreeOrders):
+    """Provider-free positional rows for ``OrderItem`` roots that reach their
+    Order and go back out to its items, one page of them at a time, so what a
+    stream costs is the page's and not the dataset's."""
+
+    __slots__ = ()
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        del document_reads
+        if "order_item t0" in sql and "order_id = any" not in sql:
+            return projected_rows(
+                sql, map(_root_item_row, self._next_roots(self._items, sql, binds))
+            )
+        parents = cast("list[int]", cast("ArrayBind", binds[0]).values)
+        if "order_item t0" not in sql:
+            return projected_rows(
+                sql, (_order_row(self._orders[parent - self._first_id]) for parent in parents)
+            )
+        return projected_rows(
+            sql, (_item_row(row) for parent in parents for row in reversed(self._items_of(parent)))
+        )
+
+
+class InvalidRootsPort(_PagedPort):
+    """Provider-free positional rows for ``Location`` roots that reach their
+    Customer and go out to its Depots, one page of them at a time, with every
+    tenth root's own document missing a required member."""
+
+    __slots__ = ("_customers", "_depots", "_fanout", "_first_id", "_locations")
+
+    def __init__(self, rows: ScriptedRows) -> None:
+        super().__init__()
+        self._fanout = rows.fanout
+        self._customers = rows.entity(_CUSTOMER_ENTITY)
+        self._locations = rows.entity(_LOCATION_ENTITY)
+        self._depots = rows.entity(_DEPOT_ENTITY)
+        self._first_id = cast("int", self._customers[0]["id"])
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        if " from location t0" in sql:
+            roots = self._next_roots(self._locations, sql, binds)
+            return projected_rows(sql, map(_root_location_row, roots), document_reads)
+        offsets = [
+            parent - self._first_id
+            for parent in cast("list[int]", cast("ArrayBind", binds[0]).values)
+        ]
+        if " from customer t0" in sql:
+            customers = (_customer_row(self._customers[offset]) for offset in offsets)
+            return projected_rows(sql, customers, document_reads)
+        depots = (
+            _depot_row(row)
+            for offset in offsets
+            for row in self._depots[offset * self._fanout : (offset + 1) * self._fanout]
+        )
+        return projected_rows(sql, depots, document_reads)
 
 
 def _eager(database: ScopedDatabase, workload: Workload) -> int:
@@ -872,6 +1018,212 @@ def _measured_work(
     return _traced(work, metric, prepare=prepare)
 
 
+@dataclass(frozen=True, slots=True)
+class _SharedWorkload:
+    """What a publication workload's reading composes: its port over generated
+    rows, its model, the Typed spelling of its query, the two hops of its one
+    include path, and whether its result holds invalid roots a checked read
+    must pass."""
+
+    port: Callable[[ScriptedRows], _PagedPort]
+    model: DomainModel
+    query: Callable[[], ObjectQuery[Any, Any]]
+    root_entity: str
+    hops: tuple[str, str]
+    checked: bool
+
+
+def repeated_fanout_query() -> ObjectQuery[Any, Any]:
+    """The Typed spelling of the ``repeated-fanout`` fixture's query."""
+    return OrderItem.where(OrderItem.all).include(OrderItem.order.items)
+
+
+def invalid_roots_query() -> ObjectQuery[Any, Any]:
+    """The Typed spelling of the ``invalid-roots`` fixture's query."""
+    return Location.where(Location.all).include(Location.customer.depots)
+
+
+_SHARED_WORKLOADS: Final[Mapping[str, _SharedWorkload]] = {
+    REPEATED_FANOUT_ID: _SharedWorkload(
+        RepeatedFanoutPort,
+        ORDERS_MODEL,
+        repeated_fanout_query,
+        _ITEM_ENTITY,
+        ("order", "items"),
+        checked=False,
+    ),
+    INVALID_ROOTS_ID: _SharedWorkload(
+        InvalidRootsPort,
+        CUSTOMER_MODEL,
+        invalid_roots_query,
+        _LOCATION_ENTITY,
+        ("customer", "depots"),
+        checked=True,
+    ),
+}
+
+
+class _FanoutRead:
+    """One lane's read of a publication workload at one sharing scope."""
+
+    __slots__ = ("_checked", "_database", "_lane", "_query", "_scope", "_wire_query")
+
+    def __init__(
+        self,
+        database: ScopedDatabase,
+        workload: Workload,
+        shared: _SharedWorkload,
+        lane: str,
+        scope: SharingScope,
+    ) -> None:
+        self._database = database
+        self._lane = lane
+        self._scope: SharingScope = scope
+        self._query = shared.query()
+        self._wire_query = workload.query
+        self._checked = shared.checked
+
+    def eager(self) -> Snapshot[Any]:
+        if self._lane == "wire":
+            return self._database.wire.find(self._wire_query, sharing_scope=self._scope)
+        return self._database.find(self._query, sharing_scope=self._scope)
+
+    def results(self) -> Sequence[Any]:
+        snapshot = self.eager()
+        return snapshot.checked().results() if self._checked else snapshot.results()
+
+    def stream(self, page_size: int) -> SnapshotStream[Any]:
+        if self._lane == "wire":
+            return self._database.wire.stream(
+                self._wire_query, batch_size=page_size, sharing_scope=self._scope
+            )
+        return self._database.stream(self._query, batch_size=page_size, sharing_scope=self._scope)
+
+    def delivered(self, stream: SnapshotStream[Any], root: Any) -> object:
+        return cast("object", stream.wire(root)) if self._lane == "projected" else root
+
+    def last_delivered(
+        self, page_size: int, *, until: int | None, collect_at_page_boundary: bool
+    ) -> object:
+        """What the delivery of root ``until`` left the caller holding, the
+        stream closed; every root's when ``until`` is absent."""
+        latest: object | None = None
+        with self.stream(page_size) as stream:
+            roots = stream.checked() if self._checked else stream
+            for count, root in enumerate(roots, start=1):
+                latest = self.delivered(stream, root)
+                if collect_at_page_boundary and count % page_size == 0:
+                    gc.collect()
+                if count == until:
+                    break
+        gc.collect()
+        assert latest is not None
+        return latest
+
+
+def _unique_nodes(lane: str, hops: tuple[str, str], roots: Sequence[Any]) -> int:
+    """The distinct published objects along the read's one include path, an
+    invalid root's counted from the diagnostic graph it carries."""
+    parent, children = hops
+    nodes: set[int] = set()
+    for delivered in roots:
+        root: Any = (
+            cast("InvalidData[Any]", delivered).data
+            if isinstance(delivered, InvalidData)
+            else delivered
+        )
+        reached: Any = getattr(root, parent) if lane == "typed" else root[parent]
+        below: Sequence[object] = (
+            getattr(reached, children) if lane == "typed" else reached[children]
+        )
+        nodes.update(id(node) for node in (root, reached, *below))
+    return len(nodes)
+
+
+def _fanout_reading(
+    workload: Workload,
+    rows: ScriptedRows,
+    cell: str,
+    *,
+    warmups: int,
+    measured: int,
+    collect_at_page_boundary: bool,
+) -> tuple[float, str, tuple[float, ...]]:
+    """One ``<lane>.<scope>.<reading>`` of ``rows``: the whole read, planning
+    included, with the root and port composed outside the window. A traced
+    read rewinds the port before it answers, so the port's cursor is not
+    priced as what the read retained."""
+    lane, scope, *reading = cell.split(".")
+    metric = reading[-1]
+    shared = _SHARED_WORKLOADS[workload.id]
+    port = shared.port(rows)
+    root = Database(_SoleRuntime(port), shared.model)
+    read = _FanoutRead(
+        root.using_database_login(), workload, shared, lane, cast("SharingScope", scope)
+    )
+    try:
+        if metric == "uniqueNodes":
+            nodes = float(_unique_nodes(lane, shared.hops, read.results()))
+            return nodes, "nodes", (nodes,) * measured
+        if metric == "maxMs":
+            samples = _timed(read.eager, warmups=warmups, measured=measured, prepare=port.reset)
+            return float(sorted(samples)[len(samples) // 2]), "ms", samples
+        if not reading[0].startswith("page"):
+            work: Callable[[], object] = read.eager
+        else:
+            page_size = _page_size(reading[0])
+            until = len(rows.entity(shared.root_entity)) // 2 if "earlyClose" in reading else None
+
+            def work() -> object:
+                held = read.last_delivered(
+                    page_size, until=until, collect_at_page_boundary=collect_at_page_boundary
+                )
+                return held if until is None else until
+
+        def rewound() -> object:
+            held = work()
+            port.reset()
+            return held
+
+        return _traced(rewound, metric, prepare=port.reset)
+    finally:
+        root.close()
+
+
+def _publication(
+    workload: Workload,
+    path: str,
+    *,
+    warmups: int,
+    measured: int,
+    collect_at_page_boundary: bool,
+) -> tuple[float, str, tuple[float, ...]]:
+    """One ``publication.*`` cell, at the fixture's own scale or at ``x10``."""
+    scale = SCALED_RESULT_FACTOR if ".x10." in path else 1
+    return _fanout_reading(
+        workload,
+        workload.rows(workload.roots * scale),
+        path.removeprefix(PUBLICATION_PREFIX),
+        warmups=warmups,
+        measured=measured,
+        collect_at_page_boundary=collect_at_page_boundary,
+    )
+
+
+def _wide_fanout(
+    workload: Workload, cell: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """One wide fan-out cell, whose every root reaches every item of one Order."""
+    return _fanout_reading(
+        workload,
+        workload.rows(WIDE_FANOUT_ORDERS, fanout=WIDE_FANOUT_ITEMS),
+        cell,
+        warmups=warmups,
+        measured=measured,
+        collect_at_page_boundary=False,
+    )
+
+
 def _delivery_control(
     control: control_support.DeliveryControl, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
@@ -1074,6 +1426,14 @@ def measure(
     measured: int,
     collect_at_page_boundary: bool,
 ) -> tuple[float, str, tuple[float, ...]]:
+    if path.startswith(PUBLICATION_PREFIX):
+        return _publication(
+            workload,
+            path,
+            warmups=warmups,
+            measured=measured,
+            collect_at_page_boundary=collect_at_page_boundary,
+        )
     if path.startswith("providerFreeCpu."):
         return _provider_free(workload, path, roots, warmups=warmups, measured=measured)
     if path.startswith("stress."):
@@ -1107,6 +1467,34 @@ def measure(
         connection_info,
         warmups=warmups,
         measured=measured,
+    )
+
+
+def _workload_reading(
+    parser: argparse.ArgumentParser, args: argparse.Namespace, contract: BudgetContract
+) -> tuple[float, str, tuple[float, ...]]:
+    """The reading of a wide fan-out cell or a Budget Contract cell."""
+    if args.workload == WIDE_FANOUT_WORKLOAD:
+        if args.cell not in WIDE_FANOUT_CELLS:
+            parser.error(f"{args.workload}.{args.cell} is not a wide fan-out cell")
+        return _wide_fanout(
+            catalog(contract)[REPEATED_FANOUT_ID],
+            args.cell,
+            warmups=args.warmups,
+            measured=args.measured,
+        )
+    if args.workload not in catalog(contract):
+        parser.error(f"{args.workload} is not a Budget Contract workload")
+    if args.cell not in {cell.path for cell in contract.cells(args.workload)}:
+        parser.error(f"{args.workload}.{args.cell} is not a Budget Contract cell")
+    return measure(
+        catalog(contract)[args.workload],
+        args.cell,
+        args.roots,
+        args.connection_info,
+        warmups=args.warmups,
+        measured=args.measured,
+        collect_at_page_boundary=contract.memory_collect_at_page_boundary,
     )
 
 
@@ -1171,20 +1559,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             control, warmups=args.warmups, measured=args.measured
         )
     else:
-        if args.workload not in catalog(contract):
-            parser.error(f"{args.workload} is not a Budget Contract workload")
-        workload = catalog(contract)[args.workload]
-        if args.cell not in {cell.path for cell in contract.cells(args.workload)}:
-            parser.error(f"{args.workload}.{args.cell} is not a Budget Contract cell")
-        value, reading_unit, samples = measure(
-            workload,
-            args.cell,
-            args.roots,
-            args.connection_info,
-            warmups=args.warmups,
-            measured=args.measured,
-            collect_at_page_boundary=contract.memory_collect_at_page_boundary,
-        )
+        value, reading_unit, samples = _workload_reading(parser, args, contract)
     origins = loaded_origins()
     print(
         json.dumps(

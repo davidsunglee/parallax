@@ -128,7 +128,7 @@ class _StreamWireProjection:
                 self._includes,
                 self._wire,
                 self._encoder,
-                memo=WeakIdentityMemo[object](),
+                memo=WeakIdentityMemo(),
             )
         rendered = cast("WireEntity", self._renderer.render_at(node, position))
         return (
