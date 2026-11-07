@@ -1,6 +1,7 @@
 """What a unit of work reads through its row acquisition and makes of the rows
-(`m-unit-work`), over an in-memory acquisition: a predicate write reads nothing,
-and a target read's cardinality and revision, without SQL or a database."""
+(`m-unit-work`), over an in-memory acquisition: a target read's cardinality, which
+object a shared read's rows go to, and what a failed consumer keeps, without SQL or a
+database."""
 
 from __future__ import annotations
 
@@ -96,24 +97,17 @@ def _selection(meta: Metamodel, entity: str) -> EntityMemberSelection:
     return view.member_selection
 
 
-def _account(account_id: int, *, version: int = 3) -> PredecessorRow:
+def _account(account_id: int) -> PredecessorRow:
     return PredecessorRow(
-        members={"id": account_id, "owner": "Ada", "balance": Decimal("100.00"), "version": version}
+        members={"id": account_id, "owner": "Ada", "balance": Decimal("100.00"), "version": 3}
     )
 
 
-def _account_patch(*, version: int = 3) -> PreparedTargetInstruction:
+def _account_patch() -> PreparedTargetInstruction:
     return prepare_wire_write(
-        TargetWriteInstruction(
-            "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
-        ),
+        TargetWriteInstruction("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=3),
         write_preparation_of(_ACCOUNT),
     )
-
-
-# --------------------------------------------------------------------------- #
-# A predicate write is readless.                                              #
-# --------------------------------------------------------------------------- #
 
 
 # --------------------------------------------------------------------------- #

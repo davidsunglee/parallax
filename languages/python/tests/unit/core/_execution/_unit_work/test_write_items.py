@@ -141,9 +141,6 @@ def test_a_post_removal_insert_answers_its_inserts_phase_and_target() -> None:
     assert (marker.phase, marker.target) == ("insert", insert.instruction.target)
 
 
-"""A cell a write type does not answer, which the static probes below prove."""
-
-
 def _position_opening() -> ComposedBitemporalOpening:
     insertion = prepare_wire_write(
         KeyedWriteInstruction(

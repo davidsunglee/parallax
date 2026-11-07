@@ -327,7 +327,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
 
 
 # --------------------------------------------------------------------------- #
-# Full bitemporal (m-temporal-write): the rectangle split and its degenerates.   #
+# Full bitemporal (m-temporal-write): what a close addresses.                 #
 # --------------------------------------------------------------------------- #
 _R1_PAYLOAD = {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
 

@@ -1,5 +1,5 @@
-"""One model's write preparation: every Entity's row selection, lane plans,
-and member masks derived once, at construction."""
+"""One model's write preparation: every Entity's row selection and lane plan
+derived once, at construction."""
 
 from __future__ import annotations
 

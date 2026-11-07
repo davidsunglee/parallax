@@ -1,5 +1,5 @@
 """Stored Sequence Spans and Balances, the observed writes of them, and the
-planner and range-binding seams the unchanged-milestone suites drive."""
+planner seam the unchanged-milestone suites drive."""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ BALANCE = EntityIdentity("parallax.compatibility", "Balance")
 T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 NOW = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 """The planning attempt's instant, which every row it opened carries."""
-JAN, MAR, APR, MAY, JUN, AUG, OCT, DEC = (
-    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 4, 5, 6, 8, 10, 12)
+JAN, MAR, JUN, OCT, DEC = (
+    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 10, 12)
 )
 
 
@@ -134,15 +134,12 @@ def step_kinds(steps: Iterable[PlannedStep]) -> list[str]:
 
 
 __all__ = [
-    "APR",
-    "AUG",
     "BALANCE",
     "BALANCES",
     "DEC",
     "JAN",
     "JUN",
     "MAR",
-    "MAY",
     "NOW",
     "OCT",
     "SPAN",
