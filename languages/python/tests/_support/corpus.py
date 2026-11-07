@@ -102,10 +102,10 @@ def _scalar_equal(observed: object, expected: object) -> bool:
     """
     from decimal import Decimal
 
+    if isinstance(observed, bool) or isinstance(expected, bool):
+        return observed is expected
     if observed == expected:
         return True
-    if isinstance(observed, bool) or isinstance(expected, bool):
-        return False
     left, right = _to_decimal(observed), _to_decimal(expected)
     if isinstance(left, Decimal) and isinstance(right, Decimal):
         return left == right

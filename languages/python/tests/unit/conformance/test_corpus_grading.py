@@ -181,10 +181,6 @@ def test_a_run_returning_a_strict_subset_of_the_expected_rows_fails_the_row_grad
         compare_rows(expected[:1], expected)
 
 
-@pytest.mark.xfail(
-    reason="_scalar_equal answers exact `==` before its bool rule, so `True` equals `1` "
-    "against m-case-format's `true` is never `1`"
-)
 @pytest.mark.parametrize(
     ("observed", "expected"), [(True, 1), (1, True), (False, 0), (0, False), (True, 1.0)]
 )
