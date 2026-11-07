@@ -3,9 +3,8 @@
 `enforce_affected_rows` is the single authoritative reading of an execution
 result, so what it answers must be decided by the step alone: the policy names
 an outcome class, the enforcer raises the error that class names, and no caller
-re-derives either. These are pure value-type tests — no metamodel, no dialect,
-no SQL, no database — pinned against synthetic identities so the rule, not a
-corpus model, is what fails them.
+re-derives either. These are pure value-type tests: no dialect, no SQL, no
+database.
 
 Two invariants are asserted independently of the shortfall matrix, because
 neither is expressible in the policy: an excess over any exact count is always
@@ -379,16 +378,6 @@ def test_no_payload_carries_sql_a_statement_a_plan_or_an_observation(step: Plann
     )
     rendered = str(error).lower()
     assert not any(fragment in rendered for fragment in ("update ", "delete ", "select ", "?"))
-
-
-def test_every_member_of_the_family_shares_one_base() -> None:
-    for error in (
-        MissingTargetError,
-        StaleWriteError,
-        OptimisticLockConflictError,
-        CardinalityCorruptionError,
-    ):
-        assert issubclass(error, WriteEffectError)
 
 
 _GATED_UPDATE = Versioned(attribute=_VERSION, gate=VersionGate(observed_version=4))

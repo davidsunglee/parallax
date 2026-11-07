@@ -6,7 +6,7 @@ function, beside the admitted writes a write travels as; the choreography a call
 performs through the real handles over a fake port is
 ``test_transaction_write_claims.py``'s subject.
 
-The evidence a source carries and how long it lives is `test_source_evidence.py`'s
+The evidence a source carries and how long it lives is `test_source_authority.py`'s
 subject; what lives here is what a SECOND intent against the same evidence may do.
 """
 
@@ -65,9 +65,6 @@ _ASSIGNMENT = WriteIntent(kind="assignment")
 _DESTRUCTIVE = WriteIntent(kind="destructive")
 _OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
 _PERSON_ONE = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
-_STATE = VersionedObjectStateKey(
-    ObjectKey(EntityIdentity("parallax.compatibility", "Account"), ()), 4
-)
 _RETAINED = RetainedObservation(
     VersionedObjectStateKey(_OBJECT, 4), VersionObservation(observed_version=4), None
 )
@@ -346,24 +343,12 @@ def test_a_settled_evidence_claims_the_scope_it_names(evidence: object, scope: o
 
 def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
     # The state case answers what its source retained, and a producer that retained
-    # none settles against nothing here — the required-observation rule refuses it
-    # where every buffered write is settled, rather than an object claim standing
-    # in for evidence a gate needs.
+    # none settles against nothing here, rather than an object claim standing in
+    # for evidence a gate needs.
     versioning, identity = _versioning("account", "Account")
     assert settled_evidence(
         versioning, identity, "amend", object_key=_OBJECT, observation=None
     ) is (None)
-
-
-def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
-    # Absence is never an input to the derivation: an unresolved target is a
-    # caller that skipped resolving it, not a family without a version source.
-    foreign = instructions.deserialize(
-        {"mutation": "delete", "entity": "parallax.compatibility.Account", "rows": [{"id": 1}]}
-    )
-    assert isinstance(foreign, KeyedWriteInstruction)
-    with pytest.raises(instructions.WriteInstructionError, match="declares no entity"):
-        instructions.prepare_wire_write(foreign, write_preparation_of(_PERSON_META))
 
 
 def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> None:

@@ -111,10 +111,11 @@ class _Session:
         concurrency: ConcurrencyPreference = "optimistic",
         execute: Callable[[StoredPositions], Any] | None = None,
         ends: tuple[object, ...] = (INFINITY,),
+        objects: tuple[int, ...] = (1,),
     ) -> None:
         self.seeded = [
             {
-                "id": 1,
+                "id": key,
                 "acctNum": "A",
                 "value": _HUNDRED,
                 "validStart": start,
@@ -122,6 +123,7 @@ class _Session:
                 "txStart": _T0,
                 "txEnd": INFINITY,
             }
+            for key in objects
             for start, end in zip((_JAN, *ends[:-1]), ends, strict=True)
         ]
         self.positions = StoredPositions(_META, self.seeded)
@@ -144,12 +146,13 @@ class _Session:
         self.requests.append(request)
         return self.positions.acquire(request, consumer)
 
-    def observed(self) -> RetainedObservation:
-        """A fresh retained observation of the row WherePosition 1 was seeded
-        with from January."""
-        observation = TemporalObservation(predecessor=PredecessorRow(members=self.seeded[0]))
+    def observed(self, key: int = 1) -> RetainedObservation:
+        """A fresh retained observation of the row WherePosition ``key`` was
+        seeded with from January."""
+        seeded = next(row for row in self.seeded if row["id"] == key)
+        observation = TemporalObservation(predecessor=PredecessorRow(members=seeded))
         return self.uow.source_authority.retain(
-            retained_observation(_write(_JAN), _META, observation)
+            retained_observation(_write(_JAN, id=key), _META, observation)
         )
 
     def flush(self, *writes: tuple[PreparedKeyedInstruction, RetainedObservation]) -> None:
@@ -163,15 +166,19 @@ class _Session:
         assert isinstance(ownership, WriteOwnership)  # the authority's own live helper
         return ownership
 
-    def held(self) -> list[_Stored]:
+    def held(self, key: ObjectKey = _KEY) -> list[_Stored]:
         return sorted(
-            (_described(row) for row in self.ownership.current_rows(_KEY, None)),
+            (_described(row) for row in self.ownership.current_rows(key, None)),
             key=_by_start,
         )
 
-    def stored(self) -> list[_Stored]:
+    def stored(self, key: int = 1) -> list[_Stored]:
         return sorted(
-            (_described(PredecessorRow(members=row)) for row in self.positions.rows),
+            (
+                _described(PredecessorRow(members=row))
+                for row in self.positions.rows
+                if row["id"] == key
+            ),
             key=_by_start,
         )
 
@@ -216,6 +223,86 @@ def test_a_continuing_source_binds_to_the_rows_its_completed_writes_stored_witho
         (_AUG, INFINITY, _NOW, "A", _HUNDRED),
     ]
     assert session.held() == session.stored()
+
+
+def test_each_write_of_a_group_holds_the_rows_its_own_steps_stored() -> None:
+    # Two objects' writes run as one group, every close ahead of every insert,
+    # so a row is held by what emitted it, not by where it falls in the group.
+    session = _Session(objects=(1, 2))
+    first, second = session.observed(), session.observed(2)
+    session.flush(
+        (_write(_FEB, _APR, acctNum="O"), first),
+        (_write(_MAR, _JUN, id=2, acctNum="P"), second),
+    )
+    assert session.held() == session.stored()
+    assert session.held(second.key.object) == session.stored(2)
+    # Every row of each object now stands at the attempt's instant, so these
+    # revise in place: a revision's stored document follows it the same way.
+    session.flush(
+        (_write(_FEB, _APR, acctNum="Q"), first),
+        (_write(_MAR, _JUN, id=2, acctNum="R"), second),
+    )
+    assert session.requests == []
+    assert session.held() == session.stored()
+    assert session.held(second.key.object) == session.stored(2)
+    assert [row[3] for row in session.stored()] == ["A", "Q", "A"]
+    assert [row[3] for row in session.stored(2)] == ["A", "R", "A"]
+
+
+def test_a_group_holds_nothing_for_a_write_no_source_continues_from() -> None:
+    # Only a retained observation demands its rows, so a write beside one
+    # stages nothing of its own.
+    session = _Session(objects=(1, 2))
+    source = session.observed()
+    other = retained_observation(
+        _write(_JAN, id=2),
+        _META,
+        TemporalObservation(predecessor=PredecessorRow(members=session.seeded[1])),
+    )
+    session.flush(
+        (_write(_FEB, _APR, acctNum="O"), source),
+        (_write(_MAR, _JUN, id=2, acctNum="P"), other),
+    )
+    assert session.held() == session.stored()
+    assert session.held(other.key.object) == []
+    assert len(session.stored(2)) == 3
+    # Its row is the attempt's own now, so it revises in place, and a revision
+    # no output describes stages nothing beside a write that does.
+    opened = next(row for row in session.positions.rows if row["id"] == 2 and row["acctNum"] == "P")
+    revised = retained_observation(
+        _write(_MAR, id=2),
+        _META,
+        TemporalObservation(predecessor=PredecessorRow(members=opened)),
+    )
+    session.flush(
+        (_write(_FEB, _APR, acctNum="Q"), source),
+        (_write(_MAR, _JUN, id=2, acctNum="R"), revised),
+    )
+    assert session.held() == session.stored()
+    assert session.held(other.key.object) == []
+    assert [row[3] for row in session.stored(2)] == ["A", "R", "A"]
+
+
+def test_a_group_no_source_demands_hands_its_execution_no_capture() -> None:
+    handed: list[dict[str, object]] = []
+
+    def recording(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
+        def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
+            handed.append(keywords)
+            return positions(*arguments, **keywords)
+
+        return execute
+
+    session = _Session(execute=recording)
+    unretained = retained_observation(
+        _write(_JAN),
+        _META,
+        TemporalObservation(predecessor=PredecessorRow(members=session.seeded[0])),
+    )
+    session.flush((_write(_FEB, _APR, acctNum="O"), unretained))
+    (keywords,) = handed
+    assert "capture_insert" not in keywords
+    assert "capture_revision" not in keywords
 
 
 def test_repeated_writes_through_one_source_hold_its_current_rows_and_no_history() -> None:

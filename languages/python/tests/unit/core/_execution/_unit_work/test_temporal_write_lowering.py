@@ -1,24 +1,15 @@
 """Temporal write finalization and lowering unit tests.
 
-Pins the two halves a temporal mutation crosses — the finalized Planned Close and
-Planned Insert successors it expands into, and the DML each of those steps lowers
-to — for audit-only close-and-chain (`m-temporal-write`) and the full-bitemporal
-rectangle split (`m-temporal-write`).
-
-The statements stay byte-exact against the corpus goldens (``m-temporal-write-001
-..006``, ``m-temporal-write-017..019/022..025``, ``m-inheritance-090/091/094..097
-/105``, ``m-value-object-032/033``). Alongside them the settled steps pin what
-lowering can no longer see: the mode-independent Milestone Target (the key plus
-one exclusive upper bound per As-Of Axis) against the observed-``in_z`` gate the
-concurrency mode decides, each successor's Row Origin, each close's Close
-Cause, and the two zero-row-close shortfall tags
-(:class:`~parallax.core.unit_work.OptimisticConflict` for a gated mismatch,
-:class:`~parallax.core.unit_work.StaleWrite` for an ungated one).
+Pins what a corpus golden cannot see of a temporal mutation (`m-temporal-write`):
+the mode-independent Milestone Target (the key plus one exclusive upper bound
+per As-Of Axis) against the observed-``in_z`` gate the concurrency mode decides,
+each successor's Row Origin, each close's Close Cause, the two zero-row-close
+shortfall tags (:class:`~parallax.core.unit_work.OptimisticConflict` for a gated
+mismatch, :class:`~parallax.core.unit_work.StaleWrite` for an ungated one), and
+the geometries of rows the attempt opened that no case states. The statements a
+corpus case states are that case's golden.
 
 Most cases here hand the planner one instruction and one observation directly.
-Where the question is *which* milestone a write settles against, that shape
-cannot ask it — the answer is decided before planning — so those cases drive the
-developer verbs over a recording port instead and pin the same emitted DML.
 """
 
 from __future__ import annotations
@@ -45,9 +36,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import DocumentValue
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
@@ -88,7 +77,6 @@ from parallax.core.write_plan.steps import (
     Finite,
     NewLineage,
     PlannedStep,
-    PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     TemporalGate,
@@ -125,10 +113,7 @@ BALANCE = _MODELS["balance"]
 POSITION = _MODELS["position"]
 READING = _MODELS["reading"]
 INSTRUMENT = _MODELS["instrument"]
-RATE = _MODELS["rate"]
 QUOTE = _MODELS["quote"]
-SUPPLIER = _MODELS["supplier"]
-BRANCH = _MODELS["branch"]
 
 
 def _observed(
@@ -247,98 +232,6 @@ def _lower(
 # --------------------------------------------------------------------------- #
 # Audit-only (m-temporal-write): insert / close-and-chain update / terminate.     #
 # --------------------------------------------------------------------------- #
-def test_audit_only_insert_opens_a_current_milestone() -> None:
-    # m-temporal-write-001.
-    insert = KeyedWriteInstruction(
-        "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},)
-    )
-    statements = _lower(insert, BALANCE, "2024-01-01T00:00:00+00:00")
-    assert statements == [
-        (
-            "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, "A", 100.00, _instant("2024-01-01T00:00:00+00:00"), OPEN_BOUND),
-        )
-    ]
-
-
-def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
-    # m-temporal-write-002: an ungated (locking-mode) close, then a chain carrying
-    # the instruction's OWN authored FULL row. The row names every member the
-    # predecessor could have carried forward, so merging is an identity and the
-    # chain is exactly the authored row.
-    update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("150.00")},)
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
-    )
-    statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
-    assert statements == [
-        (
-            "update balance set out_z = ? where bal_id = ? and out_z = ?",
-            (_instant("2024-06-01T00:00:00+00:00"), 1, "infinity"),
-        ),
-        (
-            "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
-        ),
-    ]
-
-
-def test_audit_only_terminate_closes_only() -> None:
-    # m-temporal-write-003: terminate = close, chain nothing.
-    terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 1},))
-    statements = _lower(
-        terminate,
-        BALANCE,
-        "2024-08-01T00:00:00+00:00",
-        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
-    )
-    assert statements == [
-        (
-            "update balance set out_z = ? where bal_id = ? and out_z = ?",
-            (_instant("2024-08-01T00:00:00+00:00"), 1, "infinity"),
-        )
-    ]
-
-
-def test_audit_only_update_carries_every_new_attribute() -> None:
-    # m-temporal-write-004: the chained row carries ALL corrected attributes.
-    update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("250.00")},)
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
-    )
-    statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
-    assert statements[1] == (
-        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, "B", 250.00, _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
-    )
-
-
-def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> None:
-    # A sparse public `tx.amend(copy)` row contains the primary key plus its
-    # effective change set. This shape is never authored by the conformance
-    # engine, which always supplies
-    # a full row) merges onto the observed payload, so the chained row still
-    # carries `acctNum` even though the instruction's own row never named it.
-    sparse_update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "value": Decimal("150.00")},)
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
-    )
-    statements = _lower(
-        sparse_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
-    )
-    assert statements[1] == (
-        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
-    )
 
 
 def _member_values(step: PlannedStep) -> dict[str, object]:
@@ -379,10 +272,8 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
 
 
 def test_audit_only_update_carries_a_full_authored_row_over_every_observed_member() -> None:
-    # The corpus-driven engine authors FULL rows for an audit-only write, so the
-    # merge onto the predecessor is a strict identity even though the
-    # predecessor carries every member: the authored row overrides each one it
-    # names, and no exercised compile-lane emission can change.
+    # The authored row overrides each observed member it names, whatever the
+    # predecessor held there.
     full_update = KeyedWriteInstruction(
         "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("150.00")},)
     )
@@ -419,14 +310,8 @@ def test_audit_only_terminate_records_termination_and_chains_nothing() -> None:
     assert close.cause == TERMINATED
 
 
-def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
-    terminate = KeyedWriteInstruction("terminate", "Account", ({"id": 1},))
-    with pytest.raises(ValueError, match="do not support 'terminate'"):
-        _finalize(terminate, _MODELS["account"], "2024-08-01T00:00:00+00:00")
-
-
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
-    # m-temporal-write-005: a locking-mode close never binds `in_z`, even when one
+    # m-concurrency-022: a locking-mode close never binds `in_z`, even when one
     # was observed.
     update = KeyedWriteInstruction(
         "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
@@ -441,273 +326,10 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
     assert step.affected_rows == ExactCount(1, STALE_WRITE)
 
 
-def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
-    # m-temporal-write-006: the gated close binds the observed in_z LAST.
-    close_only = KeyedWriteInstruction("terminate", "Balance", ({"id": 1},))
-    observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
-    steps = _lower_steps(
-        close_only,
-        BALANCE,
-        "2024-09-01T00:00:00+00:00",
-        observation=observation,
-        concurrency="optimistic",
-    )
-    assert len(steps) == 1
-    step, lowered = steps[0]
-    assert lowered.sql == (
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-    )
-    assert lowered.binds == (
-        _instant("2024-09-01T00:00:00+00:00"),
-        1,
-        "infinity",
-        _instant("2024-06-01T00:00:00+00:00"),
-    )
-    assert isinstance(step, PlannedClose)
-    # gated: a shortfall is the retriable optimistic conflict
-    assert step.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
-
-
-def test_audit_only_insert_is_never_gated() -> None:
-    # An INSERT never consults an observation — no close, nothing to gate. A
-    # Planned Insert carries neither a gate nor an Affected Rows Policy at all,
-    # so the absence is structural rather than a null expectation.
-    insert = KeyedWriteInstruction(
-        "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
-    )
-    steps = _lower_steps(insert, BALANCE, "2024-06-01T00:00:00+00:00", concurrency="optimistic")
-    assert len(steps) == 1
-    assert isinstance(steps[0][0], PlannedInsert)
-
-
 # --------------------------------------------------------------------------- #
 # Full bitemporal (m-temporal-write): the rectangle split and its degenerates.   #
 # --------------------------------------------------------------------------- #
 _R1_PAYLOAD = {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
-
-
-def test_bitemporal_update_until_splits_head_middle_tail() -> None:
-    # m-temporal-write-017.
-    update_until = KeyedWriteInstruction(
-        "amendUntil",
-        "Position",
-        ({"id": 1, "value": Decimal("200.00")},),
-        valid_from=_instant("2024-03-01T00:00:00+00:00"),
-        until=_instant("2024-09-01T00:00:00+00:00"),
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload=_R1_PAYLOAD,
-    )
-    statements = _lower(
-        update_until, POSITION, "2024-02-15T00:00:00+00:00", observation=observation
-    )
-    assert statements == [
-        (
-            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            (_instant("2024-02-15T00:00:00+00:00"), 1, "infinity", "infinity"),
-        ),
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                100.00,
-                _instant("2024-01-01T00:00:00+00:00"),
-                _instant("2024-03-01T00:00:00+00:00"),
-                _instant("2024-02-15T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        ),
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                200.00,
-                _instant("2024-03-01T00:00:00+00:00"),
-                _instant("2024-09-01T00:00:00+00:00"),
-                _instant("2024-02-15T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        ),
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                100.00,
-                _instant("2024-09-01T00:00:00+00:00"),
-                OPEN_BOUND,
-                _instant("2024-02-15T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        ),
-    ]
-
-
-def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
-    # m-temporal-write-018.
-    terminate_until = KeyedWriteInstruction(
-        "terminateUntil",
-        "Position",
-        ({"id": 1},),
-        valid_from=_instant("2024-03-01T00:00:00+00:00"),
-        until=_instant("2024-09-01T00:00:00+00:00"),
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload=_R1_PAYLOAD,
-    )
-    statements = _lower(
-        terminate_until, POSITION, "2024-02-15T00:00:00+00:00", observation=observation
-    )
-    assert len(statements) == 3
-    assert statements[1][1][2] == 100.00  # head carries the OLD value
-    assert statements[2][1][2] == 100.00  # tail carries the OLD value too (no middle)
-    assert statements[2][1][3:5] == (_instant("2024-09-01T00:00:00+00:00"), OPEN_BOUND)
-
-
-def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
-    # m-temporal-write-019: no close, a single INSERT.
-    insert_until = KeyedWriteInstruction(
-        "insertUntil",
-        "Position",
-        ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
-        valid_from=_instant("2024-03-01T00:00:00+00:00"),
-        until=_instant("2024-09-01T00:00:00+00:00"),
-    )
-    statements = _lower(insert_until, POSITION, "2024-01-01T00:00:00+00:00")
-    assert statements == [
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                100.00,
-                _instant("2024-03-01T00:00:00+00:00"),
-                _instant("2024-09-01T00:00:00+00:00"),
-                _instant("2024-01-01T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        )
-    ]
-
-
-def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
-    # m-temporal-write-022: the two-way degenerate — no middle, no old tail.
-    update = KeyedWriteInstruction(
-        "amend",
-        "Position",
-        ({"id": 1, "value": Decimal("200.00")},),
-        valid_from=_instant("2024-06-01T00:00:00+00:00"),
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload=_R1_PAYLOAD,
-    )
-    statements = _lower(update, POSITION, "2024-07-01T00:00:00+00:00", observation=observation)
-    assert statements == [
-        (
-            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            (_instant("2024-07-01T00:00:00+00:00"), 1, "infinity", "infinity"),
-        ),
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                100.00,
-                _instant("2024-01-01T00:00:00+00:00"),
-                _instant("2024-06-01T00:00:00+00:00"),
-                _instant("2024-07-01T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        ),
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                200.00,
-                _instant("2024-06-01T00:00:00+00:00"),
-                OPEN_BOUND,
-                _instant("2024-07-01T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        ),
-    ]
-
-
-def test_bitemporal_plain_terminate_chains_head_only() -> None:
-    # m-temporal-write-023.
-    terminate = KeyedWriteInstruction(
-        "terminate", "Position", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload=_R1_PAYLOAD,
-    )
-    statements = _lower(terminate, POSITION, "2024-07-01T00:00:00+00:00", observation=observation)
-    assert statements == [
-        (
-            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            (_instant("2024-07-01T00:00:00+00:00"), 1, "infinity", "infinity"),
-        ),
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                100.00,
-                _instant("2024-01-01T00:00:00+00:00"),
-                _instant("2024-06-01T00:00:00+00:00"),
-                _instant("2024-07-01T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        ),
-    ]
-
-
-def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
-    # m-temporal-write-025.
-    insert = KeyedWriteInstruction(
-        "insert",
-        "Position",
-        ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
-        valid_from=_instant("2024-01-01T00:00:00+00:00"),
-    )
-    statements = _lower(insert, POSITION, "2024-01-01T00:00:00+00:00")
-    assert statements == [
-        (
-            "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-            "values (?, ?, ?, ?, ?, ?, ?)",
-            (
-                1,
-                "A",
-                100.00,
-                _instant("2024-01-01T00:00:00+00:00"),
-                OPEN_BOUND,
-                _instant("2024-01-01T00:00:00+00:00"),
-                OPEN_BOUND,
-            ),
-        )
-    ]
 
 
 @pytest.mark.parametrize(
@@ -1020,50 +642,10 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Inheritance composition (m-inheritance x m-temporal-write).    #
-# --------------------------------------------------------------------------- #
-def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
-    # m-inheritance-090: the tag guard rides the identity predicates, before
-    # the current-row predicate.
-    terminate = KeyedWriteInstruction("terminate", "MeterReading", ({"id": 1},))
-    statements = _lower(
-        terminate,
-        READING,
-        "2024-08-01T00:00:00+00:00",
-        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
-    )
-    assert statements == [
-        (
-            "update reading set out_z = ? where id = ? and kind = ? and out_z = ?",
-            (_instant("2024-08-01T00:00:00+00:00"), 1, "meter", "infinity"),
-        )
-    ]
-
-
-# --------------------------------------------------------------------------- #
 # Unchanged milestones (m-temporal-write): a guard on the observed address and      #
 # start, assigning the start to itself, where the dialect's count proves it.   #
 # --------------------------------------------------------------------------- #
 _GUARDED_AT = "2024-01-01T00:00:00+00:00"
-
-
-def test_a_transaction_time_update_its_row_already_holds_lowers_to_one_guard() -> None:
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("100.00")},))
-    lowered = _lower_steps(
-        update,
-        BALANCE,
-        "2024-08-01T00:00:00+00:00",
-        observation=_observed(
-            tx_start=_GUARDED_AT, payload={"id": 1, "acctNum": "A", "value": 100}
-        ),
-        concurrency="optimistic",
-    )
-    ((step, statement),) = lowered
-    assert isinstance(step, PlannedTemporalGuard)
-    assert (statement.sql, statement.binds) == (
-        "update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?",
-        (1, "infinity", _instant(_GUARDED_AT)),
-    )
 
 
 def test_a_bitemporal_guard_addresses_its_rectangle_by_both_ends() -> None:
@@ -1112,225 +694,6 @@ def test_a_table_per_hierarchy_guard_carries_the_tag_guard_after_the_key() -> No
             (1, "meter", "infinity", _instant(_GUARDED_AT)),
         )
     ]
-
-
-def test_a_dialect_whose_count_cannot_prove_a_guard_closes_and_chains_instead() -> None:
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("100.00")},))
-    lowered = _lower_steps(
-        update,
-        BALANCE,
-        "2024-08-01T00:00:00+00:00",
-        observation=_observed(
-            tx_start=_GUARDED_AT, payload={"id": 1, "acctNum": "A", "value": 100}
-        ),
-        dialect=dataclasses.replace(POSTGRES, counts_unchanged_rows=False),
-        concurrency="optimistic",
-    )
-    assert [type(step) for step, _ in lowered] == [PlannedClose, PlannedInsert]
-
-
-def test_tpcs_txtime_terminate_has_no_tag_guard() -> None:
-    # m-inheritance-091: table-per-concrete-subtype routes to the concrete's
-    # own table, no tag.
-    terminate = KeyedWriteInstruction("terminate", "SpotQuote", ({"id": 1},))
-    statements = _lower(
-        terminate,
-        QUOTE,
-        "2024-08-01T00:00:00+00:00",
-        observation=_observed(tx_start="2024-01-01T00:00:00+00:00"),
-    )
-    assert statements == [
-        (
-            "update spot_quote set out_z = ? where id = ? and out_z = ?",
-            (_instant("2024-08-01T00:00:00+00:00"), 1, "infinity"),
-        )
-    ]
-
-
-def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
-    # m-inheritance-094.
-    terminate = KeyedWriteInstruction(
-        "terminate", "Bond", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload={"id": 1, "price": Decimal("100.00"), "coupon": Decimal("5.00")},
-    )
-    statements = _lower(terminate, INSTRUMENT, "2024-07-01T00:00:00+00:00", observation=observation)
-    assert statements[0] == (
-        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?",
-        (_instant("2024-07-01T00:00:00+00:00"), 1, "bond", "infinity", "infinity"),
-    )
-    assert statements[1][1][:3] == (1, "bond", 100.00)
-
-
-def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
-    # m-inheritance-095: routes to the concrete `deposit_rate` table.
-    terminate = KeyedWriteInstruction(
-        "terminate", "DepositRate", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload={"id": 1, "amount": Decimal("2.50"), "grade": "A"},
-    )
-    statements = _lower(terminate, RATE, "2024-07-01T00:00:00+00:00", observation=observation)
-    assert statements[0] == (
-        "update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?",
-        (_instant("2024-07-01T00:00:00+00:00"), 1, "infinity", "infinity"),
-    )
-
-
-def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
-    # m-inheritance-096.
-    terminate_until = KeyedWriteInstruction(
-        "terminateUntil",
-        "Stock",
-        ({"id": 2},),
-        valid_from=_instant("2024-03-01T00:00:00+00:00"),
-        until=_instant("2024-09-01T00:00:00+00:00"),
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload={"id": 2, "price": Decimal("100.00"), "ticker": "ACME"},
-    )
-    statements = _lower(
-        terminate_until, INSTRUMENT, "2024-02-15T00:00:00+00:00", observation=observation
-    )
-    assert len(statements) == 3
-    assert statements[0] == (
-        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?",
-        (_instant("2024-02-15T00:00:00+00:00"), 2, "stock", "infinity", "infinity"),
-    )
-
-
-def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
-    # m-inheritance-097.
-    terminate_until = KeyedWriteInstruction(
-        "terminateUntil",
-        "LoanRate",
-        ({"id": 2},),
-        valid_from=_instant("2024-03-01T00:00:00+00:00"),
-        until=_instant("2024-09-01T00:00:00+00:00"),
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload={"id": 2, "amount": Decimal("6.75"), "spread": Decimal("1.25")},
-    )
-    statements = _lower(terminate_until, RATE, "2024-02-15T00:00:00+00:00", observation=observation)
-    assert len(statements) == 3
-    assert statements[0] == (
-        "update loan_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?",
-        (_instant("2024-02-15T00:00:00+00:00"), 2, "infinity", "infinity"),
-    )
-
-
-def test_tph_txtime_optlock_composed_conflict_orders_tag_then_gate_last() -> None:
-    # m-inheritance-105: tag guard rides identity predicates, in_z gate LAST.
-    close_only = KeyedWriteInstruction("terminate", "MeterReading", ({"id": 1},))
-    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
-    statements = _lower_full(
-        close_only,
-        READING,
-        "2024-09-01T00:00:00+00:00",
-        observation=observation,
-        concurrency="optimistic",
-    )
-    lowered = statements[0]
-    assert lowered.sql == (
-        "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
-    )
-    assert lowered.binds == (
-        dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-        1,
-        "meter",
-        "infinity",
-        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Value objects ride milestone chaining whole, absent from the close.         #
-# --------------------------------------------------------------------------- #
-def test_audit_only_update_carries_the_value_object_document_on_the_chain() -> None:
-    # m-value-object-032.
-    d2: dict[str, object] = {
-        "street": "2 New Avenue",
-        "city": "Bergen",
-        "geo": {"country": "NO"},
-        "phones": [],
-    }
-    update = KeyedWriteInstruction(
-        "amend", "Supplier", ({"id": 1, "name": "Nordic Foods", "address": d2},)
-    )
-    observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
-    statements = _lower_full(update, SUPPLIER, "2024-06-01T00:00:00+00:00", observation=observation)
-    close, chain = statements
-    assert close.sql == "update supplier set out_z = ? where sup_id = ? and out_z = ?"
-    assert chain.binds[-1] == StructuredDocument(cast("DocumentValue", d2))
-
-
-def test_bitemporal_update_until_carries_the_value_object_document_on_every_chain() -> None:
-    # m-value-object-033: the document rides head/middle/tail — old, new, old.
-    d1: dict[str, object] = {
-        "street": "10 Old Road",
-        "city": "Helsinki",
-        "geo": {"country": "FI"},
-        "phones": [],
-    }
-    d2: dict[str, object] = {
-        "street": "30 New Road",
-        "city": "Tampere",
-        "geo": {"country": "FI"},
-        "phones": [],
-    }
-    update_until = KeyedWriteInstruction(
-        "amendUntil",
-        "Branch",
-        ({"id": 1, "name": "Central Branch", "address": d2},),
-        valid_from=_instant("2024-03-01T00:00:00+00:00"),
-        until=_instant("2024-09-01T00:00:00+00:00"),
-    )
-    observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00",
-        valid_start="2024-01-01T00:00:00+00:00",
-        valid_end="infinity",
-        payload={"name": "Central Branch", "address": d1},
-    )
-    statements = _lower_full(
-        update_until, BRANCH, "2024-02-15T00:00:00+00:00", observation=observation
-    )
-    close, head, middle, tail = statements
-    assert close.sql == ("update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ?")
-    assert head.binds[-1] == StructuredDocument(cast("DocumentValue", d1))
-    assert middle.binds[-1] == StructuredDocument(cast("DocumentValue", d2))
-    assert tail.binds[-1] == StructuredDocument(cast("DocumentValue", d1))
-
-
-# --------------------------------------------------------------------------- #
-# Zero-row close: the two distinct outcomes (m-concurrency / m-temporal-write).      #
-# --------------------------------------------------------------------------- #
-def test_multi_row_temporal_write_is_refused() -> None:
-    # A temporal keyed write lowers ONE row at a time: each row opens its own
-    # milestone chain (`m-temporal-write`), so there is no
-    # shared statement a collapse could render. `m-batch-write`'s eligibility
-    # never collapses a temporal entity, so reaching here with two rows is a
-    # caller wiring defect — refused, never lowered as if only the first row
-    # existed.
-    batched = KeyedWriteInstruction(
-        "amend",
-        "Balance",
-        ({"id": 1, "value": Decimal("100.00")}, {"id": 2, "value": Decimal("200.00")}),
-    )
-    with pytest.raises(ValueError, match="temporal target carries 2 rows"):
-        _lower(batched, BALANCE, "2024-02-15T00:00:00+00:00")
 
 
 # --------------------------------------------------------------------------- #
@@ -1497,16 +860,6 @@ def _owned_lowering(
     ]
 
 
-def test_an_owned_transaction_time_row_is_revised_in_place_at_its_address() -> None:
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
-    observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
-    lowered = _owned_lowering(update, BALANCE, observation, _own_balance())
-    assert [type(step) for step, _ in lowered] == [PlannedTemporalRevision]
-    assert [statement for _, statement in lowered] == [
-        ("update balance set val = ? where bal_id = ? and out_z = ?", (175.00, 1, "infinity"))
-    ]
-
-
 def test_an_owned_revision_gates_on_its_observed_start_under_optimistic() -> None:
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
     observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
@@ -1520,15 +873,6 @@ def test_an_owned_revision_gates_on_its_observed_start_under_optimistic() -> Non
         "update balance set val = ? where bal_id = ? and out_z = ? and in_z = ?",
         (175.00, 1, "infinity", _instant(_T)),
     )
-
-
-def test_terminating_an_owned_transaction_time_row_removes_it() -> None:
-    terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 1},))
-    lowered = _owned_lowering(terminate, BALANCE, _observed(tx_start=_T), _own_balance())
-    assert [type(step) for step, _ in lowered] == [PlannedTemporalRemoval]
-    assert [statement for _, statement in lowered] == [
-        ("delete from balance where bal_id = ? and out_z = ?", (1, "infinity"))
-    ]
 
 
 @pytest.mark.parametrize("stored_start", [_T, "2024-08-01T00:00:00+00:00"])
@@ -1546,14 +890,6 @@ def test_a_row_the_attempt_did_not_open_is_never_closed_at_or_before_its_start(
     assert refused.value.instant == _instant(_T)
     assert refused.value.key == {"id": 1}
     assert refused.value.stored_bound == _instant(stored_start)
-
-
-def test_a_row_whose_start_equals_the_instant_is_revised_where_the_attempt_opened_it() -> None:
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
-    observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
-    assert [
-        type(step) for step, _ in _owned_lowering(update, BALANCE, observation, _own_balance())
-    ] == [PlannedTemporalRevision]
 
 
 def _owned_position(valid_start: str, valid_end: str = "infinity") -> TemporalObservation:
@@ -1597,20 +933,6 @@ def test_an_owned_suffix_update_revises_the_retained_end_and_inserts_the_head() 
     ]
 
 
-def test_an_owned_whole_rectangle_value_change_is_one_revision() -> None:
-    # The head would cover no Valid Time, so it is not opened at all.
-    update = KeyedWriteInstruction(
-        "amend", "Position", ({"id": 1, "value": Decimal("200.00")},), valid_from=_instant(_JAN)
-    )
-    lowered = _owned_lowering(update, POSITION, _owned_position(_JAN), _own_position())
-    assert [statement for _, statement in lowered] == [
-        (
-            "update position set val = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            (200.00, 1, "infinity", "infinity"),
-        )
-    ]
-
-
 def test_an_owned_interior_correction_moves_the_tail_start_and_inserts_head_and_middle() -> None:
     update_until = KeyedWriteInstruction(
         "amendUntil",
@@ -1637,24 +959,6 @@ def test_an_owned_interior_correction_moves_the_tail_start_and_inserts_head_and_
     ]
 
 
-def test_an_owned_bounded_termination_keeps_the_tail_and_inserts_the_head() -> None:
-    terminate_until = KeyedWriteInstruction(
-        "terminateUntil",
-        "Position",
-        ({"id": 1},),
-        valid_from=_instant(_MAR),
-        until=_instant(_JUN),
-    )
-    lowered = _owned_lowering(terminate_until, POSITION, _owned_position(_JAN), _own_position())
-    assert [statement for _, statement in lowered] == [
-        (
-            "update position set from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            (_instant(_JUN), 1, "infinity", "infinity"),
-        ),
-        (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
-    ]
-
-
 def test_an_owned_unbounded_termination_removes_the_row_and_inserts_its_head() -> None:
     # No successor keeps the row's own Valid-Time end, so nothing is moved to
     # make one: the row is removed and its head opened at its own address.
@@ -1669,19 +973,6 @@ def test_an_owned_unbounded_termination_removes_the_row_and_inserts_its_head() -
             (1, "infinity", "infinity"),
         ),
         (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
-    ]
-
-
-def test_terminating_a_whole_owned_rectangle_removes_it_and_opens_nothing() -> None:
-    terminate = KeyedWriteInstruction(
-        "terminate", "Position", ({"id": 1},), valid_from=_instant(_JAN)
-    )
-    lowered = _owned_lowering(terminate, POSITION, _owned_position(_JAN), _own_position())
-    assert [statement for _, statement in lowered] == [
-        (
-            "delete from position where pos_id = ? and thru_z = ? and out_z = ?",
-            (1, "infinity", "infinity"),
-        )
     ]
 
 

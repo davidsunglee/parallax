@@ -22,9 +22,8 @@ budget), and that is the function asserted here.
 
 The second half is the failure mode worth preventing: a loop that re-ran a
 stale write would re-execute the whole unit of work against a cause no re-read
-can change. The per-step derivation on its own is ``test_write_planner``'s; what
-is composed here is the chain from that derivation, through the affected-row
-enforcer, to the retry decision.
+can change. What is graded here is each half of that chain: the affected-row
+enforcer's classification, and the retry decision over what it raises.
 """
 
 from __future__ import annotations

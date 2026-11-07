@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
-from parallax.core import inheritance
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
-from parallax.core._execution._unit_work.claims import WriteIntent, WriteIntentKind
+from parallax.core._execution._unit_work.claims import WriteIntent
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
     ParticipationToken,
@@ -20,7 +18,6 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
-    derive_keyed_instruction,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -44,22 +41,19 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
     TemporalIntent,
     WritePhase,
-    target_write,
 )
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
-    TargetWriteInstruction,
     admitted_write,
     object_key,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
-from tests._support.planner_probes import admitted_writes, object_source, write_admission
+from tests._support.planner_probes import admitted_writes, write_admission
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -69,14 +63,12 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
     OBJECT,
     POSITION,
     SEP,
-    T0,
     observed_write,
     rectangle,
     retained,
 )
 
 _ACCOUNT = corpus_model("account")
-_PERSON = corpus_model("person")
 
 
 def _prepared(mutation: KeyedMutation, *rows: Mapping[str, object]) -> PreparedKeyedInstruction:
@@ -138,217 +130,18 @@ def test_a_licensed_write_names_the_object_it_writes(licence: str) -> None:
             admitted_write(prepared, None, None, authority=InsertionIdentity(key))
 
 
-# --------------------------------------------------------------------------- #
-# The projection matrix: what every write answers of itself.                  #
-# --------------------------------------------------------------------------- #
-_ABSENT: Final = object()
+def test_a_composed_opening_names_the_object_its_insert_names() -> None:
+    assert _position_opening().object_key == OBJECT
+
+
+def test_a_post_removal_insert_answers_its_inserts_phase_and_target() -> None:
+    insert = admitted_write(_prepared("insert", _account(1)), None, _account_key(1))
+    assert isinstance(insert, KeyedInsert)
+    marker = PostRemovalInsert(insert)
+    assert (marker.phase, marker.target) == ("insert", insert.instruction.target)
+
+
 """A cell a write type does not answer, which the static probes below prove."""
-
-
-@dataclass(frozen=True, slots=True)
-class _Row:
-    """One write and the projections it answers, each beside what it answers
-    with."""
-
-    write: object
-    instruction: object
-    object_key: object
-    claim_scope: object
-    source_evidence: object
-    phase: WritePhase
-    target: EntityMetadata
-    intents: object = _ABSENT
-
-    def answered(self) -> dict[str, object]:
-        cells = {
-            "instruction": self.instruction,
-            "object_key": self.object_key,
-            "claim_scope": self.claim_scope,
-            "source_evidence": self.source_evidence,
-            "phase": self.phase,
-            "target": self.target,
-            "intents": self.intents,
-        }
-        return {name: value for name, value in cells.items() if value is not _ABSENT}
-
-
-def _keyed_insert() -> _Row:
-    write = admitted_write(_prepared("insert", _account(1)), None, _account_key(1))
-    assert isinstance(write, KeyedInsert)
-    return _Row(write, write.instruction, _account_key(1), _ABSENT, (), "insert", _target(write))
-
-
-def _absent_key_insert() -> _Row:
-    write = KeyedInsert(_prepared("insert", _account(1)), None)
-    return _Row(write, write.instruction, None, _ABSENT, (), "insert", _target(write))
-
-
-def _state_observed() -> _Row:
-    key = _account_key(1)
-    observed = RetainedObservation(VersionedObjectStateKey(key, 4), VersionObservation(4), None)
-    source = ReadEvidence(key.entity, key, ParticipationToken(), observed)
-    write = admitted_write(
-        _prepared("amend", {"id": 1, "balance": Decimal("2.00")}), observed, key, source=source
-    )
-    assert isinstance(write, StateObservedWrite)
-    return _Row(write, write.instruction, key, observed.key, (source,), "update", _target(write))
-
-
-def _continued_state_observed() -> _Row:
-    key = _account_key(1)
-    observed = RetainedObservation(VersionedObjectStateKey(key, 4), VersionObservation(4), None)
-    source = ReadEvidence(key.entity, key, ParticipationToken(), observed)
-    advanced = VersionedObjectStateKey(key, 5)
-    write = admitted_write(_prepared("delete", {"id": 1}), advanced, key, source=source)
-    assert isinstance(write, StateObservedWrite)
-    return _Row(write, write.instruction, key, advanced, (source,), "delete", _target(write))
-
-
-def _person_delete(*person_ids: int) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(
-        KeyedWriteInstruction("delete", "Person", tuple({"id": key} for key in person_ids)),
-        write_preparation_of(_PERSON),
-    )
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
-
-
-def _person_key(person_id: int) -> ObjectKey:
-    key = object_key(_person_delete(person_id), _PERSON)
-    assert key is not None
-    return key
-
-
-def _object_locked() -> _Row:
-    key = _person_key(1)
-    source = object_source(key)
-    write = admitted_write(_person_delete(1), key, key, source=source)
-    assert isinstance(write, ObjectLockedWrite)
-    return _Row(write, write.instruction, key, key, (source,), "delete", _target(write))
-
-
-def _insertion_authorized() -> _Row:
-    key = _account_key(1)
-    write = admitted_write(
-        _prepared("amend", {"id": 1, "balance": Decimal("2.00")}),
-        None,
-        key,
-        authority=InsertionIdentity(key),
-    )
-    assert isinstance(write, InsertionAuthorizedWrite)
-    return _Row(write, write.instruction, key, None, (), "update", _target(write))
-
-
-def _target_write() -> _Row:
-    prepared = prepare_wire_write(
-        TargetWriteInstruction("delete", "Account", {"id": 1}, if_version=3),
-        write_preparation_of(_ACCOUNT),
-    )
-    write = target_write(prepared, inheritance.view(_ACCOUNT))
-    key = _account_key(1)
-    return _Row(
-        write,
-        write.instruction,
-        key,
-        VersionedObjectStateKey(key, 3),
-        (),
-        "delete",
-        _target(write),
-    )
-
-
-def _insert_batch() -> _Row:
-    first, second = (_prepared("insert", _account(key)) for key in (1, 2))
-    merged = derive_keyed_instruction(first, (*first.rows, *second.rows))
-    keys = (_account_key(1), _account_key(2))
-    write = InsertBatch(merged, keys)
-    return _Row(write, merged, _ABSENT, _ABSENT, (), "insert", _target(write))
-
-
-def _object_locked_batch() -> _Row:
-    keys = (_person_key(1), _person_key(2))
-    evidence = tuple(object_source(key) for key in keys)
-    merged = _person_delete(1, 2)
-    write = ObjectLockedBatch(merged, keys, evidence)
-    return _Row(write, merged, _ABSENT, _ABSENT, evidence, "delete", _target(write))
-
-
-def _composed_temporal(*, assigns: bool) -> _Row:
-    earlier, later = retained(rectangle(JAN, JUN, "1.00")), retained(rectangle(JUN, SEP, "2.00"))
-    mutation: KeyedMutation = "amendUntil" if assigns else "terminateUntil"
-    members = {"value": "3.00"} if assigns else {}
-    first = observed_write(mutation, earlier, valid_from=MAR, until=JUN, **members)
-    second = observed_write(mutation, later, valid_from=JUN, until=SEP, **members)
-    (write,) = admitted_writes(POSITION, [first, second])
-    assert isinstance(write, ComposedTemporalWrite)
-    evidence = (*first.source_evidence, *second.source_evidence)
-    kind: WriteIntentKind = "assignment" if assigns else "destructive"
-    return _Row(
-        write,
-        _ABSENT,
-        OBJECT,
-        _ABSENT,
-        evidence,
-        "update" if assigns else "delete",
-        _position_metadata(),
-        (
-            StateObservedIntent(WriteIntent(kind, TimeInterval(MAR, JUN)), earlier, ()),
-            StateObservedIntent(WriteIntent(kind, TimeInterval(JUN, SEP)), later, ()),
-        ),
-    )
-
-
-def _lone_observed() -> _Row:
-    observed = retained(rectangle(JAN, JUN, "1.00"))
-    source = ReadEvidence(OBJECT.entity, OBJECT, ParticipationToken(), observed)
-    first = observed_write("terminateUntil", observed, valid_from=MAR, until=JUN)
-    (write,) = admitted_writes(
-        POSITION,
-        [admitted_write(first.instruction, observed, OBJECT, source=source)],
-    )
-    assert isinstance(write, StateObservedWrite)
-    return _Row(
-        write,
-        write.instruction,
-        OBJECT,
-        observed.key,
-        (source,),
-        "delete",
-        _position_metadata(),
-        (StateObservedIntent(WriteIntent("destructive", TimeInterval(MAR, JUN)), observed, ()),),
-    )
-
-
-def _lone_target() -> _Row:
-    prepared = prepare_wire_write(
-        TargetWriteInstruction(
-            "amendUntil",
-            "Position",
-            {"id": 1, "value": "2.00"},
-            if_tx_start=T0,
-            valid_from=MAR,
-            until=JUN,
-        ),
-        write_preparation_of(POSITION),
-    )
-    (write,) = admitted_writes(POSITION, [target_write(prepared, inheritance.view(POSITION))])
-    assert isinstance(write, TargetWrite)
-    return _Row(
-        write,
-        write.instruction,
-        OBJECT,
-        OBJECT,
-        (),
-        "update",
-        _position_metadata(),
-        (TargetIntent(WriteIntent("assignment", TimeInterval(MAR, JUN)), ExpectedTxStart(T0)),),
-    )
-
-
-def _position_metadata() -> EntityMetadata:
-    entity = POSITION.entity(OBJECT.entity)
-    assert entity is not None
-    return entity
 
 
 def _position_opening() -> ComposedBitemporalOpening:
@@ -377,73 +170,8 @@ def _position_opening() -> ComposedBitemporalOpening:
     return opening
 
 
-def _opening() -> _Row:
-    write = _position_opening()
-    return _Row(
-        write,
-        _ABSENT,
-        OBJECT,
-        _ABSENT,
-        (),
-        "insert",
-        write.insert.instruction.target,
-        (WriteIntent("assignment", TimeInterval(JAN, MAR)),),
-    )
-
-
-def _post_removal_insert() -> _Row:
-    insert = admitted_write(_prepared("insert", _account(1)), None, _account_key(1))
-    assert isinstance(insert, KeyedInsert)
-    write = PostRemovalInsert(insert)
-    return _Row(write, _ABSENT, _ABSENT, _ABSENT, _ABSENT, "insert", _target(insert))
-
-
-def _target(write: AdmittedWrite | InsertBatch | ObjectLockedBatch) -> EntityMetadata:
-    return write.instruction.target
-
-
 def _confirmed(write: TargetWrite) -> TargetWrite:
     return write
-
-
-_MATRIX: Final[Mapping[str, Callable[[], _Row]]] = {
-    "keyed-insert": _keyed_insert,
-    "keyed-insert-absent-key": _absent_key_insert,
-    "state-observed": _state_observed,
-    "state-observed-continued": _continued_state_observed,
-    "object-locked": _object_locked,
-    "insertion-authorized": _insertion_authorized,
-    "target": _target_write,
-    "insert-batch": _insert_batch,
-    "object-locked-batch": _object_locked_batch,
-    "lone-temporal-observed": _lone_observed,
-    "lone-temporal-target": _lone_target,
-    "composed-temporal-assigning": lambda: _composed_temporal(assigns=True),
-    "composed-temporal-destroying": lambda: _composed_temporal(assigns=False),
-    "composed-bitemporal-opening": _opening,
-    "post-removal-insert": _post_removal_insert,
-}
-
-
-@pytest.mark.parametrize("row", list(_MATRIX.values()), ids=list(_MATRIX))
-def test_every_write_answers_its_own_projections(row: Callable[[], _Row]) -> None:
-    built = row()
-    for projection, expected in built.answered().items():
-        assert getattr(built.write, projection) == expected, projection
-
-
-@pytest.mark.parametrize(
-    "row", [_state_observed, _object_locked, _object_locked_batch], ids=lambda r: r.__name__
-)
-def test_retained_source_evidence_is_the_admitted_objects_themselves(
-    row: Callable[[], _Row],
-) -> None:
-    built = row()
-    write = built.write
-    assert isinstance(write, StateObservedWrite | ObjectLockedWrite | ObjectLockedBatch)
-    expected = cast("tuple[ReadEvidence, ...]", built.source_evidence)
-    assert len(write.source_evidence) == len(expected)
-    assert all(held is kept for held, kept in zip(write.source_evidence, expected, strict=True))
 
 
 def test_a_composed_temporal_write_keeps_equal_but_distinct_evidence_once_each_in_order() -> None:

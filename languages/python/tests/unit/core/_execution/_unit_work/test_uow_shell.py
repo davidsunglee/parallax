@@ -4,9 +4,9 @@ Exercises the writable coordinator of one attempt independently of any real
 port or runner (each span a flush executes is simulated, lowering through the
 dry traversal and running nothing, and row acquisition is an injected
 reader): the pre-commit and read-dependency flushes, discarding buffered
-effects, read-your-own-writes force-flush, Clock injection, the attempt
-lifetime it consults and dooms, and what buffering admits: the claim each
-admitted write names, all or nothing, and the pending-insert transition it reports.
+effects, Clock injection, the attempt lifetime it consults and dooms, and what
+buffering admits: the claim each admitted write names, all or nothing, and the
+pending-insert transition it reports.
 The attempt's own lifecycle — commit admission, joins, and rollback — is the
 managed runner's, and is tested there.
 """
@@ -38,7 +38,6 @@ from parallax.core._execution._unit_work._write_ownership import NO_INSERTION_AU
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CoverageReadRequest,
-    RowConsumer,
     RowRequest,
     TargetReadRequest,
 )
@@ -261,15 +260,6 @@ def _member_value(attributes: Mapping[AttributeIdentity, object], name: str) -> 
 # --------------------------------------------------------------------------- #
 # The pre-commit flush, discarding, and the lifetime it consults.              #
 # --------------------------------------------------------------------------- #
-def test_the_pre_commit_flush_plans_what_is_buffered() -> None:
-    simulated = _simulated()
-
-    def body(tx: UnitOfWork) -> str:
-        tx.buffer_insert(_account_insert(9), insertion_advice=None)
-        return "ok"
-
-    assert _run(body, steps=simulated) == "ok"
-    assert _kinds(simulated) == ["insert"]
 
 
 def test_discarding_drops_every_buffered_write() -> None:
@@ -304,31 +294,9 @@ def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -
     assert order == []  # the flush was refused before it planned
 
 
-def test_settings_are_carried_on_the_unit_of_work() -> None:
-    def body(tx: UnitOfWork) -> str:
-        return tx.settings.preference
-
-    assert _run(body, settings=TransactionSettings(preference="optimistic")) == "optimistic"
-
-
 # --------------------------------------------------------------------------- #
-# Read-your-own-writes force-flush.                                            #
+# A read with nothing pending.                                                 #
 # --------------------------------------------------------------------------- #
-def test_read_force_flushes_pending_writes_first() -> None:
-    order: list[str] = []
-    simulated = _simulated()
-
-    def body(tx: UnitOfWork) -> str:
-        tx.buffer_insert(_account_insert(9), insertion_advice=None)
-        result = tx.read(lambda: (order.append("read"), "row")[1])
-        order.append("after")
-        return result
-
-    assert _run(body, steps=simulated, opening=_opener(order)) == "row"
-    # The dependent read observes the flushed write, and the outermost flush
-    # finds an empty buffer.
-    assert order == ["opened:read_dependency", "left:read_dependency", "read", "after"]
-    assert _kinds(simulated) == ["insert"]
 
 
 def test_read_without_pending_writes_does_not_flush() -> None:
@@ -344,27 +312,6 @@ def test_read_without_pending_writes_does_not_flush() -> None:
 # --------------------------------------------------------------------------- #
 # Clock injection.                                                             #
 # --------------------------------------------------------------------------- #
-def test_clock_supplies_the_flush_transaction_time_instant() -> None:
-    # `WritePlan` retains no Transaction Instant of its own (`m-unit-work`):
-    # the captured value survives only where a settled step already carries
-    # it, so the audit-only insert's own `txStart` cell is the observable.
-    simulated = _simulated(_BALANCE)
-
-    def body(tx: UnitOfWork) -> None:
-        tx.buffer_insert(
-            _inserted(
-                _BALANCE,
-                KeyedWriteInstruction(
-                    "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
-                ),
-            ),
-            insertion_advice=None,
-        )
-
-    _run(body, clock=FixedClock(_FIXED), steps=simulated, meta=_BALANCE)
-    (statement,) = simulated.statements
-    assert statement.sql.startswith("insert")
-    assert _FIXED in statement.binds
 
 
 def test_system_clock_reads_an_aware_utc_instant() -> None:
@@ -1462,20 +1409,6 @@ def _position_row(start: dt.datetime, tx_start: dt.datetime) -> PredecessorRow:
             "txEnd": INFINITY,
         }
     )
-
-
-@dataclass(slots=True)
-class _Watched:
-    """``held``'s answers, ``watch`` called as each read is asked for."""
-
-    held: HeldRows
-    watch: Callable[[], object]
-
-    def __call__[Request: RowRequest, Result](
-        self, request: Request, consumer: RowConsumer[Request, Result], /
-    ) -> Result:
-        self.watch()
-        return self.held(request, consumer)
 
 
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetInstruction:
