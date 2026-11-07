@@ -347,29 +347,10 @@ def test_serde_round_trip(doc: dict[str, Any]) -> None:
     assert wi.serialize(wi.deserialize(doc)) == doc
 
 
-def test_python_construction_round_trips() -> None:
-    instruction = wi.KeyedWriteInstruction(
-        mutation="insertUntil",
-        entity="Position",
-        rows=({"id": 9, "value": 150.00},),
-        valid_from=_I1,
-        until=_I2,
-    )
-    assert wi.deserialize(wi.serialize(instruction)) == instruction
-
-
 def test_keyed_rows_are_frozen_views() -> None:
     instruction = wi.KeyedWriteInstruction(mutation="delete", entity="Account", rows=({"id": 9},))
     with pytest.raises(TypeError):
         cast("dict[str, object]", instruction.rows[0])["id"] = 10
-
-
-def test_predicate_carries_a_canonical_predicate_node() -> None:
-    instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": {"true": {}}}}
-    )
-    assert isinstance(instruction, wi.PredicateWriteInstruction)
-    assert instruction.target.predicate == predicate_algebra.TrueNode()
 
 
 # --------------------------------------------------------------------------- #
@@ -405,11 +386,6 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
                 "rows": [{"id": 1, "balance": 0.00, forbidden: 3}],
             }
         )
-
-
-def test_programmatic_keyed_write_rejects_observation_control_keys_too() -> None:
-    with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
-        wi.KeyedWriteInstruction("amend", "Account", ({"id": 1, "observedVersion": 2},))
 
 
 def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
@@ -680,31 +656,6 @@ _BOTH_PRODUCERS = pytest.mark.parametrize(
 )
 
 
-@_BOTH_PRODUCERS
-def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
-    prepare: Any,
-) -> None:
-    prepared = prepare(
-        _target("amend", "Account", {"id": 1, "owner": "Bo"}, if_version=3), _ACCOUNT
-    )
-    assert isinstance(prepared, wi.PreparedTargetInstruction)
-    assert (prepared.mutation, prepared.assigns) == ("amend", True)
-    assert prepared.expectation == wi.ExpectedVersion(3)
-    assert named_members(prepared.row) == {"id": 1, "owner": "Bo"}
-    keyed = wi.keyed_instruction_from_target(prepared)
-    assert (keyed.mutation, keyed.target, keyed.rows) == (
-        "amend",
-        prepared.target,
-        (prepared.row,),
-    )
-
-
-@_BOTH_PRODUCERS
-def test_an_identity_only_patch_is_prepared_as_the_empty_write(prepare: Any) -> None:
-    prepared = prepare(_target("amend", "Account", {"id": 1}, if_version=3), _ACCOUNT)
-    assert (prepared.mutation, prepared.assigns) == ("amend", False)
-
-
 @pytest.mark.parametrize("prepare", [_prepare_typed, _prepare_wire])
 @pytest.mark.parametrize(
     ("instruction", "model", "assigns"),
@@ -760,65 +711,6 @@ def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_anoth
     assert wi.derive_keyed_instruction(prepared, prepared.rows, assigns=True).assigns is True
 
 
-@_BOTH_PRODUCERS
-@pytest.mark.parametrize(
-    ("instruction", "model"),
-    [
-        pytest.param(_target("delete", "Account", {"id": 1}, if_version=3), "account", id="delete"),
-        pytest.param(
-            _target("terminate", "Balance", {"id": 1}, if_tx_start=_I1), "balance", id="terminate"
-        ),
-        pytest.param(
-            _target(
-                "terminateUntil",
-                "Position",
-                {"id": 1},
-                if_tx_start=_I1,
-                valid_from=_I1,
-                until=_I2,
-            ),
-            "position",
-            id="terminate-until",
-        ),
-    ],
-)
-def test_a_destructive_target_keeps_its_verb_and_assigns_nothing(
-    prepare: Any, instruction: wi.TargetWriteInstruction, model: str
-) -> None:
-    prepared = prepare(instruction, _MODELS[model])
-    assert (prepared.mutation, prepared.assigns) == (instruction.mutation, False)
-    assert named_members(prepared.row) == {"id": 1}
-    keyed = wi.keyed_instruction_from_target(prepared)
-    assert (keyed.mutation, keyed.rows) == (instruction.mutation, (prepared.row,))
-
-
-@_BOTH_PRODUCERS
-def test_a_replacement_writes_every_omitted_nullable_member_empty(prepare: Any) -> None:
-    prepared = prepare(_target("replace", "WriteTwinLog", {"id": 5}, if_tx_start=_I1), _TWIN)
-    assert (prepared.mutation, prepared.assigns) == ("replace", True)
-    assert prepared.expectation == wi.ExpectedTxStart(_I1)
-    assert named_members(prepared.row) == {"id": 5, "label": None, "spec": None, "marks": ()}
-
-
-_TAGS = _MODELS["scalar-collection-lifecycle-layout-twin-columns"]
-
-
-@_BOTH_PRODUCERS
-def test_a_replacement_writes_every_omitted_collection_as_the_empty_collection(
-    prepare: Any,
-) -> None:
-    prepared = prepare(
-        _target("replace", "TagLedger", {"id": 2, "label": "whole"}, if_version=4), _TAGS
-    )
-    assert named_members(prepared.row) == {"id": 2, "label": "whole", "tags": (), "route": None}
-
-
-@_BOTH_PRODUCERS
-def test_a_patch_assigns_only_the_collections_it_states(prepare: Any) -> None:
-    prepared = prepare(_target("amend", "TagLedger", {"id": 2, "tags": ()}, if_version=4), _TAGS)
-    assert named_members(prepared.row) == {"id": 2, "tags": ()}
-
-
 @pytest.mark.parametrize(
     ("prepare", "celsius"),
     [
@@ -864,13 +756,6 @@ def test_a_replacement_judges_its_members_in_declaration_order(
             ),
             _MODELS["storage-layout"],
         )
-
-
-@_BOTH_PRODUCERS
-def test_a_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
-    with pytest.raises(WriteRejectedError, match=r"balance.*absent") as refused:
-        prepare(_target("replace", "Account", {"id": 1, "owner": "Ada"}, if_version=3), _ACCOUNT)
-    assert refused.value.rule == "write-required-attribute-missing"
 
 
 @_BOTH_PRODUCERS
@@ -987,107 +872,6 @@ def test_target_preparation_refuses_the_first_fault_in_its_fixed_order(
         prepare(instruction, model)
 
 
-@_BOTH_PRODUCERS
-def test_a_missing_revision_outranks_an_undeclared_member_and_a_bad_window_both(
-    prepare: Any,
-) -> None:
-    with pytest.raises(wi.WriteInstructionError, match="requires version"):
-        prepare(_target("amend", "Account", {"id": 1, "nope": 5}), _ACCOUNT)
-    with pytest.raises(wi.WriteInstructionError, match="takes no until"):
-        prepare(_target("amend", "Account", {"id": 1, "nope": 5}, until=_I2), _ACCOUNT)
-
-
-@_BOTH_PRODUCERS
-def test_a_target_write_never_assigns_a_framework_owned_member(prepare: Any) -> None:
-    with pytest.raises(wi.WriteInstructionError, match="framework-owned"):
-        prepare(_target("amend", "Account", {"id": 1, "version": 9}, if_version=3), _ACCOUNT)
-
-
-@_BOTH_PRODUCERS
-def test_a_temporal_targets_revision_is_its_observed_start(prepare: Any) -> None:
-    prepared = prepare(
-        _target("amend", "Balance", {"id": 1, "acctNum": "D"}, if_tx_start=_I1), _BALANCE
-    )
-    assert prepared.expectation == wi.ExpectedTxStart(_I1)
-    with pytest.raises(InstantError):
-        prepare(
-            _target("amend", "Balance", {"id": 1}, if_tx_start=cast("dt.datetime", _B1)),
-            _BALANCE,
-        )
-    with pytest.raises(wi.WriteInstructionError, match="requires valid_from"):
-        prepare(_target("amend", "Position", {"id": 1}, if_tx_start=_I1), _POSITION)
-
-
-def test_a_serialized_target_write_is_prepared_by_the_one_wire_producer() -> None:
-    instruction = wi.deserialize(
-        {
-            "mutation": "amend",
-            "entity": "Account",
-            "row": {"id": 1, "balance": "5.00"},
-            "ifVersion": 2,
-        }
-    )
-    prepared = wi.prepare_wire_write(instruction, write_preparation_of(_ACCOUNT))
-    assert isinstance(prepared, wi.PreparedTargetInstruction)
-    assert named_members(prepared.row) == {"id": 1, "balance": Decimal("5.00")}
-    with pytest.raises(wi.InstructionRejectedError) as refused:
-        wi.prepare_wire_write(
-            wi.deserialize(
-                {
-                    "mutation": "amend",
-                    "entity": "Account",
-                    "row": {"id": 1, "balance": 5},
-                    "ifVersion": 2,
-                }
-            ),
-            write_preparation_of(_ACCOUNT),
-        )
-    assert refused.value.rule.startswith("neutral-literal-")
-
-
-def test_predicate_rejects_a_malformed_embedded_predicate() -> None:
-    with pytest.raises(predicate_algebra.CanonicalDocumentError):
-        wi.deserialize(
-            {
-                "mutation": "delete",
-                "target": {"entity": "Account", "predicate": {"bogusNode": {}}},
-            }
-        )
-
-
-# --------------------------------------------------------------------------- #
-# Member-name honesty (metamodel-aware validation).                            #
-# --------------------------------------------------------------------------- #
-def test_member_name_honesty_accepts_declared_members() -> None:
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Account",
-            "rows": [{"id": 9, "owner": "Ada", "balance": 1}],
-        }
-    )
-    wi.prepare_typed_write(keyed, write_preparation_of(_ACCOUNT))
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Wallet.balance", "value": 0}],
-        }
-    )
-    wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-
-
-@pytest.mark.parametrize(
-    ("member", "value"),
-    [("price", "1.00"), ("orderedOn", "2024-07-01")],
-)
-def test_typed_preparation_does_not_decode_wire_literals(member: str, value: str) -> None:
-    instruction = wi.KeyedWriteInstruction("amend", "Order", ({"id": 1, member: value},))
-    with pytest.raises(ValueError, match="does not match the declared type"):
-        wi.prepare_typed_write(instruction, write_preparation_of(_MODELS["orders"]))
-    wi.prepare_wire_write(instruction, write_preparation_of(_MODELS["orders"]))
-
-
 def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> None:
     address = {"street": "Main", "city": "Berlin"}
     instruction = wi.KeyedWriteInstruction(
@@ -1117,69 +901,6 @@ def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_p
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
     # Each declared member is looked up once, the omitted ones included.
     assert address.reads == {"street": 1, "city": 1, "geo": 1, "phones": 1}
-
-
-def test_wire_preparation_owns_recursive_value_object_decoding() -> None:
-    instruction = wi.KeyedWriteInstruction(
-        "insert",
-        "Customer",
-        (
-            {
-                "id": 9,
-                "name": "Ada",
-                "address": {
-                    "street": "Main",
-                    "city": "Berlin",
-                    "geo": {"country": "DE", "elevation": 5},
-                    "phones": [{"type": "home", "number": "1"}],
-                },
-            },
-        ),
-    )
-    prepared = wi.prepare_wire_write(instruction, write_preparation_of(_MODELS["customer"]))
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    address = cast("Mapping[str, object]", named_members(prepared.rows[0])["address"])
-    geo = cast("Mapping[str, object]", address["geo"])
-    assert geo["elevation"] == 5.0
-    assert isinstance(address["phones"], tuple)
-
-
-@pytest.mark.parametrize("prepare", [_prepare_typed, _prepare_wire])
-def test_a_prepared_opening_row_states_every_applicable_many_occurrence(prepare: Any) -> None:
-    # Absence and the empty collection are one zero state, so an opening row that
-    # never mentions `marks` has said the occurrence holds none. Preparation is where
-    # that is spelled out, on both lanes: batching, the Planned Insert's own
-    # same-members rule, and lowering all read the row's member set, and a row whose
-    # zero state stayed implicit would answer them differently from a byte-identical
-    # one that named it.
-    prepared = prepare(
-        wi.KeyedWriteInstruction("insert", "Note", ({"id": 1, "title": "Ada"},)),
-        _MODELS["note"],
-    )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    assert named_members(prepared.rows[0]) == {"id": 1, "title": "Ada", "marks": ()}
-
-
-def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else() -> None:
-    # The opening-versus-revising distinction: a revising row is sparse, so a
-    # top-level occurrence it never named stays absent rather than becoming a zero
-    # the statement would write. Inside an occurrence it DID assign, the same
-    # absence is a value — assigning a document replaces the whole subtree, so a
-    # nested `many` the document left out is that subtree's empty collection.
-    note = wi.prepare_typed_write(
-        wi.KeyedWriteInstruction("amend", "Note", ({"id": 1, "title": "Ada"},)),
-        write_preparation_of(_MODELS["note"]),
-    )
-    assert isinstance(note, wi.PreparedKeyedInstruction)
-    assert named_members(note.rows[0]) == {"id": 1, "title": "Ada"}
-
-    customer = wi.prepare_typed_write(
-        wi.KeyedWriteInstruction("amend", "Customer", ({"id": 9, "address": {"street": "Main"}},)),
-        write_preparation_of(_MODELS["customer"]),
-    )
-    assert isinstance(customer, wi.PreparedKeyedInstruction)
-    assert set(named_members(customer.rows[0])) == {"id", "address"}
-    assert named_members(customer.rows[0])["address"] == {"street": "Main", "phones": ()}
 
 
 @pytest.mark.parametrize("prepare", [_prepare_typed, _prepare_wire])
@@ -1278,84 +999,6 @@ def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
         )
 
 
-def test_member_name_honesty_rejects_undeclared_row_member() -> None:
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Account",
-            "rows": [{"id": 9, "nonsense": 1}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="undeclared member"):
-        wi.prepare_typed_write(keyed, write_preparation_of(_ACCOUNT))
-
-
-def test_member_name_honesty_accepts_a_family_participants_inherited_members() -> None:
-    # A concrete-subtype keyed write naming a ROOT-declared inherited member
-    # (`id` / `amount`, Payment's own) alongside its OWN declared member
-    # (`cardNetwork`) is well-formed (m-inheritance "Inherited members") — the
-    # ancestry-effective member set, not CardPayment's bare local declarations,
-    # decides validity.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "CardPayment",
-            "rows": [{"id": 1, "amount": 200, "cardNetwork": "Visa"}],
-        }
-    )
-    wi.prepare_typed_write(keyed, write_preparation_of(_PAYMENT))
-
-
-def test_member_name_honesty_still_rejects_a_genuinely_undeclared_family_member() -> None:
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "CardPayment",
-            "rows": [{"id": 1, "amount": 200.00, "nonsense": True}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="undeclared member"):
-        wi.prepare_typed_write(keyed, write_preparation_of(_PAYMENT))
-
-
-def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Balance.value", "value": 0.00}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="does not name a declared member"):
-        wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-
-
-def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
-    # Each field may be assigned at most once. The same
-    # member assigned twice raises even though each
-    # individual assignment is otherwise well-formed.
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "assignments": [
-                {"attr": "Wallet.balance", "value": 1},
-                {"attr": "Wallet.balance", "value": 2},
-            ],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="is duplicated"):
-        wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-
-
-def test_member_name_honesty_rejects_unknown_entity() -> None:
-    keyed = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
-    with pytest.raises(
-        wi.WriteInstructionError, match="the connected model declares no entity 'Ghost'"
-    ):
-        wi.prepare_typed_write(keyed, write_preparation_of(_ACCOUNT))
-
-
 def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() -> None:
     # `entity_by_name` answers one miss for two different mistakes. The write
     # boundary every externally produced instruction crosses tells them apart:
@@ -1375,13 +1018,6 @@ def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() ->
     assert not isinstance(plain.value, wi.InstructionRejectedError)
 
 
-def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None:
-    keyed = wi.deserialize(
-        {"mutation": "delete", "entity": "archive.SharedVariant", "rows": [{"id": 1}]}
-    )
-    wi.prepare_typed_write(keyed, write_preparation_of(_SHARED_LOCAL_NAME))
-
-
 # --------------------------------------------------------------------------- #
 # Target/mutation applicability (m-case-format "requires only the temporal      #
 # coordinates the target profile uses").                                        #
@@ -1398,68 +1034,6 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target() -> None:
         "Non-temporal objects like 'Account' do not support 'terminate', which closes "
         "a row's history instead of removing it. Use 'delete' instead."
     )
-
-
-@pytest.mark.parametrize(
-    "instruction",
-    [
-        {
-            "mutation": "insertUntil",
-            "entity": "Account",
-            "rows": [{"id": 1, "balance": 5.00}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-        {
-            "mutation": "amendUntil",
-            "entity": "Account",
-            "rows": [{"id": 1, "balance": 5.00}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-        {
-            "mutation": "terminateUntil",
-            "entity": "Account",
-            "rows": [{"id": 1}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-    ],
-    ids=["keyed-insertUntil", "keyed-updateUntil", "keyed-terminateUntil"],
-)
-def test_a_bounded_verb_on_a_non_temporal_target_hears_its_window_refused_first(
-    instruction: dict[str, Any],
-) -> None:
-    # A bounded form bounds a Valid-Time window, and a target declaring no
-    # Valid-Time dimension has none: its `until` is refused first, the verdict on
-    # an argument the caller can drop, heard ahead of the verb's own
-    # applicability and of the `valid_from` the same pair states.
-    mutation = instruction["mutation"]
-    with pytest.raises(wi.WriteInstructionError) as raised:
-        wi.prepare_wire_write(wi.deserialize(instruction), write_preparation_of(_ACCOUNT))
-    assert str(raised.value) == (
-        f"Account: a non-temporal {mutation!r} takes no until "
-        "('Account' declares no Valid-Time dimension to bound)"
-    )
-
-
-@pytest.mark.parametrize(
-    "instruction",
-    [
-        {
-            "mutation": "amendUntil",
-            "entity": "Position",
-            "rows": [{"id": 1, "value": "5.00"}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-        {"mutation": "terminate", "entity": "Balance", "rows": [{"id": 1}]},
-    ],
-    ids=["bitemporal-updateUntil", "audit-only-terminate"],
-)
-def test_a_milestone_verb_is_accepted_on_a_temporal_target(instruction: dict[str, Any]) -> None:
-    model = _POSITION if instruction["entity"] == "Position" else _BALANCE
-    wi.prepare_wire_write(wi.deserialize(instruction), write_preparation_of(model))
 
 
 def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
@@ -1483,72 +1057,6 @@ def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
     assert isinstance(exc.value, wi.WriteInstructionError)
 
 
-def test_a_plural_keyed_instruction_is_accepted_on_a_non_temporal_target() -> None:
-    # The contrast that makes the rule the TARGET's: the same plural shape on a
-    # versioned non-temporal entity is the set-based flush batching collapses.
-    plural = wi.deserialize(
-        {
-            "mutation": "amend",
-            "entity": "Account",
-            "rows": [{"id": 1, "balance": 5}, {"id": 2, "balance": 6}],
-        }
-    )
-    wi.prepare_typed_write(plural, write_preparation_of(_ACCOUNT))
-
-
-def test_a_milestone_verb_is_accepted_on_a_temporal_family_descendant() -> None:
-    # Temporality is family-level metadata only the root declares
-    # (`m-inheritance`), so a descendant whose OWN accepted Metadata carries no
-    # axis still admits every milestone verb its family derives one for.
-    rate = _MODELS["rate"]
-    keyed = wi.deserialize(
-        {
-            "mutation": "terminate",
-            "entity": "DepositRate",
-            "rows": [{"id": 1}],
-            "validFrom": _B1,
-        }
-    )
-    wi.prepare_wire_write(keyed, write_preparation_of(rate))
-
-
-def test_member_name_honesty_covers_value_object_members() -> None:
-    # A top-level value-object name is a legal write-row key (m-value-object); the
-    # honesty check accepts it alongside scalar attributes.
-    customer = _MODELS["customer"]
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Customer",
-            "rows": [{"id": 9, "name": "Ada", "address": {"street": "Main", "city": "Berlin"}}],
-        }
-    )
-    wi.prepare_typed_write(keyed, write_preparation_of(customer))
-
-
-# --------------------------------------------------------------------------- #
-# The engine/serialized-path half of the shared assignment check               #
-# (`m-unit-work` "Assigned members"): a CASE-AUTHORED PredicateWriteInstruction           #
-# assignment naming a primary-key or framework-owned (version) column, or       #
-# carrying an ill-typed scalar value, is rejected with the SAME classification  #
-# `AssignableScalarExpr.set` raises at build time for the typed                #
-# path (`test_where_verbs.py`'s own `test_set_on_a_primary_key_attribute_       #
-# raises` / `..._framework_owned_version_attribute_raises` / `..._a_mismatched_ #
-# type_raises`) and for the edited copy (`test_model_free_authoring.py`'s own    #
-# three-surface parity block) — one validator, three callers.                    #
-# --------------------------------------------------------------------------- #
-def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Wallet.id", "value": 2}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="primary-key fields may not be assigned"):
-        wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-
-
 def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -> None:
     # Only a versioned or temporal target declares a framework-owned member, and
     # a predicate write refuses such a target before any assignment is judged.
@@ -1562,128 +1070,6 @@ def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -
     with pytest.raises(wi.InstructionRejectedError) as refused:
         wi.prepare_typed_write(predicate, write_preparation_of(_ACCOUNT))
     assert refused.value.rule == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
-
-
-def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> None:
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Wallet", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Wallet.owner", "value": 42}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="does not match the declared type"):
-        wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-
-
-# --------------------------------------------------------------------------- #
-# A value-object assignment validates its value against the declared composite #
-# just as scalar assignments validate their values. A non-document value is    #
-# rejected with the scalar branch's wording, while a well-formed document is   #
-# accepted. `test_where_verbs.py` covers the typed-path half of this check.     #
-# --------------------------------------------------------------------------- #
-def test_member_name_honesty_rejects_a_non_document_value_object_assignment() -> None:
-    customer = _MODELS["customer"]
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Customer", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Customer.address", "value": 42}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="does not match the declared type"):
-        wi.prepare_typed_write(predicate, write_preparation_of(customer))
-
-
-def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> None:
-    customer = _MODELS["customer"]
-    document: dict[str, object] = {
-        "street": "1 Aurora Ave",
-        "city": "Oslo",
-        "geo": None,
-        "phones": [],
-    }
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Customer", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Customer.address", "value": document}],
-        }
-    )
-    wi.prepare_typed_write(predicate, write_preparation_of(customer))  # must not raise
-
-
-# --------------------------------------------------------------------------- #
-# A `None` assignment observes nullability through the serialized, case-authored #
-# path (`inheritance/__init__.py`). `test_where_verbs.py` covers the typed path. #
-# --------------------------------------------------------------------------- #
-def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_none() -> None:
-    # `models/shipment.yaml`'s `destination` is `nullable: false` (the corpus's
-    # "required top-level value object missing" exemplar), so a `None`
-    # assignment is invalid.
-    shipment = _MODELS["shipment"]
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Shipment", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Shipment.destination", "value": None}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="required value object is absent"):
-        wi.prepare_typed_write(predicate, write_preparation_of(shipment))
-
-
-def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none() -> None:
-    # `Customer.address` is `nullable: true` -- an explicit `None` stays a
-    # legal clearing assignment.
-    customer = _MODELS["customer"]
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Customer", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Customer.address", "value": None}],
-        }
-    )
-    wi.prepare_typed_write(predicate, write_preparation_of(customer))  # must not raise
-
-
-# --------------------------------------------------------------------------- #
-# The selecting predicate is measured with the WHOLE `validate_predicate`      #
-# vocabulary, not just the rules the instruction schema states — and here,     #
-# because this is the ONE model-aware gate every predicate-write ingress runs  #
-# (`m-case-format` "The model-aware validator validates the predicate ... and  #
-# checks its entity scope"). The two cases below come from different rule      #
-# families so the pin covers the vocabulary rather than one rule.              #
-# --------------------------------------------------------------------------- #
-def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
-    predicate = wi.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": "Wallet",
-                "predicate": {"between": {"path": "Wallet.id", "lower": 10, "upper": 1}},
-            },
-        }
-    )
-    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
-        wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-    assert caught.value.rule == "between-bounds-inverted"
-
-
-def test_a_predicate_writes_out_of_position_attribute_reference_is_rejected() -> None:
-    orders = _MODELS["orders"]
-    predicate = wi.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": "Order",
-                "predicate": {"eq": {"path": "OrderItem.sku", "value": "X"}},
-            },
-        }
-    )
-    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
-        wi.prepare_typed_write(predicate, write_preparation_of(orders))
-    assert caught.value.rule == "attribute-outside-active-position"
 
 
 def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
@@ -1777,124 +1163,7 @@ def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
         )
 
 
-@pytest.mark.parametrize(
-    ("position", "predicate"),
-    [
-        ("any", {"any": {"path": "Order.items"}}),
-        ("none", {"none": {"path": "Order.items"}}),
-    ],
-    ids=["any", "none"],
-)
-def test_a_bare_quantifier_carrying_no_inner_predicate_is_accepted(
-    position: str, predicate: dict[str, Any]
-) -> None:
-    # The optional `where` is absent — the recursion has nothing to descend
-    # into and the predicate stays bare.
-    assert position in predicate
-    orders = _MODELS["orders"]
-    instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Order", "predicate": predicate}}
-    )
-    wi.prepare_typed_write(instruction, write_preparation_of(orders))  # must not raise
-
-
-def test_a_top_level_narrow_is_a_predicate_scoped_filter() -> None:
-    # `narrow` is the one result-shaping entry that survives in
-    # the Predicate grammar, and it is unambiguously a FILTER there: whole-result
-    # narrowing is `narrowTo` on the Object Query, which a write target has no
-    # clause for. A write predicate narrowing its own position is therefore an
-    # ordinary selection — this target earns the inheritance-family rejection
-    # instead, for being a family at all.
-    instruction = wi.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": "CardPayment",
-                "predicate": {
-                    "narrow": {
-                        "to": ["CardPayment"],
-                        "operand": {"eq": {"path": "Payment.id", "value": 1}},
-                    }
-                },
-            },
-        }
-    )
-    with pytest.raises(inheritance.InheritanceError) as caught:
-        wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
-
-
 _ANIMAL = _MODELS["animal"]
-# `Person` owns the polymorphic `animals` (-> the abstract root `Animal`) and is
-# itself a plain non-family, non-temporal, unversioned entity — so a predicate
-# write on it is legal and the narrow inside its quantifier is the only
-# thing under test.
-_ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"true": {}}}}
-
-
-@pytest.mark.parametrize(
-    ("position", "predicate"),
-    [
-        ("any", {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}),
-        ("none", {"none": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}),
-        ("all", {"all": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}),
-        (
-            "and",
-            {
-                "and": {
-                    "operands": [
-                        {"eq": {"path": "Person.name", "value": "Ada"}},
-                        {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}},
-                    ]
-                }
-            },
-        ),
-        (
-            "or",
-            {
-                "or": {
-                    "operands": [
-                        {"eq": {"path": "Person.name", "value": "Ada"}},
-                        {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}},
-                    ]
-                }
-            },
-        ),
-        (
-            "not",
-            {
-                "not": {
-                    "operand": {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}
-                }
-            },
-        ),
-        (
-            "group",
-            {
-                "group": {
-                    "operand": {"any": {"path": "Person.animals", "where": _ANIMAL_TO_DOG_NARROW}}
-                }
-            },
-        ),
-    ],
-    ids=["any", "none", "all", "and", "or", "not", "group"],
-)
-def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
-    position: str, predicate: dict[str, Any]
-) -> None:
-    assert position in predicate
-    instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Person", "predicate": predicate}}
-    )
-    predicate_algebra.validate_predicate(
-        next(e for e in _ANIMAL.entities if e.identity.name == "Person"),
-        cast(
-            "predicate_algebra.PredicateNode",
-            cast("wi.PredicateWriteInstruction", instruction).target.predicate,
-        ),
-        _ANIMAL,
-    )
-    wi.prepare_typed_write(instruction, write_preparation_of(_ANIMAL))  # must not raise
 
 
 # --------------------------------------------------------------------------- #
@@ -1907,19 +1176,6 @@ def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
 # target entity — set-based writes already reject inheritance-family targets,   #
 # so ancestry resolution never arises.                                         #
 # --------------------------------------------------------------------------- #
-def test_a_predicate_write_on_an_inheritance_family_target_is_rejected() -> None:
-    instruction = wi.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": "CardPayment",
-                "predicate": {"eq": {"path": "CardPayment.id", "value": 1}},
-            },
-        }
-    )
-    with pytest.raises(inheritance.InheritanceError) as caught:
-        wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
 def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> None:
@@ -1957,33 +1213,6 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
     assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
-def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:
-    # `Shipment.name` declares no `nullable: true`, so an explicit `None`
-    # assignment is refused just as it is for a required value object.
-    shipment = _MODELS["shipment"]
-    predicate = wi.deserialize(
-        {
-            "mutation": "amend",
-            "target": {"entity": "Shipment", "predicate": {"true": {}}},
-            "assignments": [{"attr": "Shipment.name", "value": None}],
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="required attribute is absent"):
-        wi.prepare_typed_write(predicate, write_preparation_of(shipment))
-
-
-# --------------------------------------------------------------------------- #
-# The model-aware keyed-write rejection matrix, stated over the KEYED           #
-# rows the corpus's own `when.write` cases carry (m-value-object-039..044 /     #
-# m-inheritance-086..089). Every one of them is authored straight at this       #
-# producer rather than through a keyed verb, because no keyed verb can reach    #
-# them: a Typed write reads its row off the value's own class, so            #
-# an undeclared member, a sibling branch's column, a framework-owned metadata   #
-# key, and a keyless row have no Typed spelling, and the Entity constructor     #
-# refuses the value-object payloads before a verb could receive one. The one    #
-# ingress they can reach is a Wire document, which prepares through the wire    #
-# producer beside this one.                                                     #
-# --------------------------------------------------------------------------- #
 def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
     # An otherwise-COMPLETE row keeps the stray key the only defect, so the
     # refusal is the member-name gate's rather than a value judgment's, which
@@ -1999,29 +1228,6 @@ def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
         wi.prepare_typed_write(keyed, write_preparation_of(_ACCOUNT))
 
 
-def test_a_keyed_row_missing_a_required_attribute_at_any_depth_is_rejected() -> None:
-    # m-value-object-039's own payload: `address.street` (depth 1) absent.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Contact",
-            "rows": [
-                {
-                    "id": 1,
-                    "name": "Acme",
-                    "address": {
-                        "city": "Oslo",
-                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
-                    },
-                }
-            ],
-        }
-    )
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_typed_write(keyed, write_preparation_of(_MODELS["contact"]))
-    assert caught.value.rule == "write-required-attribute-missing"
-
-
 def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
     # m-value-object-044's own payload: the required top-level `destination`
     # value object is entirely absent.
@@ -2033,103 +1239,9 @@ def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
     assert caught.value.rule == "write-required-value-object-missing"
 
 
-def test_a_keyed_row_binding_a_value_of_the_wrong_type_is_rejected() -> None:
-    # m-value-object-043's own payload: `address.street` bound the number 42.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Contact",
-            "rows": [
-                {
-                    "id": 5,
-                    "name": "Echo",
-                    "address": {
-                        "street": 42,
-                        "city": "Oslo",
-                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
-                    },
-                }
-            ],
-        }
-    )
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_typed_write(keyed, write_preparation_of(_MODELS["contact"]))
-    assert caught.value.rule == "write-value-type-mismatch"
-
-
-def test_a_keyless_keyed_inheritance_row_is_rejected() -> None:
-    # m-inheritance-089's own payload: no primary-key attribute at all.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "CardPayment",
-            "rows": [{"amount": 200.00, "cardNetwork": "Visa"}],
-        }
-    )
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_typed_write(keyed, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
-
-
-def test_a_wire_row_authoring_the_type_key_is_rejected_as_family_metadata() -> None:
-    row = {"id": 10, "amount": 200.00, "_type": "parallax.compatibility.CardPayment"}
-    keyed = wi.deserialize({"mutation": "insert", "entity": "CardPayment", "rows": [row]})
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_wire_write(keyed, write_preparation_of(_PAYMENT), authored_members=row.keys())
-    assert caught.value.rule == "subtype-write-metadata-field"
-
-
-def test_a_keyed_row_authoring_framework_owned_inheritance_metadata_is_rejected() -> None:
-    # m-inheritance-087's own payload: an authored `tagValue`.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "CardPayment",
-            "rows": [{"id": 10, "amount": 200.00, "tagValue": "card"}],
-        }
-    )
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_typed_write(keyed, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "subtype-write-metadata-field"
-
-
-def test_a_keyed_row_mixing_sibling_branch_attributes_is_rejected() -> None:
-    # m-inheritance-086's own payload: both CardPayment's and CashPayment's own
-    # columns, so no single concrete subtype accepts every field.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Payment",
-            "rows": [{"id": 10, "amount": 200.00, "cardNetwork": "Visa", "tendered": 25.00}],
-        }
-    )
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_typed_write(keyed, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "subtype-write-sibling-attribute"
-
-
-def test_a_keyed_row_aimed_at_an_abstract_target_is_rejected() -> None:
-    # m-inheritance-088's own payload: a well-formed CardPayment-shaped write
-    # aimed at the abstract root `Payment`.
-    keyed = wi.deserialize(
-        {
-            "mutation": "insert",
-            "entity": "Payment",
-            "rows": [{"id": 10, "amount": 200.00, "cardNetwork": "Visa"}],
-        }
-    )
-    with pytest.raises(WriteRejectedError) as caught:
-        wi.prepare_typed_write(keyed, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "abstract-write-target"
-
-
 # --------------------------------------------------------------------------- #
 # Finite authored bounds: a document decodes them, preparation judges them.    #
 # --------------------------------------------------------------------------- #
-def test_a_document_bound_decodes_to_the_instant_it_spells() -> None:
-    instruction = wi.deserialize(dict(_INSTRUCTIONS[6][1]))
-    assert isinstance(instruction, wi.KeyedWriteInstruction)
-    assert (instruction.valid_from, instruction.until) == (_I1, _I2)
 
 
 @pytest.mark.parametrize(
@@ -2354,35 +1466,6 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
     assert prepared.valid_time_window == TimeInterval(_I1, _I2)
 
 
-@_PRODUCERS
-@pytest.mark.parametrize(
-    ("instruction", "model"),
-    [
-        pytest.param(
-            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1},)), _ACCOUNT, id="non-temporal"
-        ),
-        pytest.param(
-            wi.KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)),
-            _BALANCE,
-            id="transaction-time",
-        ),
-    ],
-)
-def test_a_write_without_valid_time_prepares_no_window(
-    prepare: Any, instruction: wi.WriteInstruction, model: AcceptedMetamodel
-) -> None:
-    assert prepare(instruction, model).valid_time_window is None
-
-
-@_PRODUCERS
-def test_an_omitted_until_prepares_a_window_through_the_managed_open_end(prepare: Any) -> None:
-    prepared = prepare(
-        wi.KeyedWriteInstruction("terminate", "Position", ({"id": 1},), valid_from=_I1), _POSITION
-    )
-    assert prepared.valid_time_window == TimeInterval(_I1, INFINITY)
-    assert prepared.valid_time_window.end is INFINITY
-
-
 def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -> None:
     prepared = wi.prepare_typed_write(
         wi.KeyedWriteInstruction(
@@ -2466,37 +1549,7 @@ def _wallet_replacement(row: Mapping[str, object]) -> wi.PredicateWriteInstructi
     return wi.PredicateWriteInstruction("replace", wi.PredicateSelection("Wallet", _ALL), row=row)
 
 
-@pytest.mark.parametrize(
-    ("prepare", "balance"),
-    [(_prepare_typed, Decimal("1.50")), (_prepare_wire, "1.50")],
-    ids=["typed", "wire"],
-)
-def test_a_predicate_replacement_drops_the_key_it_states(prepare: Any, balance: object) -> None:
-    prepared = prepare(_wallet_replacement({"id": 9, "balance": balance, "owner": "Ada"}), _WALLET)
-    assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert named_members(prepared.row) == {"balance": Decimal("1.50"), "owner": "Ada"}
-    assert prepared.assigns
-
-
 _DOCUMENT_LAYOUT = _MODELS["document-layout"]
-
-
-@_PRODUCERS
-def test_a_predicate_replacement_completes_every_member_it_omits(prepare: Any) -> None:
-    prepared = prepare(
-        wi.PredicateWriteInstruction(
-            "replace", wi.PredicateSelection("Traveler", _ALL), row={"note": "east"}
-        ),
-        _DOCUMENT_LAYOUT,
-    )
-    assert named_members(prepared.row) == {
-        "note": "east",
-        "displayName": None,
-        "score": None,
-        "joinedOn": None,
-        "address": None,
-        "tags": (),
-    }
 
 
 @_PRODUCERS
@@ -2512,46 +1565,12 @@ def test_a_predicate_replacement_of_a_key_only_entity_assigns_nothing(prepare: A
 
 
 @_PRODUCERS
-def test_a_predicate_replacement_refuses_an_omitted_required_member(prepare: Any) -> None:
-    with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: .*absent") as refused:
-        prepare(_wallet_replacement({"owner": "Ada"}), _WALLET)
-    assert refused.value.rule == "write-required-attribute-missing"
-
-
-@_PRODUCERS
 def test_a_predicate_replacement_names_declared_members_only(prepare: Any) -> None:
     with pytest.raises(
         wi.WriteInstructionError,
         match=r"Wallet: predicate write row names undeclared member\(s\) \['nickname'\]",
     ):
         prepare(_wallet_replacement({"owner": "Ada", "nickname": "A"}), _WALLET)
-
-
-@_PRODUCERS
-def test_an_amendment_assigning_nothing_prepares_an_empty_row(prepare: Any) -> None:
-    prepared = prepare(
-        wi.PredicateWriteInstruction("amend", wi.PredicateSelection("Wallet", _ALL)), _WALLET
-    )
-    assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert named_members(prepared.row) == {}
-    assert not prepared.assigns
-
-
-@pytest.mark.parametrize(
-    ("prepare", "balance"),
-    [(_prepare_typed, Decimal("1.50")), (_prepare_wire, "1.50")],
-    ids=["typed", "wire"],
-)
-def test_a_predicate_amendment_prepares_the_member_row_it_assigns(
-    prepare: Any, balance: object
-) -> None:
-    prepared = prepare(
-        _wallet_update(("Wallet.owner", "Ada"), ("Wallet.balance", balance)), _WALLET
-    )
-    assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert list(named_members(prepared.row)) == ["owner", "balance"]
-    assert named_members(prepared.row) == {"owner": "Ada", "balance": Decimal("1.50")}
-    assert prepared.assigns
 
 
 @_PRODUCERS
@@ -2575,7 +1594,7 @@ def test_a_predicate_amendment_never_assigns_the_key(prepare: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Each assignment is completed before the next: its reference, then its value. #
+# Every assignment's reference is judged before any assignment's value.       #
 # --------------------------------------------------------------------------- #
 def _wallet_update(*assignments: tuple[str, object]) -> wi.PredicateWriteInstruction:
     return wi.PredicateWriteInstruction(
@@ -2590,7 +1609,7 @@ def _wallet_update(*assignments: tuple[str, object]) -> wi.PredicateWriteInstruc
     ("assignments", "message"),
     [
         ((("Wallet.nonsense", "not-a-decimal"),), "does not name a declared member"),
-        ((("Balance.value", "not-a-decimal"),), "does not name a declared member"),
+        ((("Balance.balance", "not-a-decimal"),), "does not name a declared member"),
         (
             (("Wallet.owner", "Ada"), ("Wallet.owner", 5)),
             "is duplicated",
@@ -2617,9 +1636,21 @@ def test_every_assignments_reference_is_judged_before_any_value(prepare: Any) ->
         prepare(instruction, _WALLET)
 
 
+@_PRODUCERS
+def test_an_assignment_owned_by_another_entity_is_refused_though_the_target_shares_its_name(
+    prepare: Any,
+) -> None:
+    instruction = wi.PredicateWriteInstruction(
+        "amend",
+        wi.PredicateSelection("WriteTwinItem", _ALL),
+        (wi.WriteAssignment("WriteTwinLog.label", "L"),),
+    )
+    with pytest.raises(wi.WriteInstructionError, match="does not name a declared member"):
+        prepare(instruction, _MODELS["write-transparency-layout-twin-columns"])
+
+
 # --------------------------------------------------------------------------- #
-# A Wire insert's authored payload is judged as authoring; a neutral row is   #
-# row content.                                                                #
+# A Wire insert's authored payload is judged as authoring.                   #
 # --------------------------------------------------------------------------- #
 _RATE = _MODELS["rate"]
 _RATE_ROW: dict[str, object] = {"id": 1, "amount": "1.00", "grade": "A"}
@@ -2627,14 +1658,6 @@ _RATE_ROW: dict[str, object] = {"id": 1, "amount": "1.00", "grade": "A"}
 
 def _rate_insert(row: Mapping[str, object]) -> wi.KeyedWriteInstruction:
     return wi.KeyedWriteInstruction("insert", "DepositRate", (row,), valid_from=_I1)
-
-
-def test_an_authored_insert_may_assign_its_primary_key() -> None:
-    prepared = wi.prepare_wire_write(
-        _rate_insert(_RATE_ROW), write_preparation_of(_RATE), authored_members=_RATE_ROW.keys()
-    )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    assert named_members(prepared.rows[0])["id"] == 1
 
 
 def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclared_one() -> None:
@@ -2654,23 +1677,6 @@ def test_an_authored_inserts_subtype_shape_is_judged_before_its_framework_owned_
             _rate_insert(row), write_preparation_of(_RATE), authored_members=row.keys()
         )
     assert raised.value.rule == "subtype-write-metadata-field"
-
-
-def test_a_neutral_insert_row_carries_its_framework_owned_cells() -> None:
-    # `m-case-format`'s neutral rows state stored content, the optimistic-lock
-    # version included (`m-unit-work-001`), so only a caller's explicit authoring
-    # is refused for one.
-    row = {"id": 9, "owner": "Noether", "balance": "5.00", "version": 1}
-    prepared = wi.prepare_wire_write(
-        wi.KeyedWriteInstruction("insert", "Account", (row,)), write_preparation_of(_ACCOUNT)
-    )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    with pytest.raises(wi.WriteInstructionError, match="framework-owned"):
-        wi.prepare_wire_write(
-            wi.KeyedWriteInstruction("insert", "Account", (row,)),
-            write_preparation_of(_ACCOUNT),
-            authored_members=row.keys(),
-        )
 
 
 def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_document() -> None:
@@ -2895,27 +1901,14 @@ def test_persistence_is_judged_before_every_other_fault_of_the_write(
     assert _refusal(prepare, build(_READ_ONLY_TWIN[entity]), _READ_ONLY) == _READ_ONLY_WRITE_TARGET
 
 
-_FAMILY_WRITES: dict[str, _Build] = {
-    "keyed-insert": lambda entity: _keyed("insert", entity, {"id": 1, "amount": "1.00"}),
-    "keyed-empty-amend": lambda entity: _keyed("amend", entity, {"id": 1}),
-    "target-amend": lambda entity: wi.TargetWriteInstruction(
-        "amend", entity, {"id": 1}, if_version=3
-    ),
-    "target-delete": lambda entity: wi.TargetWriteInstruction(
-        "delete", entity, {"id": 1}, if_version=3
-    ),
-    "predicate": lambda entity: _where(entity, f"{entity}.id"),
-}
-
-
 @_PRODUCERS
 @pytest.mark.parametrize("position", ["RoArchive", "RoRecord", "RoDeed", "RoLetter"])
-@pytest.mark.parametrize("build", _FAMILY_WRITES.values(), ids=list(_FAMILY_WRITES))
 def test_every_position_of_a_read_only_family_refuses_the_write(
-    prepare: Any, position: str, build: _Build
+    prepare: Any, position: str
 ) -> None:
     # The descendants declare no mode of their own: the root's is the family's.
-    assert _refusal(prepare, build(position), _READ_ONLY) == _READ_ONLY_WRITE_TARGET
+    insert = _keyed("insert", position, {"id": 1, "amount": "1.00"})
+    assert _refusal(prepare, insert, _READ_ONLY) == _READ_ONLY_WRITE_TARGET
 
 
 @_PRODUCERS

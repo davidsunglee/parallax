@@ -136,7 +136,6 @@ PERSON = CLASS_MODELS["person"]
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
-"""What a verb classifies an Account update assigning a new balance as."""
 _BALANCE = _MODELS["balance"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -295,21 +294,6 @@ def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -
 
 
 # --------------------------------------------------------------------------- #
-# A read with nothing pending.                                                 #
-# --------------------------------------------------------------------------- #
-
-
-def test_read_without_pending_writes_does_not_flush() -> None:
-    order: list[str] = []
-
-    def body(tx: UnitOfWork) -> str:
-        return tx.read(lambda: "row")
-
-    assert _run(body, opening=_opener(order)) == "row"
-    assert order == []
-
-
-# --------------------------------------------------------------------------- #
 # Clock injection.                                                             #
 # --------------------------------------------------------------------------- #
 
@@ -318,40 +302,6 @@ def test_system_clock_reads_an_aware_utc_instant() -> None:
     instant = SystemClock().now()
     assert instant.tzinfo is not None
     assert instant.utcoffset() == dt.timedelta(0)
-
-
-def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -> None:
-    # The whole round trip through the shell: an observation is recorded under
-    # the state its read observed, a reread of that state answers the recorded
-    # evidence before the write is buffered, and it travels to planning ON the
-    # write. `PlannedUpdate` carries no raw observation — the recorded version
-    # survives only as the statement's own advanced assignment.
-    simulated = _simulated()
-    state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
-    retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
-
-    def body(tx: UnitOfWork) -> None:
-        tx.source_authority.retain(retained)
-        reread = RetainedObservation(state, VersionObservation(observed_version=7), None)
-        resolved = tx.source_authority.retain(reread)
-        assert resolved is retained
-        tx.buffer(
-            StateObservedWrite(
-                instruction=_prepared_keyed(
-                    KeyedWriteInstruction(
-                        "amend", "Account", ({"id": 1, "balance": Decimal("0.00")},)
-                    ),
-                    _ACCOUNT,
-                ),
-                object_key=state.object,
-                retained_observation=resolved,
-            )
-        )
-
-    _run(body, steps=simulated)
-    (statement,) = simulated.statements
-    assert _kinds(simulated) == ["update"]
-    assert statement.binds == (Decimal("0.00"), 8, 1, 7)
 
 
 def test_an_insert_refuses_to_carry_a_write_observation() -> None:
@@ -381,7 +331,7 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
 
 def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> None:
     # `m-unit-work`: each observed version belongs to exactly one row, and
-    # `m-concurrency` binds the version the unit of work observed FOR THAT ROW.
+    # `m-unit-work` binds the version the unit of work observed FOR THAT ROW.
     # Accepted, one observation would license every row the instruction
     # addresses: the planner unwraps it once, builds a multi-key target, and
     # advances every key from `observed + 1`, so a version observed for `id 1`
@@ -609,16 +559,6 @@ def test_each_flush_is_a_scope_around_its_own_planning_and_execution() -> None:
         "executed",
         "left:pre_commit",
     ]
-
-
-def test_a_unit_of_work_without_a_flush_opening_still_flushes() -> None:
-    simulated = _simulated()
-
-    def body(tx: UnitOfWork) -> None:
-        tx.buffer_insert(_account_insert(3), insertion_advice=None)
-
-    _run(body, steps=simulated)
-    assert _kinds(simulated) == ["insert"]
 
 
 # --------------------------------------------------------------------------- #

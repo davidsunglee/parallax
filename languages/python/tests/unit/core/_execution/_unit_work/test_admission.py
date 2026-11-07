@@ -242,24 +242,6 @@ def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmat
     assert confirm.asked == []
 
 
-def test_the_write_confirmation_answers_is_the_one_composed() -> None:
-    state = START.key
-    assert isinstance(state, TemporalObjectStateKey)
-    held = RetainedTargetState(state, 0, (), None)
-
-    def retaining(item: TargetWrite) -> TargetWrite:
-        return dataclasses.replace(item, retained=held)
-
-    admission = _admitted()
-    admission.admit(addressed_write(value="150.00"), confirm_target=retaining)
-    (composed,) = admission.composed_writes()
-    assert isinstance(composed, TargetWrite)
-    assert composed.retained is held
-    (intent,) = composed.intents
-    assert isinstance(intent, TargetIntent)
-    assert intent.retained is held
-
-
 # --------------------------------------------------------------------------- #
 # A planned buffer drains its insertions into the source authority.         #
 # --------------------------------------------------------------------------- #

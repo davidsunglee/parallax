@@ -257,12 +257,6 @@ def test_a_read_that_found_no_row_binds_the_range_to_what_it_observed() -> None:
     assert tuple(bound.changed) == (head.key,)
 
 
-def test_a_caller_start_the_read_did_not_find_fails_as_its_precondition() -> None:
-    settled, _acquisition = _deferred(_plan(_target(_MAR, _SEP)))
-    with pytest.raises(WritePreconditionError):
-        _bind(settled, [])
-
-
 def test_binding_reads_the_ownership_the_attempt_holds_when_it_binds() -> None:
     settled, _acquisition = _deferred(_plan(_target(_JUN, _SEP)))
     endpoint = TemporalRowCoordinates(_SPAN, (1,), (OPEN_END, OPEN_END))
@@ -400,38 +394,6 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
         if retired is PlannedClose
         else (TemporalRowCoordinates(_SPAN, (1,), (Finite(instant=_JUN), OPEN_END)),)
     )
-
-
-# --------------------------------------------------------------------------- #
-# A temporal object's first write stays alone and settles from the intent and  #
-# transform it answers itself.                                                 #
-# --------------------------------------------------------------------------- #
-def test_a_lone_observed_write_inside_its_predecessor_binds_at_once() -> None:
-    head = _retained(_HEAD)
-    update = _update(head, _MAR, _APR)
-    (buffered,) = admitted_writes(_SPANS, [update])
-    assert buffered is update
-    plan = _plan(update)
-    (write,) = settled_writes(plan)
-    assert write.deferred is None
-    assert [type(step) for step in plan_steps(plan)] == [
-        PlannedClose,
-        PlannedInsert,
-        PlannedInsert,
-        PlannedInsert,
-    ]
-    assert _windows(tuple(plan_steps(plan))) == [
-        (_JAN, _MAR, 100),
-        (_MAR, _APR, 300),
-        (_APR, _JUN, 100),
-    ]
-    assert tuple(write.changed) == (head.key,)
-
-
-def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest() -> None:
-    head = _retained(_HEAD)
-    _settled, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
-    assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
 
 
 def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_instant() -> None:

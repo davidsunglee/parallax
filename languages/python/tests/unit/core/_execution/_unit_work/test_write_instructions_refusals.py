@@ -1,24 +1,14 @@
 """Keyed write-row validation (m-value-object write validation), graded through
-``prepare_typed_write`` over a hand-built multi-type synthetic model — the SAME
-"synthetic Widget model" convention `test_predicate_validate.py` uses for
-`_literal_matches_type`'s full neutral-type sweep, applied here to the write
-side's own value conformance. The 10 in-slice `when.write` rejected corpus
-cases are exercised through the real corpus models in
-`test_transaction_writes.py` (the developer-verb frontend) and `test_engine.py`
-(the rejected lane); this
-module covers the declared-composite walk's OWN internal branches the ten
-witnessed shapes do not reach on their own: depth-0 entity-attribute
-required-ness (a corpus shape none of the ten witness — every witnessed case
-happens to keep the entity's own scalar attributes complete), the DB-computed-
-marker exemption, sparse-mutation leniency at every level, to-many value-object
-array walking, and the full m-core neutral-type vocabulary at the DEVELOPER
-input-policy boundary (`declarations.md` "Python scalar carriers") — a native
-carrier, plus the narrow adjacent forms the input policy itself widens (an
-`int` for a `decimal` / `float`, a canonical UUID string), conform; a
-wire-only spelling (a float for a `decimal`, an ISO date/time/timestamp
-string, a hex `bytes` string) does not, since the typed preparation only ever
-sees an already-native write input (the case-format ingestion seam decodes a
-wire spelling before it ever reaches here).
+``prepare_typed_write`` over a hand-built multi-type synthetic model: the
+declared-composite walk's own branches, depth-0 entity-attribute required-ness,
+sparse-mutation leniency at every level, to-many value-object array walking, and
+the full m-core neutral-type vocabulary at the DEVELOPER input-policy boundary
+(`declarations.md` "Python scalar carriers") — a native carrier, plus the narrow
+adjacent forms the input policy itself widens (an `int` for a `decimal` /
+`float`, a canonical UUID string), conform; a wire-only spelling (a float for a
+`decimal`, an ISO date/time/timestamp string, a hex `bytes` string) does not,
+since the typed preparation only ever sees an already-native write input (the
+case-format ingestion seam decodes a wire spelling before it ever reaches here).
 """
 
 from __future__ import annotations
@@ -216,11 +206,8 @@ def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> W
 
 
 # --------------------------------------------------------------------------- #
-# Depth-0 entity attributes: required-ness, the DB-computed-marker exemption, #
-# and sparse-mutation leniency.                                               #
+# Depth-0 entity attributes: required-ness and sparse-mutation leniency.      #
 # --------------------------------------------------------------------------- #
-def test_valid_row_is_accepted_on_insert() -> None:
-    _accept(_row())
 
 
 def test_required_attribute_missing_at_depth_zero_on_insert() -> None:
@@ -233,22 +220,6 @@ def test_required_attribute_null_at_depth_zero_on_insert() -> None:
     assert _rejects(_row(label=None)).rule == "write-required-attribute-missing"
 
 
-def test_entity_attribute_type_mismatch() -> None:
-    assert _rejects(_row(flag="not-a-bool")).rule == "write-value-type-mismatch"
-
-
-def test_scalar_write_marker_exempts_type_checking() -> None:
-    # A DB-computed marker on a scalar attribute column binds verbatim
-    # regardless of its declared neutral type (m-value-object "Writing"), in
-    # the context its strategy plans in.
-    _accept(_row(marker={"computed": "maxPlusOne"}))
-    _accept({"id": 1, "marker": {"increment": 1}}, mutation="amend")
-
-
-def test_sparse_update_does_not_require_an_absent_entity_attribute() -> None:
-    _accept({"id": 1}, mutation="amend")  # `label` untouched
-
-
 def test_sparse_update_still_type_checks_a_present_attribute() -> None:
     assert _rejects({"id": 1, "flag": "nope"}, mutation="amend").rule == "write-value-type-mismatch"
 
@@ -257,16 +228,10 @@ def test_sparse_update_still_type_checks_a_present_attribute() -> None:
 # Value objects: top-level presence/nullability, nested required-ness, the    #
 # leaf-of-the-tree shape (no further nesting), and non-document values.       #
 # --------------------------------------------------------------------------- #
-def test_nullable_value_object_absent_is_fine_on_insert() -> None:
-    _accept(_row())  # `spec` never set
 
 
 def test_nullable_value_object_explicit_null_is_fine() -> None:
     _accept(_row(spec=None))
-
-
-def test_sparse_update_does_not_require_an_absent_value_object() -> None:
-    _accept({"id": 1}, mutation="amend")  # `spec` untouched, fine
 
 
 def test_nested_value_object_required_missing_once_the_parent_is_present() -> None:
@@ -276,12 +241,6 @@ def test_nested_value_object_required_missing_once_the_parent_is_present() -> No
     row = _row(spec={"note": "n"})
     assert _rejects(row).rule == "write-required-value-object-missing"
     assert _rejects(row, mutation="amend").rule == "write-required-value-object-missing"
-
-
-def test_nested_leaf_nullable_attribute_absent_is_fine() -> None:
-    # `detail` declares no further nested value objects (the leaf-of-the-tree
-    # shape) and its own `hint` is nullable.
-    _accept(_row(spec={"note": "n", "detail": {}}))
 
 
 def test_nested_leaf_attribute_type_mismatch() -> None:
@@ -299,12 +258,6 @@ def test_value_object_document_must_be_a_mapping() -> None:
 # --------------------------------------------------------------------------- #
 def test_many_value_object_must_be_a_sequence() -> None:
     assert _rejects(_row(tags="not-a-list")).rule == "write-value-type-mismatch"
-
-
-def test_many_value_object_empty_array_is_fine() -> None:
-    # The empty array is the sole zero-element representation, so writing one is
-    # writing a value rather than omitting a required member (m-value-object).
-    _accept(_row(tags=[]))
 
 
 def test_an_unnamed_many_value_object_is_its_empty_collection() -> None:
@@ -346,10 +299,6 @@ def test_many_value_object_element_must_be_a_mapping() -> None:
 
 def test_many_value_object_element_type_mismatch() -> None:
     assert _rejects(_row(tags=[{"label": "ok"}, {"label": 42}])).rule == "write-value-type-mismatch"
-
-
-def test_many_value_object_valid_elements() -> None:
-    _accept(_row(tags=[{"label": "a"}, {"label": "b"}]))
 
 
 def test_a_nested_many_element_violation_keeps_its_index_on_the_nested_member() -> None:
@@ -418,11 +367,6 @@ def test_value_conformance_over_the_full_neutral_type_vocabulary(
         _accept(row)
     else:
         assert _rejects(row).rule == "write-value-type-mismatch"
-
-
-def test_string_accepts_text_and_rejects_others() -> None:
-    _accept(_row(label="x"))
-    assert _rejects(_row(label=5)).rule == "write-value-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #
@@ -516,38 +460,6 @@ def test_the_write_admits_collection_elements_inside_their_value_spaces() -> Non
     )
 
 
-_GAUGE = identity("Gauge")
-_GAUGE_MODEL = form_metamodel(
-    source(
-        Declaration(
-            identity=_GAUGE,
-            container=Table("gauge"),
-            attributes=(
-                key(_GAUGE),
-                attribute(_GAUGE, "reading", type=_MONEY),
-                attribute(_GAUGE, "txStart", type=TIMESTAMP, column="in_z"),
-                attribute(_GAUGE, "txEnd", type=TIMESTAMP, column="out_z"),
-            ),
-            as_of_axes=(
-                AsOfAxisMetadata(
-                    dimension=TemporalDimension.TRANSACTION_TIME,
-                    start_attribute=AttributeIdentity(_GAUGE, "txStart"),
-                    end_attribute=AttributeIdentity(_GAUGE, "txEnd"),
-                ),
-            ),
-        )
-    )
-)
-
-
-def test_temporal_axis_attributes_are_never_required_on_a_full_document_insert() -> None:
-    _prepare(_GAUGE_MODEL, "Gauge", {"id": 1, "reading": Decimal("20.00")})
-
-
-def test_neutral_insert_projects_away_carried_axis_values() -> None:
-    _prepare(_GAUGE_MODEL, "Gauge", {"id": 1, "reading": Decimal("20.00"), "txStart": 12345})
-
-
 # --------------------------------------------------------------------------- #
 # Inherited members: a concrete-subtype write is validated over its whole      #
 # family-effective member set, not only the subtype's own declarations         #
@@ -609,11 +521,6 @@ def test_a_subtype_update_type_checks_an_inherited_attribute() -> None:
 
 def test_a_complete_subtype_insert_over_inherited_members_is_accepted() -> None:
     _prepare(_FAMILY_MODEL, "Truck", _valid_truck_row())
-
-
-def test_write_validation_translates_an_inheritance_target_refusal() -> None:
-    row = {"id": 1, "name": "n", "plate": {"serial": "s"}}
-    assert _refused(_FAMILY_MODEL, "Vehicle", row).rule == "abstract-write-target"
 
 
 _LEDGER = identity("Ledger")

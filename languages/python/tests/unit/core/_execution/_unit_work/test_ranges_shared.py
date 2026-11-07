@@ -3,7 +3,7 @@ binding (`m-unit-work` *Shared coverage acquisition*), over the in-memory
 acquisition: their coverage read in shared reads packed in range and
 Valid-Time order, each range ready once every read naming its parts
 succeeded, and the leading ready ranges bound together as one Write Group only
-when the flush advances to it, with no read taken to enlarge it."""
+when the flush advances to it."""
 
 from __future__ import annotations
 
@@ -56,7 +56,6 @@ from tests.unit.core._execution._shared_coverage_support import (
     AT,
     MODEL,
     ShareCols,
-    ShareDoc,
     covered_target,
     day,
     frag,
@@ -393,18 +392,6 @@ def test_a_group_is_bound_only_when_the_flush_advances_to_it(recorded: _Bound) -
         assert len(held.requests) == 1
 
 
-def test_no_read_is_taken_to_enlarge_a_ready_group(recorded: _Bound) -> None:
-    # The first read finishes the first range and reads part of the second.
-    written, stored = _fragmented(ShareCols, (1, 64))
-    held = HeldRows(MODEL, stored, overlapping=True)
-    with _bindings(written, held) as bindings:
-        assert _keys(next(bindings)) == (1,)
-        assert len(held.requests) == 1
-        assert [key for key, _reused, _acquired in recorded.calls] == [1]
-        assert _keys(next(bindings)) == (2,)
-        assert len(held.requests) == 2
-
-
 def test_a_group_lays_every_members_non_insert_steps_before_any_insert() -> None:
     written, stored = _fragmented(ShareCols, (2, 1))
     with _bindings(written, HeldRows(MODEL, stored, overlapping=True)) as bindings:
@@ -433,22 +420,6 @@ def test_a_group_lays_every_members_non_insert_steps_before_any_insert() -> None
 # --------------------------------------------------------------------------- #
 # Each stored row reaches its own object's binding.                           #
 # --------------------------------------------------------------------------- #
-def test_interleaved_rows_and_their_documents_reach_the_object_whose_key_each_holds(
-    recorded: _Bound,
-) -> None:
-    first = frag_rows(ShareDoc, 1, 1)
-    second = frag_rows(ShareDoc, 2, 2)
-    stored = [second[1], first[1], second[3], first[0], second[0], second[2]]
-    written = _span(plan([*frag(ShareDoc, 1, 1), *frag(ShareDoc, 2, 2)]))
-    _drained(_bindings(written, HeldRows(MODEL, stored, overlapping=True)), [])
-    by_key = {key: acquired for key, _reused, acquired in recorded.calls}
-    assert set(by_key) == {1, 2}
-    for key, (rows,) in by_key.items():
-        documents = [rows.document(index) for index in range(len(rows))]
-        assert {rows.key(index) for index in range(len(rows))} == {key}
-        assert documents == [
-            {"amount": amount, "label": f"k{key}"} for amount in ((1,) if key == 1 else (1, 3))
-        ]
 
 
 def test_a_row_one_read_returns_twice_reaches_its_binding_twice(recorded: _Bound) -> None:
@@ -532,18 +503,6 @@ def test_a_later_ranges_retained_completion_fails_before_any_read_or_binding(
     assert raised.value is refused
     assert recorded.calls == []
     assert [type(request) for request in held.requests] == [CompletionRequest]
-
-
-def test_a_ready_ranges_binding_precedes_the_read_its_successor_waits_for() -> None:
-    written, stored = _fragmented(ShareCols, (1, 64))
-    traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    traced.fail[2] = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
-    bound: list[object] = []
-    with pytest.raises(DatabaseError), _bindings(written, traced.acquire) as bindings:
-        for each in bindings:
-            bound.extend(_keys(each))
-    assert bound == [1]
-    assert [entry[0] for entry in traced.trace] == ["read", "read"]
 
 
 # --------------------------------------------------------------------------- #

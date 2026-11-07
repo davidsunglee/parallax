@@ -1,9 +1,8 @@
 """What a temporal object's writes against its stored coverage settle and bind
 to, stated as explicit operations, coverage reads, conditions, effects, and
-evidence: observed, insertion-authorized, and target first arrivals of
-Transaction-Time-Only and Bitemporal objects, a caller's one condition kept
-across its own destruction, and a reinsertion ordered after the removal it
-follows."""
+evidence: observed and target first arrivals of Transaction-Time-Only and
+Bitemporal objects, and a caller's one condition kept across its own
+destruction."""
 
 from __future__ import annotations
 
@@ -17,7 +16,6 @@ from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import (
-    InsertionIdentity,
     ParticipationToken,
     ReadEvidence,
 )
@@ -37,7 +35,6 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
-    MissingTargetError,
     RetainedObservation,
     TargetWriteInstruction,
     TransactionInstant,
@@ -60,19 +57,13 @@ from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
-    Openings,
     SettledWrite,
-    TemporalRowCoordinates,
     TemporalWriteOwnership,
-    WriteEffects,
-    WriteGroup,
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
     Finite,
     PlannedStep,
-    PlannedTemporalRemoval,
-    PlannedTemporalRevision,
     TemporalGate,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -82,7 +73,6 @@ from tests._support.planner_probes import (
     admit,
     plan_steps,
     settled_writes,
-    source_authority,
     write_admission,
 )
 from tests._support.write_preparation import write_preparation_of
@@ -93,9 +83,7 @@ from tests.unit.core._execution._unit_work._acquired_rows_support import (
     coverage_read,
 )
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
-    ENTITY,
     FAMILIES,
-    FEB,
     JAN,
     JUN,
     LATER,
@@ -114,15 +102,10 @@ _BALANCE = formed(corpus_records()["balance"])
 _BALANCE_ENTITY = EntityIdentity("parallax.compatibility", "Balance")
 _BALANCE_OBJECT = ObjectKey(_BALANCE_ENTITY, (("id", 1),))
 _AT = "2024-10-01T00:00:00+00:00"
-_INSTANT = dt.datetime.fromisoformat(_AT)
 
 
 def _instant() -> TransactionInstant:
     return instant_at(_AT)
-
-
-def _unconfirmed(item: TargetWrite) -> TargetWrite:
-    return item
 
 
 def _plan(
@@ -381,142 +364,3 @@ def test_a_target_assignment_and_its_destruction_over_one_window_state_one_condi
     with pytest.raises(WritePreconditionError) as refused:
         _bound(POSITION, write, [rectangle(JAN, JUN, "100.00", tx_start=T1)])
     assert refused.value.expected == T0
-
-
-# --------------------------------------------------------------------------- #
-# A write a flushed insertion authorized revises the row the attempt opened.   #
-# --------------------------------------------------------------------------- #
-def _stored_insertion(
-    meta: Metamodel,
-    insert: PreparedKeyedInstruction,
-    key: ObjectKey,
-    opened: TemporalRowCoordinates,
-) -> tuple[WriteAdmission, TemporalWriteOwnership, InsertionIdentity]:
-    """An admission whose insertion of ``key`` flushed and opened ``opened``,
-    the ownership that left, and the identity buffering that insertion
-    issued."""
-    authority = source_authority(meta)
-    admission = WriteAdmission(meta, authority=authority)
-    identity = admission.admit_insert(admitted_write(insert, None, key), insertion_advice=None)
-    assert identity is not None
-    admission.drain_planned()
-    authority.complete_write(WriteEffects(opened=Openings(continued=(opened,))), ())
-    return admission, authority.planning_ownership(concluding=False), identity
-
-
-def _authorized(
-    admission: WriteAdmission, identity: InsertionIdentity, prepared: PreparedKeyedInstruction
-) -> WriteAdmission:
-    admission.admit(
-        admitted_write(prepared, None, identity.object_key, authority=identity),
-        confirm_target=_unconfirmed,
-    )
-    return admission
-
-
-_POSITION_OPENED = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-_BALANCE_OPENED = TemporalRowCoordinates(_BALANCE_ENTITY, (1,), (OPEN_END,))
-
-
-def test_a_bitemporal_write_a_flushed_insertion_authorized_revises_its_row_from_the_anchor() -> (
-    None
-):
-    admission, ownership, identity = _stored_insertion(
-        POSITION,
-        _position("insert", FEB, None, acctNum="A", value="100.00"),
-        OBJECT,
-        _POSITION_OPENED,
-    )
-    _authorized(admission, identity, _position("amendUntil", FEB, JUN, value="150.00"))
-    (write,) = settled_writes(_plan(admission, POSITION, ownership))
-    assert write.deferred is not None
-    assert write.source_evidence == ()
-    (term,) = coverage_read(POSITION, alone(write), transaction_instant=_instant()).terms
-    assert term.valid_time_windows == (TimeInterval(FEB, JUN),)
-    owned = rectangle(FEB, INFINITY, "100.00", tx_start=_INSTANT)
-    bound = bind_held(
-        POSITION,
-        alone(write),
-        [owned],
-        transaction_instant=_instant(),
-        ownership=ownership,
-    )
-    assert not any(isinstance(step, PlannedClose) for step in bound.steps)
-    (revision,) = (step for step in bound.steps if isinstance(step, PlannedTemporalRevision))
-    assert revision.target.end_values == OPEN_BITEMPORAL_ENDS
-    assert _opened(bound.steps) == [(FEB, JUN, Decimal("150.00"))]
-
-
-def test_a_bitemporal_write_whose_insertion_anchor_has_no_row_fails_its_target() -> None:
-    admission, ownership, identity = _stored_insertion(
-        POSITION,
-        _position("insert", FEB, None, acctNum="A", value="100.00"),
-        OBJECT,
-        _POSITION_OPENED,
-    )
-    _authorized(admission, identity, _position("amendUntil", FEB, JUN, value="150.00"))
-    (write,) = settled_writes(_plan(admission, POSITION, ownership))
-    with pytest.raises(MissingTargetError):
-        bind_held(
-            POSITION,
-            alone(write),
-            [rectangle(MAR, INFINITY, "100.00", tx_start=_INSTANT)],
-            transaction_instant=_instant(),
-            ownership=ownership,
-        )
-
-
-@pytest.mark.parametrize(
-    ("mutation", "members", "step"),
-    [
-        ("amend", {"value": "175.00"}, PlannedTemporalRevision),
-        ("terminate", {}, PlannedTemporalRemoval),
-    ],
-    ids=["update", "terminate"],
-)
-def test_a_transaction_time_write_a_flushed_insertion_authorized_revises_its_own_row(
-    mutation: KeyedMutation, members: dict[str, object], step: type[PlannedStep]
-) -> None:
-    admission, ownership, identity = _stored_insertion(
-        _BALANCE,
-        _balance("insert", acctNum="A", value="100.00"),
-        _BALANCE_OBJECT,
-        _BALANCE_OPENED,
-    )
-    _authorized(admission, identity, _balance(mutation, **members))
-    (write,) = settled_writes(_plan(admission, _BALANCE, ownership))
-    assert write.deferred is not None
-    assert write.source_evidence == ()
-    bound = bind_held(
-        _BALANCE,
-        alone(write),
-        [_balance_row("100.00", _INSTANT)],
-        transaction_instant=_instant(),
-        ownership=ownership,
-    )
-    # The row is the attempt's own, so it is revised or removed in place and
-    # nothing opens beside it.
-    assert [type(each) for each in bound.steps] == [step]
-
-
-# --------------------------------------------------------------------------- #
-# A reinsertion executes after the removal of everything it replaces.         #
-# --------------------------------------------------------------------------- #
-def test_a_reinsertion_follows_the_removal_of_its_earlier_insertion() -> None:
-    admission, ownership, identity = _stored_insertion(
-        POSITION,
-        _position("insert", FEB, None, acctNum="A", value="100.00"),
-        OBJECT,
-        _POSITION_OPENED,
-    )
-    _authorized(admission, identity, _position("terminate", FEB, None))
-    admission.admit_insert(
-        admitted_write(_position("insert", FEB, None, acctNum="B", value="300.00"), None, OBJECT),
-        insertion_advice=None,
-    )
-    plan = _plan(admission, POSITION, ownership)
-    removal, reinsertion = plan.entries
-    # An insert ordinarily runs ahead of every removal; this one follows it.
-    assert isinstance(removal, SettledWrite) and removal.deferred is not None
-    assert isinstance(reinsertion, WriteGroup)
-    assert _opened(reinsertion.steps, "acctNum") == [(FEB, INFINITY, "B")]

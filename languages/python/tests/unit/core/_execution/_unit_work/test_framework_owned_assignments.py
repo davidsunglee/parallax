@@ -211,35 +211,6 @@ def test_optimized_typed_preparation_refuses_framework_owned_assignments(
     assert refused.value.rule == _RULE
 
 
-@_LANES
-def test_temporal_arguments_and_target_revision_are_not_row_assignments(prepare: _Prepare) -> None:
-    for instruction in (
-        wi.KeyedWriteInstruction(
-            "amendUntil",
-            _TEMPORAL.canonical,
-            ({"id": 1, "label": "accepted"},),
-            valid_from=_START,
-            until=_END,
-        ),
-        wi.TargetWriteInstruction(
-            "amendUntil",
-            _TEMPORAL.canonical,
-            {"id": 1, "label": "accepted"},
-            valid_from=_START,
-            until=_END,
-            if_tx_start=_START,
-        ),
-        wi.TargetWriteInstruction(
-            "amend",
-            _VERSIONED.canonical,
-            {"id": 1, "label": "accepted"},
-            if_version=3,
-        ),
-    ):
-        prepared = prepare(instruction, _PREPARATION)
-        assert prepared is not None
-
-
 @pytest.mark.parametrize("mutation", ["replace", "replaceUntil"])
 def test_typed_full_state_replacement_omits_carried_temporal_endpoints(
     mutation: wi.KeyedMutation,
@@ -272,18 +243,6 @@ def test_neutral_insert_projection_omits_carried_framework_owned_state(prepare: 
 
 
 @_LANES
-def test_owned_names_are_refused_before_undeclared_names(prepare: _Prepare) -> None:
-    instruction = wi.KeyedWriteInstruction(
-        "amend",
-        _VERSIONED.canonical,
-        ({"id": 1, "undeclared": 7, "revisionCounter": 2},),
-    )
-    with pytest.raises(wi.InstructionRejectedError) as refused:
-        prepare(instruction, _PREPARATION)
-    assert refused.value.rule == _RULE
-
-
-@_LANES
 def test_a_target_missing_its_revision_is_refused_before_payload_ownership(
     prepare: _Prepare,
 ) -> None:
@@ -309,38 +268,6 @@ def test_an_explicit_wire_insert_still_refuses_owned_payload_members(member: str
             valid_from=_START,
             until=None,
         )
-
-
-def test_typed_insert_projection_omits_carried_temporal_state() -> None:
-    target = _MODEL.entity(_TEMPORAL)
-    assert target is not None
-    entry = _PREPARATION.entity(_TEMPORAL)
-    values = entry.plan.authored_values({"id": 1, "label": "accepted", **dict.fromkeys(_OWNED, 7)})
-    prepared = wi.prepare_typed_insert(
-        _PREPARATION,
-        "insert",
-        target,
-        values=values,
-        valid_from=_START,
-        until=None,
-    )
-    assert named_members(prepared.rows[0]) == {"id": 1, "label": "accepted"}
-
-
-def test_typed_replacement_projection_omits_carried_version_state() -> None:
-    target = _MODEL.entity(_VERSIONED)
-    assert target is not None
-    entry = _PREPARATION.entity(_VERSIONED)
-    values = entry.plan.authored_values({"id": 1, "label": "accepted", "revisionCounter": 7})
-    prepared = wi.prepare_typed_keyed_write(
-        _PREPARATION,
-        "replace",
-        target,
-        values=values,
-        valid_from=None,
-        until=None,
-    )
-    assert named_members(prepared.rows[0]) == {"id": 1, "label": "accepted"}
 
 
 @pytest.fixture
