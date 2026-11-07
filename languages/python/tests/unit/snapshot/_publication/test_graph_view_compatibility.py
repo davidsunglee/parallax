@@ -9,11 +9,13 @@ contents directly.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator, Mapping
 from typing import Final
 
 import pytest
 
 from parallax.core import ONE_TO_MANY, Attr, Bitemporal, DomainModel, Entity, Int32, Rel, attr, rel
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.base import SQL_NULL
 from parallax.core.read_delivery._page import PageSchedule, page_rows
 from parallax.snapshot._publication._graph_view import GraphView
@@ -24,6 +26,7 @@ from tests.unit.snapshot._snapshot_page_support import PageFixture
 
 _NS: Final = "parallax.compatibility"
 _ITEMS: Final = f"{_NS}.EncodedOrder.items"
+_ITEM_ORDER: Final = f"{_NS}.EncodedOrderItem.order"
 _BY_CODE: Final = f"{_NS}.EncodedOrder.itemsByCode"
 _PARENTS: Final = "InverseOwner.parents"
 _LINKS: Final = "InverseParent.links"
@@ -32,6 +35,7 @@ _FIRST_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _SECOND_START: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _END: Final = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
 _SPAN: Final = "Entry.span"
+_NONE_INVALID: Final[frozenset[int]] = frozenset()
 
 
 class Span(Bitemporal, table="compatibility_span"):
@@ -49,20 +53,26 @@ class Entry(Entity, table="compatibility_entry"):
 _SPANS: Final = DomainModel(Span, Entry)
 
 
-def _resolved(fixture: PageFixture, *roots: int) -> tuple[frozenset[int] | None, GraphView]:
-    view = GraphView(page_rows(fixture.page(*roots)), PageSchedule(None, False), read_evidence={})
+def _resolved(
+    fixture: PageFixture, *roots: int, read_evidence: Mapping[int, ReadEvidence] | None = None
+) -> tuple[frozenset[int] | None, GraphView]:
+    view = GraphView(
+        page_rows(fixture.page(*roots)),
+        PageSchedule(None, False),
+        read_evidence={} if read_evidence is None else read_evidence,
+    )
     return view.resolve_shared_roots(), view
 
 
-def _order(fixture: PageFixture, order_id: int) -> int:
+def _order(fixture: PageFixture, order_id: int, *, badge: str | None = None) -> int:
     return fixture.node(
         "EncodedOrder",
-        {"id": order_id, "name": "order", "badge_hex": None, "address": None},
+        {"id": order_id, "name": "order", "badge_hex": badge, "address": None},
     )
 
 
-def _item(fixture: PageFixture, *, code: str = "0c") -> int:
-    return fixture.node("EncodedOrderItem", {"id": 11, "order_id": 1, "code_hex": code})
+def _item(fixture: PageFixture, item_id: int = 11, *, code: str = "0c") -> int:
+    return fixture.node("EncodedOrderItem", {"id": item_id, "order_id": 1, "code_hex": code})
 
 
 def _orders_reaching_one_item(fixture: PageFixture) -> tuple[int, int]:
@@ -223,12 +233,105 @@ def test_a_finding_on_a_reached_row_keeps_the_page_from_sharing(code: str, share
     assert (_resolved(fixture, first, second)[0] is not None) is shares
 
 
-@pytest.mark.parametrize("keyless", [False, True], ids=["keyed", "keyless"])
-def test_a_keyless_root_keeps_the_page_from_sharing(keyless: bool) -> None:
+@pytest.mark.parametrize(
+    ("code", "invalid"), [("0c", _NONE_INVALID), (_UNDECODABLE, frozenset({0}))]
+)
+def test_a_finding_leaves_only_the_root_that_reaches_it(code: str, invalid: frozenset[int]) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    first, second, third = _order(fixture, 1), _order(fixture, 2), _order(fixture, 3)
+    fixture.attach(first, _ITEMS, (_item(fixture, 12, code=code),))
+    shared = _item(fixture)
+    fixture.attach(second, _ITEMS, (shared,))
+    fixture.attach(third, _ITEMS, (shared,))
+
+    classified, view = _resolved(fixture, first, second, third)
+
+    assert classified == invalid
+    assert len(view) == (5 if not invalid else 3)
+
+
+def test_valid_roots_that_no_longer_overlap_have_nothing_to_share() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    first, second = _order(fixture, 1), _order(fixture, 2)
+    shared = _item(fixture)
+    fixture.attach(first, _ITEMS, (shared, _item(fixture, 12, code=_UNDECODABLE)))
+    fixture.attach(second, _ITEMS, (shared,))
+
+    assert _resolved(fixture, first, second)[0] is None
+
+
+class _RecordedEvidence(Mapping[int, ReadEvidence]):
+    def __init__(self) -> None:
+        self.read: set[int] = set()
+
+    def __getitem__(self, fetched_row: int) -> ReadEvidence:
+        self.read.add(fetched_row)
+        raise KeyError(fetched_row)
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+
+def test_classifying_the_roots_reads_no_evidence_for_a_row_the_shared_graph_discards() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    first, second, third = _order(fixture, 1), _order(fixture, 2), _order(fixture, 3)
+    fixture.attach(first, _ITEMS, (_item(fixture, 12, code=_UNDECODABLE),))
+    node_row, duplicate = _item(fixture), _item(fixture)
+    fixture.attach(second, _ITEMS, (node_row,))
+    fixture.attach(third, _ITEMS, (duplicate,))
+    evidence = _RecordedEvidence()
+
+    assert _resolved(fixture, first, second, third, read_evidence=evidence)[0] == {0}
+    assert evidence.read == {second, third, node_row}
+
+
+def _order_past_a_discarded_item(fixture: PageFixture, discarded: int, *, badge: str | None) -> int:
+    """An Order that first loaded ``discarded``, which leads to a further Order, and
+    then overwrote its items with item 11 alone."""
+    order = _order(fixture, 1)
+    fixture.attach(discarded, _ITEM_ORDER, _order(fixture, 3, badge=badge))
+    fixture.attach(order, _ITEMS, (discarded,))
+    fixture.attach(order, _ITEMS, (_item(fixture),))
+    return order
+
+
+@pytest.mark.parametrize(
+    ("reached_item", "invalid"), [(11, _NONE_INVALID), (12, None)], ids=["current", "discarded"]
+)
+def test_a_finding_only_a_merged_node_leads_to_sends_the_page_to_the_per_root_pass(
+    reached_item: int, invalid: frozenset[int] | None
+) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS, _ITEM_ORDER)
+    first = _order_past_a_discarded_item(fixture, _item(fixture, 12), badge=_UNDECODABLE)
+    second = _order(fixture, 2)
+    fixture.attach(second, _ITEMS, (_item(fixture, reached_item),))
+
+    assert _resolved(fixture, first, second)[0] == invalid
+
+
+def test_compaction_keeps_each_root_at_its_own_node() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS, _ITEM_ORDER)
+    first = _order_past_a_discarded_item(fixture, _item(fixture, 12), badge=_UNDECODABLE)
+    second = _order(fixture, 2)
+    fixture.attach(second, _ITEMS, (_item(fixture),))
+
+    _, view = _resolved(fixture, first, second)
+
+    assert len(view) == 3
+    assert [view.member_values(view.root_node(position))[0] for position in (0, 1)] == [1, 2]
+
+
+@pytest.mark.parametrize(("keyless", "invalid"), [(False, _NONE_INVALID), (True, frozenset({2}))])
+def test_a_keyless_root_is_classified_and_its_neighbours_still_share(
+    keyless: bool, invalid: frozenset[int]
+) -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     roots = _orders_reaching_one_item(fixture)
     if keyless:
         row = encoded_identity_read().record_row((None, None, SQL_NULL), fixture.builder, source=0)
         roots = (*roots, row[0])
 
-    assert (_resolved(fixture, *roots)[0] is None) is keyless
+    assert _resolved(fixture, *roots)[0] == invalid

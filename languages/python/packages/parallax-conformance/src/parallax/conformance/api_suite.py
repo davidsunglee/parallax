@@ -2867,7 +2867,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-158": _STREAMED_DELIVERY_REASON,
     "m-inheritance-159": _STREAMED_DELIVERY_REASON,
     # -- m-snapshot-read: the sharing-scope twins ---------------------------- #
-    **{f"m-snapshot-read-{n:03d}": _SHARING_SCOPE_TWIN_REASON for n in range(52, 60)},
+    **{f"m-snapshot-read-{n:03d}": _SHARING_SCOPE_TWIN_REASON for n in range(52, 62)},
     # -- m-snapshot-read: the corrupt-stored-state lane ---------------------- #
     "m-snapshot-read-049": _CORRUPT_STORED_STATE_REASON,
     "m-snapshot-read-050": _SHARED_STATE_ROOT_AUTHORITY_REASON,

@@ -3,12 +3,16 @@
 Three Orders of one Customer, read through ``Order.customer.orders``, so every root
 reaches the same four rows. Sharing is opportunistic, so these stories prove it ran
 by counting unique published nodes, and use identity only for what must not happen.
+
+Three Purchases of one Buyer add a Depot only the root position reaches, so a corrupt
+Depot classifies its root alone, while every root still reaches that root's row.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, cast
@@ -19,19 +23,59 @@ from parallax.conformance import engine
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.guide_models import Customer, Order
+from parallax.conformance.guide_models import Address, Customer, Order
 from parallax.conformance.read_models import DepositRate
-from parallax.core import LATEST, DomainModel, ObjectQuery
+from parallax.core import (
+    LATEST,
+    MANY_TO_ONE,
+    ONE_TO_MANY,
+    Attr,
+    DomainModel,
+    Entity,
+    Int32,
+    ObjectQuery,
+    Rel,
+    attr,
+    rel,
+)
 from parallax.core.entity import UnloadedRelationshipError, model_of
+from parallax.core.execution import KeyedWriteValueError
 from parallax.core.object_query import TX_TIME
-from parallax.core.unit_work import WriteEvidenceError
+from parallax.core.read_delivery import InvalidData
+from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
 from parallax.snapshot import ScopedDatabase, SharingScope, TxnContext, connect, edge_of, pin_of
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 
+
+class Depot(Entity, table="sharing_depot"):
+    id: Attr[int] = attr(primary_key=True)
+    ship_to: Attr[Address]
+
+
+class Buyer(Entity, table="sharing_buyer"):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=100)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    purchases: Rel[tuple[Purchase, ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "buyer_id"), order_by=("id",)
+    )
+
+
+class Purchase(Entity, table="sharing_purchase"):
+    id: Attr[int] = attr(primary_key=True)
+    buyer_id: Attr[int]
+    depot_id: Attr[int]
+    note: Attr[str] = attr(max_length=100)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    buyer: Rel[Buyer | None] = rel(reverse_of="purchases")
+    depot: Rel[Depot] = rel(cardinality=MANY_TO_ONE, join=("depot_id", "id"))
+
+
 _MODEL: Final = DomainModel(Customer, Order)
+_INVALID_MODEL: Final = DomainModel(Depot, Buyer, Purchase)
 _ORDER_IDS: Final = (10, 11, 12)
 _ROOTS: Final = len(_ORDER_IDS)
 _NODES_AT_PAGE_SCOPE: Final = _ROOTS + 1
@@ -43,6 +87,17 @@ _ORDER_KEYS: Final = {"id", "customerId", "placedOn", "total", "version"}
 _CUSTOMER_KEYS: Final = {"id", "name", "email"}
 _REPEATED: Final[ObjectQuery[Any, Any]] = (
     Order.where(Order.all).include(Order.customer.orders).order_by(Order.id.asc())
+)
+_INVALID: Final = _ORDER_IDS[1]
+_PURCHASE_KEYS: Final = {"id", "buyerId", "depotId", "note", "version"}
+_NODES_BESIDE_AN_INVALID_ROOT_AT_PAGE_SCOPE: Final = 6
+_NODES_BESIDE_AN_INVALID_ROOT_AT_ROOT_SCOPE: Final = 10
+_DOCUMENTS_BESIDE_AN_INVALID_ROOT_AT_PAGE_SCOPE: Final = 8
+_DOCUMENTS_BESIDE_AN_INVALID_ROOT_AT_ROOT_SCOPE: Final = 12
+_BESIDE_AN_INVALID_ROOT: Final[ObjectQuery[Any, Any]] = (
+    Purchase.where(Purchase.all)
+    .include(Purchase.depot, Purchase.buyer.purchases)
+    .order_by(Purchase.id.asc())
 )
 
 
@@ -68,6 +123,98 @@ def _db(profile_run: Any, *, lifecycle_provider: Any = None) -> ScopedDatabase:
     ).using_database_login()
 
 
+def _db_with_a_corrupt_depot(
+    profile_run: Any, *, depot_of: Callable[[int], int], corrupt: int
+) -> ScopedDatabase:
+    """Three Purchases of one Buyer, each at ``depot_of`` its id, with the required
+    ``street`` of Depot ``corrupt`` absent. That stays hydratable, so an invalid root
+    still publishes the nodes a write door must refuse."""
+    profile_run.reset(
+        model_of(_INVALID_MODEL),
+        {
+            "Buyer": [{"id": 1, "name": "Ada", "version": 1}],
+            "Depot": [
+                {
+                    "id": depot,
+                    "shipTo": {"street": "1 Quay", "city": "Oslo", "postcode": "0150"},
+                }
+                for depot in {depot_of(purchase) for purchase in _ORDER_IDS}
+            ],
+            "Purchase": [
+                {
+                    "id": purchase,
+                    "buyerId": 1,
+                    "depotId": depot_of(purchase),
+                    "note": "held",
+                    "version": 1,
+                }
+                for purchase in _ORDER_IDS
+            ],
+        },
+    )
+    control = profile_run.control()
+    try:
+        control.execute_write(
+            f"update sharing_depot set ship_to = ship_to - 'street' where id = {corrupt}", ()
+        )
+    finally:
+        control.close()
+    return own_root(connect(profile_run.port, _INVALID_MODEL)).using_database_login()
+
+
+def _db_with_an_invalid_root(profile_run: Any) -> ScopedDatabase:
+    return _db_with_a_corrupt_depot(
+        profile_run, depot_of=lambda purchase: purchase, corrupt=_INVALID
+    )
+
+
+def _db_with_every_root_invalid(profile_run: Any) -> ScopedDatabase:
+    return _db_with_a_corrupt_depot(profile_run, depot_of=lambda _purchase: 1, corrupt=1)
+
+
+def _direct_wire(reader: Any, **scope: SharingScope) -> list[Any]:
+    return reader.wire.find(_BESIDE_AN_INVALID_ROOT, **scope).checked().results()
+
+
+def _projected_wire(reader: Any, **scope: SharingScope) -> list[Any]:
+    return reader.find(_BESIDE_AN_INVALID_ROOT, **scope).wire().checked().results()
+
+
+_WIRE_READS: Final = pytest.mark.parametrize("read", [_direct_wire, _projected_wire])
+
+
+def _purchase_nodes(roots: list[Any]) -> int:
+    return len(
+        {
+            id(node)
+            for root in roots
+            for node in (root, root.depot, root.buyer, *root.buyer.purchases)
+        }
+    )
+
+
+def _purchase_documents(roots: list[Any]) -> int:
+    return len(
+        {
+            id(document)
+            for root in roots
+            for document in (root, root["depot"], root["buyer"], *root["buyer"]["purchases"])
+        }
+    )
+
+
+def _purchase_document(root: Any, purchase_id: int) -> Any:
+    return next(leaf for leaf in root["buyer"]["purchases"] if leaf["id"] == purchase_id)
+
+
+def _valid(roots: list[Any]) -> list[Any]:
+    return [root for root in roots if not isinstance(root, InvalidData)]
+
+
+def _hydrated(roots: list[Any]) -> list[Any]:
+    return [root.data for root in roots]
+
+
 def _nodes(roots: list[Any]) -> int:
     return len(
         {id(node) for root in roots for node in (root, root.customer, *root.customer.orders)}
@@ -84,8 +231,8 @@ def _documents(roots: list[Any]) -> int:
     )
 
 
-def _order(orders: tuple[Any, ...], order_id: int) -> Any:
-    return next(order for order in orders if order.id == order_id)
+def _by_id(nodes: tuple[Any, ...], node_id: int) -> Any:
+    return next(node for node in nodes if node.id == node_id)
 
 
 def _assert_each_position_holds_its_keys(roots: list[Any]) -> None:
@@ -109,7 +256,7 @@ def test_a_page_publishes_one_node_per_logical_row(profile_run: Any) -> None:
     assert at_page[0] is not again[0]
     assert at_page[0].customer is not again[0].customer
     for root in (*at_root, *at_page):
-        assert _order(root.customer.orders, root.id) is root
+        assert _by_id(root.customer.orders, root.id) is root
 
 
 def test_a_back_reference_shares_with_the_forward_hop_on_its_slot(profile_run: Any) -> None:
@@ -127,10 +274,10 @@ def test_a_shared_node_gains_what_another_position_loaded_and_closes_a_cycle(
     at_page = db.find(_REPEATED, sharing_scope="page").results()
 
     with pytest.raises(UnloadedRelationshipError):
-        _ = _order(at_root[0].customer.orders, _ORDER_IDS[1]).customer
-    leaf = _order(at_page[0].customer.orders, _ORDER_IDS[1])
+        _ = _by_id(at_root[0].customer.orders, _ORDER_IDS[1]).customer
+    leaf = _by_id(at_page[0].customer.orders, _ORDER_IDS[1])
     assert leaf.customer is at_page[0].customer
-    assert _order(leaf.customer.orders, leaf.id) is leaf
+    assert _by_id(leaf.customer.orders, leaf.id) is leaf
 
 
 def test_a_typed_to_wire_projection_keeps_each_positions_keys(profile_run: Any) -> None:
@@ -219,7 +366,7 @@ def test_a_shared_node_carries_the_write_evidence_its_read_admits(profile_run: A
     def amend_through_two_roots(tx: TxnContext) -> None:
         roots = tx.find(_REPEATED, sharing_scope="page").results()
         tx.amend(roots[0].edit(total=Decimal("6.00")))
-        alias = _order(roots[1].customer.orders, roots[0].id)
+        alias = _by_id(roots[1].customer.orders, roots[0].id)
         tx.amend(alias.edit(placed_on=_REPLACED_ON))
 
     db.transact(amend_through_two_roots)
@@ -274,3 +421,110 @@ def test_a_shared_node_from_another_attempt_is_refused_at_the_write_door(profile
         db.transact(lambda tx: tx.amend(published[0].edit(total=Decimal("6.00"))))
 
     assert refused.value.code == "write-evidence-unavailable"
+
+
+def test_valid_roots_share_beside_an_invalid_one(profile_run: Any) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+    at_root = db.find(_BESIDE_AN_INVALID_ROOT).checked().results()
+    at_page = db.find(_BESIDE_AN_INVALID_ROOT, sharing_scope="page").checked().results()
+
+    first, invalid, last = cast("list[Any]", at_page)
+    assert [first.id, invalid.data.id, last.id] == list(_ORDER_IDS)
+    assert invalid.ordinal == 1
+    assert invalid.issues == cast("Any", at_root[1]).issues
+    assert _purchase_nodes(_valid(at_page)) == _NODES_BESIDE_AN_INVALID_ROOT_AT_PAGE_SCOPE
+    assert _purchase_nodes(_valid(at_root)) == _NODES_BESIDE_AN_INVALID_ROOT_AT_ROOT_SCOPE
+
+    neighbour = _by_id(first.buyer.purchases, _INVALID)
+    assert invalid.data is not neighbour
+    assert invalid.data.buyer is not first.buyer
+    assert invalid.data.depot.id == _INVALID
+    with pytest.raises(UnloadedRelationshipError):
+        _ = neighbour.depot
+
+
+@_WIRE_READS
+def test_valid_documents_share_beside_an_invalid_one(profile_run: Any, read: Any) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+    at_root = read(db)
+    at_page = read(db, sharing_scope="page")
+
+    first, invalid, last = at_page
+    assert [first["id"], invalid.data["id"], last["id"]] == list(_ORDER_IDS)
+    assert invalid.ordinal == 1
+    assert invalid.issues == at_root[1].issues
+    assert _purchase_documents(_valid(at_page)) == _DOCUMENTS_BESIDE_AN_INVALID_ROOT_AT_PAGE_SCOPE
+    assert _purchase_documents(_valid(at_root)) == _DOCUMENTS_BESIDE_AN_INVALID_ROOT_AT_ROOT_SCOPE
+
+    neighbour = _purchase_document(first, _INVALID)
+    assert invalid.data is not neighbour
+    assert invalid.data["buyer"] is not first["buyer"]
+    assert set(neighbour) == _PURCHASE_KEYS
+    assert _valid(at_page) == _valid(at_root)
+    assert invalid.data == at_root[1].data
+
+
+def test_an_invalid_nodes_write_is_refused_and_its_neighbours_admitted(profile_run: Any) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+
+    def amend_the_row_through_both(tx: TxnContext) -> None:
+        first, invalid, _last = cast(
+            "list[Any]", tx.find(_BESIDE_AN_INVALID_ROOT, sharing_scope="page").checked().results()
+        )
+        for edited in (invalid.data.edit(note="moved"), invalid.data.buyer.edit(name="Grace")):
+            with pytest.raises(KeyedWriteValueError) as refused:
+                tx.amend(edited)
+            assert refused.value.code == "write-value-not-stored"
+        tx.amend(_by_id(first.buyer.purchases, _INVALID).edit(note="moved"))
+        tx.amend(first.buyer.edit(name="Grace"))
+
+    db.transact(amend_the_row_through_both)
+    purchase = db.find(Purchase.where(Purchase.id == _INVALID)).result()
+    buyer = db.find(Buyer.where(Buyer.id == 1)).result()
+    assert (purchase.note, purchase.version, buyer.name) == ("moved", 2, "Grace")
+
+
+@_WIRE_READS
+def test_an_invalid_documents_write_is_refused_and_its_neighbours_admitted(
+    profile_run: Any, read: Any
+) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+
+    def amend_the_row_through_both(tx: TxnContext) -> None:
+        first, invalid, _last = read(tx, sharing_scope="page")
+        for document, edit in (
+            (invalid.data, {"note": "moved"}),
+            (invalid.data["buyer"], {"name": "Grace"}),
+        ):
+            with pytest.raises(WriteInstructionError):
+                tx.wire.amend(document, edit)
+        tx.wire.amend(_purchase_document(first, _INVALID), {"note": "moved"})
+        tx.wire.amend(first["buyer"], {"name": "Grace"})
+
+    db.transact(amend_the_row_through_both)
+    purchase = db.find(Purchase.where(Purchase.id == _INVALID)).result()
+    buyer = db.find(Buyer.where(Buyer.id == 1)).result()
+    assert (purchase.note, purchase.version, buyer.name) == ("moved", 2, "Grace")
+
+
+def test_a_corrupt_row_every_root_reaches_publishes_no_more_nodes_than_root_scope(
+    profile_run: Any,
+) -> None:
+    db = _db_with_every_root_invalid(profile_run)
+    at_root = db.find(_BESIDE_AN_INVALID_ROOT).checked().results()
+    at_page = db.find(_BESIDE_AN_INVALID_ROOT, sharing_scope="page").checked().results()
+
+    assert _purchase_nodes(_hydrated(at_page)) == _purchase_nodes(_hydrated(at_root))
+
+
+@_WIRE_READS
+def test_a_corrupt_row_every_root_reaches_publishes_no_more_documents_than_root_scope(
+    profile_run: Any, read: Any
+) -> None:
+    db = _db_with_every_root_invalid(profile_run)
+
+    at_root = _hydrated(read(db))
+    at_page = _hydrated(read(db, sharing_scope="page"))
+
+    assert _purchase_documents(at_page) == _purchase_documents(at_root)
+    assert at_page == at_root
