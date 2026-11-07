@@ -955,18 +955,23 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     return node
 
 
-def at_value_object_columns(model: Model, entity: Entity, row: PublishedRow) -> dict[str, Any]:
+def at_value_object_columns(
+    model: Model, entity: Entity, row: PublishedRow, node: Mapping[str, Any] | None
+) -> dict[str, Any]:
     """*row*, read at *entity*'s position, as a read's ``expectRows`` entry states it.
 
-    A decoded top-level Value Object stands under its occurrence name for the graph
-    a step can assemble, while a flat row keeps the projection's physical spelling
-    (`m-case-format` *Read result form*).
+    A flat row keeps the projection's physical spelling (`m-case-format` *Read
+    result form*), so each top-level Value Object *node* decoded stands at its
+    occurrence's Column. A position with no *node* decoded nothing.
     """
-    columns = {
-        occurrence["name"]: occurrence["column"]
+    if node is None:
+        return dict(row)
+    decoded = {
+        occurrence["column"]: node[occurrence["name"]]
         for occurrence in variant_entity(model, entity, row).value_objects
+        if occurrence["column"] in row
     }
-    return {columns.get(key, key): value for key, value in row.items()}
+    return {**row, **decoded}
 
 
 def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Entity:

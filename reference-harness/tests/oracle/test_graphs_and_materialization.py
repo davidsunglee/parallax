@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
@@ -26,7 +27,7 @@ import pytest
 from reference_harness.case import Case, Model, _load_yaml
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.document_codec import ParsedJsonString
-from reference_harness.object_query_oracle import assert_case_read
+from reference_harness.object_query_oracle import assert_case_read, retained
 from reference_harness.object_query_oracle import materialize as oracle_materialize
 from reference_harness.temporality import derive_temporal_structure
 from reference_harness.unit_work_scenario.observations import ScenarioRowObservations
@@ -1410,6 +1411,7 @@ def test_a_step_row_refuses_a_value_object_spelled_by_its_occurrence(
 
 _OWNER_PROFILE = {"label": "owner-profile"}
 _OWNER_ROW = {"id": 1, "target_id": 10, "details": _OWNER_PROFILE}
+_OWNER_NODE = {"id": 1, "targetId": 10, "profile": _OWNER_PROFILE}
 _REPLACED_PROFILE = {"label": "replaced"}
 
 
@@ -1594,6 +1596,106 @@ def test_a_copy_keeps_the_identity_of_its_source(damaged_case: CaseLoader) -> No
     _observe_every_step(case, ScriptedReads(results=[[stored]]))
 
 
+def _count_document_decodes(monkeypatch: pytest.MonkeyPatch) -> Counter[Any]:
+    decodes: Counter[Any] = Counter()
+    decode_stored = oracle_materialize.decode_stored
+
+    def counted(value: Any) -> Any:
+        decodes[value] += 1
+        return decode_stored(value)
+
+    monkeypatch.setattr(oracle_materialize, "decode_stored", counted)
+    return decodes
+
+
+def test_a_read_step_decodes_each_stored_document_once(
+    damaged_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": {}, "expectRows": [_OWNER_NODE]},
+    )
+    case.raw["when"]["scenario"][0]["expectRows"] = [_OWNER_ROW]
+    decodes = _count_document_decodes(monkeypatch)
+
+    _observe_every_step(case, ScriptedReads(results=[_OWNER_ROWS]))
+
+    assert decodes == {_OWNER_ROWS[0]["details"]: 1}
+
+
+def _streamed_owner_read(case: Case, model: Model, *later_steps: dict[str, Any]) -> Case:
+    """The `ProfileOwner` read of :func:`_owner_read` as one short streamed page."""
+    streamed = _owner_read(case, model, *later_steps)
+    root = streamed.raw["when"]["scenario"][0]
+    root["stream"] = {"batchSize": 2}
+    root["statements"] = [
+        {
+            "sql": {
+                "postgres": "select t0.id, t0.target_id, not t0.details is null, t0.details, "
+                "t0.id parallax_seek_0 from profile_owner t0 order by t0.id asc limit ?"
+            },
+            "binds": [3],
+        }
+    ]
+    return streamed
+
+
+def test_a_streamed_step_decodes_each_stored_document_once(
+    damaged_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _streamed_owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": {}, "expectRows": [_OWNER_NODE]},
+    )
+    case.raw["when"]["scenario"][0]["expectRows"] = [_OWNER_ROW]
+    decodes = _count_document_decodes(monkeypatch)
+
+    _observe_every_step(case, ScriptedReads(results=[[_OWNER_ROWS[0] | {"parallax_seek_0": 1}]]))
+
+    assert decodes == {_OWNER_ROWS[0]["details"]: 1}
+
+
+def test_a_copy_of_a_streamed_root_carries_no_view_the_page_attached(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _streamed_owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": {}, "expectRows": [_OWNER_NODE]},
+    )
+    root = case.raw["when"]["scenario"][0]
+    root["objectQuery"]["includes"] = [
+        {"segments": [{"rel": "compatibility.overlap.ProfileOwner.details"}]}
+    ]
+    root["databaseCalls"] = 2
+    root["statements"].append(
+        {
+            "sql": {
+                "postgres": "select t0.id from profile_target t0 "
+                "where t0.id = any(cast(? as bigint[]))"
+            },
+            "binds": [[10]],
+        }
+    )
+
+    _observe_every_step(
+        case,
+        ScriptedReads(results=[[_OWNER_ROWS[0] | {"parallax_seek_0": 1}], [{"id": 10}]]),
+    )
+
+
+def test_a_position_that_decoded_nothing_states_what_it_published(
+    damaged_case: CaseLoader,
+) -> None:
+    stored = {"id": 1, "target_id": 10, "details": json.dumps({"label": 7})}
+    case = _owner_read(damaged_case(_SCENARIO_WITH_INCLUDES), damaged_case(_PROFILE_HOP).model)
+    case.raw["when"]["scenario"][0]["expectRows"] = [stored]
+
+    _observe_every_step(case, ScriptedReads(results=[[stored]]))
+
+
 def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(
     corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1642,6 +1744,19 @@ def test_the_owner_node_decode_refuses_a_row_that_skipped_the_seam(
 
     with pytest.raises(CaseFailure, match="the owner-node decode projects a row"):
         oracle_materialize.materialize_variant_owner_node(case, entity, row)
+
+
+def test_an_observation_refuses_rows_that_skipped_the_seam() -> None:
+    """A retained observation holds what its step published, and refuses anything else.
+
+    Standing in for a future path that assembles the materialization sequence
+    itself: the observation refuses the rows at construction rather than retaining
+    storage a later reuse, access, or identity check would be graded against.
+    """
+    unpublished = cast(oracle_materialize.PublishedRow, {"id": 1})
+
+    with pytest.raises(TypeError, match="did not come through the publication seam"):
+        retained.Observation(rows=[unpublished], nodes=[None], entity=None, includes=None)
 
 
 def test_per_variant_narrowing_refuses_rows_that_skipped_the_seam(

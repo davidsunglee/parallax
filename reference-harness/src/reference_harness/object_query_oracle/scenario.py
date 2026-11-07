@@ -59,19 +59,17 @@ class ScenarioRowObservations:
 
         A delivery hands back roots it has ALREADY materialized — fanned out of a
         Relational Document Layout and carrying ``familyVariant`` in place of the
-        raw tag — so what is left here is the decode a delivery leaves to its
-        caller: the owner's own value-object projection, taken at each root's own
-        concrete variant, which an eager step's rows carry too and which the
-        reference oracle below must not see.
+        raw tag — beside the node it graded each one as, so an include-free step
+        retains those nodes. An Include Path's node carries the views the page
+        attached to it, which a retained Wire value does not.
 
         A streamed step states no ``expectGraph`` — what it publishes is roots,
         page after page — so it retains no view for a later access to navigate.
         """
         entity = self._read_entity(step_index)
         step_read = _step_as_read(self._case, step_index)
-        delivered = stream.deliver_stream(
-            step_read, reader, f"scenario[{step_index}].statements"
-        ).root_rows
+        delivery = stream.deliver_stream(step_read, reader, f"scenario[{step_index}].statements")
+        delivered = delivery.root_rows
         reference = self._reference_rows(step, reader)
         if reference is not None:
             materialized = materialize.materialize_read(step_read, reference)
@@ -81,9 +79,9 @@ class ScenarioRowObservations:
                 delivered,
                 entity,
             )
-        if entity is None:
+        if entity is None or not includes.query_has_includes(step["objectQuery"]):
             return retained.Observation(
-                rows=delivered, nodes=[*delivered], entity=None, includes=None
+                rows=delivered, nodes=delivery.nodes, entity=entity, includes=None
             )
         return self._read_observation(entity, delivered, None)
 
@@ -128,12 +126,9 @@ class ScenarioRowObservations:
         step_includes: retained.StepIncludes | None,
     ) -> retained.Observation:
         """What a read retains of the rows it published at *entity*'s position."""
-        case = self._case
         return retained.Observation(
-            rows=[
-                materialize.materialize_variant_owner_node(case, entity, row) for row in published
-            ],
-            nodes=[graph.graph_node(case, entity, row) for row in published],
+            rows=published,
+            nodes=[graph.graph_node(self._case, entity, row) for row in published],
             entity=entity,
             includes=step_includes,
         )

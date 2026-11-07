@@ -62,9 +62,10 @@ class Observation:
     `set` assigns a primary key, so a copy denotes the object its source did.
 
     ``nodes`` are the same positions as Wire values, keyed by declared member, which
-    a `mutate` derives its copy from; ``None`` marks a position that published no
-    value. ``derived`` is whether those nodes are a `mutate`'s copy, which an
-    `access` of it keeps, since a step's result then is that Wire value.
+    hold the step's decoded Value Objects and which a `mutate` derives its copy from;
+    ``None`` marks a position that published no value. ``derived`` is whether those
+    nodes are a `mutate`'s copy, which an `access` of it keeps, since a step's result
+    then is that Wire value.
     """
 
     rows: list[materialize.PublishedRow]
@@ -88,7 +89,10 @@ class Observation:
             return [node for node in self.nodes if node is not None]
         if self.entity is None:
             return self.rows
-        return [materialize.at_value_object_columns(model, self.entity, row) for row in self.rows]
+        return [
+            materialize.at_value_object_columns(model, self.entity, row, node)
+            for row, node in zip(self.rows, self.nodes, strict=True)
+        ]
 
 
 def relationship_path_fans_out(case: Case, start: Entity, path: str) -> bool:

@@ -23,7 +23,6 @@ import pytest
 
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
-from reference_harness.object_query_oracle import materialize as oracle_materialize
 from reference_harness.unit_work_scenario import assert_unit_work_scenario
 
 from .conftest import (
@@ -668,29 +667,6 @@ def test_a_retained_observation_outlives_the_session_that_produced_it(
     # access after it ran with no live session at all — and the double refuses one
     # that has ended, so reaching back for the view would have raised.
     assert db.chronology[-1] == Committed(0)
-
-
-def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(
-    corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A retained observation holds what its step published, and refuses anything else.
-
-    Standing in for a future path that assembles the materialization sequence
-    itself: the sequence's last step is replaced by a pass-through, and the
-    observation refuses the rows at construction rather than retaining storage a
-    later reuse, access, or identity check would be graded against.
-    """
-    monkeypatch.setattr(
-        oracle_materialize,
-        "materialize_variant_owner_node",
-        lambda _case, _entity, row: dict(row),
-    )
-    case = corpus_case(_EDIT_KEEPS_ITEMS)
-
-    with pytest.raises(TypeError, match="did not come through the publication seam"):
-        assert_unit_work_scenario(
-            case, ScriptedProvider(script=_rows(_ORDER_ONE, _ORDER_ONE_ITEMS))
-        )
 
 
 @pytest.mark.parametrize("reuse_anchor", [False, True])
