@@ -254,7 +254,8 @@ def _wire_read(
 ) -> tuple[Snapshot[WireEntity], LifecycleObservation]:
     """One Wire read of the case's own Object Query, and what it ran.
 
-    The whole lane is ``wire.find`` on the surface :func:`_case_read` selects:
+    The whole lane is ``wire.find`` on the surface :func:`_case_read` selects, at
+    the Sharing Scope the case declares:
     target resolution, validation, deep-fetch planning, per-level compilation
     and execution, row conversion, projection merging, root classification, and
     the finite include-tree unwind are production's, and a scanning read answers
@@ -268,7 +269,16 @@ def _wire_read(
     with case_database(case, port, observed.provider) as root:
         db = root.using_database_login()
         try:
-            return _case_read(case, db, lambda reader: reader.wire.find(query)), observed
+            return (
+                _case_read(
+                    case,
+                    db,
+                    lambda reader: reader.wire.find(
+                        query, sharing_scope=case_document.sharing_scope(case)
+                    ),
+                ),
+                observed,
+            )
         except READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
 

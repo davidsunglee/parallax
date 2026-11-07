@@ -8,6 +8,7 @@ by counting unique published nodes, and use identity only for what must not happ
 from __future__ import annotations
 
 import datetime as dt
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, cast
@@ -35,8 +36,11 @@ _ORDER_IDS: Final = (10, 11, 12)
 _ROOTS: Final = len(_ORDER_IDS)
 _NODES_AT_PAGE_SCOPE: Final = _ROOTS + 1
 _NODES_AT_ROOT_SCOPE: Final = _ROOTS * (_ROOTS + 1)
+_DOCUMENTS_AT_PAGE_SCOPE: Final = 2 * _ROOTS + 1
+_DOCUMENTS_AT_ROOT_SCOPE: Final = _ROOTS * (_ROOTS + 2)
 _REPLACED_ON: Final = dt.date(2024, 5, 1)
 _ORDER_KEYS: Final = {"id", "customerId", "placedOn", "total", "version"}
+_CUSTOMER_KEYS: Final = {"id", "name", "email"}
 _REPEATED: Final[ObjectQuery[Any, Any]] = (
     Order.where(Order.all).include(Order.customer.orders).order_by(Order.id.asc())
 )
@@ -70,8 +74,26 @@ def _nodes(roots: list[Any]) -> int:
     )
 
 
+def _documents(roots: list[Any]) -> int:
+    return len(
+        {
+            id(document)
+            for root in roots
+            for document in (root, root["customer"], *root["customer"]["orders"])
+        }
+    )
+
+
 def _order(orders: tuple[Any, ...], order_id: int) -> Any:
     return next(order for order in orders if order.id == order_id)
+
+
+def _assert_each_position_holds_its_keys(roots: list[Any]) -> None:
+    for root in roots:
+        assert set(root) == {*_ORDER_KEYS, "customer"}
+        assert set(root["customer"]) == {*_CUSTOMER_KEYS, "orders"}
+        for leaf in root["customer"]["orders"]:
+            assert set(leaf) == _ORDER_KEYS
 
 
 def test_a_page_publishes_one_node_per_logical_row(profile_run: Any) -> None:
@@ -116,12 +138,44 @@ def test_a_typed_to_wire_projection_keeps_each_positions_keys(profile_run: Any) 
     direct = db.wire.find(_REPEATED).results()
     projected = cast("list[Any]", db.find(_REPEATED, sharing_scope="page").wire().results())
 
-    for root in projected:
-        assert set(root) == {*_ORDER_KEYS, "customer"}
-        assert set(root["customer"]) == {"id", "name", "email", "orders"}
-        for leaf in root["customer"]["orders"]:
-            assert set(leaf) == _ORDER_KEYS
+    _assert_each_position_holds_its_keys(projected)
     assert projected == direct
+
+
+def test_a_direct_wire_page_publishes_one_document_per_node_and_render_token(
+    profile_run: Any,
+) -> None:
+    db = _db(profile_run)
+    at_root = cast("list[Any]", db.wire.find(_REPEATED).results())
+    at_page = cast("list[Any]", db.wire.find(_REPEATED, sharing_scope="page").results())
+    again = cast("list[Any]", db.wire.find(_REPEATED, sharing_scope="page").results())
+
+    assert _documents(at_root) == _DOCUMENTS_AT_ROOT_SCOPE
+    assert _documents(at_page) == _DOCUMENTS_AT_PAGE_SCOPE
+    assert [root["id"] for root in at_page] == list(_ORDER_IDS)
+    assert at_root[0]["customer"] is not at_root[1]["customer"]
+    assert at_page[0] is not again[0]
+    assert at_page[0]["customer"] is not again[0]["customer"]
+    _assert_each_position_holds_its_keys(at_page)
+    assert at_page == at_root
+
+
+def test_a_back_reference_renders_finitely_on_a_shared_document(profile_run: Any) -> None:
+    db = _db(profile_run)
+    query = Order.where(Order.all).include(Order.customer.orders.customer).order_by(Order.id.asc())
+
+    def back_references(roots: list[Any]) -> list[Any]:
+        return [leaf["customer"] for root in roots for leaf in root["customer"]["orders"]]
+
+    at_root = cast("list[Any]", db.wire.find(query).results())
+    at_page = cast("list[Any]", db.wire.find(query, sharing_scope="page").results())
+
+    assert len({id(document) for document in back_references(at_root)}) == _ROOTS
+    assert len({id(document) for document in back_references(at_page)}) == 1
+    for document in back_references(at_page):
+        assert set(document) == _CUSTOMER_KEYS
+    assert at_page == at_root
+    assert json.loads(json.dumps(at_page)) == json.loads(json.dumps(at_root))
 
 
 def test_a_milestone_reads_roots_stand_at_their_own_pins(profile_run: Any) -> None:
@@ -150,6 +204,8 @@ def test_an_unknown_scope_is_refused_before_any_database_call(profile_run: Any) 
         before = observation.database_calls
         with pytest.raises(ValueError, match="sharing_scope"):
             reader.find(_REPEATED, sharing_scope=unknown)
+        with pytest.raises(ValueError, match="sharing_scope"):
+            reader.wire.find(_REPEATED, sharing_scope=unknown)
         assert observation.database_calls == before
 
     refused_inside(db)
@@ -173,6 +229,41 @@ def test_a_shared_node_carries_the_write_evidence_its_read_admits(profile_run: A
         _REPLACED_ON,
         2,
     )
+
+
+def test_a_shared_document_carries_the_write_evidence_its_read_admits(profile_run: Any) -> None:
+    db = _db(profile_run)
+
+    def amend_through_two_roots(tx: TxnContext) -> None:
+        roots = cast("list[Any]", tx.wire.find(_REPEATED, sharing_scope="page").results())
+        tx.wire.amend(roots[0], {"total": "6.00"})
+        alias = next(
+            leaf for leaf in roots[1]["customer"]["orders"] if leaf["id"] == roots[0]["id"]
+        )
+        tx.wire.amend(alias, {"placedOn": _REPLACED_ON.isoformat()})
+
+    db.transact(amend_through_two_roots)
+    stored = db.find(Order.where(Order.id == _ORDER_IDS[0])).result()
+    assert (stored.total, stored.placed_on, stored.version) == (
+        Decimal("6.00"),
+        _REPLACED_ON,
+        2,
+    )
+
+
+def test_a_shared_document_from_another_attempt_is_refused_at_the_write_door(
+    profile_run: Any,
+) -> None:
+    db = _db(profile_run)
+    published = cast(
+        "list[Any]",
+        db.transact(lambda tx: tx.wire.find(_REPEATED, sharing_scope="page").results()),
+    )
+
+    with raises_contextualized(WriteEvidenceError) as refused:
+        db.transact(lambda tx: tx.wire.amend(published[0], {"total": "6.00"}))
+
+    assert refused.value.code == "write-evidence-unavailable"
 
 
 def test_a_shared_node_from_another_attempt_is_refused_at_the_write_door(profile_run: Any) -> None:

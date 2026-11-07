@@ -2004,6 +2004,15 @@ _STREAMED_DELIVERY_REASON: Final[str] = (
     "graded against the shipped surface by `tests/unit/test_snapshot_stream.py`"
 )
 
+_SHARING_SCOPE_TWIN_REASON: Final[str] = (
+    "the corpus's sharing-scope twins, whose claim is that a Sharing Scope moves no "
+    "statement and no Wire document: the run sweep grades each arm at its own scope against "
+    "real Postgres, and the static twin gate holds the two arms to one read. An idiomatic "
+    "story over the same read would publish equal values and show nothing, because what a "
+    "Sharing Scope changes is reference identity, which `tests/api/test_page_sharing.py` "
+    "proves by counting unique published nodes"
+)
+
 _CORRUPT_STORED_STATE_REASON: Final[str] = (
     "the corpus's corrupt-stored-state lane, whose claim is a verdict about STORAGE the "
     "case itself wrote (`m-case-format` *Corrupting stored state*) rather than anything a "
@@ -2857,6 +2866,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-inheritance: a position with no concrete subtype, streamed -------- #
     "m-inheritance-158": _STREAMED_DELIVERY_REASON,
     "m-inheritance-159": _STREAMED_DELIVERY_REASON,
+    # -- m-snapshot-read: the sharing-scope twins ---------------------------- #
+    **{f"m-snapshot-read-{n:03d}": _SHARING_SCOPE_TWIN_REASON for n in range(52, 60)},
     # -- m-snapshot-read: the corrupt-stored-state lane ---------------------- #
     "m-snapshot-read-049": _CORRUPT_STORED_STATE_REASON,
     "m-snapshot-read-050": _SHARED_STATE_ROOT_AUTHORITY_REASON,

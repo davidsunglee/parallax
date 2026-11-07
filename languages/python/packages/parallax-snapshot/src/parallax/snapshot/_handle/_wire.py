@@ -10,7 +10,12 @@ from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.snapshot._handle._read import Snapshot, wire_publication_for
+from parallax.snapshot._handle._read import (
+    SharingScope,
+    Snapshot,
+    wire_publication_builder,
+    wire_publication_for,
+)
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
     WireChanges,
@@ -76,7 +81,9 @@ class WireDatabaseView:
     def __init__(self, reads: ExecutionScope | ReadOnlyTxnAttempt | TxnAttempt) -> None:
         self._reads = reads
 
-    def find(self, query: WireQuery) -> Snapshot[WireEntity]:
+    def find(
+        self, query: WireQuery, *, sharing_scope: SharingScope = "root"
+    ) -> Snapshot[WireEntity]:
         """Execute ``query`` exactly once and return its Wire Snapshot.
 
         Each root is a frozen :class:`~parallax.snapshot.WireEntity`
@@ -91,7 +98,9 @@ class WireDatabaseView:
         and resolved under the read's selection.
         """
         return self._reads.read(
-            query, convert_query=wire_read_query, build_publication=wire_publication_for
+            query,
+            convert_query=wire_read_query,
+            build_publication=wire_publication_builder(sharing_scope),
         )
 
     def stream(

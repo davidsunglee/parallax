@@ -166,7 +166,7 @@ report-check-all-summary:
 # ===========================================================================
 
 [doc("Every blocking check over the core spec and compatibility corpus.")]
-core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools core-check-twin-layouts core-check-batch-size-twins core-check-language-spec
+core-check: core-check-module-graph core-check-slice-profiles core-check-schemas core-check-contract-tools core-check-twin-layouts core-check-batch-size-twins core-check-sharing-scope-twins core-check-language-spec
 
 [metadata("runtime:fast")]
 [doc("modules.md DAG legality, per-module fixture coverage, and the active-to-deferred rule.")]
@@ -207,6 +207,11 @@ core-check-twin-layouts:
 [doc("Streamed batch-size case twins state one read at every page size.")]
 core-check-batch-size-twins:
     cd {{harness}} && uv run python -m reference_harness.batch_size_twin_check ../core/compatibility
+
+[metadata("runtime:fast")]
+[doc("Sharing-scope case twins state one read at both scopes.")]
+core-check-sharing-scope-twins:
+    cd {{harness}} && uv run python -m reference_harness.sharing_scope_twin_check ../core/compatibility
 
 [metadata("runtime:fast")]
 [doc("Language binding claims and required topology declarations are valid.")]

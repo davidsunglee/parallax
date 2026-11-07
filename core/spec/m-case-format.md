@@ -140,9 +140,10 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 - **`when`** — the action under test and how the client performs it. Exactly one
   **action** member per shape (`objectQuery` | `writeSequence` | `scenario` |
   `concurrency` | `boundary` | `edit` | `attempts`, plus the
-  single-attempt conflict's `write`); the **context** members (`uow`, `stream`, `mutation`,
-  `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, the
-  written verb, and alternate surface encodings.
+  single-attempt conflict's `write`); the **context** members (`uow`, `stream`,
+  `sharingScope`, `mutation`, `equivalentEncodings`) describe the unit-of-work mode,
+  the streamed delivery, the Sharing Scope, the written verb, and alternate surface
+  encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
@@ -405,6 +406,7 @@ in decimal space under any authored `tolerance`.
 | `when.uow.accessMode` | `when.uow` | no | admitted on `read` and `boundary` cases alone: the Access Mode (`m-db-port`) the outer invocation's entrypoint selects (`m-execution` *Read-only transactions*) — `read-write`, the default when omitted, or `read-only`, whose request names no `concurrency`. **Prescriptive** like `isolation`: an API Conformance Suite invokes the matching entrypoint. No root configures it, because the mode is the entrypoint's rather than an option |
 | `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`), which the harness resolves the same way for the sessions it holds. A case never names an engine's own level or a session variable |
 | `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
+| `when.sharingScope` | `when` | no | the Sharing Scope a `read` case's read runs at (`m-snapshot-read` *Node sharing*) — `root`, what omitting it means, or `page`; **prescriptive** like `when.uow.isolation`, and authored in twin pairs (see *Sharing scope twins*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step; empty only for a read whose result position has no concrete subtype (see *Structurally empty reads*, below). *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on boundary and edit cases |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
@@ -727,6 +729,23 @@ their shared claim covers.
 `then.databaseCalls` needs no rule of its own: every authored page statement
 executes, so the deep-fetch rule (the count equals the authored statement count)
 already holds across pages.
+
+#### Sharing scope twins (`when.sharingScope`)
+
+A `read` case's `when` MAY carry **`sharingScope`**, the Sharing Scope its read
+runs at: `root`, which omitting the member also means, or `page`. A Sharing Scope
+governs which published nodes are reused across a result's roots, which a
+tree-shaped `then.graph` cannot show. It changes no statement and no Wire document
+(`m-snapshot-read` *Node sharing*), so what the corpus states about it is that
+invariance: the same case at both scopes.
+
+A **sharing-scope pair** — two cases equal in everything but `when.sharingScope` —
+is how it states that, on the *Streamed reads* batch-size precedent. Unlike a
+batch-size pair, its arms share their physical observations too, because a Sharing
+Scope moves none. Such a pair is named
+`<module>-NNN-<proof>-sharing-scope-twin-<sharingScope>.yaml`, its pair identity
+is `<module>-<proof>`, both arms declare their scope, and a static gate asserts
+that each declaration matches its filename and the arms agree on everything else.
 
 #### Graph keys and back-reference cycles
 

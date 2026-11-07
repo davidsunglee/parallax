@@ -129,9 +129,9 @@ interval, or `TemporalBound.INFINITY` while that axis is current.
 `edge_of` answers a temporal node's milestone `Edge`. The answer is stable: a node
 and every edit of it answer equal `Edge` values, however often they are inspected.
 
-Typed `find` takes a keyword-only `sharing_scope`, a `SharingScope` of `"root"`,
-the default, or `"page"`, which selects the read's Sharing Scope (`m-snapshot-read`
-*Node sharing*). Any other value raises `ValueError` as the call evaluates its
+Typed and Wire `find` take a keyword-only `sharing_scope`, a `SharingScope` of
+`"root"`, the default, or `"page"`, which selects the read's Sharing Scope
+(`m-snapshot-read` *Node sharing*). Any other value raises `ValueError` as the call evaluates its
 arguments, before the query is judged, before any I/O, and ahead of the re-entry
 check a transaction's read makes. `Snapshot.wire` takes no option: it renders the
 published values through the read's include shape.

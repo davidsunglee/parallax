@@ -15,7 +15,7 @@
         "when": {
           "required": ["objectQuery"],
           "propertyNames": {
-            "enum": ["objectQuery", "uow", "stream", "equivalentEncodings"]
+            "enum": ["objectQuery", "uow", "stream", "sharingScope", "equivalentEncodings"]
           }
         },
         "then": {
@@ -834,6 +834,10 @@
         "stream": {
           "description": "The streamed delivery context of a read case (m-read-delivery *Streamed delivery*): its presence makes the read STREAMED rather than eager, exactly as `when.uow.concurrency` makes a read's mode prescriptive rather than descriptive. A streamed read keyset-pages its root positions in the Continuation Order and deep-fetches one page at a time, so its `then.statements` is the concatenation of the pages' own `1 + L` groups and its result is the roots the eager read of the same Object Query publishes, at the same pins — `then.graph` for a single-instant read, delivered in the same order, and for a milestone-set read the same per-milestone `then.graphs` the eager read states, each delivered root standing at its own edge. A milestone set is graded as that partition rather than as a sequence, because the two orders agree over one key's history and generally not across several: the eager read ranks by milestone across every key, the stream by the primary key or an authored Sort Key before the edge. Sibling of the action member, never a query clause — a page size is how the client consumes the result, not part of the Object Query the corpus canonicalizes and round-trips.",
           "$ref": "#/$defs/streamContext"
+        },
+        "sharingScope": {
+          "description": "The Sharing Scope a read case's read runs at (m-snapshot-read *Node sharing*): `root`, what a case omitting the member reads at, or `page`. Sibling of the action member, never a query clause, because a Sharing Scope is how the client asks for a result to be published and not part of the Object Query the corpus canonicalizes and round-trips. It changes no statement and no Wire document, so it is authored in twin pairs (m-case-format *Sharing scope twins*).",
+          "enum": ["root", "page"]
         },
         "objectQuery": {
           "description": "The canonical m-object-query document under test: one flat query naming its own queried `target` and carrying its `predicate`, `narrowTo`, `temporal`, `orderBy`, `limit`, and `includes` clauses as siblings. Present on read and rejected cases; absent on writeSequence cases. The `$ref` is the whole contract — no second hand-written pass validates it, and no envelope repeats the queried entity beside it.",

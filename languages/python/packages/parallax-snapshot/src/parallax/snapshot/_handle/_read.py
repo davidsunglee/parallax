@@ -606,6 +606,12 @@ def _typed_publication_at(
     )
 
 
+def wire_publication_builder(sharing_scope: SharingScope) -> PublicationBuilder:
+    """The builder of a Wire read at ``sharing_scope``, refusing any other value."""
+    check_sharing_scope(sharing_scope)
+    return wire_publication_for if sharing_scope == "root" else wire_shared_publication_for
+
+
 def wire_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
     """The Wire publication of a read served under ``selected``.
 
@@ -613,6 +619,11 @@ def wire_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
     no classless refusal applies.
     """
     return wire_publication(selected.model, selected.wire, selected.edition)
+
+
+def wire_shared_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
+    """:func:`wire_publication_for` at page scope."""
+    return wire_publication(selected.model, selected.wire, selected.edition, sharing_scope="page")
 
 
 def typed_publication(
@@ -681,7 +692,11 @@ def typed_publication(
 
 
 def wire_publication(
-    model: CatalogedModel, wire: WireModelFacts, edition: str
+    model: CatalogedModel,
+    wire: WireModelFacts,
+    edition: str,
+    *,
+    sharing_scope: SharingScope = "root",
 ) -> SnapshotPublication:
     """Publish through the wire materializer: frozen declared-name value trees.
 
@@ -719,9 +734,22 @@ def wire_publication(
         if released or current is None:
             raise RuntimeError("a released Wire publication cannot publish another Page")
         current.begin_page()
+        publisher = WireRootPublisher(model.meta, wire, includes, current)
+        if sharing_scope == "page":
+            yield from publish_shared_roots(
+                page,
+                publisher,
+                publisher.publish_shared_graph,
+                model.meta,
+                atomic=atomic,
+                ordinal_offset=ordinal_offset,
+                milestones=milestones,
+                read_evidence=origins,
+            )
+            return
         yield from publish_roots(
             page,
-            WireRootPublisher(model.meta, wire, includes, current),
+            publisher,
             model.meta,
             atomic=atomic,
             ordinal_offset=ordinal_offset,

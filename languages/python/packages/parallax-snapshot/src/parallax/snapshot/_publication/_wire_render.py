@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import concurrency, temporal_read
@@ -182,9 +182,10 @@ class WireRenderer[Node]:
     frozen object — exactly as two positions reaching one Entity instance do in
     the Typed lane; a value that refuses mutation through the instance is safely
     shared. Direct publication owns one renderer per publication pass and
-    clears it at each root, eager Typed projection owns one for the complete
-    result, and stream projection owns one per page. The owner releases that
-    state when its scope ends.
+    clears it at each root, a Shared Graph's render owns one for all its roots,
+    eager Typed projection owns one for the complete result, and stream
+    projection owns one per page. The owner releases that state when its scope
+    ends.
     """
 
     __slots__ = ("_encode", "_includes", "_memo", "_model", "_reader", "_record_values")
@@ -402,6 +403,9 @@ class WireRootPublisher:
     never share a rendered node, while the reader's provenance is shared across
     the Page's roots and released with the publisher. ``wire`` is the prepared
     model's Wire facts, and ``encode`` is the delivery's scalar encoder.
+
+    :meth:`publish_shared_graph` is the Shared Graph's render, and shares none
+    of that per-root state.
     """
 
     __slots__ = (
@@ -452,3 +456,20 @@ class WireRootPublisher:
             return (cast("InvalidData[WireEntity]", verdict.published(rendered)),)
         finally:
             renderer.clear()
+
+    def publish_shared_graph(
+        self, view: GraphView, positions: Sequence[int]
+    ) -> tuple[_WireRoot, ...]:
+        """The roots at ``positions`` of ``view``'s Shared Graph, in order, each
+        rendered at the query's root.
+
+        One reader and renderer serve this render and end with it, so a node
+        renders once per token across the roots. They stay apart from the
+        per-root pair, which binds to the first view it meets and keys its memo
+        by the node indices of a different graph.
+        """
+        renderer = WireRenderer(
+            GraphViewReader(view, self._temporal), self._includes, self._wire, self._encode
+        )
+        root = self._includes.root
+        return tuple(renderer.render_at(view.root_node(position), root) for position in positions)

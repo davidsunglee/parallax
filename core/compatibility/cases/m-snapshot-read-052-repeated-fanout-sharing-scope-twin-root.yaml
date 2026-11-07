@@ -1,0 +1,90 @@
+# Repeated fan-out at both Sharing Scopes (m-snapshot-read *Node sharing*): roots 11 and 12
+# reach one Order and both of its items, so a page-scope read of this Page publishes
+# one Shared Graph, while root 21 reaches rows of its own beside them. Each root's
+# own row is also a leaf of `Order.items`, which holds no `order` key at that position.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-read-planning, sharing-scope, to-many, relationship, graph, materialization, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child levels - the Order and Order.items IN-list binds are gathered from the level above, so the child emissions depend on a query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.OrderItem
+    predicate:
+      in:
+        path: parallax.compatibility.OrderItem.id
+        values:
+          - 11
+          - 12
+          - 21
+    orderBy:
+      - attr: parallax.compatibility.OrderItem.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.OrderItem.order
+          - rel: parallax.compatibility.Order.items
+  sharingScope: root
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc
+      binds: [[11, 12, 21]]
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
+      binds: [[1, 2]]
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
+      binds: [[1, 2]]
+  graph:
+    OrderItem:
+      - id: 11
+        orderId: 1
+        sku: A-100
+        quantity: 2
+        shippedOn: null
+        order:
+          id: 1
+          name: Ada
+          sku: A-100
+          qty: 5
+          price: "10.50"
+          active: true
+          orderedOn: 2024-01-05
+          items:
+            - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+            - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+      - id: 12
+        orderId: 1
+        sku: B-200
+        quantity: 1
+        shippedOn: 2024-02-15
+        order:
+          id: 1
+          name: Ada
+          sku: A-100
+          qty: 5
+          price: "10.50"
+          active: true
+          orderedOn: 2024-01-05
+          items:
+            - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
+            - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
+      - id: 21
+        orderId: 2
+        sku: A-300
+        quantity: 4
+        shippedOn: 2024-02-20
+        order:
+          id: 2
+          name: Linus
+          sku: B-200
+          qty: 10
+          price: "20.00"
+          active: true
+          orderedOn: 2024-02-10
+          items:
+            - { id: 21, orderId: 2, sku: A-300, quantity: 4, shippedOn: 2024-02-20 }
+  databaseCalls: 3

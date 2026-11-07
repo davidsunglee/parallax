@@ -88,9 +88,11 @@ def _read(
     peer_sql: str,
     isolation: IsolationLevel,
     sharing_scope: SharingScope,
+    wire: bool = False,
 ) -> Snapshot[Any]:
     """``query`` read at ``sharing_scope`` from a fresh seed, with ``peer_sql``
-    committed right after the first read of ``after_table``."""
+    committed right after the first read of ``after_table``. ``wire`` reads it
+    through direct Wire."""
     profile_run.reset(
         model_of(_MODEL),
         {
@@ -113,7 +115,8 @@ def _read(
         connect(profile_run.port, _MODEL, lifecycle_provider=interleaving)
     ).using_database_login()
     snapshot = db.read_only(
-        lambda tx: tx.find(query, sharing_scope=sharing_scope), isolation=isolation
+        lambda tx: (tx.wire if wire else tx).find(query, sharing_scope=sharing_scope),
+        isolation=isolation,
     )
     assert interleaving.fired
     assert interleaving.failures == []
@@ -135,6 +138,13 @@ def _child_nodes(snapshot: Snapshot[Any]) -> int:
     return len({id(first), id(second), id(second.hop), id(first.child), id(second.hop.child)})
 
 
+def _child_documents(snapshot: Snapshot[Any]) -> int:
+    first, second = snapshot.results()
+    return len(
+        {id(first), id(second), id(second["hop"]), id(first["child"]), id(second["hop"]["child"])}
+    )
+
+
 @pytest.mark.parametrize("sharing_scope", ["root", "page"])
 def test_a_stored_difference_across_roots_is_preserved_at_read_committed(
     profile_run: Any, sharing_scope: SharingScope
@@ -151,6 +161,25 @@ def test_a_stored_difference_across_roots_is_preserved_at_read_committed(
 
     assert _children_seen(snapshot) == ["old", "new"]
     assert _wire_children_seen(snapshot) == ["old", "new"]
+
+
+@pytest.mark.parametrize("sharing_scope", ["root", "page"])
+def test_direct_wire_preserves_a_stored_difference_across_roots_at_read_committed(
+    profile_run: Any, sharing_scope: SharingScope
+) -> None:
+    snapshot = _read(
+        profile_run,
+        _CHILD_TWICE,
+        _ONE_ROOT_PER_PATH,
+        after_table="isolation_hop",
+        peer_sql=_CHANGE_CHILD,
+        isolation="read_committed",
+        sharing_scope=sharing_scope,
+        wire=True,
+    )
+
+    first, second = snapshot.results()
+    assert [first["child"]["value"], second["hop"]["child"]["value"]] == ["old", "new"]
 
 
 def test_a_repeatable_read_page_shares_past_a_peer_commit(profile_run: Any) -> None:
@@ -173,7 +202,27 @@ def test_a_repeatable_read_page_shares_past_a_peer_commit(profile_run: Any) -> N
     assert _child_nodes(read("root")) == 5
 
 
-def test_a_conflict_within_one_root_raises_as_it_does_at_root_scope(profile_run: Any) -> None:
+def test_a_direct_wire_repeatable_read_page_shares_past_a_peer_commit(profile_run: Any) -> None:
+    def read(sharing_scope: SharingScope) -> Snapshot[Any]:
+        return _read(
+            profile_run,
+            _CHILD_TWICE,
+            _ONE_ROOT_PER_PATH,
+            after_table="isolation_hop",
+            peer_sql=_CHANGE_CHILD,
+            isolation="repeatable_read",
+            sharing_scope=sharing_scope,
+            wire=True,
+        )
+
+    assert _child_documents(read("page")) == 4
+    assert _child_documents(read("root")) == 5
+
+
+@pytest.mark.parametrize("wire", [False, True], ids=["typed", "wire"])
+def test_a_conflict_within_one_root_raises_as_it_does_at_root_scope(
+    profile_run: Any, wire: bool
+) -> None:
     def conflict(sharing_scope: SharingScope) -> SnapshotConsistencyError:
         with raises_contextualized(SnapshotConsistencyError) as raised:
             _read(
@@ -184,6 +233,7 @@ def test_a_conflict_within_one_root_raises_as_it_does_at_root_scope(profile_run:
                 peer_sql=_CHANGE_CHILD,
                 isolation="read_committed",
                 sharing_scope=sharing_scope,
+                wire=wire,
             )
         return raised.value
 
@@ -216,3 +266,23 @@ def test_a_membership_difference_across_roots_is_preserved_at_read_committed(
     wire_first, wire_second = cast("list[Any]", snapshot.wire().results())
     assert [child["id"] for child in wire_first["parent"]["children"]] == [9]
     assert [child["id"] for child in wire_second["hop"]["parent"]["children"]] == [9, 10]
+
+
+@pytest.mark.parametrize("sharing_scope", ["root", "page"])
+def test_direct_wire_preserves_a_membership_difference_across_roots_at_read_committed(
+    profile_run: Any, sharing_scope: SharingScope
+) -> None:
+    snapshot = _read(
+        profile_run,
+        _CHILDREN_TWICE,
+        _ONE_PARENT_ROOT_PER_PATH,
+        after_table="isolation_child",
+        peer_sql=_ADD_CHILD,
+        isolation="read_committed",
+        sharing_scope=sharing_scope,
+        wire=True,
+    )
+
+    first, second = snapshot.results()
+    assert [child["id"] for child in first["parent"]["children"]] == [9]
+    assert [child["id"] for child in second["hop"]["parent"]["children"]] == [9, 10]

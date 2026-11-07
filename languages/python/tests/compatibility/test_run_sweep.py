@@ -205,32 +205,14 @@ def _unordered_key_sets(binds: list[object]) -> list[object]:
     ]
 
 
-@pytest.mark.parametrize(
-    "case",
-    _CASES,
-    ids=[c.path.stem if "coordinate" in c.path.stem else c.case_id for c in _CASES],
-)
-def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
-    model = engine.load_case_metamodel(case)
-    from parallax.conformance import provision
-
-    profile_run.reset(
-        engine.load_case_setup_metamodel(case),
-        provision.load_fixtures(engine.case_setup_model_ref(case)),
-    )
-
-    envelope = adapter.run_case(case.path, profile_run)
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    # The envelope names the profile this lane declares and reports the dialect the
-    # container's own adapter executed in — the same key the goldens below resolve.
-    assert envelope["profile"] == profile.name
-    assert envelope["dialect"] == profile.dialect.name
-
-    doc = case_document(case)
-    then = doc.get("then", {})
+def _grade_read_emissions(
+    case: case_format.Case,
+    profile: Profile,
+    model: Metamodel,
+    emissions: Sequence[dict[str, Any]],
+) -> None:
+    """A read's emissions against its golden statements, in order."""
     golden_statements = _read_golden_statements(case, profile.dialect.name)
-    emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     # Which emissions carry user-authored binds: an eager read's is its one root
     # statement, and a streamed delivery's is every page's, each of which binds
@@ -270,6 +252,33 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
                 emission,
             )
 
+
+@pytest.mark.parametrize(
+    "case",
+    _CASES,
+    ids=[c.path.stem if "coordinate" in c.path.stem else c.case_id for c in _CASES],
+)
+def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
+    model = engine.load_case_metamodel(case)
+    from parallax.conformance import provision
+
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
+    )
+
+    envelope = adapter.run_case(case.path, profile_run)
+    validate_adapter_envelope(envelope)
+    assert envelope["status"] == "ok", envelope
+    # The envelope names the profile this lane declares and reports the dialect the
+    # container's own adapter executed in — the same key the goldens below resolve.
+    assert envelope["profile"] == profile.name
+    assert envelope["dialect"] == profile.dialect.name
+
+    doc = case_document(case)
+    then = doc.get("then", {})
+    _grade_read_emissions(case, profile, model, envelope["emissions"])
+
     observations = envelope["observations"]
     assert observations["databaseCalls"] == then.get("databaseCalls", 1), case.case_id
     _grade_execution_lifecycle(then, observations)
@@ -290,6 +299,67 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
                 expected_entry["pin"]
             ), case.case_id
             compare_graph(observed_entry["graph"], expected_entry["graph"], CollectionKinds(model))
+
+
+def _reads_a_graph_with_includes(case: case_format.Case) -> bool:
+    """Whether ``case`` reads one eager graph with includes and leaves its scope
+    open. A milestone-set read states `then.graphs`, and it and a read with no
+    includes never share, so rerunning them at page scope would show nothing."""
+    document = case_document(case)
+    when = cast("dict[str, Any]", document["when"])
+    return (
+        "graph" in document["then"]
+        and "includes" in when["objectQuery"]
+        and "stream" not in when
+        and "sharingScope" not in when
+    )
+
+
+_PAGE_SCOPE_RERUNS = [case for case in _CASES if _reads_a_graph_with_includes(case)]
+
+
+def _at_page_scope(case: case_format.Case) -> case_format.Case:
+    when = {**cast("dict[str, Any]", case_document(case)["when"]), "sharingScope": "page"}
+    return replace(case, document={**case.document, "when": when})
+
+
+@pytest.mark.parametrize("case", _PAGE_SCOPE_RERUNS, ids=[c.case_id for c in _PAGE_SCOPE_RERUNS])
+def test_a_graph_read_states_the_same_at_page_scope(
+    case: case_format.Case, profile: Profile, profile_run: Any
+) -> None:
+    from parallax.conformance import provision
+
+    model = engine.load_case_metamodel(case)
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
+    )
+
+    emissions, graph, database_calls, stored_data_issues = engine.run_graph_case(
+        _at_page_scope(case), profile_run.port
+    )
+
+    then = cast("dict[str, Any]", case_document(case)["then"])
+    _grade_read_emissions(case, profile, model, [emission.to_json() for emission in emissions])
+    assert database_calls == then.get("databaseCalls", 1), case.case_id
+    compare_graph(graph, then["graph"], CollectionKinds(model))
+    compare_stored_data_issues(stored_data_issues, then.get("storedDataIssues"))
+
+
+def test_a_case_declaring_a_scope_reads_at_that_scope(profile_run: Any) -> None:
+    from parallax.conformance import provision
+
+    def orders_rendered(case_id: str) -> int:
+        case = next(c for c in _CASES if c.case_id == case_id)
+        profile_run.reset(
+            engine.load_case_setup_metamodel(case),
+            provision.load_fixtures(engine.case_setup_model_ref(case)),
+        )
+        _, graph, _, _ = engine.run_graph_case(case, profile_run.port)
+        return len({id(cast("dict[str, Any]", root)["order"]) for root in graph["OrderItem"]})
+
+    assert orders_rendered("m-snapshot-read-052") == 3
+    assert orders_rendered("m-snapshot-read-053") == 2
 
 
 # The scenario cases that ALSO declare `compileEligibility: run-only` and ALSO use
