@@ -1408,6 +1408,192 @@ def test_a_step_row_refuses_a_value_object_spelled_by_its_occurrence(
         ScenarioRowObservations(case).assert_step(0, ScriptedReads(results=_STORED_NOTE_READS))
 
 
+_OWNER_PROFILE = {"label": "owner-profile"}
+_OWNER_ROW = {"id": 1, "target_id": 10, "details": _OWNER_PROFILE}
+_REPLACED_PROFILE = {"label": "replaced"}
+
+
+def _owner_read(case: Case, model: Model, *later_steps: dict[str, Any]) -> Case:
+    """A Scenario read of a `ProfileOwner`, then *later_steps*."""
+    read = replace(case, model=model)
+    read.raw["when"]["scenario"] = [
+        {
+            "objectQuery": {
+                "target": "compatibility.overlap.ProfileOwner",
+                "predicate": {"true": {}},
+            },
+            "databaseCalls": 1,
+            "statements": [
+                {
+                    "sql": {
+                        "postgres": "select t0.id, t0.target_id, not t0.details is null, "
+                        "t0.details from profile_owner t0"
+                    }
+                }
+            ],
+        },
+        *later_steps,
+    ]
+    return read
+
+
+def _observe_every_step(case: Case, reads: ScriptedReads) -> None:
+    observations = ScenarioRowObservations(case)
+    for index in range(len(case.scenario)):
+        observations.assert_step(index, reads)
+
+
+def test_an_access_states_the_rows_of_its_source(damaged_case: CaseLoader) -> None:
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "access", "on": 0, "path": "details", "expectRows": [_OWNER_ROW]},
+    )
+    root = case.raw["when"]["scenario"][0]
+    root["objectQuery"]["includes"] = [
+        {"segments": [{"rel": "compatibility.overlap.ProfileOwner.details"}]}
+    ]
+    root["databaseCalls"] = 2
+    root["statements"].append(
+        {
+            "sql": {
+                "postgres": "select t0.id from profile_target t0 "
+                "where t0.id = any(cast(? as bigint[]))"
+            },
+            "binds": [[10]],
+        }
+    )
+
+    _observe_every_step(case, ScriptedReads(results=[_OWNER_ROWS, [{"id": 10}]]))
+
+
+@pytest.mark.parametrize(
+    ("assigned", "copy"),
+    [
+        pytest.param(
+            {"profile": _REPLACED_PROFILE},
+            {"id": 1, "targetId": 10, "profile": _REPLACED_PROFILE},
+            id="occurrence",
+        ),
+        pytest.param(
+            {"targetId": 11}, {"id": 1, "targetId": 11, "profile": _OWNER_PROFILE}, id="attribute"
+        ),
+    ],
+)
+def test_a_mutate_states_the_wire_value_of_its_copy(
+    assigned: dict[str, Any], copy: dict[str, Any], damaged_case: CaseLoader
+) -> None:
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": assigned, "expectRows": [copy]},
+    )
+
+    _observe_every_step(case, ScriptedReads(results=[_OWNER_ROWS]))
+
+
+def test_a_mutate_refuses_a_copy_spelled_by_its_columns(damaged_case: CaseLoader) -> None:
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": {}, "expectRows": [_OWNER_ROW]},
+    )
+
+    with pytest.raises(CaseFailure, match="rows != expectRows"):
+        _observe_every_step(case, ScriptedReads(results=[_OWNER_ROWS]))
+
+
+def test_a_mutate_chain_states_the_copy_it_reached(damaged_case: CaseLoader) -> None:
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": {"targetId": 11}},
+        {
+            "action": "mutate",
+            "on": 1,
+            "set": {"profile": _REPLACED_PROFILE},
+            "expectRows": [{"id": 1, "targetId": 11, "profile": _REPLACED_PROFILE}],
+        },
+    )
+
+    _observe_every_step(case, ScriptedReads(results=[_OWNER_ROWS]))
+
+
+def test_an_access_of_a_mutate_states_the_copy(damaged_case: CaseLoader) -> None:
+    copy = {"id": 1, "targetId": 11, "profile": _OWNER_PROFILE}
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        damaged_case(_PROFILE_HOP).model,
+        {"action": "mutate", "on": 0, "set": {"targetId": 11}},
+        {"action": "access", "on": 1, "path": "details", "expectRows": [copy]},
+    )
+
+    _observe_every_step(case, ScriptedReads(results=[_OWNER_ROWS]))
+
+
+def test_a_mutate_of_a_family_row_states_its_occurrence(damaged_case: CaseLoader) -> None:
+    note = _concrete_note_read(damaged_case(_VARIANT_OVERLAP))
+    case = replace(damaged_case(_SCENARIO_WITH_INCLUDES), model=note.model)
+    case.raw["when"]["scenario"] = [
+        {
+            "objectQuery": note.object_query,
+            "databaseCalls": 1,
+            "statements": note.then["statements"],
+        },
+        {
+            "action": "mutate",
+            "on": 0,
+            "set": {"profile": _REPLACED_PROFILE},
+            "expectRows": [_NOTE_NODE | {"profile": _REPLACED_PROFILE}],
+        },
+    ]
+
+    _observe_every_step(
+        case, ScriptedReads(results=[[{"id": 2, "variantProfile": _STORED_PROFILE}]])
+    )
+
+
+def test_a_mutate_of_an_abstract_row_copies_its_own_variant(damaged_case: CaseLoader) -> None:
+    payments = damaged_case(_ABSTRACT_ROOT_GRAPH)
+    case = replace(damaged_case(_SCENARIO_WITH_INCLUDES), model=payments.model)
+    case.raw["when"]["scenario"] = [
+        {
+            "objectQuery": payments.object_query,
+            "databaseCalls": 1,
+            "statements": payments.then["statements"],
+        },
+        {
+            "action": "mutate",
+            "on": 0,
+            "set": {"tendered": "30.00"},
+            "expectRows": [
+                {"id": 3, "amount": "20.00", "tendered": "30.00", "familyVariant": "CashPayment"}
+            ],
+        },
+    ]
+
+    _observe_every_step(case, ScriptedReads(results=[[_PAYMENTS[2]]]))
+
+
+def test_a_copy_keeps_the_identity_of_its_source(damaged_case: CaseLoader) -> None:
+    def rename_the_owner_key(document: dict[str, Any]) -> None:
+        _entity(document, "ProfileOwner")["attributes"][0]["column"] = "owner_id"
+
+    model = _with_descriptor_change(damaged_case(_PROFILE_HOP), rename_the_owner_key).model
+    case = _owner_read(
+        damaged_case(_SCENARIO_WITH_INCLUDES),
+        model,
+        {"action": "mutate", "on": 0, "set": {"targetId": 11}},
+        {"action": "access", "on": 1, "path": "details", "sameObjectAs": 0},
+    )
+    case.raw["when"]["scenario"][0]["statements"][0]["sql"]["postgres"] = (
+        "select t0.owner_id, t0.target_id, not t0.details is null, t0.details from profile_owner t0"
+    )
+    stored = {"owner_id": 1, "target_id": 10, "details": json.dumps(_OWNER_PROFILE)}
+
+    _observe_every_step(case, ScriptedReads(results=[[stored]]))
+
+
 def test_a_graph_assembled_from_roots_that_skipped_the_seam_is_refused(
     corpus_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
 ) -> None:

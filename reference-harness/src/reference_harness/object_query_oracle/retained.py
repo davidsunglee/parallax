@@ -20,10 +20,11 @@ materialized it or a ``mutate`` derived it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..case import Case, Entity
+from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure
 from . import graph, includes, materialize
 
@@ -47,21 +48,30 @@ class Observation:
     """Everything one asserted step published, keyed later by that step's index.
 
     ``entity`` is what the rows decode against — a read step's own query target,
-    an `access`'s navigated terminal, or a `mutate` source's Entity — and is
-    ``None`` only where a step observed no rows. ``includes`` is ``None``
-    where the step's query declared no Include
-    Paths, so there is no materialized view for a later access to navigate.
+    which an `access` and a `mutate` keep from their source — and is ``None`` only
+    where a step observed no rows. ``includes`` is ``None`` where the step's query
+    declared no Include Paths, so there is no materialized view for a later access
+    to navigate.
 
     ``rows`` are what the step PUBLISHED, so they come from the materialization
     seam and nowhere else. That is checked at construction rather than trusted:
     an observation outlives its reader and is read back by later steps, so a raw
     physical row admitted here would surface as a wrong ``expectRows``, a wrong
     identity, or a wrong graph several steps away from the path that let it in.
+    They keep their result columns, and a `mutate` keeps its source's, because no
+    `set` assigns a primary key, so a copy denotes the object its source did.
+
+    ``nodes`` are the same positions as Wire values, keyed by declared member, which
+    a `mutate` derives its copy from; ``None`` marks a position that published no
+    value. ``derived`` is whether those nodes are a `mutate`'s copy, which an
+    `access` of it keeps, since a step's result then is that Wire value.
     """
 
     rows: list[materialize.PublishedRow]
+    nodes: list[dict[str, Any] | None]
     entity: Entity | None
     includes: StepIncludes | None
+    derived: bool = False
 
     def __post_init__(self) -> None:
         if not all(isinstance(row, materialize.PublishedRow) for row in self.rows):
@@ -71,6 +81,14 @@ class Observation:
                 "materialize_hop_level / edited), so they may still carry storage the "
                 "step never asked for."
             )
+
+    def stated_rows(self, model: Model) -> Sequence[Mapping[str, Any]]:
+        """What a step's ``expectRows`` states of this observation (`m-case-format`)."""
+        if self.derived:
+            return [node for node in self.nodes if node is not None]
+        if self.entity is None:
+            return self.rows
+        return [materialize.at_value_object_columns(model, self.entity, row) for row in self.rows]
 
 
 def relationship_path_fans_out(case: Case, start: Entity, path: str) -> bool:

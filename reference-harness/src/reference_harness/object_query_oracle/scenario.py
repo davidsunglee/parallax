@@ -37,7 +37,7 @@ class ScenarioRowObservations:
                     "golden statements; independent reads cannot reuse earlier rows"
                 )
 
-            self._assert_row_observables(step_index, step, observation.rows)
+            self._assert_row_observables(step_index, step, observation)
             self._assert_graph_observable(step_index, step, observation)
             # Publication is the LAST thing a step does, so a step that failed an
             # observable published nothing: a later step naming it is refused for
@@ -81,15 +81,11 @@ class ScenarioRowObservations:
                 delivered,
                 entity,
             )
-        rows = (
-            delivered
-            if entity is None
-            else [
-                materialize.materialize_variant_owner_node(self._case, entity, row)
-                for row in delivered
-            ]
-        )
-        return retained.Observation(rows=rows, entity=entity, includes=None)
+        if entity is None:
+            return retained.Observation(
+                rows=delivered, nodes=[*delivered], entity=None, includes=None
+            )
+        return self._read_observation(entity, delivered, None)
 
     def _query(
         self,
@@ -119,11 +115,27 @@ class ScenarioRowObservations:
         if reference is not None:
             self._assert_reference_rows(step_index, reference, rows, entity)
         published = materialize.materialize_read(step_read, rows)
-        rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
+        return self._read_observation(
+            entity,
+            published,
+            self._run_step_includes(step_index, step, published, pairs, reader),
+        )
+
+    def _read_observation(
+        self,
+        entity: Entity,
+        published: list[materialize.PublishedRow],
+        step_includes: retained.StepIncludes | None,
+    ) -> retained.Observation:
+        """What a read retains of the rows it published at *entity*'s position."""
+        case = self._case
         return retained.Observation(
-            rows=rows,
+            rows=[
+                materialize.materialize_variant_owner_node(case, entity, row) for row in published
+            ],
+            nodes=[graph.graph_node(case, entity, row) for row in published],
             entity=entity,
-            includes=self._run_step_includes(step_index, step, published, pairs, reader),
+            includes=step_includes,
         )
 
     def _act(
@@ -138,11 +150,7 @@ class ScenarioRowObservations:
             )
         if step.get("action") == "mutate":
             return self._mutate(step_index, step)
-        return retained.Observation(
-            rows=self._reused_rows(step_index, step),
-            entity=self._read_entity(step_index),
-            includes=None,
-        )
+        return replace(self._accessed_source(step_index, step), includes=None)
 
     def _mutate(self, step_index: int, step: Mapping[str, Any]) -> retained.Observation:
         """Publish the one Wire row a ``mutate`` derives from its source."""
@@ -163,13 +171,22 @@ class ScenarioRowObservations:
             raise CaseFailure(
                 f"{self._case.path.name}: scenario[{step_index}] mutate set is not a mapping"
             )
-        row = materialize.edited(observed.rows[0], assignments)
-        return retained.Observation(rows=[row], entity=observed.entity, includes=observed.includes)
+        node = observed.nodes[0]
+        if node is None:
+            raise CaseFailure(
+                f"{self._case.path.name}: scenario[{step_index}] mutate names a position "
+                f"that published no value to edit"
+            )
+        return retained.Observation(
+            rows=observed.rows,
+            nodes=[materialize.edited(node, assignments)],
+            entity=observed.entity,
+            includes=observed.includes,
+            derived=True,
+        )
 
-    def _reused_rows(
-        self, step_index: int, step: Mapping[str, Any]
-    ) -> list[materialize.PublishedRow]:
-        """The source rows whose already-materialized relationship access navigates."""
+    def _accessed_source(self, step_index: int, step: Mapping[str, Any]) -> retained.Observation:
+        """The observation whose already-materialized relationship an access navigates."""
         source = step.get("on")
         if not isinstance(source, int):
             raise CaseFailure(
@@ -177,7 +194,7 @@ class ScenarioRowObservations:
                 f"own and names no earlier source step — a zero-Database-Call "
                 f"snapshot access answers with the rows an earlier step published."
             )
-        return self._observation(step_index, source).rows
+        return self._observation(step_index, source)
 
     # --- what an observation retains -----------------------------------------
 
@@ -289,34 +306,30 @@ class ScenarioRowObservations:
             )
 
     def _assert_row_observables(
-        self, step_index: int, step: Mapping[str, Any], rows: list[materialize.PublishedRow]
+        self, step_index: int, step: Mapping[str, Any], observation: retained.Observation
     ) -> None:
         """Assert the expected rows and preserved identity of a snapshot observation."""
         case = self._case
         expect = step.get("expectRows")
-        entity = self._read_entity(step_index)
+        entity = observation.entity
+        stated = observation.stated_rows(case.model)
         if expect is not None and not (
-            rows_equal(rows, expect, case.tolerance, ordered="stream" in step)
+            rows_equal(stated, expect, case.tolerance, ordered="stream" in step)
             if entity is None
             else row.rows_equal(
-                [materialize.at_value_object_columns(case.model, entity, found) for found in rows],
-                expect,
-                case.model,
-                entity,
-                case.tolerance,
-                ordered="stream" in step,
+                stated, expect, case.model, entity, case.tolerance, ordered="stream" in step
             )
         ):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}] rows != expectRows.\n"
-                f"  rows:     {rows!r}\n"
+                f"  rows:     {stated!r}\n"
                 f"  expected: {expect!r}"
             )
         if "sameObjectAs" not in step:
             return
         source = step["sameObjectAs"]
         identity_column = step.get("identityAttr", case.model.root_entity.identity_column)
-        these = self._identity_keys(step_index, step_index, rows, identity_column)
+        these = self._identity_keys(step_index, step_index, observation.rows, identity_column)
         those = self._identity_keys(
             step_index, source, self._observation(step_index, source).rows, identity_column
         )
