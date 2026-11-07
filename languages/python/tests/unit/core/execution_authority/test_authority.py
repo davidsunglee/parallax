@@ -70,7 +70,7 @@ def test_capture_reads_properties_once_in_order_and_retains_only_values() -> Non
     assert retained() is None
 
 
-@pytest.mark.parametrize("subject", [None, "", "db-login:runner"])
+@pytest.mark.parametrize("subject", [None, "", 7, "db-login:runner"])
 def test_invalid_subjects_are_translated_with_the_actor_error_as_cause(subject: object) -> None:
     principal = _Principal(subject, _Authorization("role-a"), [])
 
