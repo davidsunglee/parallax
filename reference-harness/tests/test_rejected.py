@@ -22,6 +22,7 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -299,6 +300,47 @@ def test_tph_concrete_subtype_missing_tag_value_is_rejected() -> None:
 
 
 _LABELLED = [{"name": "label", "type": "string"}]
+_CONCRETE_DOG = {
+    "name": "Dog",
+    "inheritance": {"role": "concrete-subtype", "parent": "Animal", "tagValue": "dog"},
+}
+
+
+def _standalone_ticket(members: dict[str, Any]) -> dict[str, Any]:
+    return {"entity": {"name": "Ticket", "table": "ticket", **members}}
+
+
+def _concrete_dog(members: dict[str, Any]) -> dict[str, Any]:
+    return {"entities": [_tph_root(), {**_CONCRETE_DOG, **members}]}
+
+
+def _dormant_draft(members: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": "Draft",
+        "inheritance": {"role": "abstract-subtype", "parent": "Animal"},
+        **members,
+    }
+
+
+def _dormant_tph_position(members: dict[str, Any]) -> dict[str, Any]:
+    return {"entities": [_tph_root(), _CONCRETE_DOG, _dormant_draft(members)]}
+
+
+def _dormant_tpcs_position(members: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "entities": [
+            {
+                "name": "Animal",
+                "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            },
+            {
+                "name": "Dog",
+                "table": "dog",
+                "inheritance": {"role": "concrete-subtype", "parent": "Animal"},
+            },
+            _dormant_draft(members),
+        ]
+    }
 
 
 @pytest.mark.parametrize(
@@ -324,28 +366,19 @@ _LABELLED = [{"name": "label", "type": "string"}]
         pytest.param({"relationships": [{"name": "familyVariant"}]}, id="relationship"),
     ],
 )
-@pytest.mark.parametrize("standalone", [True, False], ids=["standalone", "participant"])
+@pytest.mark.parametrize(
+    "descriptor_of",
+    [
+        pytest.param(_standalone_ticket, id="standalone"),
+        pytest.param(_concrete_dog, id="participant"),
+        pytest.param(_dormant_tph_position, id="dormant-tph"),
+        pytest.param(_dormant_tpcs_position, id="dormant-tpcs"),
+    ],
+)
 def test_no_entity_may_declare_the_variant_spelling(
-    members: dict[str, Any], standalone: bool
+    members: dict[str, Any], descriptor_of: Callable[[dict[str, Any]], dict[str, Any]]
 ) -> None:
-    descriptor: dict[str, Any] = (
-        {"entity": {"name": "Ticket", "table": "ticket", **members}}
-        if standalone
-        else {
-            "entities": [
-                _tph_root(),
-                {
-                    "name": "Dog",
-                    "inheritance": {
-                        "role": "concrete-subtype",
-                        "parent": "Animal",
-                        "tagValue": "dog",
-                    },
-                    **members,
-                },
-            ]
-        }
-    )
+    descriptor = descriptor_of(members)
 
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)

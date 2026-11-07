@@ -1,0 +1,22 @@
+model: models/dormant-position-layout-twin-columns.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, familyVariant, dormant, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Gadget
+        namespace: parallax.compatibility
+        table: dormant_gadget
+        inheritance: { role: root, strategy: table-per-hierarchy, tag: { column: kind } }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Widget
+        namespace: parallax.compatibility
+        inheritance: { role: concrete-subtype, parent: parallax.compatibility.Gadget, tagValue: widget }
+      - name: Prototype
+        namespace: parallax.compatibility
+        inheritance: { role: abstract-subtype, parent: parallax.compatibility.Gadget }
+        attributes:
+          - { name: familyVariant, type: string, maxLength: 16, nullable: true, column: prototype_kind }
+then:
+  rejectedRule: inheritance-materialization-key-collision

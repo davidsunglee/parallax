@@ -3,7 +3,7 @@ predicate-write assignment checking."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, cast
@@ -516,6 +516,9 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     ),
     "m-inheritance-122-rejected-layout-declared-on-descendant": LAYOUT_NOT_ROOT_OWNED,
     "m-inheritance-165-rejected-standalone-family-variant-materialization-key-collision": (
+        MATERIALIZATION_KEY_COLLISION
+    ),
+    "m-inheritance-166-rejected-dormant-family-variant-materialization-key-collision": (
         MATERIALIZATION_KEY_COLLISION
     ),
 }
@@ -1093,61 +1096,112 @@ def test_family_variant_is_reserved_from_a_value_object_storage_column() -> None
 _RESERVED_TARGET = identity("ReservedTarget")
 
 
-@pytest.mark.parametrize(
-    ("attributes", "value_objects", "relationships"),
-    [
-        pytest.param((attribute(_ROOT, "familyVariant", type=STRING),), (), (), id="attribute"),
-        pytest.param(
-            (attribute(_ROOT, "marker", type=STRING, column="familyVariant"),),
-            (),
-            (),
-            id="attribute-column",
-        ),
-        pytest.param(
-            (),
-            (
-                ValueObjectOccurrenceDeclaration(
-                    name="familyVariant", storage=Column("profile"), shape=_shape("label")
-                ),
-            ),
-            (),
-            id="value-object",
-        ),
-        pytest.param(
-            (),
-            (
-                ValueObjectOccurrenceDeclaration(
-                    name="profile", storage=Column("familyVariant"), shape=_shape("label")
-                ),
-            ),
-            (),
-            id="value-object-column",
-        ),
-        pytest.param(
-            (attribute(_ROOT, "targetId"),),
-            (),
-            (_relationship(_ROOT, _RESERVED_TARGET, "familyVariant"),),
-            id="relationship",
-        ),
-    ],
+_DORMANT = identity("Draft")
+
+
+def _spelled_like_the_variant(owner: EntityIdentity, contributor: str) -> dict[str, Any]:
+    """*owner*'s members declaring *contributor* under the reserved spelling."""
+    match contributor:
+        case "attribute":
+            return {"attributes": (attribute(owner, "familyVariant", type=STRING),)}
+        case "attribute-column":
+            return {
+                "attributes": (attribute(owner, "marker", type=STRING, column="familyVariant"),)
+            }
+        case "value-object":
+            occurrence = ValueObjectOccurrenceDeclaration(
+                name="familyVariant", storage=Column("profile"), shape=_shape("label")
+            )
+            return {"value_objects": (occurrence,)}
+        case "value-object-column":
+            occurrence = ValueObjectOccurrenceDeclaration(
+                name="profile", storage=Column("familyVariant"), shape=_shape("label")
+            )
+            return {"value_objects": (occurrence,)}
+        case _:
+            return {
+                "attributes": (attribute(owner, "targetId"),),
+                "relationships": (_relationship(owner, _RESERVED_TARGET, "familyVariant"),),
+            }
+
+
+_RESERVED_CONTRIBUTORS = (
+    "attribute",
+    "attribute-column",
+    "value-object",
+    "value-object-column",
+    "relationship",
 )
-def test_a_standalone_entity_may_not_declare_the_family_variant_spelling(
-    attributes: tuple[AttributeMetadata, ...],
-    value_objects: tuple[ValueObjectOccurrenceDeclaration, ...],
-    relationships: tuple[UnresolvedDefiningRelationshipDeclaration, ...],
-) -> None:
+
+
+@pytest.mark.parametrize("contributor", _RESERVED_CONTRIBUTORS)
+def test_a_standalone_entity_may_not_declare_the_family_variant_spelling(contributor: str) -> None:
+    members = _spelled_like_the_variant(_ROOT, contributor)
     issues = _rule_issues(
         Declaration(
             identity=_ROOT,
             container=Table("ledger"),
-            attributes=(key(_ROOT), *attributes),
-            value_objects=value_objects,
-            relationships=relationships,
+            attributes=(key(_ROOT), *members.get("attributes", ())),
+            value_objects=members.get("value_objects", ()),
+            relationships=members.get("relationships", ()),
         ),
         Declaration(identity=_RESERVED_TARGET, attributes=(key(_RESERVED_TARGET),)),
     )
     assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+def _table_per_concrete_subtype_family() -> tuple[Declaration, ...]:
+    return (
+        Declaration(
+            identity=_ROOT,
+            attributes=(key(_ROOT),),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        _concrete(_LEAF, tag_value=None, container=Table("entry")),
+    )
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        pytest.param(lambda: (_hierarchy(), _concrete(_LEAF)), id="table-per-hierarchy"),
+        pytest.param(_table_per_concrete_subtype_family, id="table-per-concrete-subtype"),
+    ],
+)
+@pytest.mark.parametrize("contributor", _RESERVED_CONTRIBUTORS)
+def test_a_dormant_position_may_not_declare_the_family_variant_spelling(
+    contributor: str, family: Callable[[], tuple[Declaration, ...]]
+) -> None:
+    issues = _rule_issues(
+        *family(),
+        Declaration(
+            identity=_DORMANT,
+            inheritance=AbstractSubtype(ExactEntityReference(_ROOT)),
+            **_spelled_like_the_variant(_DORMANT, contributor),
+        ),
+        Declaration(identity=_RESERVED_TARGET, attributes=(key(_RESERVED_TARGET),)),
+    )
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].related == (EntityLocation(_DORMANT),)
+
+
+def test_a_dormant_position_keeps_every_other_materialized_key() -> None:
+    issues = _rule_issues(
+        _hierarchy(),
+        _concrete(_LEAF),
+        Declaration(
+            identity=_DORMANT,
+            inheritance=AbstractSubtype(ExactEntityReference(_ROOT)),
+            attributes=(
+                attribute(_DORMANT, "targetId"),
+                attribute(_DORMANT, "marker", type=STRING, column="details"),
+            ),
+            relationships=(_relationship(_DORMANT, _RESERVED_TARGET),),
+        ),
+        Declaration(identity=_RESERVED_TARGET, attributes=(key(_RESERVED_TARGET),)),
+    )
+    assert issues == ()
 
 
 def test_a_participant_attribute_may_not_take_the_family_variant_name() -> None:
