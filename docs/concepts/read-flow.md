@@ -116,6 +116,13 @@ checks those rows agree with each other, classifies the root, and builds its val
 - The graph is [closed](../../core/spec/m-snapshot-read.md#closed-world): following a
   relationship the read did not include finds it absent, and never runs a query.
 
+A read can instead ask for page scope. Then a Page whose roots reach the same rows and
+agree about them publishes one [Shared Graph](../../core/spec/m-snapshot-read.md#node-sharing)
+for its valid roots, with one object per logical row. A Page with nothing to share, or
+whose rows disagree, publishes root by root as above. Sharing never crosses a Page, so
+each streamed Page is its own boundary, and a stream finishes a Page before delivering
+its first root.
+
 ## Eager and streamed delivery
 
 Both deliveries run the same flow up to the Page. They differ in how many Pages they

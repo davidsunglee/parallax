@@ -465,7 +465,7 @@ def test_a_batch_size_that_is_not_a_positive_int_is_refused_at_the_call(size: ob
     assert _reads(port) == []
 
 
-def _delivered_ids(db: ScopedDatabase, namespace: str, **size: int) -> list[int]:
+def _delivered_ids(db: ScopedDatabase, namespace: str, **size: Any) -> list[int]:
     if namespace == "typed":
         with db.stream(_all_orders(), **size) as roots:
             return [root.id for root in roots]

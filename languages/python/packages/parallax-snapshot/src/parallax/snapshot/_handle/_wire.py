@@ -14,7 +14,6 @@ from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
     wire_publication_builder,
-    wire_publication_for,
 )
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
@@ -104,7 +103,11 @@ class WireDatabaseView:
         )
 
     def stream(
-        self, query: WireQuery, *, batch_size: int = DEFAULT_BATCH_SIZE
+        self,
+        query: WireQuery,
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        sharing_scope: SharingScope = "root",
     ) -> SnapshotStream[WireEntity]:
         """Deliver ``query``'s roots one at a time, in the Continuation Order,
         as the scope-bound single-pass peer of :meth:`find`.
@@ -116,15 +119,16 @@ class WireDatabaseView:
         format argument anywhere. WHICH roots arrive is the separate claim: over
         storage the model describes they are ``find``'s roots exactly, and
         ``batch_size`` counts root positions and is a performance dial alone
-        there, exactly as in the Typed namespace. :class:`SnapshotStream` states
-        the one stored value outside that, for both namespaces.
+        there, exactly as in the Typed namespace, except that a page-scope read
+        shares within each page. :class:`SnapshotStream` states the one stored
+        value outside that, for both namespaces.
         """
         return SnapshotStream(
             self._reads,
             query,
             batch_size,
             convert_query=wire_read_query,
-            build_publication=wire_publication_for,
+            build_publication=wire_publication_builder(sharing_scope),
         )
 
     def __repr__(self) -> str:

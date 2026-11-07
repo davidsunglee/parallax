@@ -26,7 +26,6 @@ from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
     typed_publication_builder,
-    typed_publication_for,
 )
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._transaction import (
@@ -114,14 +113,18 @@ class ScopedDatabase:
         )
 
     def stream[S](
-        self, query: ObjectQuery[Any, S], *, batch_size: int = DEFAULT_BATCH_SIZE
+        self,
+        query: ObjectQuery[Any, S],
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        sharing_scope: SharingScope = "root",
     ) -> SnapshotStream[S]:
         return SnapshotStream(
             self._execution,
             query,
             batch_size,
             convert_query=typed_read_query,
-            build_publication=typed_publication_for,
+            build_publication=typed_publication_builder(sharing_scope),
         )
 
     @property

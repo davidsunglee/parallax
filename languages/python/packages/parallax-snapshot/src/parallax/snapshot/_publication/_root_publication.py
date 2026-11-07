@@ -162,7 +162,9 @@ def publish_shared_roots[T](
             read_evidence=read_evidence,
         )
         return
-    yield from _deliver_in_result_order(page, shared, publish_root, ordinal_offset)
+    yield from _deliver_in_result_order(
+        page, shared, publish_root, atomic=atomic, ordinal_offset=ordinal_offset
+    )
 
 
 def _attempt_shared_graph[T](
@@ -194,24 +196,38 @@ def _deliver_in_result_order[T](
     page: Page,
     shared: SharedGraph[T],
     publish_root: Callable[[GraphView, int], tuple[T, ...]],
+    *,
+    atomic: bool,
     ordinal_offset: int,
 ) -> Iterator[T]:
-    """Publish each invalid root through ``shared``'s view, whose Shared Graph is
-    published and done with, then release ``page`` and hand over every root in
-    result order."""
+    """Hand over every root of ``page`` in result order, each invalid one
+    published alone through ``shared``'s view, whose Shared Graph is published
+    and done with.
+
+    An ``atomic`` publication publishes them all and releases ``page`` before its
+    first root. A stream publishes each as it reaches it, so it holds one
+    diagnostic graph at a time and builds none past a refusal, and it needs the
+    Page until the last of them, so it drops the Page whole.
+    """
     rows = page_rows(page)
     observer = page_cadence(page)
     view = shared.view
-    published_alone: dict[int, tuple[T, ...]] = {}
-    for position in sorted(shared.invalid):
+    invalid = shared.invalid
+
+    def published_alone(position: int) -> tuple[T, ...]:
         view.resolve_root(position, rows.pin)
-        published_alone[position] = publish_root(view, ordinal_offset + position)
+        return publish_root(view, ordinal_offset + position)
+
+    prepared: dict[int, tuple[T, ...]] = {}
     positions = range(len(rows.roots))
-    release_page_rows(page)
+    if atomic:
+        for position in sorted(invalid):
+            prepared[position] = published_alone(position)
+        release_page_rows(page)
     shared_roots = iter(shared.roots)
     for position in positions:
-        if position in published_alone:
-            yield from published_alone[position]
+        if position in invalid:
+            yield from prepared[position] if atomic else published_alone(position)
         else:
             yield next(shared_roots)
         observer.root_published(ordinal_offset + position)

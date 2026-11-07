@@ -417,7 +417,7 @@ def _wire_delivery(
     lifecycle: LifecycleRun | None,
 ) -> tuple[list[object], LifecycleObservation]:
     """One streamed Wire delivery of ``query`` on the surface :func:`_case_read`
-    selects, drained, and what it ran.
+    selects, at the Sharing Scope the case declares, drained, and what it ran.
 
     The roots are accumulated for reporting, which is the harness's memory rather
     than a claim about production's: what the caller grades is the roots the
@@ -429,7 +429,11 @@ def _wire_delivery(
         db = root.using_database_login()
 
         def drained(reader: _Reader) -> list[object]:
-            with reader.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
+            with reader.wire.stream(
+                query,
+                batch_size=_stream_batch_size(case),
+                sharing_scope=case_document.sharing_scope(case),
+            ) as delivery:
                 return list(delivery.checked())
 
         try:

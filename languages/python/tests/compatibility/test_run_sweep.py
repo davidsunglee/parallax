@@ -302,15 +302,14 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 
 
 def _reads_a_graph_with_includes(case: case_format.Case) -> bool:
-    """Whether ``case`` reads one eager graph with includes and leaves its scope
-    open. A milestone-set read states `then.graphs`, and it and a read with no
-    includes never share, so rerunning them at page scope would show nothing."""
+    """Whether ``case`` reads one graph with includes, eager or streamed, and leaves
+    its scope open. A milestone-set read states `then.graphs`, and it and a read with
+    no includes never share, so rerunning them at page scope would show nothing."""
     document = case_document(case)
     when = cast("dict[str, Any]", document["when"])
     return (
         "graph" in document["then"]
         and "includes" in when["objectQuery"]
-        and "stream" not in when
         and "sharingScope" not in when
     )
 
@@ -335,7 +334,10 @@ def test_a_graph_read_states_the_same_at_page_scope(
         provision.load_fixtures(engine.case_setup_model_ref(case)),
     )
 
-    emissions, graph, database_calls, stored_data_issues = engine.run_graph_case(
+    run_case = (
+        engine.run_stream_case if "stream" in case_document(case)["when"] else engine.run_graph_case
+    )
+    emissions, graph, database_calls, stored_data_issues = run_case(
         _at_page_scope(case), profile_run.port
     )
 
@@ -346,20 +348,26 @@ def test_a_graph_read_states_the_same_at_page_scope(
     compare_stored_data_issues(stored_data_issues, then.get("storedDataIssues"))
 
 
-def test_a_case_declaring_a_scope_reads_at_that_scope(profile_run: Any) -> None:
+def _orders_rendered(profile_run: Any, run_case: Any, case_id: str) -> int:
     from parallax.conformance import provision
 
-    def orders_rendered(case_id: str) -> int:
-        case = next(c for c in _CASES if c.case_id == case_id)
-        profile_run.reset(
-            engine.load_case_setup_metamodel(case),
-            provision.load_fixtures(engine.case_setup_model_ref(case)),
-        )
-        _, graph, _, _ = engine.run_graph_case(case, profile_run.port)
-        return len({id(cast("dict[str, Any]", root)["order"]) for root in graph["OrderItem"]})
+    case = next(c for c in _CASES if c.case_id == case_id)
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case),
+        provision.load_fixtures(engine.case_setup_model_ref(case)),
+    )
+    _, graph, _, _ = run_case(case, profile_run.port)
+    return len({id(cast("dict[str, Any]", root)["order"]) for root in graph["OrderItem"]})
 
-    assert orders_rendered("m-snapshot-read-052") == 3
-    assert orders_rendered("m-snapshot-read-053") == 2
+
+def test_a_case_declaring_a_scope_reads_at_that_scope(profile_run: Any) -> None:
+    assert _orders_rendered(profile_run, engine.run_graph_case, "m-snapshot-read-052") == 3
+    assert _orders_rendered(profile_run, engine.run_graph_case, "m-snapshot-read-053") == 2
+
+
+def test_a_streamed_case_declaring_a_scope_reads_at_that_scope(profile_run: Any) -> None:
+    assert _orders_rendered(profile_run, engine.run_stream_case, "m-snapshot-read-062") == 4
+    assert _orders_rendered(profile_run, engine.run_stream_case, "m-snapshot-read-063") == 3
 
 
 # The scenario cases that ALSO declare `compileEligibility: run-only` and ALSO use

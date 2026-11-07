@@ -224,7 +224,7 @@ def _name(layout: _Layout) -> str:
 
 
 def _streamed(
-    tx: TxnContext, layout: _Layout, representation: _Representation, **size: int
+    tx: TxnContext, layout: _Layout, representation: _Representation, **size: Any
 ) -> Iterator[Any]:
     if representation == "typed":
         stream = tx.stream(_typed_query(layout), **size)

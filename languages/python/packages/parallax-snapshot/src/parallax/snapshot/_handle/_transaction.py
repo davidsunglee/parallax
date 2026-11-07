@@ -12,7 +12,6 @@ from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
     typed_publication_builder,
-    typed_publication_for,
 )
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
@@ -443,7 +442,11 @@ class TxnContext:
         return WireTransactionView(self._attempt)
 
     def stream[S](
-        self, query: ObjectQuery[Any, S], *, batch_size: int = DEFAULT_BATCH_SIZE
+        self,
+        query: ObjectQuery[Any, S],
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        sharing_scope: SharingScope = "root",
     ) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction, as
         the scope-bound single-pass peer of :meth:`find`.
@@ -464,7 +467,7 @@ class TxnContext:
             query,
             batch_size,
             convert_query=typed_read_query,
-            build_publication=typed_publication_for,
+            build_publication=typed_publication_builder(sharing_scope),
         )
 
     def amend_where[E: EntityBase](
@@ -563,7 +566,11 @@ class ReadOnlyTxnContext:
         )
 
     def stream[S](
-        self, query: ObjectQuery[Any, S], *, batch_size: int = DEFAULT_BATCH_SIZE
+        self,
+        query: ObjectQuery[Any, S],
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        sharing_scope: SharingScope = "root",
     ) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction.
 
@@ -576,7 +583,7 @@ class ReadOnlyTxnContext:
             query,
             batch_size,
             convert_query=typed_read_query,
-            build_publication=typed_publication_for,
+            build_publication=typed_publication_builder(sharing_scope),
         )
 
     @property

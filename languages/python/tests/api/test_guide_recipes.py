@@ -95,6 +95,7 @@ from parallax.conformance.guide_recipes import (
     open_an_account_even_if_the_order_fails,
     orders_of,
     orders_placed_on,
+    orders_sharing_their_customers,
     orders_with_their_customer,
     payments_for,
     place_an_order,
@@ -120,6 +121,7 @@ from parallax.conformance.guide_recipes import (
     table_statements,
     total_of_every_order,
     tracked_deliveries_for,
+    what_each_orders_customer_spent,
     who_placed,
     withdraw_a_credit_limit,
 )
@@ -553,6 +555,27 @@ def test_two_result_roots_reaching_one_customer_hold_distinct_objects(profile_ru
     assert ten.customer is not None and eleven.customer is not None
     assert ten.customer is not eleven.customer
     assert ten.customer == eleven.customer
+
+
+def test_orders_of_one_customer_share_a_customer_at_page_scope(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    orders = orders_sharing_their_customers(db, dt.date(2024, 4, 1))
+
+    assert sorted(order.id for order in orders) == [10, 11, 12]
+    assert len({id(order.customer) for order in orders}) == 2
+
+
+def test_a_stream_totals_each_orders_customer_at_page_scope(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    assert what_each_orders_customer_spent(db, 2) == {
+        10: Decimal("170.00"),
+        11: Decimal("170.00"),
+        12: Decimal("40.00"),
+    }
 
 
 def test_each_result_shape_answers_its_arity(profile_run: Any) -> None:
@@ -1831,6 +1854,14 @@ def _total_of_every_order(db: ScopedDatabase) -> Decimal:
     return total_of_every_order(db, 10)
 
 
+def _what_each_orders_customer_spent(db: ScopedDatabase) -> dict[int, Decimal]:
+    return what_each_orders_customer_spent(db, 10)
+
+
+def _orders_sharing_since_april(db: ScopedDatabase) -> list[Order]:
+    return orders_sharing_their_customers(db, dt.date(2024, 4, 1))
+
+
 def _export_customers(db: ScopedDatabase) -> int:
     return export_customers(db, io.StringIO(), 10)
 
@@ -1993,6 +2024,16 @@ def _place_two_orders_together_serializably(db: ScopedDatabase) -> tuple[bool, b
         pytest.param(_card_payments_ending_in_4242, (), id="is-a-narrowing"),
         pytest.param(_card_payments_over_ten, (), id="narrow-clause"),
         pytest.param(_total_of_every_order, ([_ORDER_ROW],), id="typed-stream"),
+        pytest.param(
+            _what_each_orders_customer_spent,
+            ([_ORDER_ROW], [_CUSTOMER_ROW], [_ORDER_ROW]),
+            id="page-scope-stream",
+        ),
+        pytest.param(
+            _orders_sharing_since_april,
+            ([_ORDER_ROW], [_CUSTOMER_ROW], [_ORDER_ROW]),
+            id="page-scope-find",
+        ),
         pytest.param(_export_customers, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="wire-stream"),
         pytest.param(
             _customer_one_for_page_and_api, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="wire-projection"
@@ -2209,6 +2250,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             open_an_account_even_if_the_order_fails,
             orders_of,
             orders_placed_on,
+            orders_sharing_their_customers,
             orders_with_their_customer,
             payments_for,
             place_an_order,
@@ -2234,6 +2276,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             table_statements,
             total_of_every_order,
             tracked_deliveries_for,
+            what_each_orders_customer_spent,
             who_placed,
             withdraw_a_credit_limit,
         )
