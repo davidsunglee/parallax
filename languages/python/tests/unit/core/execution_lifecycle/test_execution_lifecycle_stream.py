@@ -298,6 +298,16 @@ def test_exhaustion_finishes_the_stream_where_it_was_discovered() -> None:
         assert finished is root.events[-1]
 
 
+def test_every_event_of_a_standalone_stream_names_its_root() -> None:
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedAdapter(Read(rows=[_order_row(1)]))
+    with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:
+        assert len(list(stream)) == 1
+
+    (root,) = recorder.roots
+    assert {event.execution_id for event in root.events} == {root.execution.id}
+
+
 def test_once_exhausted_a_later_caller_error_cannot_rewrite_the_outcome() -> None:
     # Exhaustion having already finished the stream is what leaves the caller's
     # own failure with nothing to end: it propagates as itself and the delivery
