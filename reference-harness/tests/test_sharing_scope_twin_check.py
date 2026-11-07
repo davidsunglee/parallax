@@ -139,6 +139,48 @@ def test_a_name_outside_the_module_catalog_is_refused(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("root_name", "page_name"),
+    [
+        ("m-snapshot-read-900-repeated.yaml", "m-snapshot-read-901-repeated.yaml"),
+        (
+            "m-snapshot-read-900-repeated-sharing-scope-twin-root.v2.yaml",
+            "m-snapshot-read-901-repeated-sharing-scope-twin-page.v2.yaml",
+        ),
+    ],
+    ids=["ordinary-names", "dotted-arm-suffixes"],
+)
+def test_a_scope_declared_outside_the_twin_grammar_is_refused(
+    tmp_path: Path, root_name: str, page_name: str
+) -> None:
+    _corpus(tmp_path)
+    (tmp_path / "cases" / _ROOT_ARM).rename(tmp_path / "cases" / root_name)
+    (tmp_path / "cases" / _PAGE_ARM).rename(tmp_path / "cases" / page_name)
+
+    errors = sharing_scope_twin_errors(tmp_path)
+
+    assert len(errors) == 2
+    assert all("only a sharing-scope twin may declare" in error for error in errors)
+    assert {error.split(":")[0] for error in errors} == {root_name, page_name}
+
+
+def test_a_case_declaring_no_scope_needs_no_twin(tmp_path: Path) -> None:
+    _corpus(tmp_path)
+    _write(tmp_path / "cases" / "m-snapshot-read-902-plain.yaml", _case(None))
+
+    assert sharing_scope_twin_errors(tmp_path) == []
+
+
+def test_an_unreadable_case_outside_the_twin_grammar_is_reported(tmp_path: Path) -> None:
+    _corpus(tmp_path)
+    unreadable = "m-snapshot-read-902-plain.yaml"
+    (tmp_path / "cases" / unreadable).write_text("- a list\n", encoding="utf-8")
+
+    assert sharing_scope_twin_errors(tmp_path) == [
+        f"{unreadable}: compatibility case is not a mapping"
+    ]
+
+
 def test_an_unreadable_arm_is_reported_and_not_compared(tmp_path: Path) -> None:
     _corpus(tmp_path)
     (tmp_path / "cases" / _PAGE_ARM).write_text("- a list\n", encoding="utf-8")
