@@ -1814,9 +1814,6 @@ _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
 )
 
 
-# `TxnContext._buffer` calls (`test_transaction_writes.py`'s per-rule unit tests exercise#
-
-
 _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "a payload combining two SIBLING branches' own columns (CardPayment's `cardNetwork` AND "
     "CashPayment's `tendered`) has no idiomatic spelling: each concrete mirror class declares "
@@ -1824,11 +1821,11 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "DROPS a field the target class does not declare (empirically verified: "
     "`CardPayment(..., tendered=...)` constructs successfully but never carries `tendered`), "
     "so no single typed instance can reproduce this payload's cross-branch shape to drive "
-    "`tx.insert`/`tx.amend` through it — `test_transaction_writes.py` exercises the "
-    "classified rule directly at the neutral seam (`TxnContext._buffer`) instead. The same "
-    "holds for the keyed-instruction twin (m-inheritance-131), whose row carries the sibling "
-    "column alone: the typed surface reaches `TxnContext._buffer` only through an instance, "
-    "and the instance cannot carry the field"
+    "`tx.insert`/`tx.amend` through it — `test_write_instructions.py` exercises the "
+    "classified rule directly at the write preparation seam (`prepare_typed_write`) instead. "
+    "The same holds for the keyed-instruction twin (m-inheritance-131), whose row carries the "
+    "sibling column alone: the typed surface reaches write preparation only through an "
+    "instance, and the instance cannot carry the field"
 )
 _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "an authored `tagValue` or `_type` has no idiomatic spelling: each is framework-owned "
