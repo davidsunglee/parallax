@@ -97,7 +97,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.read_delivery._page import Page, PageRows
 from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnContext
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
@@ -686,7 +686,7 @@ def test_a_delivery_holds_one_page_and_one_published_root() -> None:
                 where = (namespace.name, batch_size, fanout, counts)
                 assert counts.get(Page.__qualname__) == 1, where
                 assert counts.get(PageRows.__qualname__) == 1, where
-                assert counts.get(RootView.__qualname__) == 1, where
+                assert counts.get(GraphView.__qualname__) == 1, where
                 publishers = (TypedRootPublisher.__qualname__, WireRootPublisher.__qualname__)
                 assert sum(counts.get(kind, 0) for kind in publishers) == 1, where
                 alive = sum(counts.get(kind, 0) for kind in published)

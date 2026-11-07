@@ -121,7 +121,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._handle import _database, _read
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -356,7 +356,7 @@ def test_a_proved_level_classifies_every_document_as_it_is_recorded() -> None:
 
     assert _states_decoded(observer) == 2
 
-    def judged_so_far(root: RootView, _ordinal: int) -> tuple[int, list[str]]:
+    def judged_so_far(root: GraphView, _ordinal: int) -> tuple[int, list[str]]:
         return _states_decoded(observer), [issue.code for issue in root.issues(0)]
 
     assert each_root(result.page, meta, judged_so_far) == [

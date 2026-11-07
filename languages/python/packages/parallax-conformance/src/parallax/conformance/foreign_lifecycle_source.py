@@ -15,7 +15,7 @@ from parallax.core.execution import ModelSelection
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery._delivery import find as execute_read
 from parallax.core.read_delivery._page import Page
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots, require_publishable
 
 __all__ = ["ForeignLifecycleSource"]
@@ -121,7 +121,7 @@ class ForeignLifecycleSource:
         def lifecycle_states(instances: Sequence[object]) -> tuple[object, ...]:
             return (state,) * len(instances)
 
-        def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
+        def publish(root: GraphView, _ordinal: int) -> tuple[object, ...]:
             require_publishable(root)
             return (construction.publish(root, lifecycle_states),)
 

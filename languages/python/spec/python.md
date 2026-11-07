@@ -653,7 +653,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   alternate-source reads consume the same validated execution token as
   production. The second-source fixture then drives read delivery's eager
   `find` over that token and publishes the sealed `Page` it returns through
-  Snapshot's own `publish_roots`, `RootView`, and `require_publishable`, so the
+  Snapshot's own `publish_roots`, `GraphView`, and `require_publishable`, so the
   delivery and stored-data refusal it grades are production's. The scenario and
   snapshot lanes drive the production write planner through `build_write_planner`
   and judge every case write against the production write preparation through

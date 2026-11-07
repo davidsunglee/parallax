@@ -1,4 +1,4 @@
-"""One publication pass over a Page: realized reach, lazy origins, per-root
+"""One publication pass over a Page: view reach, lazy origins, per-root
 resets, and the failure boundary, in both representations and at both delivery
 boundaries.
 
@@ -19,7 +19,7 @@ from parallax.core.base import NeutralType, StructuredDocument
 from parallax.core.entity import UNLOADED
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import Page, page_rows, shared_entity_state
+from parallax.core.read_delivery._page import Page, judged_entity_state, page_rows
 from parallax.core.read_planning import IncludeTree
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot import (
@@ -28,8 +28,8 @@ from parallax.snapshot import (
     is_view_loaded,
 )
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
-from parallax.snapshot._publication import _root, _typed, _wire_render
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication import _graph_view, _typed, _wire_render
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
@@ -119,7 +119,7 @@ def _evidence(form: _Form, value: object) -> object:
 
 
 # --------------------------------------------------------------------------- #
-# Realized reach: an arm the carried views discard publishes nowhere.          #
+# View reach: an arm the carried views discard publishes nowhere.          #
 # --------------------------------------------------------------------------- #
 def _overwritten_relationship_value(
     *, invalid: Literal["discarded", "current"]
@@ -315,7 +315,7 @@ class _RecordedOrigins(Mapping[int, object]):
             raise RuntimeError("origin resolution failed")
         rows = page_rows(self.page)
         assert rows.keys[projection] is not None, f"projection {projection} was released"
-        assert shared_entity_state(rows, projection) is not None, (
+        assert judged_entity_state(rows, projection) is not None, (
             f"projection {projection} is unjudged"
         )
         self.lookups.append(projection)
@@ -689,7 +689,7 @@ def test_the_wire_renderer_forgets_a_root_whose_rendering_failed() -> None:
         fixture.model, wire_facts_for(CatalogedModel(fixture.model)), includes, encode
     )
 
-    def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
+    def publish_root(root: GraphView, ordinal: int) -> tuple[object, ...]:
         try:
             return publisher(root, ordinal)
         except _Boom:
@@ -771,7 +771,7 @@ def test_a_pass_side_or_wire_failure_propagates_unwrapped(
     fixture, roots = _two_orders()
     if seam == "decoding":
         monkeypatch.setattr(
-            _root, "entity_state", _failing_second_call(vars(_root)["entity_state"])
+            _graph_view, "entity_state", _failing_second_call(vars(_graph_view)["entity_state"])
         )
     else:
         monkeypatch.setattr(
@@ -798,9 +798,9 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_however_a_root_ends(
         graph_construction_for(ENCODED_ORDERS),
         prepared_view_keys_for(ENCODED_ORDERS),
     )
-    held: list[RootView | None] = []
+    held: list[GraphView | None] = []
 
-    def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
+    def publish_root(root: GraphView, ordinal: int) -> tuple[object, ...]:
         published = publisher(root, ordinal)
         held.append(publisher._root)  # pyright: ignore[reportPrivateUsage]
         return published
@@ -860,9 +860,9 @@ def test_a_retained_root_view_answers_for_the_last_root_while_copies_survive() -
     second = _item(fixture, 31, order_id=9)
     page = fixture.page(first, second)
 
-    retained: list[RootView] = []
+    retained: list[GraphView] = []
 
-    def inspect(root: RootView, ordinal: int) -> object:
+    def inspect(root: GraphView, ordinal: int) -> object:
         retained.append(root)
         return observed(root, ordinal)
 

@@ -25,7 +25,7 @@ from parallax.core.read_delivery._page import Page, PageSchedule, page_rows
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotConsistencyError
 from parallax.snapshot._publication import _root_publication
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW, PARENT_ROWS
 from tests.unit._root_publication_support import deferring_schedule, each_root
 from tests.unit.snapshot._snapshot_page_support import PageFixture
@@ -134,7 +134,7 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
         fixture.view_key("InverseLink.parent")
     ]
 
-    def after_release(root: RootView, ordinal: int) -> tuple[object, ...]:
+    def after_release(root: GraphView, ordinal: int) -> tuple[object, ...]:
         # The pass releases what a root finished with before publishing it.
         if ordinal == 0:
             return (root.view(1, slot), bool(rows.view_rows[link]))
@@ -172,7 +172,7 @@ def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
         fixture.view_key("InverseLink.parent")
     ]
 
-    def after_release(root: RootView, ordinal: int) -> tuple[object, ...]:
+    def after_release(root: GraphView, ordinal: int) -> tuple[object, ...]:
         names = [root.layout(node).concrete.name for node in range(len(root))]
         if ordinal == 0:
             return (root.view(1, slot), rows.fetched_rows_by_logical_row[logical])
@@ -336,7 +336,7 @@ def _coordinate_distinct_parents() -> tuple[PageFixture, tuple[int, ...], int]:
 def _resolved_parents(fixture: PageFixture, *roots: int) -> list[object]:
     """Each root's link's resolved inverse, the link being its last node."""
 
-    def resolved(root: RootView, _ordinal: int) -> object:
+    def resolved(root: GraphView, _ordinal: int) -> object:
         link = len(root) - 1
         return root.view(link, root.view_layout(link).index_of[fixture.view_key(_TEMPORAL_PARENT)])
 

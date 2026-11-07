@@ -22,10 +22,10 @@ from parallax.core.wire._facts import (
 )
 from parallax.snapshot._inspection import RootConformance
 from parallax.snapshot._publication._classify import ConformingRoot, classify_root
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._wire import (
+    GraphViewReader,
     NodeReader,
-    RootViewReader,
     WireEntity,
     _FrozenMapping,  # pyright: ignore[reportPrivateUsage] - the carriers a renderer fills
     _FrozenSequence,  # pyright: ignore[reportPrivateUsage] - the carriers a renderer fills
@@ -428,15 +428,15 @@ class WireRootPublisher:
         self._encode = encode
         self._temporal = temporal_read.view(model)
         self._versioning = concurrency.view(model)
-        self._reader: RootViewReader | None = None
+        self._reader: GraphViewReader | None = None
         self._renderer: WireRenderer[int] | None = None
 
-    def __call__(self, root: RootView, ordinal: int) -> tuple[_WireRoot, ...]:
+    def __call__(self, root: GraphView, ordinal: int) -> tuple[_WireRoot, ...]:
         """``root`` published at result ``ordinal``."""
         reader = self._reader
         renderer = self._renderer
         if reader is None or renderer is None:
-            reader = self._reader = RootViewReader(root, self._temporal)
+            reader = self._reader = GraphViewReader(root, self._temporal)
             renderer = self._renderer = WireRenderer(
                 reader, self._includes, self._wire, self._encode
             )

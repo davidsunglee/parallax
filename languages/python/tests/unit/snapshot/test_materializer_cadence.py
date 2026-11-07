@@ -26,7 +26,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS
@@ -64,7 +64,7 @@ def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
 _ORDERS: Final = model_of(ORDERS_MODEL)
 
 
-def _publish(_root: RootView, ordinal: int) -> tuple[object, ...]:
+def _publish(_root: GraphView, ordinal: int) -> tuple[object, ...]:
     return (ordinal,)
 
 
@@ -139,7 +139,7 @@ def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
 
 
 _DECODED: Final = ("states_decoded", 1)
-_SHARED: Final = ("states_shared", 1)
+_REUSED: Final = ("states_reused", 1)
 _REACHED: Final = ("fetched_rows_reached", 1)
 
 
@@ -154,7 +154,7 @@ _REACHED: Final = ("fetched_rows_reached", 1)
             [
                 *(_DECODED, _REACHED, ("root_published", 0)),
                 *(_DECODED, _REACHED, ("root_published", 1)),
-                *(_SHARED, _REACHED, ("root_published", 2)),
+                *(_REUSED, _REACHED, ("root_published", 2)),
             ],
             id="streamed",
         ),
@@ -163,7 +163,7 @@ _REACHED: Final = ("fetched_rows_reached", 1)
             "EncodedOrder",
             {"name": "Ada", "badge_hex": None, "address": None},
             True,
-            [_DECODED, _REACHED, _DECODED, _REACHED, _SHARED, _REACHED]
+            [_DECODED, _REACHED, _DECODED, _REACHED, _REUSED, _REACHED]
             + [("root_published", ordinal) for ordinal in range(3)],
             id="atomic-judging-in-place",
         ),
@@ -172,7 +172,7 @@ _REACHED: Final = ("fetched_rows_reached", 1)
             "EncodedAccount",
             {"token_hex": "0a", "version": 1},
             True,
-            [_REACHED, _DECODED, _REACHED, _DECODED, _REACHED, _SHARED]
+            [_REACHED, _DECODED, _REACHED, _DECODED, _REACHED, _REUSED]
             + [("root_published", ordinal) for ordinal in range(3)],
             id="atomic-deferring-states",
         ),
@@ -203,7 +203,7 @@ def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fai
     observer = RecordingObserver()
     page = _page(observer, 1, 2)
 
-    def publish(_root: RootView, ordinal: int) -> tuple[object, ...]:
+    def publish(_root: GraphView, ordinal: int) -> tuple[object, ...]:
         if ordinal == 1:
             raise RuntimeError("later root failed")
         return (ordinal,)
@@ -224,7 +224,7 @@ def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() ->
     page = _page(observer, 1, 2)
     received: list[object] = []
 
-    def publish(_root: RootView, ordinal: int) -> tuple[object, ...]:
+    def publish(_root: GraphView, ordinal: int) -> tuple[object, ...]:
         if ordinal == 1:
             raise RuntimeError("later root failed")
         return (ordinal,)

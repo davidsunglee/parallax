@@ -18,7 +18,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.temporal_read import Edge
 from parallax.core.write_plan import ObjectKey
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 
 __all__ = [
     "CONFORMING_ROOT",
@@ -67,7 +67,7 @@ CONFORMING_ROOT: Final = ConformingRoot(0)
 
 
 def classify_root(
-    root: RootView,
+    root: GraphView,
     model: Metamodel,
     versioning: ConcurrencyFacet,
     *,
