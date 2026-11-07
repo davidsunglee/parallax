@@ -6,6 +6,8 @@ Docker-free, over the engine's recording fake.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from parallax.conformance._mechanism.transaction_control import (
@@ -13,7 +15,14 @@ from parallax.conformance._mechanism.transaction_control import (
     committed,
     write_connection,
 )
-from parallax.core.db_port import DatabaseConnection, PipelineStatement, RolledBack
+from parallax.core.db_port import (
+    BeginFailed,
+    CommitFailed,
+    DatabaseConnection,
+    PipelineStatement,
+    RolledBack,
+    TransactionOutcome,
+)
 from tests._support.db_port import ScriptedAdapter
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -74,6 +83,22 @@ def test_absorbing_rollback_lets_every_other_failure_through() -> None:
     with pytest.raises(ValueError, match="not the sentinel"), absorbing_rollback():
         committed(inner.transaction(lambda conn: _refuse("not the sentinel")))
     assert inner.rollbacks == 1
+
+
+def _rolled_back_after_commit_failed(error: Exception) -> RolledBack:
+    return RolledBack(CommitFailed(error))
+
+
+@pytest.mark.parametrize(
+    "ended", [BeginFailed, _rolled_back_after_commit_failed], ids=["begin-failed", "commit-failed"]
+)
+def test_committed_raises_the_failure_of_a_boundary_that_did_not_commit(
+    ended: Callable[[Exception], TransactionOutcome[int]],
+) -> None:
+    failure = ValueError("the boundary failed")
+    with pytest.raises(ValueError, match="the boundary failed") as raised:
+        committed(ended(failure))
+    assert raised.value is failure
 
 
 def _refuse(message: str) -> int:

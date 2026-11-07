@@ -911,6 +911,58 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_milestone_ranked_g
     ] == [["50.00", "25.00"], ["75.00"]]
 
 
+def test_run_streamed_graphs_case_ranks_a_milestone_delivered_after_a_later_one() -> None:
+    def line(key: int, in_z: dt.datetime) -> MappingRow:
+        return {
+            "id": key,
+            "invoice_id": 100,
+            "amount": decimal.Decimal("50.00"),
+            "in_z": in_z,
+            "out_z": INFINITY,
+        }
+
+    port = QueueDbPort(
+        [[line(1000, _APRIL), line(1001, _JANUARY)], [line(1001, _JANUARY)]],
+    )
+    case = _doctored("m-snapshot-read-013", stream={"batchSize": 1})
+    _emissions, graphs, _calls = reads.run_streamed_graphs_case(case, port)
+    assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
+        "2024-01-01T00:00:00.000000Z",
+        "2024-04-01T00:00:00.000000Z",
+    ]
+
+
+def test_run_streamed_graphs_case_ranks_valid_time_before_transaction_time() -> None:
+    def position(key: int, from_z: dt.datetime, in_z: dt.datetime) -> MappingRow:
+        return {
+            "pos_id": key,
+            "acct_num": "A",
+            "val": decimal.Decimal("90.00"),
+            "from_z": from_z,
+            "thru_z": INFINITY,
+            "in_z": in_z,
+            "out_z": INFINITY,
+        }
+
+    port = QueueDbPort(
+        [
+            [position(1, _APRIL, _JANUARY), position(2, _JANUARY, _APRIL)],
+            [position(2, _JANUARY, _APRIL)],
+        ]
+    )
+    _emissions, graphs, _calls = reads.run_streamed_graphs_case(_case("m-snapshot-read-037"), port)
+    assert [_entry(g, "pin") for g in graphs] == [
+        {
+            "valid-time": "2024-01-01T00:00:00.000000Z",
+            "transaction-time": "2024-04-01T00:00:00.000000Z",
+        },
+        {
+            "valid-time": "2024-04-01T00:00:00.000000Z",
+            "transaction-time": "2024-01-01T00:00:00.000000Z",
+        },
+    ]
+
+
 def _invoice_line(amount: str, in_z: object, out_z: object) -> MappingRow:
     return {
         "id": 1000,
