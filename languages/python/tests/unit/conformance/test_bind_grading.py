@@ -1,5 +1,5 @@
-"""Golden bind grading at declared float positions (`m-case-format` *Canonical
-literal oracles*).
+"""Golden bind grading (`m-case-format` *Canonical literal oracles*): each
+comparator on its own, and both at declared float positions.
 
 A declared ``float32``/``float64`` position — a scalar Column or a Value Object
 leaf — distinguishes ``-0.0`` from the canonical ``0.0``; a Json position, here a
@@ -10,12 +10,14 @@ positions are read off each case's own golden statement and model.
 from __future__ import annotations
 
 import copy
+import decimal
 from typing import Any, cast
 
 import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.core.base import FLOAT32, FLOAT64, INT64, STRING, Decimal
+from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from tests._support.bind_positions import (
     Document,
     EachElement,
@@ -209,3 +211,70 @@ def test_a_shared_document_column_array_types_each_row_by_its_own_tag() -> None:
         Decimal(18, 2),
         STRING,
     ]
+
+
+@pytest.mark.parametrize(
+    ("observed", "golden"),
+    [
+        pytest.param([1, "a"], [1, "b"], id="a-changed-value"),
+        pytest.param(["b", "a"], ["a", "b"], id="binds-reordered"),
+        pytest.param([1], [1, 2], id="a-missing-bind"),
+        pytest.param([1, 2, 3], [1, 2], id="an-invented-bind"),
+        pytest.param([ArrayBind(INT64, [1, 3])], [[1, 2]], id="a-changed-element"),
+        pytest.param([ArrayBind(INT64, [1])], [[1, 2]], id="a-missing-element"),
+        pytest.param([ArrayBind(INT64, [1])], [1], id="an-array-against-a-scalar"),
+    ],
+)
+def test_compare_binds_alone_refuses_a_bind_the_golden_does_not_state(
+    observed: list[object], golden: list[object]
+) -> None:
+    with pytest.raises(AssertionError):
+        compare_binds(observed, golden)
+
+
+@pytest.mark.parametrize(
+    ("observed", "golden"),
+    [
+        pytest.param([decimal.Decimal("5.00")], [5.00], id="a-decimal-against-its-literal"),
+        pytest.param([StructuredDocument({"a": 1})], [{"a": 1}], id="a-document-unwrapped"),
+        pytest.param([ArrayBind(INT64, [1, 2])], [[1, 2]], id="an-array-element-by-element"),
+        pytest.param(
+            [ArrayBind(STRING, ["a", JSON_NULL])], [["a", None]], id="a-json-null-element"
+        ),
+    ],
+)
+def test_compare_binds_alone_accepts_an_admitted_second_spelling(
+    observed: list[object], golden: list[object]
+) -> None:
+    compare_binds(observed, golden)
+
+
+def test_compare_binds_alone_refuses_negative_zero_at_a_declared_float() -> None:
+    case, sql, golden = _golden("m-core-010")
+    positions = statement_bind_positions(engine.load_case_metamodel(case), sql, golden)
+    compare_binds([1, 0.0, 0.0], golden, positions)
+    with pytest.raises(AssertionError, match=r"^bind 1: "):
+        compare_binds([1, -0.0, 0.0], golden, positions)
+
+
+def test_assert_wire_binds_alone_refuses_a_changed_value() -> None:
+    case, sql, golden = _golden("m-core-010")
+    model = engine.load_case_metamodel(case)
+    assert_wire_binds(model, sql, golden, list(golden))
+    with pytest.raises(AssertionError):
+        assert_wire_binds(model, sql, golden, [2, *golden[1:]])
+
+
+def test_assert_wire_binds_alone_refuses_negative_zero_at_a_declared_float() -> None:
+    case, sql, golden = _golden("m-core-010")
+    with pytest.raises(AssertionError, match=r"^bind 1: "):
+        assert_wire_binds(engine.load_case_metamodel(case), sql, golden, [1, -0.0, 0.0])
+
+
+def test_assert_wire_binds_refuses_the_other_scale_compare_binds_reconciles() -> None:
+    case, sql, golden = _golden("m-temporal-write-002")
+    assert golden[2] == "100.00"
+    observed: list[object] = [*golden[:2], "100.0", *golden[3:]]
+    compare_binds(observed, golden)
+    with pytest.raises(AssertionError):
+        assert_wire_binds(engine.load_case_metamodel(case), sql, golden, observed)

@@ -32,8 +32,9 @@ from parallax.conformance.boundary_runner import (
 from parallax.conformance.class_models import MODELS
 from parallax.core import Entity
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.db_port import AcquisitionReason, ConnectionAcquisitionError
 from parallax.core.execution import (
+    ExecutionFailure,
     ServingModel,
     TransactionAccessModeError,
     TransactionAuthorityError,
@@ -41,7 +42,9 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, case_fixtures
@@ -346,3 +349,207 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-unit-work-040",
         "m-unit-work-041",
     }
+
+
+_BASELINE = Decimal("250.00")
+_COMMITTED = Decimal("251.00")
+_AMOUNT_TARGET = BoundaryTarget[Any](
+    find=lambda _tx: None,
+    edit=lambda stored: stored,
+    amount=lambda stored: stored,
+    baseline=_BASELINE,
+    committed=_COMMITTED,
+)
+_AMEND = boundary_runner.BoundaryStep("amend", {})
+_CASE = _CASES[0]
+_EDITION = engine.case_edition(_CASE)
+
+
+class _PersistedAmount:
+    def __init__(self, amount: Decimal) -> None:
+        self._amount = amount
+
+    def transact(self, _find: object) -> Decimal:
+        return self._amount
+
+
+def _returning(result: Decimal | None) -> Callable[[], Entity | None]:
+    return lambda: cast("Entity | None", result)
+
+
+def _failing(cause: Exception, edition: str = _EDITION) -> Callable[[], Entity | None]:
+    def run() -> Entity | None:
+        raise ExecutionFailure(edition, cause) from cause
+
+    return run
+
+
+def _refused(category: str | None) -> DatabaseError:
+    return DatabaseError(
+        category=cast("Any", category), native_code=None, message="the database refused"
+    )
+
+
+def _unacquired(reason: AcquisitionReason = "preparation_failed") -> ConnectionAcquisitionError:
+    return ConnectionAcquisitionError("no connection", reason=reason)
+
+
+def _conflict() -> OptimisticLockConflictError:
+    account = EntityIdentity("parallax.compatibility", "Account")
+    target = KeyTarget(key_attributes=(AttributeIdentity(account, "id"),), key_values=((2,),))
+    return OptimisticLockConflictError(account, target, 1, 0)
+
+
+def _grade(
+    outcome: str,
+    run: Callable[[], Entity | None],
+    persisted: Decimal = _BASELINE,
+    *,
+    amends: bool = False,
+    fault: str | None = None,
+) -> None:
+    _assert_outcome(
+        _CASE,
+        outcome,
+        run,
+        steps=[_AMEND] if amends else [],
+        target=_AMOUNT_TARGET,
+        fault=fault,
+        verify_db=cast("ScopedDatabase", _PersistedAmount(persisted)),
+    )
+
+
+_ABORT = BoundaryAbort("scripted")
+_OPTION_REFUSAL = TransactionOptionConflictError("refused")
+_AUTHORITY_REFUSAL = TransactionAuthorityError("refused")
+_ACCESS_MODE_REFUSAL = TransactionAccessModeError("refused")
+_ACQUISITION_FAULT = "connection-acquisition-failure"
+
+
+def test_assert_outcome_accepts_each_outcome_ending_as_it_states() -> None:
+    _grade("committed", _returning(_BASELINE))
+    _grade("committed", _returning(_COMMITTED), _COMMITTED, amends=True)
+    _grade("aborted", _failing(_ABORT))
+    _grade("optimistic-lock-conflict", _failing(_conflict()))
+    _grade("option-conflict", _failing(_OPTION_REFUSAL))
+    _grade("authority-mismatch", _failing(_AUTHORITY_REFUSAL))
+    _grade("access-mode-mismatch", _failing(_ACCESS_MODE_REFUSAL))
+    _grade("boundary-failed", _failing(_unacquired()), fault=_ACQUISITION_FAULT)
+    _grade("boundary-failed", _failing(_refused(None)))
+    _grade("deadlock", _failing(_refused("deadlock")))
+
+
+@pytest.mark.parametrize(
+    ("outcome", "run", "persisted", "amends", "fault"),
+    [
+        pytest.param("committed", _returning(None), _BASELINE, False, None, id="committed-nothing"),
+        pytest.param(
+            "committed", _returning(_BASELINE), _COMMITTED, True, None, id="an-unamended-result"
+        ),
+        pytest.param(
+            "committed", _returning(_COMMITTED), _BASELINE, True, None, id="an-unpersisted-amend"
+        ),
+        pytest.param("aborted", _failing(_ABORT), _COMMITTED, False, None, id="a-durable-abort"),
+        pytest.param(
+            "option-conflict",
+            _failing(_OPTION_REFUSAL),
+            _COMMITTED,
+            False,
+            None,
+            id="a-durable-option-conflict",
+        ),
+        pytest.param(
+            "access-mode-mismatch",
+            _failing(_ACCESS_MODE_REFUSAL),
+            _COMMITTED,
+            False,
+            None,
+            id="a-durable-access-mode-mismatch",
+        ),
+        pytest.param(
+            "boundary-failed",
+            _failing(_unacquired("closed")),
+            _BASELINE,
+            False,
+            _ACQUISITION_FAULT,
+            id="another-acquisition-reason",
+        ),
+        pytest.param(
+            "boundary-failed",
+            _failing(_unacquired(), "another-edition"),
+            _BASELINE,
+            False,
+            _ACQUISITION_FAULT,
+            id="an-acquisition-under-another-edition",
+        ),
+        pytest.param(
+            "boundary-failed",
+            _failing(_refused("deadlock")),
+            _BASELINE,
+            False,
+            None,
+            id="a-classified-boundary-failure",
+        ),
+        pytest.param(
+            "boundary-failed",
+            _failing(_refused(None), "another-edition"),
+            _BASELINE,
+            False,
+            None,
+            id="a-boundary-failure-under-another-edition",
+        ),
+        pytest.param(
+            "deadlock",
+            _failing(_refused("lockWaitTimeout")),
+            _BASELINE,
+            False,
+            None,
+            id="another-failure-category",
+        ),
+    ],
+)
+def test_assert_outcome_refuses_a_run_ending_otherwise(
+    outcome: str,
+    run: Callable[[], Entity | None],
+    persisted: Decimal,
+    amends: bool,
+    fault: str | None,
+) -> None:
+    with pytest.raises(AssertionError):
+        _grade(outcome, run, persisted, amends=amends, fault=fault)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "fault"),
+    [
+        ("aborted", None),
+        ("optimistic-lock-conflict", None),
+        ("option-conflict", None),
+        ("authority-mismatch", None),
+        ("access-mode-mismatch", None),
+        ("boundary-failed", _ACQUISITION_FAULT),
+        ("boundary-failed", None),
+        ("deadlock", None),
+    ],
+)
+def test_assert_outcome_refuses_a_run_that_raised_nothing(outcome: str, fault: str | None) -> None:
+    with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
+        _grade(outcome, _returning(_BASELINE), fault=fault)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "fault"),
+    [
+        ("aborted", None),
+        ("optimistic-lock-conflict", None),
+        ("option-conflict", None),
+        ("authority-mismatch", None),
+        ("access-mode-mismatch", None),
+        ("boundary-failed", _ACQUISITION_FAULT),
+        ("boundary-failed", None),
+        ("deadlock", None),
+    ],
+)
+def test_assert_outcome_refuses_a_failure_of_another_type(outcome: str, fault: str | None) -> None:
+    with pytest.raises(AssertionError, match="expected an ExecutionFailure caused by"):
+        _grade(outcome, _failing(ValueError("another failure")), fault=fault)

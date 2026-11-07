@@ -6,7 +6,8 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import cast
+from pathlib import Path
+from typing import Final, cast
 
 import pytest
 
@@ -264,3 +265,71 @@ def test_a_reading_states_its_window_and_runtime_only_when_it_has_them() -> None
     )
     validate(envelope)
     assert envelope.document()["readings"] == [bare.document(), labeled.document()]
+
+
+_SYNTHETIC_CONTRACT: Final = BudgetContract.from_bytes(
+    Path("synthetic-budget-contract.yaml"),
+    b"""\
+schemaVersion: 1
+authority:
+  machine: synthetic-machine
+  cpu: synthetic-cpu
+  cores: 8
+  ramGiB: 32
+  cpython: "3.14.0"
+  postgres: "18.0"
+sampling:
+  timing:
+    measuredPairs: 3
+workloads:
+  synthetic:
+    limit: 1
+""",
+)
+_SYNTHETIC_PROVENANCE: Final = Provenance(
+    commit="a" * 40,
+    dirty=False,
+    budget_contract_digest=_SYNTHETIC_CONTRACT.digest,
+    budget_contract=_SYNTHETIC_CONTRACT.authored.decode("utf-8"),
+    workload_digest="b" * 64,
+    lock_digest="c" * 64,
+    machine="synthetic-machine",
+    cpu="synthetic-cpu",
+    cores=8,
+    ram_gib=32,
+    os="recorded but not matched",
+    cpython="3.14.0",
+    postgres="18.0",
+    sampling=_SYNTHETIC_CONTRACT.sampling,
+)
+_HOST_MISMATCHES: Final[dict[str, object]] = {
+    "machine": "another-machine",
+    "cpu": "another-cpu",
+    "cores": 9,
+    "ram_gib": 33,
+    "cpython": "3.14.1",
+    "postgres": "18.1",
+}
+
+
+def test_a_provenance_matching_its_contract_in_full_is_authoritative() -> None:
+    assert classify_authority(_SYNTHETIC_PROVENANCE, _SYNTHETIC_CONTRACT) == "authoritative"
+    validate(CostReportEnvelope("snapshot-delivery", _SYNTHETIC_PROVENANCE, "authoritative"))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("commit", ""), ("budget_contract_digest", "0" * 64), *_HOST_MISMATCHES.items()],
+)
+def test_one_unmatched_fingerprint_field_loses_authority(field: str, value: object) -> None:
+    provenance = replace(_SYNTHETIC_PROVENANCE, **{field: value})
+    assert classify_authority(provenance, _SYNTHETIC_CONTRACT) == "non-authoritative"
+
+
+@pytest.mark.parametrize(("field", "value"), _HOST_MISMATCHES.items())
+def test_validation_refuses_a_stored_authority_its_host_fingerprint_does_not_earn(
+    field: str, value: object
+) -> None:
+    provenance = replace(_SYNTHETIC_PROVENANCE, **{field: value})
+    with pytest.raises(ValueError, match="disagrees with provenance classification"):
+        validate(CostReportEnvelope("snapshot-delivery", provenance, "authoritative"))

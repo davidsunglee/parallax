@@ -173,3 +173,30 @@ def test_a_root_collection_compares_as_a_multiset() -> None:
     expected, kinds = _authored_graph("m-inheritance-076")
     observed = {"Animal": list(reversed(cast("list[Any]", expected["Animal"])))}
     compare_graph(observed, expected, kinds)
+
+
+def test_a_run_returning_a_strict_subset_of_the_expected_rows_fails_the_row_grade() -> None:
+    expected: list[dict[str, Any]] = [{"id": 1}, {"id": 2}]
+    with pytest.raises(AssertionError, match=r"^row count: "):
+        compare_rows(expected[:1], expected)
+
+
+@pytest.mark.xfail(
+    reason="_scalar_equal answers exact `==` before its bool rule, so `True` equals `1` "
+    "against m-case-format's `true` is never `1`"
+)
+@pytest.mark.parametrize(
+    ("observed", "expected"), [(True, 1), (1, True), (False, 0), (0, False), (True, 1.0)]
+)
+def test_a_boolean_never_equals_a_number_in_the_row_grade(
+    observed: object, expected: object
+) -> None:
+    with pytest.raises(AssertionError, match=r"^observed row unmatched: "):
+        compare_rows([{"flag": observed}], [{"flag": expected}])
+
+
+def test_a_list_at_an_undeclared_position_refuses_to_choose_a_comparison_rule() -> None:
+    expected, kinds = _authored_graph("m-value-object-023")
+    cast("dict[str, Any]", expected["Customer"][0])["undeclared"] = [1, 2]
+    with pytest.raises(AssertionError, match=r"\.undeclared: the model declares no collection"):
+        compare_graph(copy.deepcopy(expected), expected, kinds)

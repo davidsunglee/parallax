@@ -17,6 +17,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Sequence
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -25,6 +26,7 @@ import pytest
 from parallax.conformance import adapter, case_format, concurrency_runner, engine, models
 from parallax.conformance.profile import Profile
 from parallax.core import storage_layout
+from parallax.core.db_error import Category, DatabaseError
 from parallax.core.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.case_corpus import reachable_cases
@@ -1392,3 +1394,345 @@ def test_grade_step_affected_rows_refuses_any_other_report(counts: list[tuple[in
     case, steps = _counted_case()
     with pytest.raises(AssertionError):
         _grade_step_affected_rows(case, steps, _counted_envelope(counts))
+
+
+# The sweep graders' own directional proofs, run without a database: each states
+# a conforming observation, then the damage a grader must refuse.
+type _Damage = Callable[[dict[str, Any]], object]
+
+_LIFECYCLE_STREAM: Final[list[dict[str, str]]] = [{"kind": "first"}, {"kind": "second"}]
+
+
+def test_grade_execution_lifecycle_accepts_the_stream_the_case_states() -> None:
+    _grade_execution_lifecycle(
+        {"executionLifecycle": _LIFECYCLE_STREAM}, {"executionLifecycle": list(_LIFECYCLE_STREAM)}
+    )
+    _grade_execution_lifecycle({}, {})
+
+
+@pytest.mark.parametrize(
+    "observed",
+    [_LIFECYCLE_STREAM[::-1], _LIFECYCLE_STREAM[:1], [*_LIFECYCLE_STREAM, {"kind": "third"}]],
+    ids=["reordered", "a-lost-event", "an-invented-event"],
+)
+def test_grade_execution_lifecycle_refuses_any_other_stream(observed: list[dict[str, str]]) -> None:
+    with pytest.raises(AssertionError, match="execution lifecycle mismatch"):
+        _grade_execution_lifecycle(
+            {"executionLifecycle": _LIFECYCLE_STREAM}, {"executionLifecycle": observed}
+        )
+
+
+def test_grade_execution_lifecycle_refuses_a_stream_the_case_does_not_author() -> None:
+    with pytest.raises(AssertionError):
+        _grade_execution_lifecycle({}, {"executionLifecycle": _LIFECYCLE_STREAM})
+
+
+def test_grade_execution_lifecycle_refuses_an_envelope_omitting_the_stated_stream() -> None:
+    with pytest.raises(KeyError):
+        _grade_execution_lifecycle({"executionLifecycle": _LIFECYCLE_STREAM}, {})
+
+
+def _two_page_stream() -> tuple[case_format.Case, list[str]]:
+    case = next(c for c in _CASES if c.case_id == "m-snapshot-read-028")
+    return case, [sql for sql, _binds in _read_golden_statements(case, "postgres")]
+
+
+def test_stream_root_positions_finds_each_page_root() -> None:
+    case, statements = _two_page_stream()
+    assert _stream_root_positions(case, statements) == {0, 2}
+    assert _stream_root_positions(case, []) == set()
+
+
+def test_stream_root_positions_refuses_a_delivery_of_another_page_count() -> None:
+    case, statements = _two_page_stream()
+    with pytest.raises(AssertionError):
+        _stream_root_positions(case, statements[:2])
+    with pytest.raises(AssertionError):
+        _stream_root_positions(case, [*statements, statements[2]])
+
+
+def test_stream_root_positions_refuses_a_delivery_not_opening_on_a_page_root() -> None:
+    case, statements = _two_page_stream()
+    with pytest.raises(AssertionError):
+        _stream_root_positions(case, ["select 1", *statements])
+
+
+def _stated_balance_table() -> tuple[case_format.Case, Metamodel, dict[str, Any]]:
+    case = _write_case("m-temporal-write-002")
+    state = cast("dict[str, Any]", deepcopy(case_document(case)["then"]["tableState"]))
+    return case, engine.load_case_metamodel(case), state
+
+
+def _reorder_a_row(state: dict[str, Any]) -> None:
+    rows = state["balance"]
+    rows[0] = dict(reversed(rows[0].items()))
+
+
+def test_grade_table_state_accepts_the_tables_the_case_states() -> None:
+    case, model, state = _stated_balance_table()
+    _grade_table_state(case, model, {"tableState": state})
+
+
+_TABLE_DAMAGE: Final[dict[str, _Damage]] = {
+    "a-lost-row": lambda state: state["balance"].pop(),
+    "a-changed-value": lambda state: state["balance"][0].update(val="1.00"),
+    "an-invented-row": lambda state: state["balance"].append(dict(state["balance"][0])),
+    "a-row-off-the-layout-order": _reorder_a_row,
+}
+
+
+@pytest.mark.parametrize("damage", _TABLE_DAMAGE.values(), ids=_TABLE_DAMAGE.keys())
+def test_grade_table_state_refuses_any_other_table(damage: _Damage) -> None:
+    case, model, state = _stated_balance_table()
+    damage(state)
+    with pytest.raises(AssertionError):
+        _grade_table_state(case, model, {"tableState": state})
+
+
+_LAYOUT_DAMAGE: Final[dict[str, _Damage]] = {
+    "a-lost-table": lambda state: state.pop("balance"),
+    "an-invented-table": lambda state: state.update(invented=[]),
+    "a-lost-column": lambda state: state["balance"][0].pop("val"),
+    "an-invented-column": lambda state: state["balance"][0].update(invented=None),
+    "columns-reordered": _reorder_a_row,
+}
+
+
+@pytest.mark.parametrize("damage", _LAYOUT_DAMAGE.values(), ids=_LAYOUT_DAMAGE.keys())
+def test_layout_shaped_table_state_refuses_any_other_shape(damage: _Damage) -> None:
+    case, model, state = _stated_balance_table()
+    _assert_layout_shaped_table_state(case, model, state)
+    damage(state)
+    with pytest.raises(AssertionError):
+        _assert_layout_shaped_table_state(case, model, state)
+
+
+_FLUSH_FAILURE_CASE: Final[str] = "m-concurrency-030"
+
+
+def _flush_failure_case() -> tuple[case_format.Case, Metamodel, list[dict[str, Any]]]:
+    case = next(c for c in reachable_cases() if c.case_id == _FLUSH_FAILURE_CASE)
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    return case, engine.load_case_metamodel(case), steps
+
+
+def _stated_units(case: case_format.Case) -> dict[str, Any]:
+    return deepcopy(_expected_units(case))
+
+
+def test_grade_units_accepts_the_fates_the_case_states() -> None:
+    case, _model, _steps = _flush_failure_case()
+    _grade_units(case, {"units": _stated_units(case)})
+
+
+def test_a_reported_entity_matches_a_statement_of_its_bare_name_alone() -> None:
+    assert _same_entity("parallax.compatibility.SequenceSpan", "SequenceSpan")
+    assert not _same_entity("parallax.compatibility.SequenceSpan", "Other")
+
+
+_UNIT_DAMAGE: Final[dict[str, _Damage]] = {
+    "a-changed-outcome": lambda units: units["control"].update(outcome="rolledBack"),
+    "a-lost-group": lambda units: units.pop("control"),
+    "an-invented-group": lambda units: units.update(invented={"outcome": "committed"}),
+    "an-invented-flush-failure": lambda units: units["control"].update(
+        flushFailure=units["stale"]["flushFailure"]
+    ),
+    "another-flush-site": lambda units: units["stale"]["flushFailure"].update(at="flush"),
+    "another-shortfall": lambda units: units["stale"]["flushFailure"].update(shortfall="zeroRows"),
+    "an-invented-error": lambda units: units["stale"]["flushFailure"].update(error="invented"),
+    "another-entity": lambda units: units["stale"]["flushFailure"].update(
+        entity="parallax.compatibility.Other"
+    ),
+    "another-key": lambda units: units["stale"]["flushFailure"].update(key={"id": 99}),
+}
+
+
+@pytest.mark.parametrize("damage", _UNIT_DAMAGE.values(), ids=_UNIT_DAMAGE.keys())
+def test_grade_units_refuses_any_other_fate(damage: _Damage) -> None:
+    case, _model, _steps = _flush_failure_case()
+    units = _stated_units(case)
+    damage(units)
+    with pytest.raises(AssertionError):
+        _grade_units(case, {"units": units})
+
+
+def test_grade_units_refuses_a_fate_omitting_its_flush_failure() -> None:
+    case, _model, _steps = _flush_failure_case()
+    units = _stated_units(case)
+    del units["stale"]["flushFailure"]
+    with pytest.raises(KeyError):
+        _grade_units(case, {"units": units})
+
+
+def _state_run_envelope(
+    case: case_format.Case, model: Metamodel, steps: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """A conforming run of the state-graded case: every table in layout order."""
+    stated = cast("dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"])
+    return {
+        "emissions": [],
+        "observations": {
+            **_step_rows_envelope(steps)["observations"],
+            "errors": [
+                {"at": "/scenario/2/write/1", "errorClass": "write-evidence-already-claimed"}
+            ],
+            "units": _stated_units(case),
+            "tableState": {
+                layout.table.name: [
+                    {slot.column.name: row[slot.column.name] for slot in layout.columns}
+                    for row in stated.get(layout.table.name, [])
+                ]
+                for layout in storage_layout.view(model).tables
+            },
+        },
+    }
+
+
+def test_grade_state_run_accepts_what_the_case_states() -> None:
+    case, model, steps = _flush_failure_case()
+    _grade_state_run(case, model, _state_run_envelope(case, model, steps))
+
+
+_STATE_RUN_DAMAGE: Final[dict[str, _Damage]] = {
+    "an-invented-emission": lambda run: run["emissions"].append({"sql": "update"}),
+    "a-lost-step-row": lambda run: run["observations"]["stepRows"][0]["rows"].pop(),
+    "a-lost-refusal": lambda run: run["observations"]["errors"].pop(),
+    "an-invented-refusal": lambda run: run["observations"]["errors"].append(
+        {"at": "/scenario/0/write/0"}
+    ),
+    "a-changed-fate": lambda run: run["observations"]["units"]["control"].update(
+        outcome="rolledBack"
+    ),
+    "a-lost-table-row": lambda run: run["observations"]["tableState"]["sequence_span"].pop(),
+}
+
+
+@pytest.mark.parametrize("damage", _STATE_RUN_DAMAGE.values(), ids=_STATE_RUN_DAMAGE.keys())
+def test_grade_state_run_refuses_any_other_run(damage: _Damage) -> None:
+    case, model, steps = _flush_failure_case()
+    envelope = _state_run_envelope(case, model, steps)
+    damage(envelope)
+    with pytest.raises(AssertionError):
+        _grade_state_run(case, model, envelope)
+
+
+def _step_graph_case() -> tuple[
+    case_format.Case, Metamodel, list[dict[str, Any]], list[dict[str, Any]]
+]:
+    case = _write_case("m-snapshot-read-016")
+    steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    entries = [{"at": "/scenario/2", "graph": deepcopy(steps[2]["expectGraph"])}]
+    return case, engine.load_case_metamodel(case), steps, entries
+
+
+def test_grade_step_graphs_accepts_the_graph_each_step_states() -> None:
+    case, model, steps, entries = _step_graph_case()
+    _grade_step_graphs(case, model, steps, {"observations": {"stepGraphs": entries}})
+
+
+_STEP_GRAPH_DAMAGE: Final[dict[str, Callable[[list[dict[str, Any]]], object]]] = {
+    "an-unanswered-step": lambda entries: entries.clear(),
+    "another-step": lambda entries: entries[0].update(at="/scenario/1"),
+    "a-changed-leaf": lambda entries: entries[0]["graph"]["OrderItem"][0].update(sku="WRONG"),
+}
+
+
+@pytest.mark.parametrize("damage", _STEP_GRAPH_DAMAGE.values(), ids=_STEP_GRAPH_DAMAGE.keys())
+def test_grade_step_graphs_refuses_any_other_graph(
+    damage: Callable[[list[dict[str, Any]]], object],
+) -> None:
+    case, model, steps, entries = _step_graph_case()
+    damage(entries)
+    with pytest.raises(AssertionError):
+        _grade_step_graphs(case, model, steps, {"observations": {"stepGraphs": entries}})
+
+
+def _concurrency_case(case_id: str) -> case_format.Case:
+    return next(c for c in _CONCURRENCY_CASES if c.case_id == case_id)
+
+
+def _raised(category: Category | None = "deadlock", native_code: str = "40001") -> DatabaseError:
+    return DatabaseError(category=category, native_code=native_code, message="refused")
+
+
+def _rounds_raising(*errors: DatabaseError) -> concurrency_runner.RoundsRun:
+    return concurrency_runner.RoundsRun(
+        (
+            {"A": concurrency_runner.NodeOutcome()},
+            *({"B": concurrency_runner.NodeOutcome(error=error)} for error in errors),
+        )
+    )
+
+
+def test_grade_error_rounds_accepts_the_one_classified_error_the_case_states(
+    profile: Profile,
+) -> None:
+    _grade_error_rounds(_concurrency_case("m-concurrency-035"), profile, _rounds_raising(_raised()))
+
+
+@pytest.mark.parametrize(
+    "errors",
+    [
+        (),
+        (_raised(), _raised()),
+        (_raised(category="lockWaitTimeout"),),
+        (_raised(native_code="40P01"),),
+    ],
+    ids=["no-error", "two-errors", "another-category", "another-native-code"],
+)
+def test_grade_error_rounds_refuses_any_other_error(
+    errors: tuple[DatabaseError, ...], profile: Profile
+) -> None:
+    with pytest.raises(AssertionError):
+        _grade_error_rounds(
+            _concurrency_case("m-concurrency-035"), profile, _rounds_raising(*errors)
+        )
+
+
+def _answered_rounds() -> tuple[
+    case_format.Case,
+    tuple[dict[str, concurrency_runner.ConcurrencyStep], ...],
+    list[dict[str, concurrency_runner.NodeOutcome]],
+]:
+    case = _concurrency_case("m-concurrency-034")
+    rounds = concurrency_runner.parse_rounds(case, "postgres")
+    answered = [
+        {
+            node: concurrency_runner.NodeOutcome(
+                rows=step.expect_rows or (), affected=step.affected_rows or ()
+            )
+            for node, step in round_spec.items()
+        }
+        for round_spec in rounds
+    ]
+    return case, rounds, answered
+
+
+def test_grade_success_rounds_accepts_what_each_step_states() -> None:
+    case, rounds, answered = _answered_rounds()
+    _grade_success_rounds(case, rounds, concurrency_runner.RoundsRun(tuple(answered)))
+
+
+@pytest.mark.parametrize(
+    ("index", "node", "outcome"),
+    [
+        (2, "B", concurrency_runner.NodeOutcome(error=_raised(), affected=(1,))),
+        (0, "A", concurrency_runner.NodeOutcome()),
+        (2, "B", concurrency_runner.NodeOutcome(affected=(0,))),
+    ],
+    ids=["a-raised-step", "a-read-of-other-rows", "another-affected-count"],
+)
+def test_grade_success_rounds_refuses_any_other_outcome(
+    index: int, node: str, outcome: concurrency_runner.NodeOutcome
+) -> None:
+    case, rounds, answered = _answered_rounds()
+    answered[index][node] = outcome
+    with pytest.raises(AssertionError):
+        _grade_success_rounds(case, rounds, concurrency_runner.RoundsRun(tuple(answered)))
+
+
+def test_grade_success_rounds_refuses_a_read_step_stating_no_rows() -> None:
+    case, rounds, answered = _answered_rounds()
+    unstated = ({"A": replace(rounds[0]["A"], expect_rows=None)}, *rounds[1:])
+    with pytest.raises(AssertionError):
+        _grade_success_rounds(case, unstated, concurrency_runner.RoundsRun(tuple(answered)))
