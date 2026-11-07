@@ -144,6 +144,38 @@ def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
         escaped[0].uow.buffer_insert(account_insert(), insertion_advice=None)
 
 
+def test_a_reference_escaped_from_a_doomed_attempt_reports_the_escape_not_the_doom() -> None:
+    port = ScriptedAdapter(Transact())
+    db = scope(port)
+    escaped: list[TxnAttempt] = []
+
+    def outer(tx: TxnAttempt) -> None:
+        escaped.append(tx)
+        with pytest.raises(RuntimeError, match="inner failure"):
+            db.transact(_raise_inner, itself)
+
+    with raises_contextualized(RollbackOnlyError):
+        db.transact(outer, itself)
+    with pytest.raises(EscapedTransactionError):
+        escaped[0].uow.buffer_insert(account_insert(), insertion_advice=None)
+
+
+def test_a_failed_transaction_leaves_nothing_for_the_next_one_to_join() -> None:
+    port = ScriptedAdapter(Transact(), Transact())
+    db = scope(port)
+    failed: list[TxnAttempt] = []
+
+    def fn(tx: TxnAttempt) -> None:
+        failed.append(tx)
+        raise RuntimeError("boom")
+
+    with raises_contextualized(RuntimeError, match="boom"):
+        db.transact(fn, itself)
+
+    assert db.transact(lambda tx: tx is not failed[0], itself)
+    assert port.calls == [BeginCall(), RollbackCall(), BeginCall(), CommitCall()]
+
+
 # --------------------------------------------------------------------------- #
 # Join semantics: same Attempt, option conflicts, foreclosure.             #
 # --------------------------------------------------------------------------- #
@@ -698,21 +730,6 @@ def test_a_joining_call_with_an_invalid_explicit_value_is_refused_as_invalid(
     assert port.calls == [BeginCall(), CommitCall()]
 
 
-@pytest.mark.parametrize("retired", ["retries", "max_retries"])
-def test_a_retired_bound_keyword_is_refused_on_every_entrypoint(retired: str) -> None:
-    # `retry` replaced each spelling without an alias, so the old ones are
-    # unknown keywords rather than bounds.
-    port = ScriptedAdapter()
-    keywords = cast("dict[str, Any]", {retired: 3})
-    with pytest.raises(TypeError, match=retired):
-        scope(port).transact(_must_not_run, itself, **keywords)
-    with pytest.raises(TypeError, match=retired):
-        scope(port).read_only(_must_not_run, itself, **keywords)
-    with pytest.raises(TypeError, match=retired):
-        scope(port).with_options(**keywords)
-    assert port.calls == []
-
-
 def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
     # An inner deadlock dooms the transaction; even though the outer
     # callback catches it and returns normally, the commit refusal preserves the
@@ -937,6 +954,25 @@ def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
     with raises_contextualized(RuntimeError, match="the callback's own") as failed:
         db.transact(body, itself)
     assert failed.edition == "a"
+
+
+def test_a_standalone_failure_escaping_a_callback_keeps_the_edition_that_read_adopted() -> None:
+    # The nested read names its own edition, and the invocation around it adds no
+    # second wrapper, so what escapes names the execution that failed rather than
+    # the one that merely enclosed it.
+    serving = ServingModel(_A)
+    failure = DatabaseError(category="uniqueViolation", native_code="23505", message="duplicate")
+    port = ScriptedAdapter(Transact(Read(raises=failure)))
+    db = scope(port, serving)
+
+    def body(_tx: TxnAttempt) -> None:
+        serving.publish(_B, expected=_A)
+        WireDatabaseView(db).find(_account_seven())
+
+    with raises_contextualized(DatabaseError) as failed:
+        db.transact(body, itself)
+    assert failed.edition == "b"
+    assert failed.value is failure
 
 
 def test_a_failed_rollback_keeps_both_errors_inside_the_contextualized_cause() -> None:

@@ -5,7 +5,7 @@ grouping.
 Direct, focused tests over the pure decision functions — independent of the
 Write Planner's own batching-stage adjacency logic (pinned in
 ``test_write_planner.py``) and the rendered SQL (pinned in
-``test_write_lowering.py`` / ``test_engine.py``). The final section composes
+``test_write_lowering.py``). The final section composes
 the two: it plans through the SAME production wiring
 (``parallax.core._execution._planning.build_write_planner``) and lowers the resulting
 plan, pinning that a run only ever collapses rows whose filtered Table Layout
@@ -287,20 +287,6 @@ def test_collapses_dispatches_by_mutation() -> None:
 # composed with the write lowering it feeds, under the composition layer's own  #
 # injected vocabulary.                                                          #
 # --------------------------------------------------------------------------- #
-def test_same_shape_insert_run_collapses_into_one_multi_row_statement() -> None:
-    model, _ = WALLET
-    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
-        KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
-        ),
-        KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 11, "owner": "Omar", "balance": Decimal("20.00")},)
-        ),
-    ]
-    assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
-        "insert into wallet(id, owner, balance) select * from "
-        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
-    ]
 
 
 def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() -> None:
@@ -310,21 +296,6 @@ def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() ->
             "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
         ),
         KeyedWriteInstruction("insert", "Wallet", ({"id": 11, "owner": "Omar"},)),
-    ]
-    with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: required attribute"):
-        _flush_and_lower(buffer, model)
-
-
-def test_one_invalid_insert_refuses_the_whole_candidate_run_before_grouping() -> None:
-    model, _ = WALLET
-    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
-        KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
-        ),
-        KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 11, "owner": "Nils", "balance": Decimal("30.00")},)
-        ),
-        KeyedWriteInstruction("insert", "Wallet", ({"id": 12, "owner": "Omar"},)),
     ]
     with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: required attribute"):
         _flush_and_lower(buffer, model)

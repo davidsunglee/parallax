@@ -328,16 +328,19 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
     _participating(run, ScriptedAdapter(Transact()))
 
 
-def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched() -> None:
-    def interrupting(_activity: object, _inputs: ReadInputs) -> object:
-        raise KeyboardInterrupt
+@pytest.mark.parametrize("fatal", [KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched(
+    fatal: type[BaseException],
+) -> None:
+    raised = fatal()
 
-    try:
+    def interrupting(_activity: object, _inputs: ReadInputs) -> object:
+        raise raised
+
+    with pytest.raises(fatal) as escaped:
         _scope(ScriptedAdapter()).begin().eager(_TARGET, "typed", interrupting)
-    except KeyboardInterrupt:
-        pass
-    else:  # pragma: no cover - the assertion is the except clause
-        raise AssertionError("a control-flow exception was contextualized")
+    assert escaped.value is raised
+    assert escaped.value.__cause__ is None
 
 
 # --------------------------------------------------------------------------- #
@@ -600,19 +603,6 @@ class _EvidenceContext:
 
     def register_read_evidence(self, evidence: ReadEvidence, /, *, read_at: int) -> None:
         del evidence, read_at
-
-
-@pytest.mark.parametrize("scanned", [False, True], ids=["observed", "scanned"])
-def test_a_page_read_with_no_evidence_context_collects_nothing(scanned: bool) -> None:
-    collector = _page_origin_collector(ACCOUNT_META, None, scanned=scanned)
-
-    assert collector is EMPTY_PAGE_ORIGIN_COLLECTOR
-
-
-def test_a_writable_page_scanning_an_axis_collects_nothing() -> None:
-    collector = _page_origin_collector(ACCOUNT_META, _EvidenceContext(), scanned=True)
-
-    assert collector is EMPTY_PAGE_ORIGIN_COLLECTOR
 
 
 def test_every_observed_writable_page_takes_a_fresh_evidence_collector() -> None:

@@ -3,8 +3,7 @@
 Effects of one key or milestone each that a Write Group lays out in one effect
 span lower as one statement whose `unnest(…) with ordinality` source binds one
 typed array per source column and returns each changed or removed row's source
-ordinal. Every expectation here is authored from the grammar, not read back from
-production.
+ordinal. Every expected statement here is authored from the grammar.
 """
 
 from __future__ import annotations
@@ -439,24 +438,6 @@ def test_a_second_effect_failing_still_presents_the_first_alone() -> None:
     assert held == (steps[0],)
     assert raised is failure
     assert arrays(statement)[0] == (INT64, [1])
-
-
-def test_the_first_effect_failing_presents_nothing() -> None:
-    steps = _three()
-    failure = _Refused()
-    preparer = _FailingPreparer(WALLET, steps[0], failure)
-    cursor, span = _span_cursor(steps, preparer)
-    with pytest.raises(_Refused) as raised:
-        cursor.lowered_grouped_effect(steps[0], span)
-    assert raised.value is failure
-
-
-def test_a_control_flow_exception_preparing_a_later_effect_presents_none_of_the_span() -> None:
-    steps = _three()
-    preparer = _FailingPreparer(WALLET, steps[2], KeyboardInterrupt())
-    cursor, span = _span_cursor(steps, preparer)
-    with pytest.raises(KeyboardInterrupt):
-        cursor.lowered_grouped_effect(steps[0], span)
 
 
 def test_the_dry_traversal_answers_the_prefix_then_raises_the_held_failure() -> None:

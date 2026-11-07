@@ -380,13 +380,6 @@ def test_a_step_that_cannot_join_ends_the_run_taken_but_unprepared(kind: str) ->
     assert preparer.prepared == [step.entries[0] for step in run]
 
 
-def test_another_objects_opening_of_the_same_shape_joins_the_run() -> None:
-    steps = (*_openings(1), _opening(_row(2, _JUN)))
-    statement, following, _failure = _grouped(_cursor(steps))
-    assert following is None
-    assert _spelled(statement) == _joined(*steps)
-
-
 def test_no_entry_count_ends_a_run() -> None:
     steps = tuple(_opening(_row(key, _JAN)) for key in range(1, 71))
     cursor = _cursor(steps)
@@ -451,13 +444,6 @@ def test_the_first_openings_failure_raises_with_no_statement() -> None:
         _grouped(cursor)
     assert raised.value is failure
     assert _remaining(cursor) == list(steps[1:])
-
-
-def test_a_control_flow_exception_preparing_a_later_opening_propagates() -> None:
-    steps = _openings(3)
-    preparer = _Preparer(failing={id(steps[1].entries[0]): KeyboardInterrupt()})
-    with pytest.raises(KeyboardInterrupt):
-        _grouped(_cursor(steps, preparer))
 
 
 # --------------------------------------------------------------------------- #

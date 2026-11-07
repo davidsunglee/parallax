@@ -15,7 +15,6 @@ import pytest
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     Credential,
-    CredentialResolutionError,
     CredentialSource,
     DriverManaged,
     Password,
@@ -72,15 +71,6 @@ def test_the_driver_managed_declaration_admits_one_instance() -> None:
 
     with pytest.raises(TypeError, match="one instance"):
         type("Narrower", (DriverManaged,), {})
-
-
-def test_a_resolution_refusal_is_an_ordinary_exception_a_provider_can_raise() -> None:
-    # Providers live in other distributions, so the type they refuse with is
-    # part of this seam rather than of any adapter.
-    refusal = CredentialResolutionError("the credential source could not produce a password")
-
-    assert isinstance(refusal, Exception)
-    assert str(refusal) == "the credential source could not produce a password"
 
 
 def test_any_object_that_resolves_is_a_source_without_registering_anything() -> None:

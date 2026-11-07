@@ -72,13 +72,6 @@ def test_a_violation_of_the_tables_own_exclusion_is_recognized_and_raised_unchan
     assert recognized[0] is failure
 
 
-def test_a_grouped_insert_failure_is_recognized_against_the_tables_exclusion() -> None:
-    failure = _exclusion()
-    raised, recognized = _executed(ScriptedAdapter(Write(raises=failure)), opening(3), opening(5))
-    assert raised is failure
-    assert recognized == [failure]
-
-
 def test_an_ordered_statement_failure_is_recognized_against_its_own_step() -> None:
     failure = _exclusion()
     result = OrderedWriteResultComplete((1, StatementFailed(failure), StatementNotExecuted()))

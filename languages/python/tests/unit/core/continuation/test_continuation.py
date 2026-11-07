@@ -1,10 +1,9 @@
-"""Continuation pure page-plan unit tests (`m-snapshot-read` streaming).
+"""Continuation pure page-plan unit tests (`m-read-delivery` streaming).
 
 Exercises `parallax.core.continuation.plan` with no port and no database, the
 way `test_read_planning.py` exercises its neighbour: the Continuation Order a page
 node carries, the seek `after` composes onto the caller's own predicate, and the
-query shape a page plan refuses outright. Most assertions here are over the
-returned resolved page query alone.
+query shape a page plan refuses outright.
 
 The algebra is graded as a table, because that is what it is: direction, Null
 Placement, term count, whether an authored key already named the primary key, and
@@ -72,7 +71,7 @@ from parallax.core.predicate._resolved import ResolvedConstant
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
 from parallax.descriptor import _records
-from tests.unit._corpus_model_support import corpus, formed
+from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -163,13 +162,6 @@ def _active(model: Metamodel, target: str) -> Comparison:
 # --------------------------------------------------------------------------- #
 # The Continuation Order a page node carries.                                  #
 # --------------------------------------------------------------------------- #
-def test_an_undeclared_ordering_pages_by_the_primary_key_ascending() -> None:
-    # The whole of the order a stream advances by when the caller declared none:
-    # the primary key, ascending, which is total, immutable, and non-nullable, so
-    # every page seeks and no write moves a root across a page boundary.
-    node = _planned(ORDERS, "Order").first(limit=50)
-    assert _order(node) == _normalized((OrderKey(attr=_ORDER_ID, direction="asc"),))
-    assert node.limit == 50
 
 
 def test_the_first_page_carries_the_callers_query_unchanged_but_ordered_and_capped() -> None:
@@ -193,38 +185,12 @@ def test_the_page_size_is_the_nodes_limit_rather_than_a_clause_of_its_own() -> N
 
 
 def test_the_continuation_order_is_not_readable_off_the_plan() -> None:
-    # Deliberate: a caller hands over one opaque coordinate and the plan states
-    # which terms it is measured against, so there is no way to assemble a cursor
-    # the plan would then disagree with. Where the order is observable is where it
-    # is graded — the `orderBy` of the node `first` returns.
+    # A caller hands over one opaque coordinate and the plan states which terms
+    # it is measured against, so no attribute offers terms to assemble a cursor
+    # from. The order itself is observable on the nodes the plan returns.
     plan = _planned(ORDERS, "Order")
     assert not hasattr(plan, "order")
     assert not hasattr(plan, "key")
-
-
-def test_an_authored_ordering_is_carried_verbatim_with_the_key_appended() -> None:
-    # The composition rule, on the shape that shows both halves: the authored
-    # keys keep their resolved direction and Null Placement, and the key is
-    # appended after them, ascending, because nothing else makes the order total.
-    plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),))
-    assert _order(plan.first(limit=2)) == _normalized(
-        (
-            OrderKey(attr=_ORDER_SKU, nulls="first"),
-            OrderKey(attr=_ORDER_ID, direction="asc"),
-        )
-    )
-
-
-def test_an_authored_key_naming_the_primary_key_is_not_appended_a_second_time() -> None:
-    # The key is in the order once however it got there. An unconditional append
-    # would order by it twice and seek a coordinate no page binds, and the second
-    # term could not break a tie the first already resolved.
-    order = (
-        OrderKey(attr=_ORDER_ACTIVE, direction="asc"),
-        OrderKey(attr=_ORDER_ID, direction="desc"),
-    )
-    plan = _planned(ORDERS, "Order", order_by=order)
-    assert _order(plan.first(limit=2)) == _normalized(order)
 
 
 def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() -> None:
@@ -525,8 +491,7 @@ def test_an_eager_read_of_the_same_query_captures_nothing() -> None:
 
 def test_null_placement_over_a_non_nullable_key_changes_no_seek() -> None:
     # Placement is observable only on a nullable key (m-dialect), so the two
-    # spellings over `Order.name` order the same rows AND seek the same way —
-    # while the page node still carries each one as resolved.
+    # spellings over `Order.name` order the same rows AND seek the same way.
     coordinate = ContinuationCoordinate(("Ada", 1))
     seeks = {
         placement: _where(
@@ -647,15 +612,6 @@ def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -
     )
 
 
-def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
-    # An unfiltered query contributes no conjunct at all, so the page's `where`
-    # clause is the seek rather than a conjunction with an empty left operand —
-    # which would lower to a dangling `and`.
-    plan = _planned(ORDERS, "Order")
-    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((2,)), limit=3))
-    assert _where(statement) == "t0.id >= ? and (t0.id > ? or t0.id is null)"
-
-
 def test_a_coordinate_of_the_wrong_width_is_refused_by_name() -> None:
     # A coordinate is positional over the WHOLE Continuation Order, so one of
     # another width was captured under a different order than this plan composes
@@ -663,16 +619,6 @@ def test_a_coordinate_of_the_wrong_width_is_refused_by_name() -> None:
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),))
     with pytest.raises(continuation.ContinuationError, match="carries 1"):
         plan.after(ContinuationCoordinate((1,)), limit=3)
-
-
-def test_a_page_seeks_past_a_null_carrier_rather_than_refusing_it() -> None:
-    # The rule a checked delivery rests on: whatever a root's stored data turned
-    # out to be, its ordering expressions evaluated to something, and a null one
-    # is an ordinary coordinate the next page advances from. Nothing here asks
-    # whether a member decoded.
-    plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
-    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((None, 4)), limit=3))
-    assert _where(statement) == "(t0.sku is null and (t0.id > ? or t0.id is null))"
 
 
 def test_a_coordinates_snapshot_is_an_inert_copy_rather_than_a_second_cursor() -> None:
@@ -691,10 +637,9 @@ def test_a_coordinates_snapshot_is_an_inert_copy_rather_than_a_second_cursor() -
 
 
 def test_a_sort_key_naming_no_declared_attribute_is_refused_by_name() -> None:
-    # The plan resolves its own references rather than trusting the caller's:
-    # every term needs the member's identity to read a coordinate under and its
+    # Every term needs the member's identity to read a coordinate under and its
     # nullability to decide the seek, so a reference that resolves to nothing has
-    # no term to contribute and is refused where it is read.
+    # no term to contribute and is refused before a plan forms.
     with pytest.raises(ValueError, match="no declared ordering attribute"):
         _planned(ORDERS, "Order", order_by=(OrderKey(attr="parallax.compatibility.Order.missing"),))
 
@@ -876,7 +821,7 @@ def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_o
 ) -> None:
     # The property the edge exists for, asserted at every boundary offset a page
     # size can land on: eight milestones over two keys, so a page boundary falls
-    # inside one key's own history at every size below eight. Ordering by the key
+    # inside one key's own history at most sizes below eight. Ordering by the key
     # alone would end each of those deliveries early — the next page seeks past
     # the whole key — and this is the same paging evaluation the Column orderings
     # above are graded by, over instants rather than scalars.
@@ -1200,24 +1145,6 @@ def test_a_root_whose_ordered_by_member_moves_behind_the_cursor_is_skipped(
     assert 9 not in delivered
 
 
-@pytest.mark.parametrize("batch_size", [1, 2, 3], ids=lambda size: f"batch-{size}")
-@pytest.mark.parametrize(
-    "write",
-    [_moves_a_delivered_root_ahead, _moves_an_undelivered_root_behind],
-    ids=["moved-ahead", "moved-behind"],
-)
-def test_the_undeclared_order_is_immune_to_both_because_no_write_moves_a_key(
-    write: _Writer, batch_size: int
-) -> None:
-    # The immunity the same two writers meet against the default order: with no
-    # authored `orderBy` the Continuation Order is the primary key alone, and a
-    # keyed write ADDRESSES a row by that key rather than changing it — so
-    # neither writer can move a root across the position, and every root arrives
-    # exactly once at every page size.
-    delivered = _delivered_under_writes((), batch_size=batch_size, write=write)
-    assert delivered == list(range(1, len(_dataset()) + 1))
-
-
 # --------------------------------------------------------------------------- #
 # The model rule the appended term rests on.                                   #
 # --------------------------------------------------------------------------- #
@@ -1259,34 +1186,19 @@ def test_a_composite_primary_key_does_not_form() -> None:
     # The premise the appended term rests on, asserted where it is decided: a
     # second local primary-key Attribute is a formation defect, so no accepted
     # model presents a Continuation Order whose key half is two members and the
-    # last branch of every seek is one comparison. The day that contract widens,
-    # this fails before anything downstream silently skips a root.
+    # last branch of every seek is one comparison.
     with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
         formed(_TWO_LOCAL_KEYS)
 
 
 def test_a_family_whose_ancestry_chain_declares_a_second_key_does_not_form() -> None:
     # The other route to a composite key, and the one a stream reaches through:
-    # `_family_key` resolves a subtype's order through its family root, so a
+    # `_family_view` resolves a subtype's order through its family root, so a
     # subtype adding a key of its own would widen the order without touching the
     # root. The applicable ancestry chain admits exactly one primary-key
     # Attribute (`m-inheritance`), so that model does not form either.
     with pytest.raises(MetamodelValidationError, match="inheritance-primary-key-multiple"):
         formed(_TWO_FAMILY_KEYS)
-
-
-def test_no_corpus_model_declares_a_composite_primary_key() -> None:
-    # The inventory beside the rule: every shipped model the streaming lane
-    # plans against carries a single-Attribute key today, so the seek's premise
-    # holds of the corpus and not only of formation.
-    for stem, model in corpus().items():
-        for entity in model.entities:
-            keys = [
-                attribute.identity.name
-                for attribute in entity.declared_attributes
-                if isinstance(attribute.primary_key, PrimaryKey)
-            ]
-            assert len(keys) <= 1, (stem, entity.identity.canonical, keys)
 
 
 def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:

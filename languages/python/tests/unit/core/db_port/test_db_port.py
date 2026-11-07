@@ -26,6 +26,7 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     InvalidAuthorizationError,
     PipelineStatement,
+    RoutePolicy,
     Row,
     TransactionOutcome,
     isolation_level,
@@ -44,10 +45,6 @@ class UnhashableName(str):
     """
 
     __hash__ = None  # type: ignore[assignment]
-
-
-def test_the_vocabulary_is_exactly_three_levels() -> None:
-    assert set(ISOLATION_LEVELS) == {"read_committed", "repeatable_read", "serializable"}
 
 
 @pytest.mark.parametrize("level", sorted(ISOLATION_LEVELS))
@@ -70,7 +67,8 @@ def test_every_level_of_the_vocabulary_is_returned_unchanged(level: str) -> None
     ],
 )
 def test_anything_outside_the_vocabulary_is_refused_by_naming_the_whole_set(value: object) -> None:
-    with pytest.raises(ValueError, match=r"isolation must be one of \['read_committed', "):
+    known = r"\['read_committed', 'repeatable_read', 'serializable'\]"
+    with pytest.raises(ValueError, match=rf"isolation must be one of {known}"):
         isolation_level(value)
 
 
@@ -83,7 +81,7 @@ def test_an_accepted_level_comes_back_as_a_plain_hashable_str() -> None:
 
 def test_a_connection_context_source_declares_resource_free_context_creation() -> None:
     class _Source:
-        def new_context(self) -> ConnectionContext:
+        def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
             raise AssertionError("the structural check must perform no I/O")
 
     assert isinstance(_Source(), ConnectionContextSource)

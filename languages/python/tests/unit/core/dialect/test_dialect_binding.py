@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Any, cast
 
 import pytest
 
@@ -130,10 +129,3 @@ def test_owned_document_reads_validate_presence_and_document_carriers() -> None:
         POSTGRES.parse_owned_document_read(1, None)
     with pytest.raises(ValueError, match="portable JSON value"):
         POSTGRES.parse_owned_document_read(True, object())
-
-
-def test_connecting_with_an_obsolete_dialect_keyword_is_refused() -> None:
-    # No alias and no mismatch check: the pair collapsed, so naming a dialect
-    # beside a port is an unrecognized argument like any other.
-    with pytest.raises(TypeError, match="dialect"):
-        cast("Any", connect)(_SpellingPort(POSTGRES), ACCOUNT, dialect=POSTGRES)

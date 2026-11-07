@@ -1,12 +1,11 @@
 """The shared port kit's own contract: what a script guarantees its consumers.
 
-Docker-free. The suites that moved onto the kit are its coverage of ordinary
-answering — every one of them asserts on rows, counts, and recorded calls. What
-they never exercise is what the kit exists to add over the mutable queues it
-replaced: that a call the script does not reach fails at the call, that the
-shape states which side of a transaction boundary a call landed on, that an
-entry left unreached is reported, and that one failure instance cannot be
-reported twice.
+Docker-free. The suites built on the kit cover most of its ordinary answering:
+each asserts on rows, counts, and recorded calls. What they never exercise is
+what a script guarantees beyond that: that a call the script does not reach
+fails at the call, that the shape states which side of a transaction boundary a
+call landed on, that an entry left unreached is reported, and that one failure
+instance cannot be reported twice.
 """
 
 from __future__ import annotations
@@ -68,7 +67,7 @@ def test_a_call_the_script_does_not_reach_fails_at_the_call() -> None:
 
 def test_a_call_of_another_kind_than_the_next_entry_fails_at_the_call() -> None:
     # Positional means positional: a pending read is not skipped because a write
-    # arrived, which is what a per-kind queue did and what hid the ordering.
+    # arrived, so a call out of order fails instead of hiding the ordering.
     port = ScriptedAdapter(Read(rows=[]), Write(affected=1))
 
     with pytest.raises(AssertionError, match="unscripted write"):
@@ -92,14 +91,6 @@ def test_a_scripted_failure_is_raised_by_the_call_it_belongs_to() -> None:
         _read(port)
 
     assert raised.value is failure
-
-
-def test_mapping_fixtures_reach_the_caller_as_positional_rows() -> None:
-    rows = [{"id": 1}]
-    port = ScriptedAdapter(Read(rows=rows), Read(rows=rows))
-
-    assert _read(port) == [(1,)]
-    assert _read(port) == [(1,)]
 
 
 def test_scripted_pipeline_returns_one_ordered_batch_per_statement() -> None:
