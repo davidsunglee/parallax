@@ -13,6 +13,7 @@ from parallax.core.inheritance._table_groups import (
     project_topology,
 )
 from parallax.core.metamodel import (
+    AbstractRoot,
     AsOfAxisLocation,
     AttributeLocation,
     CandidateMetamodel,
@@ -139,8 +140,8 @@ MATERIALIZATION_KEY_COLLISION: Final[IssueCode] = "inheritance-materialization-k
 Scalar fields render by physical column, Value Objects and relationships by
 canonical member name, narrowed relationships under a derived bracketed key,
 and inheritance participants under the synthetic ``_type`` key. No member name
-can spell that key, and no Entity may store a member in a Column of that
-spelling, so it only ever means the node's concrete Entity.
+can spell that key, and no Entity may store a member or tag rows in a Column of
+that spelling, so it only ever means the node's concrete Entity.
 """
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
@@ -265,21 +266,32 @@ def _storage_names(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelL
 
 
 def _type_column_issues(declaration: EntityDeclaration) -> list[MetamodelIssue]:
-    """The members ``declaration`` stores in a Column spelled ``_type``.
+    """The members and tag ``declaration`` stores in a Column spelled ``_type``.
 
     The refusal binds what an Entity declares, so it does not depend on any node
     rendering it.
     """
+    entity = EntityLocation(declaration.identity)
+    spelled = (*_storage_names(declaration), *_tag_column(declaration))
     return [
         MetamodelIssue(
             MATERIALIZATION_KEY_COLLISION,
             location,
-            (EntityLocation(declaration.identity),),
+            (entity,),
             message=f"Column {WIRE_TYPE_KEY!r} spells the materialized field key of a node's type",
         )
-        for name, location in _storage_names(declaration)
+        for name, location in spelled
         if name == WIRE_TYPE_KEY
     ]
+
+
+def _tag_column(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelLocation]]:
+    """The tag Column a table-per-hierarchy root declares, located at that root."""
+    inheritance = declaration.inheritance
+    if isinstance(inheritance, AbstractRoot) and isinstance(
+        inheritance.strategy, TablePerHierarchy
+    ):
+        yield inheritance.strategy.tag_column, EntityLocation(declaration.identity)
 
 
 def _rendered_keys(

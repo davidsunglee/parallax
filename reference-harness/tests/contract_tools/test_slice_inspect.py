@@ -76,6 +76,7 @@ _MATERIALIZATION_KEY_CASES = {
     "core/compatibility/cases/m-inheritance-166-rejected-dormant-attribute-type-column.yaml",
     "core/compatibility/cases/m-inheritance-167-rejected-standalone-value-object-type-column.yaml",
     "core/compatibility/cases/m-inheritance-168-rejected-dormant-value-object-type-column.yaml",
+    "core/compatibility/cases/m-inheritance-171-rejected-tag-type-column.yaml",
 }
 
 

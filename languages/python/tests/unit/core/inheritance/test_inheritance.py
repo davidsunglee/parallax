@@ -519,6 +519,7 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
         MATERIALIZATION_KEY_COLLISION
     ),
     "m-inheritance-168-rejected-dormant-value-object-type-column": (MATERIALIZATION_KEY_COLLISION),
+    "m-inheritance-171-rejected-tag-type-column": MATERIALIZATION_KEY_COLLISION,
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 
@@ -1252,6 +1253,20 @@ def test_a_participant_attribute_may_not_store_in_the_type_column() -> None:
     assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].location == AttributeLocation(marker.identity)
     assert issues[0].related == (EntityLocation(_ROOT),)
+
+
+def test_a_family_may_not_name_its_tag_column_the_type_key() -> None:
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            container=Table("ledger"),
+            attributes=(key(_ROOT),),
+            inheritance=AbstractRoot(TablePerHierarchy("_type")),
+        ),
+        _concrete(_LEAF),
+    )
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
+    assert issues[0].location == EntityLocation(_ROOT)
 
 
 def test_a_participant_may_spell_a_member_family_variant() -> None:

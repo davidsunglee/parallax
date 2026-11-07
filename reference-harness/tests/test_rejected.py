@@ -408,6 +408,27 @@ def test_the_family_variant_spelling_is_ordinary(
     validate_family(descriptor_of(members))
 
 
+def _tagged_by_the_type_key() -> dict[str, Any]:
+    root = _tph_root()
+    root["inheritance"]["tag"]["column"] = "_type"
+    return {"entities": [root, _CONCRETE_DOG]}
+
+
+def test_a_family_may_not_name_its_tag_column_the_type_key() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_family(_tagged_by_the_type_key())
+    assert exc.value.rule == INHERITANCE_MATERIALIZATION_KEY_COLLISION
+
+
+def test_an_evolution_endpoint_may_not_name_a_tag_column_the_type_key(tmp_path: Path) -> None:
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "later.yaml").write_text(yaml.safe_dump(_tagged_by_the_type_key()))
+    errors: list[str] = []
+    _validate_models(tmp_path, load_schemas(Path(__file__))["metamodel.schema.json"], errors)
+    assert len(errors) == 1
+    assert INHERITANCE_MATERIALIZATION_KEY_COLLISION in errors[0]
+
+
 def test_an_evolution_endpoint_may_not_declare_the_type_column(tmp_path: Path) -> None:
     # An endpoint is a corpus model, and the static inventory is what accepts one.
     (tmp_path / "models").mkdir()

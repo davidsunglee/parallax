@@ -1,4 +1,4 @@
-"""Every route an Entity is declared through refuses a Column spelled ``_type``."""
+"""Every route an Entity is declared through refuses a member or tag Column of ``_type``."""
 
 from __future__ import annotations
 
@@ -9,7 +9,15 @@ import pytest
 import yaml
 
 from parallax.conformance import models
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import (
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    TablePerHierarchy,
+    attr,
+)
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor import DescriptorError, domain_model_from_document
 
@@ -78,28 +86,65 @@ def test_a_class_member_cannot_spell_the_type_key() -> None:
         DomainModel(Ticket)
 
 
-def test_a_tag_column_may_spell_the_type_key_because_it_renders_no_key() -> None:
+def _tagged_family(column: str) -> dict[str, Any]:
+    return {
+        "entities": [
+            {
+                "name": "Record",
+                "table": "record",
+                "inheritance": {
+                    "role": "root",
+                    "strategy": "table-per-hierarchy",
+                    "tag": {"column": column},
+                },
+                "attributes": [_KEY],
+            },
+            {
+                "name": "Note",
+                "inheritance": {
+                    "role": "concrete-subtype",
+                    "parent": "Record",
+                    "tagValue": "note",
+                },
+            },
+        ]
+    }
+
+
+def test_a_descriptor_may_not_name_a_tag_column_the_type_key() -> None:
+    with pytest.raises(MetamodelValidationError) as refused:
+        domain_model_from_document(_tagged_family("_type"))
+    assert [issue.code for issue in refused.value.issues] == [_COLLISION]
+
+
+def test_a_class_may_not_name_a_tag_column_the_type_key() -> None:
+    class Record(Entity, table="record", inheritance=AbstractRoot(TablePerHierarchy("_type"))):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Note(Record, inheritance=ConcreteSubtype(tag_value="note")):
+        pass
+
+    with pytest.raises(MetamodelValidationError) as refused:
+        DomainModel(Record, Note)
+    assert [issue.code for issue in refused.value.issues] == [_COLLISION]
+
+
+def test_an_evolution_endpoint_may_not_name_a_tag_column_the_type_key(tmp_path: Path) -> None:
+    later = tmp_path / "later.yaml"
+    later.write_text(yaml.safe_dump(_tagged_family("_type")))
+    with pytest.raises(MetamodelValidationError) as refused:
+        models.load_model(later)
+    assert [issue.code for issue in refused.value.issues] == [_COLLISION]
+
+
+def test_a_structured_column_may_spell_the_type_key_because_it_renders_no_key() -> None:
     domain_model_from_document(
         {
-            "entities": [
-                {
-                    "name": "Record",
-                    "table": "record",
-                    "inheritance": {
-                        "role": "root",
-                        "strategy": "table-per-hierarchy",
-                        "tag": {"column": "_type"},
-                    },
-                    "attributes": [_KEY],
-                },
-                {
-                    "name": "Note",
-                    "inheritance": {
-                        "role": "concrete-subtype",
-                        "parent": "Record",
-                        "tagValue": "note",
-                    },
-                },
-            ]
+            "entity": {
+                "name": "Ticket",
+                "table": "ticket",
+                "layout": {"document": {"column": "_type"}},
+                "attributes": [_KEY, {"name": "note", "type": "string"}],
+            }
         }
     )

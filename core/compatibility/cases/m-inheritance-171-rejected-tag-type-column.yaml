@@ -1,0 +1,15 @@
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, materialization-key, type-key, table-per-hierarchy, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        table: record
+        inheritance: { role: root, strategy: table-per-hierarchy, tag: { column: _type } }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Note
+        inheritance: { role: concrete-subtype, parent: Record, tagValue: note }
+then:
+  rejectedRule: inheritance-materialization-key-collision

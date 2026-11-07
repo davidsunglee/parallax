@@ -288,10 +288,11 @@ the rendered mapping. Formation rejects an Attribute physical column that equals
 an applicable Value Object occurrence name or broad relationship name. It also
 reserves every `<relationshipName>[` prefix from applicable Attribute physical
 columns because narrowed views occupy that derived-key namespace. A member name
-begins with a lowercase letter (`m-metamodel`), so no member can spell `_type`, and
-no Entity, inheritance participant or not, may store an Attribute or a Value Object
-in a Column spelled `_type`. That key therefore always means the node's concrete
-Entity; whether a node carries it still depends on participation. These ambiguities
+begins with a lowercase letter (`m-metamodel`), so no member can spell `_type`. No
+Entity, inheritance participant or not, may store an Attribute or a Value Object in
+a Column spelled `_type`, and no family may name its tag column `_type`. That key
+therefore always means the node's concrete Entity; whether a node carries it still
+depends on participation. These ambiguities
 are `inheritance-materialization-key-collision`; a materializer MUST NOT choose a
 winner. Foundational canonical member-name collisions remain
 `metamodel-local-member-collision`, and duplicate physical contributors remain
