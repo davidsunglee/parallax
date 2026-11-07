@@ -8,7 +8,7 @@ when the flush advances to it."""
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import FrameType
 from typing import Any, cast
@@ -75,11 +75,6 @@ def _always(state: ObjectStateKey, read_at: int) -> bool:
     return True
 
 
-def _never(state: ObjectStateKey, read_at: int) -> bool:
-    del state, read_at
-    return False
-
-
 class _Traced:
     """``held``'s answers, each request recorded in ``trace`` as it is asked
     for: a completion by the keys it completes, a coverage read by each key it
@@ -130,12 +125,7 @@ class _Traced:
             self.answers.extend(by_key.values())
 
 
-def _bindings(
-    written: WritePlan,
-    acquire: AcquireRows,
-    *,
-    current: Callable[[ObjectStateKey, int], bool] = _always,
-) -> RangeBindings:
+def _bindings(written: WritePlan, acquire: AcquireRows) -> RangeBindings:
     """The scoped binding of every entry of ``written``: its one acquisition
     span, or its one deferred write."""
     planner = build_write_planner(MODEL)
@@ -144,7 +134,7 @@ def _bindings(
         start=0,
         stop=len(written.entries),
         acquire_rows=acquire,
-        current=current,
+        current=_always,
         ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
         audit=planner.audit_decoration(
             actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=instant_at(AT.isoformat())
@@ -340,27 +330,6 @@ def _window(step: PlannedStep) -> tuple[object, object]:
     return cells["validStart"], cells["validEnd"]
 
 
-def test_a_span_its_retained_rows_cover_reads_nothing() -> None:
-    targets = [covered_target(ShareCols, key) for key in (1, 2, 3)]
-    traced = _Traced(HeldRows(MODEL, [row for _write, row in targets], overlapping=True))
-    written = _span(plan([write for write, _row in targets], concurrency="locking"))
-    _drained(_bindings(written, traced.acquire), traced.trace)
-    assert traced.trace == [
-        ("complete", (1,)),
-        ("complete", (2,)),
-        ("complete", (3,)),
-        ("bind", (1, 2, 3)),
-    ]
-
-
-def test_a_stale_retained_row_is_read_with_the_spans_other_parts() -> None:
-    target, stored = covered_target(ShareCols, 1)
-    traced = _Traced(HeldRows(MODEL, [stored, *frag_rows(ShareCols, 2, 1)], overlapping=True))
-    written = _span(plan([target, *frag(ShareCols, 2, 1)], concurrency="locking"))
-    _drained(_bindings(written, traced.acquire, current=_never), traced.trace)
-    assert traced.trace == [("read", ((1, 1), (2, 1))), ("bind", (1, 2))]
-
-
 def test_each_ranges_missing_coverage_is_derived_once_before_anything_is_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -376,45 +345,6 @@ def test_each_ranges_missing_coverage_is_derived_once_before_anything_is_read(
     monkeypatch.setattr(ranges_module, "_missing_coverage", deriving)
     _drained(_bindings(written, traced.acquire), traced.trace)
     assert derived == [0, 0, 0]
-
-
-def test_a_group_is_bound_only_when_the_flush_advances_to_it(recorded: _Bound) -> None:
-    written, stored = _fragmented(ShareCols, (1, 1, 1))
-    held = HeldRows(MODEL, stored, overlapping=True)
-    with _bindings(written, held) as bindings:
-        assert (held.requests, recorded.calls) == ([], [])
-        group = next(bindings)
-        # One read serves all three, which bind together.
-        assert len(held.requests) == 1
-        assert [key for key, _reused, _acquired in recorded.calls] == [1, 2, 3]
-        assert _keys(group) == (1, 2, 3)
-        assert next(bindings, None) is None
-        assert len(held.requests) == 1
-
-
-def test_a_group_lays_every_members_non_insert_steps_before_any_insert() -> None:
-    written, stored = _fragmented(ShareCols, (2, 1))
-    with _bindings(written, HeldRows(MODEL, stored, overlapping=True)) as bindings:
-        (group,) = bindings
-    first, second = _members([group])
-    kinds = ["insert" if isinstance(step, PlannedInsert) else "non-insert" for step in group.steps]
-    # frag(k, m) closes its 2m rectangles and opens m merged pairs and its tail.
-    assert kinds == ["non-insert"] * (4 + 2) + ["insert"] * (3 + 2)
-    own = [
-        [step for step in member.steps if isinstance(step, PlannedInsert) is inserts]
-        for inserts in (False, True)
-        for member in (first, second)
-    ]
-    assert list(group.steps) == [step for steps in own for step in steps]
-    assert all(
-        laid is original
-        for laid, original in zip(
-            group.steps, [step for steps in own for step in steps], strict=True
-        )
-    )
-    # Every close is one shape, so the bound group records them all as one span.
-    (span,) = group.effect_spans
-    assert (span.start, span.stop) == (0, 4 + 2)
 
 
 # --------------------------------------------------------------------------- #

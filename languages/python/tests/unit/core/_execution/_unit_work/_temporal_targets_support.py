@@ -1,5 +1,5 @@
 """A temporal Position's stored rectangles, observations, and target
-and observed writes, shared by the admission and range-binding suites."""
+and observed writes, shared across the unit-of-work suites."""
 
 from __future__ import annotations
 

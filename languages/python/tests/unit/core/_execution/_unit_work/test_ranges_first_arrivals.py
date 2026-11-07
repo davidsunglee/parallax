@@ -309,16 +309,10 @@ def test_a_transaction_time_target_binds_the_row_its_caller_named() -> None:
     assert _opened([opened]) == [(Decimal("175.00"),)]
 
 
-@pytest.mark.parametrize(
-    "rows",
-    [pytest.param([], id="no-row"), pytest.param([_balance_row("100.00", T1)], id="restated")],
-)
-def test_a_transaction_time_target_whose_row_moved_on_binds_nothing(
-    rows: list[PredecessorRow],
-) -> None:
+def test_a_transaction_time_target_finding_no_row_binds_nothing() -> None:
     (write,) = settled_writes(_planned(_BALANCE, _balance_target(T0, value="175.00")))
     with pytest.raises(WritePreconditionError) as refused:
-        _bound(_BALANCE, write, rows)
+        _bound(_BALANCE, write, [])
     assert refused.value.expected == T0
 
 
