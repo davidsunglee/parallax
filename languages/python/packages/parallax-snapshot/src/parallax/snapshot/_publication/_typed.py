@@ -19,7 +19,7 @@ from parallax.snapshot._inspection import (
     pin_for_shape,
 )
 from parallax.snapshot._publication._classify import ConformingRoot, classify_root
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 
 __all__ = ["TypedRootPublisher"]
 
@@ -45,9 +45,9 @@ class TypedRootPublisher:
         "_conformance",
         "_construction",
         "_model",
+        "_plain_states",
         "_provenance",
         "_root",
-        "_shared_states",
         "_temporal",
         "_versioning",
         "_view_keys",
@@ -64,12 +64,12 @@ class TypedRootPublisher:
         self._view_keys = view_keys
         self._temporal = temporal_read.view(model)
         self._versioning = concurrency.view(model)
-        self._root: RootView | None = None
+        self._root: GraphView | None = None
         self._conformance = RootConformance.CONFORMING
         self._provenance = PageProvenance()
-        self._shared_states: dict[NodeProvenance, SnapshotNodeState] = {}
+        self._plain_states: dict[NodeProvenance, SnapshotNodeState] = {}
 
-    def __call__(self, root: RootView, ordinal: int) -> tuple[object | InvalidData[object], ...]:
+    def __call__(self, root: GraphView, ordinal: int) -> tuple[object | InvalidData[object], ...]:
         """``root`` published at result ``ordinal``: as itself when it conforms,
         and otherwise as its record, carrying its value when it hydrates."""
         # The lifecycle-states callback is bound per call rather than held: a held
@@ -102,10 +102,10 @@ class TypedRootPublisher:
         with a narrowed view or Read Evidence; any other node shares one state
         per provenance across the Page.
         """
-        root = cast("RootView", self._root)
+        root = cast("GraphView", self._root)
         conformance = self._conformance
         provenance_for = self._provenance.provenance_for
-        shared_states = self._shared_states
+        plain_states = self._plain_states
         shape_of = self._temporal.shape
         root_pin = root.pin
         layout_of = root.layout
@@ -118,7 +118,7 @@ class TypedRootPublisher:
         provenance: NodeProvenance | None = None
         pin: Pin | None = None
         edge_cache: TransactionTimeOnly | Bitemporal | None = None
-        shared: SnapshotNodeState | None = None
+        plain: SnapshotNodeState | None = None
         for node in range(len(instances)):
             concrete = layout_of(node).concrete
             if concrete is not last:
@@ -127,11 +127,11 @@ class TypedRootPublisher:
                 pin = pin_for_shape(shape, root_pin)
                 edge_cache = None if isinstance(shape, NonTemporal) else shape
                 provenance = provenance_for(concrete, conformance, pin)
-                shared = None
+                plain = None
                 if edge_cache is None:
-                    shared = shared_states.get(provenance)
-                    if shared is None:
-                        shared = shared_states.setdefault(
+                    plain = plain_states.get(provenance)
+                    if plain is None:
+                        plain = plain_states.setdefault(
                             provenance, SnapshotNodeState(provenance, _NO_VIEWS)
                         )
             narrowed = view_layout_of(node).narrowed_views
@@ -151,8 +151,8 @@ class TypedRootPublisher:
                         edge_cache,
                     )
                 )
-            elif shared is not None and not views:
-                states.append(shared)
+            elif plain is not None and not views:
+                states.append(plain)
             else:
                 states.append(
                     SnapshotNodeState(

@@ -1748,7 +1748,7 @@ def test_a_read_planning_import_in_value_publication_fails_lint_imports(
     # it — SQL generation — is what the row reports.
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot._publication._root",
+        "parallax.snapshot._publication._graph_view",
         "import parallax.core.read_delivery._read_plan  # deliberate planning violation",
     )
 
@@ -1756,8 +1756,9 @@ def test_a_read_planning_import_in_value_publication_fails_lint_imports(
         "parallax.snapshot._publication may import only its permitted dependencies BROKEN"
         in reported
     )
-    assert "parallax.snapshot._publication._root -> parallax.core.read_delivery._read_plan" in (
-        reported
+    assert (
+        "parallax.snapshot._publication._graph_view -> parallax.core.read_delivery._read_plan"
+        in (reported)
     )
 
 

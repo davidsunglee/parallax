@@ -20,5 +20,5 @@ def test_the_inert_observer_accepts_every_cadence_event() -> None:
     observer.fetched_rows_reached(3)
     observer.stored_values_compared(1)
     observer.states_decoded()
-    observer.states_shared()
+    observer.states_reused()
     observer.root_published(0)

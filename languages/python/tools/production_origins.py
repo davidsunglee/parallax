@@ -48,7 +48,7 @@ MEASURED_MODULES: Final = (
     "parallax.core.read_delivery._convert",
     "parallax.core.document_codec._document",
     "parallax.core.entity._row_fill",
-    "parallax.snapshot._publication._root",
+    "parallax.snapshot._publication._graph_view",
     "parallax.snapshot._publication._wire_render",
 )
 """The read-construction modules whose origins a runtime's identity records,

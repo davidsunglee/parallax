@@ -30,7 +30,7 @@ from parallax.core.read_delivery._page import (
     page_rows,
 )
 from parallax.core.temporal_read import Pin, TemporalShape
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 
 __all__ = ["RootObservation", "each_root", "observed", "observed_roots"]
@@ -39,7 +39,7 @@ __all__ = ["RootObservation", "each_root", "observed", "observed_roots"]
 def each_root[T](
     page: Page,
     model: Metamodel,
-    inspect: Callable[[RootView, int], T],
+    inspect: Callable[[GraphView, int], T],
     *,
     atomic: bool = False,
     milestones: TemporalShape | None = None,
@@ -93,7 +93,7 @@ class RootObservation:
         return self.views[node][slot]
 
 
-def observed(root: RootView, _ordinal: int = 0) -> RootObservation:
+def observed(root: GraphView, _ordinal: int = 0) -> RootObservation:
     """A detached copy of everything ``root`` answers for its current root."""
     nodes = range(len(root))
     return RootObservation(

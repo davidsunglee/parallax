@@ -27,7 +27,7 @@ from parallax.snapshot._inspection import (
     typed_pin_of,
     view,
 )
-from parallax.snapshot._publication._root import SnapshotConsistencyError
+from parallax.snapshot._publication._graph_view import SnapshotConsistencyError
 from parallax.snapshot._publication._wire import (
     WireEntity,
     required_wire_provenance,

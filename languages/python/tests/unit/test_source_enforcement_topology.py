@@ -261,7 +261,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"typed_predicate_interpretation"}
     ),
     ("parallax.snapshot._handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
-    ("parallax.snapshot._publication._root", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot._publication._graph_view", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot._publication._wire", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot._publication._wire", "_declaration"): frozenset({"wire_names_of"}),
     ("parallax.snapshot._publication._wire", "_entity"): frozenset(
@@ -537,8 +537,8 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ): frozenset({"publish_roots", "require_publishable"}),
     (
         "parallax.conformance.foreign_lifecycle_source",
-        "parallax.snapshot._publication._root",
-    ): frozenset({"RootView"}),
+        "parallax.snapshot._publication._graph_view",
+    ): frozenset({"GraphView"}),
     (
         "parallax.conformance.foreign_lifecycle_source",
         "parallax.core._execution._read_query",

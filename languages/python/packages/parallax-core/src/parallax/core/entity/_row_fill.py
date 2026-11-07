@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from parallax.core.entity._instance_state import PublicationPlan
     from parallax.core.metamodel import EntityIdentity, OccurrenceMetadata
 
-__all__ = ["EntityFacts", "OccurrenceFacts", "compact_row", "publish"]
+__all__ = ["EntityFacts", "OccurrenceFacts", "compact_row", "publish_graph"]
 
 _NO_LAYOUT: Final = object()
 
@@ -257,7 +257,7 @@ def compact_row(
     return row
 
 
-def publish(
+def publish_graph(
     facts: Mapping[EntityIdentity, EntityFacts],
     graph: IndexedGraph,
     lifecycle_states: Callable[[Sequence[object]], Sequence[object]],

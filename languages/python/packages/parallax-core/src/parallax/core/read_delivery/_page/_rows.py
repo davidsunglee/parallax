@@ -40,6 +40,7 @@ __all__ = [
     "dedupe_issues",
     "entity_state",
     "exact_stored_equal",
+    "judged_entity_state",
     "layout_order_key",
     "page_edges",
     "page_rows",
@@ -49,7 +50,6 @@ __all__ = [
     "release_finished_rows",
     "release_page_rows",
     "same_stored_values",
-    "shared_entity_state",
     "stored_order_key",
     "with_identity_findings",
 ]
@@ -207,8 +207,8 @@ class DecoderRows:
     A deferred one is judged by its level's shared decoder from the stored
     values and routed member row the Page holds for it, plus the sparse inputs
     registered beside them, each ``None`` where no fetched row registered one.
-    A judgment is :meth:`pending` until :meth:`settle` or :meth:`release` drops
-    its decoder and inputs. A keyless fetched row's is never settled, since
+    A judgment is :meth:`pending` until :meth:`retire` or :meth:`release` drops
+    its decoder and inputs. A keyless fetched row's is never retired, since
     every root reaching it judges it again, so the Page keeps its stored values
     and routed row until release. A fetched row judged when it was recorded has
     no judgment here at all.
@@ -275,7 +275,7 @@ class DecoderRows:
             occurrences=occurrences,
         )
 
-    def settle(self, fetched_row: int) -> None:
+    def retire(self, fetched_row: int) -> None:
         """Retire ``fetched_row``'s judgment once its state no longer needs one."""
         self._values[fetched_row] = None
         if self._carried_positions:
@@ -494,7 +494,7 @@ def same_stored_values(rows: PageRows, left: int, right: int) -> bool:
     )
 
 
-def shared_entity_state(rows: PageRows, fetched_row: int) -> EntityState | None:
+def judged_entity_state(rows: PageRows, fetched_row: int) -> EntityState | None:
     """The Entity State already judged for ``fetched_row``, if any.
 
     A logical row of one fetched row holds at most one. A logical row of
@@ -531,9 +531,9 @@ def entity_state(rows: PageRows, fetched_row: int) -> EntityState:
         if type(recorded) is tuple:
             return EntityState(recorded, ())
         return _judge_entity_state(rows, fetched_row)
-    held = shared_entity_state(rows, fetched_row)
+    held = judged_entity_state(rows, fetched_row)
     if held is not None:
-        _notify(rows.observer, "states_shared")
+        _notify(rows.observer, "states_reused")
         return held
     state = _judge_entity_state(rows, fetched_row)
     logical = rows.logical_rows[fetched_row]
@@ -559,7 +559,7 @@ def attribute_state(rows: PageRows, fetched_row: int) -> EntityState:
 def _judge_entity_state(rows: PageRows, fetched_row: int) -> EntityState:
     member_row, findings = rows.decoders.decode(fetched_row)
     if rows.keys[fetched_row] is not None:
-        rows.decoders.settle(fetched_row)
+        rows.decoders.retire(fetched_row)
     _notify(rows.observer, "states_decoded")
     return EntityState(member_row, _with_identity_findings(rows, fetched_row, findings))
 
@@ -625,7 +625,7 @@ class PageSchedule(NamedTuple):
     defers_states: bool
 
 
-_RAW_ROWS: Final = PageSchedule(None, False)
+_NO_LAST_USES: Final = PageSchedule(None, False)
 
 
 def page_schedule(page: Page, model: Metamodel, *, atomic: bool) -> PageSchedule:
@@ -639,7 +639,7 @@ def page_schedule(page: Page, model: Metamodel, *, atomic: bool) -> PageSchedule
     Scheduling judges no state.
     """
     if not atomic:
-        return _RAW_ROWS
+        return _NO_LAST_USES
     rows = page_rows(page)
     layouts = rows.layouts
     versioning = concurrency.view(model)
@@ -668,8 +668,8 @@ def _last_uses(rows: PageRows) -> tuple[array[int], array[int]]:
             logical_last[logical] = position
             fetched = fetched_rows_by_logical_row[logical]
             if not isinstance(fetched, int):
-                for sibling in fetched:
-                    fetched_row_last[sibling] = position
+                for other_row in fetched:
+                    fetched_row_last[other_row] = position
     return fetched_row_last, logical_last
 
 
@@ -819,8 +819,8 @@ class PageBuilder:
     eager and milestone-set reads each give their whole flat result one Page.
     Only a level ``schema`` says may repeat rows merges; every fetched row of
     any other level is its own logical row. A back-reference, recorded with
-    :meth:`write_reference`, retains logical rows, not a page-global fetched
-    row winner.
+    :meth:`write_reference`, retains logical rows, not a page-global node
+    row.
 
     Relationship views accumulate beside the rows rather than inside them,
     because a parent's views are only known once its child level lands and the

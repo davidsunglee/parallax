@@ -26,7 +26,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Pin
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells, uncarried
@@ -119,7 +119,7 @@ def test_keyless_occurrences_are_judged_only_when_their_root_is_requested() -> N
         assert calls.decoded == []
         assert page_rows(cast("Any", page)).roots == (0, 1)
 
-        def judged_so_far(root: RootView, _ordinal: int) -> tuple[list[object], int | None]:
+        def judged_so_far(root: GraphView, _ordinal: int) -> tuple[list[object], int | None]:
             invalid = root.invalid_root
             return list(calls.decoded), None if invalid is None else invalid.ordinal
 
@@ -291,7 +291,7 @@ def test_a_keyless_fetched_row_publishes_the_same_state_to_every_root_reaching_i
     # reached; a proved one was judged once, as it was recorded.
     page = _shared_keyless_animal(owners, animal_row, uncarrying, proved=proved)
 
-    def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
+    def publish(root: GraphView, _ordinal: int) -> tuple[object, ...]:
         (node,) = (node for node in range(len(root)) if root.layout(node).concrete.name != "Person")
         return (
             (

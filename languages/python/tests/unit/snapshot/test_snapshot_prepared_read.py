@@ -105,7 +105,7 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.descriptor._records import ValueObject as DescriptorValueObject
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
 from tests._support.document_reads import folded_names
 from tests._support.sql import compile_read
@@ -1481,7 +1481,7 @@ def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_i
         builder.write_view(root, holdings, (holding,))
     page = builder.finish(roots, Pin())
 
-    def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
+    def publish(root: GraphView, _ordinal: int) -> tuple[object, ...]:
         node = [root.layout(node).concrete for node in range(len(root))].index(_HOLDING)
         return (
             (

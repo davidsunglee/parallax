@@ -56,21 +56,21 @@ from parallax.snapshot._inspection import (
     pin_for_shape,
     snapshot_state_of,
 )
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._graph_view import GraphView
 
 __all__ = [
+    "GraphViewReader",
     "InstanceReader",
     "NodeReader",
-    "RootViewReader",
     "WireEntity",
     "authoring_of",
     "opened_wire_entity",
     "projection_entity",
     "read_evidence_of",
     "required_wire_provenance",
-    "shared_wire_encoder",
     "stored_provenance_of",
     "wire_edge_of",
+    "wire_scalar_cache",
 ]
 
 _FROZEN = "a Wire read result refuses mutation through the instance"
@@ -432,7 +432,7 @@ class NodeReader[Node](Protocol):
     def admission_error(self, concrete: EntityIdentity) -> Exception: ...
 
 
-class RootViewReader:
+class GraphViewReader:
     """The :class:`NodeReader` over a publication pass's Root View: a node is
     a Root View node, and every answer borrows the Root View's own state for
     the root it currently names.
@@ -446,7 +446,7 @@ class RootViewReader:
 
     __slots__ = ("_by_concrete", "_conformance", "_page", "_root", "_temporal")
 
-    def __init__(self, root: RootView, temporal: TemporalFacet) -> None:
+    def __init__(self, root: GraphView, temporal: TemporalFacet) -> None:
         self._root = root
         self._temporal = temporal
         self._conformance = RootConformance.CONFORMING
@@ -661,7 +661,7 @@ def _stated_wire_collection(element_type: NeutralType, value: object) -> WireVal
     )
 
 
-class _SharedWireEncoder:
+class _WireScalarCache:
     """A delivery encoder retaining at most the current and preceding Page.
 
     Advancing a Page drops everything older than its predecessor. Equal values
@@ -701,9 +701,9 @@ class _SharedWireEncoder:
         self._previous.clear()
 
 
-def shared_wire_encoder() -> _SharedWireEncoder:
+def wire_scalar_cache() -> _WireScalarCache:
     """A trusted encoder whose bounded reuse lasts for one delivery."""
-    return _SharedWireEncoder()
+    return _WireScalarCache()
 
 
 def _tuple_elements(value: object) -> Iterable[object]:
