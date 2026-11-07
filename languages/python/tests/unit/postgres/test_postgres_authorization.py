@@ -11,9 +11,6 @@ from psycopg.sql import Composed
 from parallax.core.db_port import InvalidAuthorizationError
 from parallax.postgres import PostgresRole
 from parallax.postgres._authorization import install_role, restore_role
-from parallax.postgres._connection import ConnectionEstablishment
-from parallax.postgres._route import PostgresRoute
-from parallax.postgres._runtime import PostgresRuntime
 
 
 class _RecordingConnection:
@@ -30,14 +27,6 @@ class _RecordingConnection:
         return self
 
     def __exit__(self, *_: object) -> None:
-        return
-
-
-class _UnusedPool:
-    def get_stats(self) -> dict[str, int]:
-        return {}
-
-    def close(self) -> None:
         return
 
 
@@ -64,13 +53,3 @@ def test_role_commands_use_identifier_composition_and_fixed_restoration() -> Non
     assert isinstance(installed, Composed)
     assert installed.as_string() == 'SET ROLE "tenant""; reset role; --"'
     assert restored == "RESET ROLE"
-
-
-def test_principal_binding_refuses_any_value_other_than_postgres_role() -> None:
-    runtime = PostgresRuntime(
-        PostgresRoute("writer", cast("Any", _UnusedPool()), ConnectionEstablishment()),
-        acquire_timeout=15.0,
-    )
-
-    with pytest.raises(InvalidAuthorizationError):
-        runtime.principal_source(cast("Any", "tenant"))

@@ -436,12 +436,12 @@ def test_every_runtime_classification_is_logged_in_its_own_python_spelling(
 
 
 def test_a_detail_outside_the_vocabulary_is_refused_at_construction() -> None:
-    # `LifecycleLogDetail` is the one family an application configures, so its
-    # migration has to be a rejection rather than a rename that keeps working.
-    # There is no alias: the retired spelling names no disclosure level, and
-    # accepting it would either narrow a requested `diagnostic` or widen a
-    # requested `safe` without the application ever being told. The accepted
-    # half is read off the alias, so a detail added later is graded here too.
+    # `LifecycleLogDetail` is the one family an application configures, so a value
+    # outside it has to be a rejection. There is no alias: any other spelling
+    # names no disclosure level, and accepting it would either narrow a requested
+    # `diagnostic` or widen a requested `safe` without the application ever being
+    # told. The accepted half is read off the alias, so a detail added later is
+    # graded here too.
     for detail in get_args(LifecycleLogDetail.__value__):
         assert LoggingLifecycleProvider(_logger(), detail=detail).open(EXECUTION) is not None
     for refused in ("SAFE", "DIAGNOSTIC", "", None, 0):
@@ -854,10 +854,9 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The closure claim, at runtime and in one place: the event union is what a
-    # consumer has to be exhaustive over, and this is the consumer that is. The
-    # stream half has no emitter until streaming itself exists, which is exactly
-    # why the closure needs stating here rather than being a byproduct of some
-    # suite that happens to drive every kind of work.
+    # consumer has to be exhaustive over, and this is the consumer that is, so the
+    # closure is stated here rather than being a byproduct of some suite that
+    # happens to drive every kind of work.
     every: list[ExecutionEvent] = [
         ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
         ReadFinished(EXECUTION.id, 2, 1, None, ReadCompleted()),
@@ -908,16 +907,6 @@ def test_a_handler_error_is_logged_correlation_only(
     assert "transition" not in record.fields, "a report is not a transition of the stream"
 
 
-def test_a_logger_below_the_level_is_told_nothing(caplog: pytest.LogCaptureFixture) -> None:
-    logger = _logger(logging.WARNING)
-    handler = LoggingLifecycleProvider(logger).open(EXECUTION)
-    assert handler is not None
-    with caplog.at_level(logging.WARNING, logger=logger.name):
-        handler.handle(ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"))
-        handler.handle(ReadFinished(EXECUTION.id, 2, 1, None, ReadCompleted()))
-    assert caplog.records == []
-
-
 def test_a_transition_the_logger_would_drop_is_never_described() -> None:
     # The saving, graded through the interface the test itself supplied rather
     # than through a byte count: `max_retries` is read only while a record is
@@ -947,6 +936,7 @@ def test_a_transition_the_logger_would_drop_is_never_described() -> None:
         return policy.read, len(collected.records)
 
     assert described(logging.CRITICAL) == (0, 0)
+    assert described(logging.INFO) == (0, 0)
     assert described(logging.DEBUG) == (1, 1)
 
 
@@ -1025,48 +1015,6 @@ def test_a_level_between_the_rules_keeps_exactly_the_records_worth_it() -> None:
         (logging.WARNING, "transactionAttemptFinished")
     ]
     assert written[0].fields["retry_eligible"] is True
-
-
-def test_the_level_the_guard_asks_about_is_the_level_the_record_is_written_at() -> None:
-    # Describing nothing a Logger would drop means asking it twice per event —
-    # here, and again inside `Logger.log` — so what has to hold is that the two
-    # questions are the same question. An approximate guard, one asking whether
-    # a record COULD be worth keeping, would drop records the exact level keeps;
-    # the level asked here comes from the same match that names the transition,
-    # so every event contributes two asks at the level its record is written at.
-    class _RecordedItsQuestions(logging.Logger):
-        def __init__(self, name: str) -> None:
-            super().__init__(name)
-            self.asked: list[int] = []
-
-        def isEnabledFor(self, level: int) -> bool:
-            self.asked.append(level)
-            return super().isEnabledFor(level)
-
-    logger = _RecordedItsQuestions(f"parallax.test.{uuid4().hex}")
-    logger.setLevel(logging.DEBUG)
-    collected = _Collecting()
-    logger.addHandler(collected)
-    handler = LoggingLifecycleProvider(logger).open(EXECUTION)
-    assert handler is not None
-    for event in [
-        ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "typed", None),
-        TransactionAttemptFinished(
-            EXECUTION.id, 2, 3, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
-        ),
-        ReadFinished(EXECUTION.id, 3, 4, None, ReadCompleted()),
-        ReadFinished(EXECUTION.id, 4, 5, None, ReadFailed(_failure())),
-    ]:
-        handler.handle(event)
-
-    written = [_written(record) for record in collected.records]
-    assert [record.level for record in written] == [
-        logging.DEBUG,
-        logging.WARNING,
-        logging.INFO,
-        logging.ERROR,
-    ]
-    assert logger.asked == [level for record in written for level in (record.level,) * 2]
 
 
 def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record() -> None:

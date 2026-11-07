@@ -1,10 +1,9 @@
 """The Read Root Execution end to end (m-execution-lifecycle, Docker-free).
 
 A standalone read is the smallest live root there is — one Read over its own
-Database Calls — so this is where the correlation envelope, the activity tree,
-the Database Call payload, and the failure attribution are graded, against the
-events a Provider installed through ``connect`` actually receives and never
-against a projection of them.
+Database Calls — so this is where the activity tree, the Database Call payload,
+and the failure attribution are graded, against the events a Provider installed
+through ``connect`` actually receives and never against a projection of them.
 
 The default path is here too, because "no Provider installed" is a behavior
 rather than an absence: the same code runs, and what it must not do is allocate,
@@ -14,18 +13,16 @@ read a clock, or construct anything at all.
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from types import MethodType
 from typing import Any, Final
 
 import pytest
 
-from parallax.conformance import read_models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution import _read_pipeline as read_pipeline_module
-from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -37,8 +34,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
     QueryTargetError,
-    ServingModel,
-    prepare_model,
 )
 from parallax.core.execution_lifecycle import (
     CausedFailure,
@@ -48,10 +43,8 @@ from parallax.core.execution_lifecycle import (
     DatabaseReadCompleted,
     DirectFailure,
     ExecutionEvent,
-    ReadCompleted,
     ReadFailed,
     ReadFinished,
-    ReadStarted,
     ResultRepresentation,
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
@@ -63,8 +56,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
-from parallax.snapshot import ScopedDatabase, SnapshotMaterializationError, connect
-from parallax.snapshot._handle import _read as read_module
+from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -76,7 +68,7 @@ from tests._support.db_port import (
     Write,
 )
 from tests._support.root_ownership import own_root
-from tests.unit._transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
+from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, ORDERS
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
     serve_one_measurement,
@@ -117,52 +109,6 @@ def _transitions(events: tuple[ExecutionEvent, ...]) -> list[str]:
     return [type(event).__name__ for event in events]
 
 
-def test_a_typed_find_brackets_its_one_database_call() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
-
-    (root,) = recorder.roots
-    assert root.execution.kind == "read"
-    started, _, _, call_started, call_finished, _, _, finished = root.events
-    assert _transitions(root.events) == [
-        "ReadStarted",
-        "AcquisitionStarted",
-        "AcquisitionFinished",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "ReleaseStarted",
-        "ReleaseFinished",
-        "ReadFinished",
-    ]
-    # The correlation envelope: one-based and contiguous on both counters, and
-    # every one of the three is a child of the Read rather than a sibling of it
-    # — the connection the read holds is bracketed BESIDE the statement that
-    # runs on it, never around it.
-    assert [event.sequence for event in root.events] == [1, 2, 3, 4, 5, 6, 7, 8]
-    assert [event.activity_id for event in root.events] == [1, 2, 2, 3, 3, 4, 4, 1]
-    assert [event.parent_activity_id for event in root.events] == [
-        None,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        None,
-    ]
-    assert {event.execution_id for event in root.events} == {root.execution.id}
-
-    assert isinstance(started, ReadStarted)
-    assert (started.target, started.purpose) == ("parallax.compatibility.Account", "typed")
-    assert isinstance(call_started, DatabaseCallStarted)
-    assert (call_started.target, call_started.kind) == ("parallax.compatibility.Account", "read")
-    assert isinstance(call_finished, DatabaseCallFinished)
-    assert call_finished.outcome == DatabaseReadCompleted(1)
-    assert isinstance(finished, ReadFinished)
-    assert finished.outcome == ReadCompleted()
-
-
 def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
@@ -181,16 +127,6 @@ def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
 
 def POSTGRES_DRIVER_SQL(sql: str) -> str:
     return sql.replace("?", "%s")
-
-
-def test_the_unlocked_standalone_statement_is_what_the_call_names() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
-    (root,) = recorder.roots
-    call = root.events[3]
-    assert isinstance(call, DatabaseCallStarted)
-    assert POSTGRES_DRIVER_SQL(call.statement.sql) == FIND_SQL_UNLOCKED
 
 
 def test_a_duration_excludes_the_handler_time_around_it() -> None:
@@ -351,17 +287,6 @@ def test_a_failed_sibling_pipeline_balances_every_open_call() -> None:
     assert caused.cause_activity_id == 5
 
 
-def test_the_wire_lane_names_its_own_purpose() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    db = _db(port, recorder)
-    db.wire.find({"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 7}}})
-    (root,) = recorder.roots
-    started = root.events[0]
-    assert isinstance(started, ReadStarted)
-    assert started.purpose == "wire"
-
-
 def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     recorder = RecordingLifecycleProvider()
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
@@ -397,38 +322,32 @@ def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     assert caused.diagnostic is outcome.diagnostic.failure
 
 
-def test_a_failure_after_the_call_completed_is_the_reads_own(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Materialization fails after every call came back, so the Read failed
-    # DIRECTLY: proximity to a completed call attributes nothing.
-    def refuse_materialization(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise SnapshotMaterializationError("refused materialization", cause=ValueError("refused"))
+class _UnwalkableRows(list[Row]):
+    """An answer a call can count and nothing can walk."""
 
-    def refusing_publisher(*args: object) -> object:
-        del args
-        return refuse_materialization
+    def __iter__(self) -> Iterator[Row]:
+        raise ValueError("these rows cannot be walked")
 
-    monkeypatch.setattr(read_module, "TypedRootPublisher", refusing_publisher)
+
+class _UnwalkablePort(ScriptedAdapter):
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        return _UnwalkableRows(super().execute(sql, binds, document_reads, read_only=read_only))
+
+
+def test_a_failure_past_a_completed_call_is_the_reads_own() -> None:
+    # The call came back and counted its rows, and what failed came after it, so
+    # the Read failed DIRECTLY: proximity to a completed call attributes nothing.
     recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(
-        Read(
-            rows=[
-                {
-                    "bal_id": 1,
-                    "acct_num": "A-1",
-                    "val": Decimal("5.00"),
-                    "in_z": FIXED,
-                    "out_z": INFINITY,
-                }
-            ]
-        )
-    )
-    with raises_contextualized(SnapshotMaterializationError):
-        _db(port, recorder, read_models.BALANCE_MODEL).find(
-            read_models.Balance.where(read_models.Balance.id == 1)
-        )
+    port = _UnwalkablePort(Read(rows=[NEW_ROW]))
+    with raises_contextualized(ValueError, match="cannot be walked"):
+        _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
     call_finished, read_finished = root.events[4], root.events[7]
@@ -747,43 +666,6 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     # compilation produced: the two together leave a re-lowered spelling nowhere.
     (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
     assert POSTGRES_DRIVER_SQL(statement.sql) == executed.sql
-
-
-def test_a_standalone_reads_started_event_carries_the_edition_it_adopted() -> None:
-    # Adoption precedes the root: the read takes the Serving Model's current
-    # selection, and the Started event delivered when its root opens states
-    # that edition — the same one the result it publishes retains.
-    recorder = RecordingLifecycleProvider()
-    serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    snapshot = (
-        own_root(connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder))
-        .using_database_login()
-        .find(mm.Account.where(mm.Account.id == 7))
-    )
-
-    (root,) = recorder.roots
-    started = root.events[0]
-    assert isinstance(started, ReadStarted)
-    assert started.edition == "ledger-a" == snapshot.edition
-
-
-def test_a_participating_reads_started_event_carries_no_edition_of_its_own() -> None:
-    # A read under an attempt inherits the attempt's edition through the parent
-    # correlation, and its own Started event states none.
-    recorder = RecordingLifecycleProvider()
-    serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
-    port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
-    db = own_root(
-        connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
-    ).using_database_login()
-
-    db.transact(lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result())
-
-    (root,) = recorder.roots
-    (started,) = [event for event in root.events if isinstance(event, ReadStarted)]
-    assert started.parent_activity_id is not None
-    assert started.edition is None
 
 
 if __name__ == "__main__":

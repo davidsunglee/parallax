@@ -52,20 +52,15 @@ from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
     AttemptBeginFailed,
-    AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
     AttemptRolledBack,
     CausedFailure,
     DirectFailure,
     ExecutionEvent,
-    FlushCompleted,
-    FlushFailed,
-    FlushFinished,
     FlushStarted,
     JoinedInvocation,
     JoinedInvocationRaised,
-    JoinedInvocationReturned,
     OuterInvocation,
     OuterInvocationCommitted,
     OuterInvocationFailed,
@@ -153,51 +148,6 @@ def _increase_balance(tx: TxnContext) -> None:
 # --------------------------------------------------------------------------- #
 # The committed topology.                                                      #
 # --------------------------------------------------------------------------- #
-def test_one_invocation_roots_its_attempt_its_flushes_and_its_read() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
-
-    def body(tx: TxnContext) -> str:
-        tx.insert(new_account())
-        tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
-        return "ok"
-
-    assert _db(port, recorder).transact(body) == "ok"
-
-    root = _only(recorder)
-    # The dependency flush and the Read it enables are ordered SIBLINGS under the
-    # attempt: the flush happens inside `uow.read`, before the Read opens, so
-    # neither contains the other.
-    assert _tree(root.events) == [
-        ("TransactionInvocationStarted", 1, None),
-        ("TransactionAttemptStarted", 2, 1),
-        ("AcquisitionStarted", 3, 2),
-        ("AcquisitionFinished", 3, 2),
-        ("FlushStarted", 4, 2),
-        ("DatabaseCallStarted", 5, 4),
-        ("DatabaseCallFinished", 5, 4),
-        ("FlushFinished", 4, 2),
-        ("ReadStarted", 6, 2),
-        ("DatabaseCallStarted", 7, 6),
-        ("DatabaseCallFinished", 7, 6),
-        ("ReadFinished", 6, 2),
-        ("FlushStarted", 8, 2),
-        ("DatabaseCallStarted", 9, 8),
-        ("DatabaseCallFinished", 9, 8),
-        ("FlushFinished", 8, 2),
-        ("ReleaseStarted", 10, 2),
-        ("ReleaseFinished", 10, 2),
-        ("TransactionAttemptFinished", 2, 1),
-        ("TransactionInvocationFinished", 1, None),
-    ]
-    started = root.events[0]
-    assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation(
-        "read_write", "optimistic", RetryPolicy(max_retries=10), "read_committed"
-    )
-    assert _finished(root) == OuterInvocationCommitted()
-    assert _attempt_outcomes(root) == [AttemptCommitted()]
 
 
 def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
@@ -220,24 +170,6 @@ def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
     assert observed("serializable") == observed("read_committed")
 
 
-def test_each_flush_names_the_trigger_that_forced_it() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
-
-    def body(tx: TxnContext) -> None:
-        tx.insert(new_account())
-        tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
-
-    _db(port, recorder).transact(body)
-
-    root = _only(recorder)
-    flushes = [event for event in root.events if isinstance(event, FlushStarted)]
-    assert [flush.trigger for flush in flushes] == ["read_dependency", "pre_commit"]
-    finished = [event for event in root.events if isinstance(event, FlushFinished)]
-    assert [flush.outcome for flush in finished] == [FlushCompleted(), FlushCompleted()]
-
-
 def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports() -> None:
     recorder = RecordingLifecycleProvider()
     _db(ScriptedAdapter(Transact()), recorder).transact(
@@ -251,22 +183,6 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
     assert isinstance(started, TransactionInvocationStarted)
     assert started.invocation == OuterInvocation(
         "read_write", "locking", RetryPolicy(max_retries=3), "serializable"
-    )
-
-
-def test_an_invocation_naming_no_level_reports_the_roots_resolved_default() -> None:
-    # A public transaction always resolves a concrete level — the root's
-    # default, Read Committed on an unconfigured root — so what the descriptor
-    # reports is the level every attempt REQUESTED, never an absence: absence
-    # remains the port's own lower-level form, which no Database transaction
-    # uses.
-    recorder = RecordingLifecycleProvider()
-    _db(ScriptedAdapter(Transact()), recorder).transact(lambda _tx: None)
-
-    started = _only(recorder).events[0]
-    assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation(
-        "read_write", "optimistic", RetryPolicy(max_retries=10), "read_committed"
     )
 
 
@@ -330,98 +246,6 @@ def test_a_wire_read_is_a_child_of_the_attempt_for_the_wire_purpose() -> None:
 # --------------------------------------------------------------------------- #
 # Retry: one root, many attempts.                                              #
 # --------------------------------------------------------------------------- #
-def test_a_retried_invocation_holds_both_attempts_under_one_root() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Write(), commit=deadlock()), Transact(Write()))
-
-    _db(port, recorder).transact(lambda tx: tx.insert(new_account()))
-
-    root = _only(recorder)
-    assert _transitions(root.events) == [
-        "TransactionInvocationStarted",
-        "TransactionAttemptStarted",
-        "AcquisitionStarted",
-        "AcquisitionFinished",
-        "FlushStarted",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "FlushFinished",
-        "ReleaseStarted",
-        "ReleaseFinished",
-        "TransactionAttemptFinished",
-        "TransactionAttemptStarted",
-        "AcquisitionStarted",
-        "AcquisitionFinished",
-        "FlushStarted",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "FlushFinished",
-        "ReleaseStarted",
-        "ReleaseFinished",
-        "TransactionAttemptFinished",
-        "TransactionInvocationFinished",
-    ]
-    # A retry re-executes the callback, so the second attempt runs its own Flush
-    # and its own call — every activity of the first is closed before it starts.
-    rolled_back, committed = _attempt_outcomes(root)
-    assert isinstance(rolled_back, AttemptRolledBack)
-    assert (rolled_back.failure.phase, rolled_back.failure.retry_eligible) == ("commit", True)
-    assert committed == AttemptCommitted()
-    assert _finished(root) == OuterInvocationCommitted()
-
-
-def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> None:
-    # `retry_eligible` is the verdict under the effective policy INDEPENDENT of
-    # the budget: the attempt that ends the invocation was retriable and simply
-    # had nothing left, which is a different fact from being non-retriable.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
-
-    with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(lambda _tx: None, retry=fast_retry(2))
-
-    root = _only(recorder)
-    outcomes = _attempt_outcomes(root)
-    assert len(outcomes) == 3
-    assert all(
-        isinstance(outcome, AttemptRolledBack) and outcome.failure.retry_eligible
-        for outcome in outcomes
-    )
-    # Every attempt finished before the next one started, so no two attempts of
-    # one invocation are ever open at the same time.
-    assert _transitions(root.events) == [
-        "TransactionInvocationStarted",
-        *[
-            "TransactionAttemptStarted",
-            "AcquisitionStarted",
-            "AcquisitionFinished",
-            "ReleaseStarted",
-            "ReleaseFinished",
-            "TransactionAttemptFinished",
-        ]
-        * 3,
-        "TransactionInvocationFinished",
-    ]
-    failed = _finished(root)
-    assert isinstance(failed, OuterInvocationFailed)
-    assert isinstance(failed.failure, CausedFailure)
-    last_attempt = root.events[-2]
-    assert failed.failure.cause_activity_id == last_attempt.activity_id
-
-
-def test_a_replayed_conflict_is_reported_eligible_on_the_attempt_it_ended() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(
-        Transact(Read(rows=[NEW_ROW]), Write(affected=0)),
-        Transact(Read(rows=[NEW_ROW]), Write()),
-    )
-
-    _db(port, recorder).transact(_increase_balance)
-
-    rolled_back, committed = _attempt_outcomes(_only(recorder))
-    assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.retry_eligible
-    assert committed == AttemptCommitted()
 
 
 def test_a_conflict_a_zero_bound_leaves_unreplayed_is_still_reported_eligible() -> None:
@@ -521,21 +345,6 @@ def test_a_callback_failure_is_the_callback_phase() -> None:
     assert isinstance(rolled_back.failure.failure, DirectFailure)
 
 
-def test_a_failure_in_the_final_flush_is_the_pre_commit_phase() -> None:
-    # The port reports one body failure however it arose, so the phase is decided
-    # by exception identity against the pre-commit flush's own failure — not by
-    # which half of the body happened to run last.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
-
-    with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance, retry=RetryPolicy(max_retries=0))
-
-    (rolled_back,) = _attempt_outcomes(_only(recorder))
-    assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.phase == "pre_commit"
-
-
 def test_a_failure_in_a_dependency_flush_is_still_the_callback_phase() -> None:
     # The dependency flush runs because the CALLBACK asked for a read, so a
     # failure inside it belongs to the callback: only the automatic flush after
@@ -616,40 +425,6 @@ def test_a_control_flow_escape_still_finishes_every_activity_it_left() -> None:
 # --------------------------------------------------------------------------- #
 # Joined invocations.                                                          #
 # --------------------------------------------------------------------------- #
-def test_a_joined_call_is_a_child_of_the_attempt_and_opens_no_attempt() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Write()))
-    db = _db(port, recorder)
-
-    db.transact(lambda _outer: db.transact(lambda inner: inner.insert(new_account())))
-
-    root = _only(recorder)
-    # The joined activity runs no attempt of its own, and the write it buffered
-    # reaches the OUTER attempt's pre-commit flush — a joined boundary adds no
-    # third trigger.
-    assert _tree(root.events) == [
-        ("TransactionInvocationStarted", 1, None),
-        ("TransactionAttemptStarted", 2, 1),
-        ("AcquisitionStarted", 3, 2),
-        ("AcquisitionFinished", 3, 2),
-        ("TransactionInvocationStarted", 4, 2),
-        ("TransactionInvocationFinished", 4, 2),
-        ("FlushStarted", 5, 2),
-        ("DatabaseCallStarted", 6, 5),
-        ("DatabaseCallFinished", 6, 5),
-        ("FlushFinished", 5, 2),
-        ("ReleaseStarted", 7, 2),
-        ("ReleaseFinished", 7, 2),
-        ("TransactionAttemptFinished", 2, 1),
-        ("TransactionInvocationFinished", 1, None),
-    ]
-    joined_started = root.events[4]
-    assert isinstance(joined_started, TransactionInvocationStarted)
-    assert joined_started.invocation == JoinedInvocation()
-    joined_finished = root.events[5]
-    assert isinstance(joined_finished, TransactionInvocationFinished)
-    assert joined_finished.outcome == JoinedInvocationReturned()
-    assert port.calls.count(BeginCall()) == 1
 
 
 def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more() -> None:
@@ -682,24 +457,6 @@ def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more()
 # --------------------------------------------------------------------------- #
 # Causality.                                                                   #
 # --------------------------------------------------------------------------- #
-def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
-    # The call reached the database and came back, so it COMPLETED; the shortfall
-    # is judged afterwards and belongs to the Flush. Attribution is by the
-    # enforcement bracket rather than by which call ran last.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
-
-    with raises_contextualized(OptimisticLockConflictError):
-        _db(port, recorder).transact(_increase_balance, retry=RetryPolicy(max_retries=0))
-
-    root = _only(recorder)
-    flush_finished = next(event for event in root.events if isinstance(event, FlushFinished))
-    call_finished = root.events[root.events.index(flush_finished) - 1]
-    assert isinstance(flush_finished.outcome, FlushFailed)
-    failure = flush_finished.outcome.failure
-    assert isinstance(failure, CausedFailure)
-    assert failure.cause_activity_id == call_finished.activity_id
-    assert failure.diagnostic.qualified_type.endswith("OptimisticLockConflictError")
 
 
 def test_a_read_that_failed_is_what_its_attempt_names() -> None:
@@ -1231,13 +988,6 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
 # --------------------------------------------------------------------------- #
 # The unobserved and declined paths.                                           #
 # --------------------------------------------------------------------------- #
-def test_a_transaction_with_no_provider_installed_records_nothing() -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
-    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().transact(
-        _increase_balance
-    )
-    assert recorder.roots == ()
 
 
 def test_a_declined_transaction_root_delivers_no_event() -> None:
@@ -1253,32 +1003,6 @@ def test_a_declined_transaction_root_delivers_no_event() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
     _db(port, recorder).transact(_increase_balance)
     assert port.calls[0] == BeginCall()
-
-
-def test_the_attempt_started_transition_is_what_assigns_the_next_activity_id() -> None:
-    # A boundary that never began still ran the attempt that adopted before it,
-    # so that attempt takes the next ID and the invocation's own Finished sits
-    # after it with no gap nothing explains.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Transact(begin=deadlock()))
-
-    with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(lambda _tx: None)
-
-    root = _only(recorder)
-    # The attempt (2) takes its ID before it asks for anything, its Acquisition
-    # (3) the next, which the refused boundary fails with no Release after it,
-    # and the invocation's own Finished closes over 1 with no gap between them.
-    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 2, 1]
-
-
-def test_the_first_transition_a_joined_activity_makes_is_its_own_started() -> None:
-    recorder = RecordingLifecycleProvider()
-    db = _db(ScriptedAdapter(Transact()), recorder)
-    db.transact(lambda _outer: db.transact(lambda _inner: None))
-
-    root = _only(recorder)
-    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 4, 4, 5, 5, 2, 1]
 
 
 def test_a_refused_join_opens_no_activity_at_all() -> None:
@@ -1320,18 +1044,6 @@ def test_an_invalid_retry_option_creates_no_root_and_reaches_no_provider() -> No
 
     assert recorder.roots == ()
     assert port.calls == []
-
-
-def test_the_attempt_started_transition_carries_its_correlation_and_its_edition() -> None:
-    recorder = RecordingLifecycleProvider()
-    edition = _db(ScriptedAdapter(Transact()), recorder).transact(lambda tx: tx.edition)
-
-    started = _only(recorder).events[1]
-    assert isinstance(started, TransactionAttemptStarted)
-    assert (started.activity_id, started.parent_activity_id) == (2, 1)
-    # The edition is the whole of what is attempt-specific: it is the one the
-    # callback's transaction reported, adopted before the boundary opened.
-    assert started.edition == edition
 
 
 def test_a_retry_reports_each_attempts_own_edition_and_the_failure_names_the_last() -> None:

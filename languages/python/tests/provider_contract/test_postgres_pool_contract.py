@@ -5,7 +5,7 @@ that capacity really is bounded, that a queue really refuses, that a runtime tha
 closed really admits nothing more, and that every connection a pool creates —
 initial, grown, replacement, or on-demand — really decodes what the read path
 depends on. The deterministic failure paths a server will not produce on demand
-are ``tests/unit/test_postgres_pool.py``'s.
+are ``tests/unit/postgres/test_postgres_pool.py``'s.
 
 Every configuration here names the database this run opened, and every runtime
 it opens is closed by the scope that opened it.
@@ -38,6 +38,7 @@ from parallax.core.db_port import (
     Returned,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
+from parallax.postgres._connection import IncompatibleSessionError
 from tests._support.ended_sessions import end_backend, named_backend
 
 _BACKEND = "select pg_backend_pid() as pid"
@@ -209,7 +210,7 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
     # therefore does not get one — the acquisition budget is the control that
     # matters here, and the two do not compose as independent limits. What the
     # override IS, exactly, is pinned against the installed pool release in
-    # `tests/unit/test_postgres_pool.py`; here it is proven not to prevent an
+    # `tests/unit/postgres/test_postgres_pool.py`; here it is proven not to prevent an
     # establishment against a real server.
     from psycopg.conninfo import conninfo_to_dict
 
@@ -943,6 +944,61 @@ def test_indirect_connection_inputs_resolve_at_each_physical_connection(
         assert resolved_application_name(runtime) == "parallax-after"
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "named"),
+    [("datestyle", "German", "DateStyle"), ("client_encoding", "latin1", "client encoding")],
+    ids=["date-style", "client-encoding"],
+)
+def test_a_session_the_codecs_cannot_read_is_refused_naming_the_setting(
+    profile_run: Any, setting: str, value: str, named: str
+) -> None:
+    # SQL crosses this boundary as UTF-8 bytes and a finite instant decodes from
+    # its ISO text, so another encoding or date style corrupts both. The refusal
+    # names the setting and its effective value, which are session configuration
+    # rather than credentials.
+    configured = profile_run.configured(
+        pool=OnDemandOptions(max_size=1), settings={setting: value}, startup_timeout=5.0
+    )
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        configured.open()
+
+    assert (failed.value.route, failed.value.phase) == ("writer", "acquire")
+    refusal = failed.value.__cause__
+    assert isinstance(refusal, ConnectionAcquisitionError)
+    assert refusal.reason == "preparation_failed"
+    assert isinstance(refusal.__cause__, IncompatibleSessionError)
+    assert named in str(refusal.__cause__)
+
+
+def test_a_session_refused_on_a_pool_worker_is_what_startup_names(profile_run: Any) -> None:
+    # A retaining pool initializes on its own workers, where a refusal is retried
+    # and logged and a waiting caller never sees it; the record is what lets the
+    # eventual timeout say what is wrong.
+    configured = profile_run.configured(
+        pool=PoolOptions(min_size=1, max_size=1),
+        settings={"datestyle": "German"},
+        startup_timeout=1.0,
+    )
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        configured.open()
+
+    assert failed.value.phase == "minimum_ready"
+    assert isinstance(failed.value.__cause__, IncompatibleSessionError)
+
+
+@pytest.mark.parametrize("order", ["ISO,MDY", "ISO,DMY", "ISO,YMD"])
+def test_the_field_order_within_iso_is_left_to_the_deployment(profile_run: Any, order: str) -> None:
+    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1), settings={"datestyle": order})
+    try:
+        with _context(runtime) as scoped:
+            ((datestyle,),) = scoped.execute("select current_setting('datestyle')", [])
+    finally:
+        runtime.close()
+    assert str(datestyle).replace(" ", "") == order
 
 
 @pytest.mark.adapter_smoke

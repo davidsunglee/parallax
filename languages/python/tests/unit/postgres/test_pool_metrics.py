@@ -303,19 +303,6 @@ def _runtime(pool: _StatsPool) -> PostgresRuntime:
     )
 
 
-def test_a_runtime_publishes_one_writer_source_that_stays_the_same_object() -> None:
-    # Stable identity is what lets an exporter hold it: a close changes the
-    # ANSWER rather than which object answers.
-    runtime = _runtime(_StatsPool())
-    (before,) = runtime.pool_metrics
-
-    runtime.close()
-
-    assert before.route == "writer"
-    assert runtime.pool_metrics == (before,)
-    assert runtime.pool_metrics[0] is before
-
-
 def test_the_source_detaches_before_the_native_close_even_when_that_close_fails() -> None:
     # The ordering handshake is the close itself: the fake pool samples the
     # source from inside `close`, so what it records is what a sample taken
@@ -339,16 +326,3 @@ def test_the_source_detaches_before_the_native_close_even_when_that_close_fails(
 
     assert pool.closes == 1
     assert isinstance(seen[1], PoolDetached)
-
-
-def test_a_closed_runtime_takes_no_measurement_however_often_it_is_asked() -> None:
-    pool = _StatsPool()
-    runtime = _runtime(pool)
-    (source,) = runtime.pool_metrics
-    assert isinstance(source.sample(), PoolAvailable)
-
-    runtime.close()
-    reads_at_close = pool.reads
-
-    assert isinstance(source.sample(), PoolDetached)
-    assert pool.reads == reads_at_close

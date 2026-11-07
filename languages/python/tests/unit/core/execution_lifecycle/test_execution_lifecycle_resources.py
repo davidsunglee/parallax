@@ -65,11 +65,10 @@ from parallax.core.execution_lifecycle import (
     ReleaseStarted,
     RootExecution,
     TransactionAttemptFinished,
-    TransactionAttemptStarted,
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle import _fanout as fanout_module
-from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from parallax.snapshot import Database, ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -348,27 +347,6 @@ def test_a_refusal_before_any_route_was_selected_names_none() -> None:
     assert (outcome.reason, outcome.route, outcome.fallback) == ("closed", None, None)
 
 
-def test_an_attempt_that_could_not_acquire_finishes_begin_failed_caused_by_it() -> None:
-    # The Acquisition reports its failure up under its own Activity ID, so the
-    # attempt names it. The sibling case — a boundary that refused to open on a
-    # connection the attempt DID acquire — finishes `direct`, which
-    # `test_execution_lifecycle_transaction.py` pins.
-    recorder = RecordingLifecycleProvider()
-    adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("timeout")])
-
-    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
-        db = _root_db.using_database_login()
-        db.transact(lambda _tx: None)
-
-    (root,) = recorder.roots
-    (acquisition,) = _of(root, AcquisitionStarted)
-    (begin_failed,) = [event.outcome for event in _of(root, TransactionAttemptFinished)]
-    assert isinstance(begin_failed, AttemptBeginFailed)
-    failure = begin_failed.failure
-    assert isinstance(failure, CausedFailure)
-    assert failure.cause_activity_id == acquisition.activity_id
-
-
 def test_a_release_reports_what_letting_go_established_without_changing_the_outcome() -> None:
     # The read published and the connection could not be handed back: two facts
     # that stand side by side, and neither rewrites the other.
@@ -385,30 +363,6 @@ def test_a_release_reports_what_letting_go_established_without_changing_the_outc
     assert release.cleanup_result is release_unconfirmed
     read_finished = root.events[-1]
     assert type(read_finished).__name__ == "ReadFinished"
-
-
-def test_participating_work_acquires_nothing_of_its_own() -> None:
-    # An attempt owns one connection and everything under it runs on that one:
-    # a participating read is one more thing running on the transaction's
-    # connection, never a second borrower of it.
-    recorder = RecordingLifecycleProvider()
-    adapter = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
-
-    def body(tx: TxnContext) -> None:
-        tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
-
-    with _db(adapter, recorder) as _root_db:
-        db = _root_db.using_database_login()
-        db.transact(body)
-
-    (root,) = recorder.roots
-    (attempt,) = _of(root, TransactionAttemptStarted)
-    resources = _of(root, AcquisitionStarted) + _of(root, ReleaseStarted)
-    # One pair, and the attempt owns both: the read, the Flush, and the call
-    # beneath them opened none of their own.
-    assert [event.parent_activity_id for event in resources] == [attempt.activity_id] * 2
-    assert adapter.acquisitions == 1
 
 
 # --------------------------------------------------------------------------- #

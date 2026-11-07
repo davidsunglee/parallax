@@ -20,7 +20,7 @@ from psycopg.pq import Format
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
-from parallax.core.base import INT32, INT64, NeutralType
+from parallax.core.base import INT32, INT64, STRING, NeutralType
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -176,3 +176,20 @@ def test_every_connection_path_binds_an_integer_array_in_its_declared_binary_typ
     finally:
         for runtime in runtimes:
             runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("element_type", "values", "server_type", "length"),
+    [
+        pytest.param(INT64, [], "bigint[]", 0, id="empty"),
+        pytest.param(STRING, [None, None], "text[]", 2, id="all-null"),
+    ],
+)
+def test_an_array_with_no_value_to_infer_from_keeps_its_declared_type(
+    profile_run: Any, element_type: NeutralType, values: list[object], server_type: str, length: int
+) -> None:
+    bind = ArrayBind(element_type, values)
+
+    assert profile_run.port.execute(
+        "select pg_typeof(%s)::text, cardinality(%s)", [bind, bind]
+    ) == [(server_type, length)]

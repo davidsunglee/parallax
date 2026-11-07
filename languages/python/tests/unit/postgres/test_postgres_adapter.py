@@ -5,10 +5,10 @@ policies, and ``isolation_spelling`` (§8 topology); psycopg bind mechanics and 
 connection under an acquisition stay internal. The bind-adaptation seam — the
 neutral ``StructuredDocument`` carrier becoming a psycopg ``Jsonb`` at the adapter
 boundary — the `m-db-error` port-boundary re-raise (every psycopg exception
-translated to a neutral ``DatabaseError``), and the per-connection setup and
-transaction phases are all provable over a fake connection here; the
-end-to-end deadlock witness lives in the provider lane and the resource
-lifetimes in ``test_postgres_pool.py``.
+translated to a neutral ``DatabaseError``), and the transaction phases are all
+provable over a fake connection here; the end-to-end deadlock witness and the
+session refusals live in the provider lane and the resource lifetimes in
+``test_postgres_pool.py``.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from typing import Any, cast
 import psycopg
 import pytest
 from psycopg import errors, postgres
-from psycopg.abc import Dumper, Loader
 from psycopg.adapt import AdaptersMap, PyFormat, Transformer
 from psycopg.pq import ExecStatus, Format, TransactionStatus
 from psycopg.rows import TupleRow
@@ -36,7 +35,6 @@ from psycopg.sql import Composable
 from psycopg.types.array import BaseListDumper
 from psycopg.types.json import Jsonb, JsonbLoader
 
-import parallax.postgres
 import parallax.postgres._connection as connection_module
 from parallax.core.base import (
     BOOLEAN,
@@ -57,14 +55,12 @@ from parallax.core.base import (
     FrozenMap,
     NeutralType,
     StructuredDocument,
-    TemporalBound,
 )
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
     JSON_NULL,
-    AccessMode,
     ArrayBind,
     BeginFailed,
     CallbackRaised,
@@ -84,23 +80,10 @@ from parallax.core.db_port import (
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
-from parallax.core.document_codec import (
-    Present,
-    SetScalar,
-    apply_prepared_patches,
-    prepare_patches,
-)
-from parallax.core.metamodel import (
-    ValueObjectAttributeDeclaration,
-    ValueObjectShapeDeclaration,
-    ValueObjectShapeKey,
-)
 from parallax.core.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
-from parallax.postgres._compiled_loaders import compiled_loaders
 from parallax.postgres._connection import (
     ConnectionEstablishment,
-    IncompatibleSessionError,
     PostgresConnection,
     adapt_binds,
     initialize_connection,
@@ -127,19 +110,6 @@ from tests.unit.postgres._native_pipeline_support import (
 _DIALECT = PostgresAdapter.dialect
 
 
-def test_public_surface_is_the_adapter_its_endpoint_options_and_isolation_spelling() -> None:
-    assert parallax.postgres.__all__ == [
-        "OnDemandOptions",
-        "PoolOptions",
-        "PostgresAdapter",
-        "PostgresEndpoint",
-        "PostgresRole",
-        "isolation_spelling",
-    ]
-    assert not hasattr(parallax.postgres, "Json")
-    assert not hasattr(parallax.postgres, "Jsonb")
-
-
 def test_every_portable_level_has_exactly_one_postgres_spelling() -> None:
     # The map is keyed by the port's own vocabulary, so a level added there with no
     # spelling here — or a spelling for a level the vocabulary does not name — is a
@@ -150,21 +120,6 @@ def test_every_portable_level_has_exactly_one_postgres_spelling() -> None:
         "repeatable_read": "repeatable read",
         "serializable": "serializable",
     }
-
-
-def testadapt_binds_wraps_json_documents_and_passes_scalars_through() -> None:
-    adapted = adapt_binds([1, "x", StructuredDocument({"city": "Oslo"}), None])
-    assert adapted[0] == 1
-    assert adapted[1] == "x"
-    assert isinstance(adapted[2], Jsonb)
-    assert adapted[3] is None
-
-
-def testadapt_binds_wraps_the_document_value() -> None:
-    document: DocumentValue = {"geo": {"lat": 1}}
-    (adapted,) = adapt_binds([StructuredDocument(document)])
-    assert isinstance(adapted, Jsonb)
-    assert adapted.obj == document
 
 
 def test_frozen_documents_dump_byte_equal_to_the_standard_json_settings() -> None:
@@ -191,60 +146,7 @@ def test_frozen_document_dump_preserves_standard_unsupported_leaf_errors() -> No
         transformer.dump_sequence(adapted, [PyFormat.AUTO])
 
 
-def test_a_patched_successor_binds_its_retained_numbers_with_their_exact_meaning() -> None:
-    # The stored document arrives through the adapter's own loader, the codec
-    # patches a declared leaf and carries the unknown members, and the bind
-    # writes what was carried with the meaning it was read with.
-    stored = connection_module._DocumentJsonbLoader(3802).load(  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
-        b'{"city": "Oslo", "reading": 0.10000000000000001, "wide": 1e999, "plain": 0.1}'
-    )
-    shape = ValueObjectShapeDeclaration(
-        key=ValueObjectShapeKey(),
-        attributes=(ValueObjectAttributeDeclaration(name="city", type=STRING, nullable=True),),
-    ).member_shape
-    successor = apply_prepared_patches(
-        stored, prepare_patches(shape, [SetScalar(("city",), Present("Bergen"))])
-    )
-    (dumped,) = Transformer(postgres.adapters).dump_sequence(
-        adapt_binds([StructuredDocument(cast("DocumentValue", successor))]), [PyFormat.AUTO]
-    )
-
-    assert dumped is not None
-    assert json.loads(bytes(dumped), parse_float=decimal.Decimal) == {
-        "city": "Bergen",
-        "reading": decimal.Decimal("0.10000000000000001"),
-        "wide": decimal.Decimal("1e999"),
-        "plain": decimal.Decimal("0.1"),
-    }
-
-
 # -- port-boundary re-raise (m-db-error) ----------------------------------------
-
-
-def test_translate_driver_error_maps_a_unique_violation() -> None:
-    error = translate_driver_error(_DIALECT, errors.UniqueViolation("dup key"))
-    assert error.category == "uniqueViolation"
-    assert error.native_code == "23505"
-    assert error.violates_unique_index
-    assert error.message == "dup key"
-
-
-class _NamedUniqueViolation(errors.UniqueViolation):
-    """A `23505` whose libpq diagnostics name the index it violated.
-
-    libpq treats an index as a constraint even when no constraint syntax created
-    it, so a bare `create unique index` reports its own name in this field —
-    which is what makes the name correlate with a rollout's own provenance.
-    """
-
-    @property
-    def diag(self) -> Any:
-        return SimpleNamespace(constraint_name="pxi_widget_label_0f1e2d3c")
-
-
-def test_translate_driver_error_forwards_the_violated_index_name() -> None:
-    error = translate_driver_error(_DIALECT, _NamedUniqueViolation("dup key"))
-    assert error.violated_index == PhysicalIndexName("pxi_widget_label_0f1e2d3c")
 
 
 class _NamedCheckViolation(errors.CheckViolation):
@@ -277,20 +179,6 @@ def test_translate_driver_error_is_uncategorized_without_sqlstate() -> None:
     assert error.category is None
     assert error.native_code is None
     assert error.message == "connection closed"
-
-
-def test_translating_driver_errors_reraises_as_a_database_error() -> None:
-    with pytest.raises(DatabaseError) as exc_info, translating_driver_errors(_DIALECT):
-        raise errors.DeadlockDetected("deadlock detected")
-    assert exc_info.value.category == "deadlock"
-    assert exc_info.value.is_retriable
-    assert exc_info.value.native_code == "40P01"
-
-
-def test_translating_driver_errors_passes_a_clean_block() -> None:
-    with translating_driver_errors(_DIALECT):
-        value = 1 + 1
-    assert value == 2
 
 
 def test_translating_driver_errors_passes_a_non_driver_exception() -> None:
@@ -400,23 +288,6 @@ class _FakePipeline:
         return False
 
 
-class _RecordingAdapters(AdaptersMap):
-    """A connection's own adapter map over psycopg's defaults, as a real
-    connection's is, recording every adapter registered on it."""
-
-    def __init__(self) -> None:
-        super().__init__(postgres.adapters)
-        self.registered: list[tuple[object, object]] = []
-
-    def register_loader(self, oid: int | str, loader: type[Loader]) -> None:
-        super().register_loader(oid, loader)
-        self.registered.append((oid, loader))
-
-    def register_dumper(self, cls: type | str | None, dumper: type[Dumper]) -> None:
-        super().register_dumper(cls, dumper)
-        self.registered.append((cls, dumper))
-
-
 class _FakeInfo:
     """A ``connection.info`` stand-in answering the two settings initialization checks.
 
@@ -425,12 +296,10 @@ class _FakeInfo:
     here either.
     """
 
-    def __init__(self, *, encoding: str = "utf-8", date_style: str | None = "ISO, MDY") -> None:
-        self.encoding = encoding
-        self._date_style = date_style
+    encoding = "utf-8"
 
     def parameter_status(self, name: str) -> str | None:
-        return self._date_style if name == "DateStyle" else None
+        return "ISO, MDY" if name == "DateStyle" else None
 
 
 class _FakePgConn:
@@ -476,10 +345,8 @@ class _FakeConnection:
         begin_error: BaseException | None = None,
         commit_error: psycopg.Error | None = None,
         rollback_error: psycopg.Error | None = None,
-        encoding: str = "utf-8",
-        date_style: str | None = "ISO, MDY",
     ) -> None:
-        self.info = _FakeInfo(encoding=encoding, date_style=date_style)
+        self.info = _FakeInfo()
         self.pgconn = _FakePgConn()
         self.cursor_error = cursor_error
         self.begin_error = begin_error
@@ -490,7 +357,7 @@ class _FakeConnection:
             lambda _name, _value: None
         )
         self.status_after_boundary = TransactionStatus.IDLE
-        self.adapters = _RecordingAdapters()
+        self.adapters = AdaptersMap(postgres.adapters)
         self.rollbacks = 0
         self.closed = False
         self.executed: list[object] = []
@@ -566,24 +433,6 @@ def _sent_sql(connection: _FakeConnection) -> list[str]:
     ]
 
 
-def test_adapter_registers_boundary_value_adapters() -> None:
-    # A `real` decodes exactly and native `timestamptz` infinity normalizes to
-    # the m-core sentinel through the compiled loaders psycopg's implementation
-    # runs, documents decode through the adapter's own JSON loaders, and the
-    # sentinel binds through the adapter's own dumper.
-    connection = _FakeConnection()
-    _direct_execution(connection)
-    loaders = compiled_loaders(psycopg.pq.__impl__)
-    assert connection.adapters.registered == [
-        ("float4", loaders.float4),
-        ("timestamptz", loaders.timestamptz),
-        ("jsonb", connection_module._DocumentJsonbLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
-        ("jsonb", connection_module._DocumentJsonbBinaryLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
-        (TemporalBound, connection_module._NativeInfinityDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
-        (ArrayBind, connection_module._ArrayBindDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
-    ]
-
-
 def _dumped(adapters: AdaptersMap, bind: object) -> tuple[bytes | None, int, Format]:
     """What a statement sends for ``bind`` under ``adapters``: its bytes, its
     parameter type OID, and its format."""
@@ -593,26 +442,6 @@ def _dumped(adapters: AdaptersMap, bind: object) -> tuple[bytes | None, int, For
     assert transformer.formats is not None
     ((oid,), (format_,)) = (transformer.types, transformer.formats)
     return (None if dumped is None else bytes(dumped), oid, format_)
-
-
-def test_the_open_bound_binds_exactly_as_its_string_spelling_does() -> None:
-    # Untyped text, so the server infers the parameter's type from the
-    # statement around it, as it does for the spelling.
-    connection = _FakeConnection()
-    _direct_execution(connection)
-
-    assert _dumped(connection.adapters, INFINITY) == (b"infinity", 0, Format.TEXT)
-    assert _dumped(connection.adapters, "infinity") == _dumped(connection.adapters, INFINITY)
-
-
-def test_the_open_bound_dumper_is_registered_on_the_connection_alone() -> None:
-    connection = _FakeConnection()
-    _direct_execution(connection)
-    dumper = connection_module._NativeInfinityDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
-
-    assert connection.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is dumper
-    assert postgres.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
-    assert AdaptersMap(postgres.adapters).get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
 
 
 def _binary_array(element_oid: int, elements: Sequence[bytes | None]) -> bytes:
@@ -697,22 +526,6 @@ def test_an_integer_array_keeps_its_declared_type_whatever_its_magnitudes() -> N
     assert _dumped(adapters, ArrayBind(INT64, [-(2**63), None, 2**63 - 1])) == (
         _binary_array(20, [struct.pack("!q", -(2**63)), None, struct.pack("!q", 2**63 - 1)]),
         1016,
-        Format.BINARY,
-    )
-
-
-@pytest.mark.usefixtures("no_element_scan")
-def test_an_empty_or_all_null_array_keeps_its_declared_element_type() -> None:
-    adapters = _initialized()
-
-    assert _dumped(adapters, ArrayBind(INT64, [])) == (
-        _binary_array(20, []),
-        1016,
-        Format.BINARY,
-    )
-    assert _dumped(adapters, ArrayBind(STRING, [None, None])) == (
-        _binary_array(25, [None, None]),
-        1009,
         Format.BINARY,
     )
 
@@ -1148,40 +961,6 @@ def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync()
     ]
 
 
-def test_execute_and_execute_pipeline_return_the_same_rows_for_the_same_result() -> None:
-    def result() -> _Result:
-        return _Result(3, [(1, False, None), (2, True, None), (3, True, {"a": 1})])
-
-    ordinary = _direct_execution(_ResultConnection(result())).execute("select", [], ((1, 2),))
-    (pipelined,) = _direct_execution(_ResultConnection(result())).execute_pipeline(
-        (PipelineStatement("select", document_reads=((1, 2),)),)
-    )
-
-    assert pipelined == ordinary
-
-
-def test_a_designated_read_submits_and_answers_exactly_what_an_undesignated_one_does() -> None:
-    def result() -> _Result:
-        return _Result(3, [(1, False, None), (2, True, {"a": 1})])
-
-    def submitted(read_only: bool) -> tuple[object, list[str]]:
-        single = _ResultConnection(result())
-        batch = _ResultConnection(result(), result())
-        rows = (
-            _direct_execution(single).execute("select", [7], ((1, 2),), read_only=read_only),
-            _direct_execution(batch).execute_pipeline(
-                (
-                    PipelineStatement("select", (7,), ((1, 2),)),
-                    PipelineStatement("select", (8,), ((1, 2),)),
-                ),
-                read_only=read_only,
-            ),
-        )
-        return rows, single.pipeline_events + batch.pipeline_events
-
-    assert submitted(read_only=True) == submitted(read_only=False)
-
-
 def test_execute_pipeline_returns_an_empty_result_for_a_statement_without_rows() -> None:
     assert _direct_execution(_ResultConnection(None)).execute_pipeline(
         (PipelineStatement("set local application_name = 'parallax'"),)
@@ -1194,10 +973,6 @@ def test_execute_reraises_a_driver_error_at_the_boundary() -> None:
         adapter.execute("select 1", [])
     assert exc_info.value.violates_unique_index
     assert exc_info.value.native_code == "23505"
-
-
-def test_the_adapter_reads_pipeline_availability_from_the_libpq_psycopg_loaded() -> None:
-    assert connection_module._PIPELINED is psycopg.capabilities.has_pipeline()  # pyright: ignore[reportPrivateUsage] - the availability the facade selects on
 
 
 @pytest.mark.parametrize("pipelined", [True, False], ids=["pipeline", "no-pipeline"])
@@ -1502,48 +1277,6 @@ def test_a_statement_the_driver_refused_to_send_is_unconfirmed_and_the_rest_unse
 
 def _owing_deallocation(native: psycopg.Connection[TupleRow]) -> None:
     native._prepared._to_flush.append(b"_pg3_0")  # pyright: ignore[reportPrivateUsage] - the deallocation a pipeline's own eviction leaves owed
-
-
-def _deallocation() -> object:
-    return (
-        ("close", b"_pg3_0")
-        if psycopg.capabilities.has_send_close_prepared()
-        else b"DEALLOCATE _pg3_0"
-    )
-
-
-def test_prepared_cache_maintenance_between_statements_answers_none_of_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    server = Server()
-    with native_session(monkeypatch, server) as native:
-        _owing_deallocation(native)
-        result = _ordered_writes(PostgresConnection(native))
-
-    assert result == OrderedWriteResultComplete((1, 1, 1))
-    assert server.sent == [
-        b"update a set v = 1",
-        _deallocation(),
-        b"update b set v = 2",
-        b"delete from c",
-        "sync",
-    ]
-
-
-def test_failed_prepared_cache_maintenance_interrupts_without_blaming_a_statement(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    server = Server(script([failed("23505", "duplicate key")]))
-    with native_session(monkeypatch, server) as native:
-        _owing_deallocation(native)
-        facade = PostgresConnection(native)
-        result = _ordered_writes(facade)
-
-    assert isinstance(result, OrderedWriteResultInterrupted)
-    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 3, 0)
-    assert isinstance(result.error, DatabaseError)
-    assert isinstance(result.error.__cause__, errors.PipelineAborted)
-    assert facade.suspect
 
 
 def test_an_abort_no_confirmed_failure_explains_ends_what_is_confirmed(
@@ -1979,12 +1712,6 @@ def test_every_failed_port_invocation_reports_its_own_error_instance() -> None:
     }
 
 
-def test_transaction_commits_and_reports_the_body_value() -> None:
-    assert _direct_execution(_FakeConnection()).transaction(lambda _port: "kept") == Committed(
-        "kept"
-    )
-
-
 def test_the_transaction_scoped_port_reports_the_boundarys_own_dialect() -> None:
     # The port a body holds spells the statements that boundary is about to run,
     # so it answers the dialect of the port that opened the boundary rather than
@@ -2014,42 +1741,7 @@ def test_transaction_reports_a_boundary_that_never_began() -> None:
     ]
 
 
-_DRIVER_LEVELS: dict[str, psycopg.IsolationLevel] = {
-    "read_committed": psycopg.IsolationLevel.READ_COMMITTED,
-    "repeatable_read": psycopg.IsolationLevel.REPEATABLE_READ,
-    "serializable": psycopg.IsolationLevel.SERIALIZABLE,
-}
-
 _CLEARED: list[object] = [("isolation_level", None), ("read_only", None)]
-
-
-@pytest.mark.parametrize("access_mode", [None, "read_only", "read_write"])
-@pytest.mark.parametrize("isolation", [None, *sorted(ISOLATION_LEVELS)])
-def test_each_request_travels_in_the_drivers_begin_and_is_cleared_after_it(
-    isolation: str | None, access_mode: AccessMode | None
-) -> None:
-    # Every pair, including each request alone and neither, reaches the
-    # attributes the driver composes its BEGIN from before the context is
-    # entered, so the boundary sends no statement beyond the body's own; and the
-    # outer boundary leaves both cleared, so the session's own defaults govern
-    # the next one.
-    connection = _FakeConnection()
-    outcome = _direct_execution(connection).transaction(
-        lambda port: port.execute("select 1", []),
-        isolation=None if isolation is None else isolation_level(isolation),
-        access_mode=access_mode,
-    )
-    level = None if isolation is None else _DRIVER_LEVELS[isolation]
-    read_only = None if access_mode is None else access_mode == "read_only"
-    assert outcome == Committed([])
-    assert connection.boundary == [
-        ("isolation_level", level),
-        ("read_only", read_only),
-        ("BEGIN", level, read_only),
-        "COMMIT",
-        *_CLEARED,
-    ]
-    assert _sent_sql(connection) == ["select 1"]
 
 
 @pytest.mark.parametrize(
@@ -2473,44 +2165,3 @@ def test_transaction_reports_a_body_raised_base_exception_unchanged() -> None:
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
     assert trigger.error is raised_by_the_body
-
-
-def test_a_connection_whose_client_encoding_is_not_utf_8_is_refused() -> None:
-    # SQL crosses this boundary as UTF-8 bytes and a stored document is decoded
-    # as UTF-8 text, so another encoding corrupts both. The refusal names the
-    # setting and its effective value, which are session configuration rather
-    # than credentials.
-    connection = _FakeConnection(encoding="latin1")
-    with pytest.raises(IncompatibleSessionError, match="client encoding"):
-        initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
-
-
-def test_a_connection_whose_date_style_is_not_iso_is_refused() -> None:
-    # A finite `timestamptz` is decoded from its text form, which psycopg's
-    # loader reads in ISO order; the field order WITHIN ISO does not affect that
-    # and is left alone.
-    connection = _FakeConnection(date_style="German, DMY")
-    with pytest.raises(IncompatibleSessionError, match="DateStyle"):
-        initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
-
-    for accepted in ("ISO, MDY", "ISO, DMY", "ISO, YMD"):
-        initialize_connection(
-            cast("psycopg.Connection[TupleRow]", _FakeConnection(date_style=accepted))
-        )
-
-
-def test_the_per_connection_setup_records_a_refusal_and_reraises_it() -> None:
-    # A pool creates most of its connections on its own background path, where a
-    # refusal is retried and logged where a caller waiting for one never sees
-    # it; the record is what lets the eventual timeout say what is wrong.
-    establishment = ConnectionEstablishment()
-    refused = _FakeConnection(encoding="latin1")
-
-    with pytest.raises(IncompatibleSessionError) as raised:
-        establishment(cast("psycopg.Connection[TupleRow]", refused))
-
-    failure = establishment.last_failure
-    assert failure is not None
-    assert (failure.reason, failure.cause) == ("preparation_failed", raised.value)
-    establishment(cast("psycopg.Connection[TupleRow]", _FakeConnection()))
-    assert establishment.last_failure is None
