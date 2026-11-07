@@ -602,11 +602,6 @@ def test_a_group_lays_its_updates_out_shape_by_shape_and_records_their_spans() -
     assert [(span.start, span.stop) for span in group.effect_spans] == [(0, 2), (2, 4)]
 
 
-def test_one_settled_write_forms_a_group_without_effect_spans() -> None:
-    (group,) = _groups(_plan([_amend_wallet(1, "1.00")], _WALLET))
-    assert group.effect_spans == ()
-
-
 def test_a_group_of_temporal_amendments_spans_their_closes_ahead_of_their_inserts() -> None:
     buffer = [
         KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},))

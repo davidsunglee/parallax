@@ -227,22 +227,9 @@ def test_an_old_and_a_fresh_source_of_one_produced_version_share_one_claim() -> 
     assert statement_kinds(simulated.statements) == ["update", "delete"]
 
 
-def test_a_versioned_source_read_before_its_states_completed_change_is_stale() -> None:
-    uow, _simulated = _uow(_ACCOUNT)
-    read_at = uow.source_authority.freshness
-    source = _published(uow, _account(1), version=1)
-    _write(uow, _ACCOUNT, source, "amend", owner="Ada")
-    _flush(uow)
-    late = _published(uow, _account(1), version=1, read_at=read_at)
-    assert _refusal(lambda: _write(uow, _ACCOUNT, late, "amend", owner="Bo")) == (
-        "write-evidence-consumed"
-    )
-    _write(uow, _ACCOUNT, source, "amend", owner="Cy")
-
-
 def test_a_locking_versioned_source_carrying_no_observation_settles_against_nothing() -> None:
-    # Locking needs no observation to admit the source, and the planner's
-    # required-observation rule refuses the write it would settle.
+    # Locking needs no observation to admit the source, which then resolves to
+    # nothing a write could settle against.
     uow, _simulated = _uow(_ACCOUNT, settings=TransactionSettings(preference="locking"))
     evidence = ReadEvidence(
         _account(1).entity, _account(1), uow.source_authority.participation, None

@@ -1268,12 +1268,13 @@ def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
     def missing_view(_model: object) -> MissingPosition:
         return MissingPosition()
 
+    preparation = write_preparation_of(_ACCOUNT)
     monkeypatch.setattr(inheritance, "view", missing_view)
 
     with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
         wi.prepare_typed_write(
             wi.KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
-            write_preparation_of(_ACCOUNT),
+            preparation,
         )
 
 

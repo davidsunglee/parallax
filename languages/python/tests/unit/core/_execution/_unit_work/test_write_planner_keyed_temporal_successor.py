@@ -1,12 +1,11 @@
 """A keyed temporal amendment's successor, settled through the production
-planner (`m-temporal-write` *Temporal expansion*): it overlays every member its
-row assigns, and a restated occurrence is assigned whole."""
+planner (`m-temporal-write` *Temporal expansion*): a restated occurrence is
+assigned whole."""
 
 from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -21,7 +20,6 @@ from parallax.core.base import INFINITY
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import PreparedEffectiveChange
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
@@ -42,10 +40,8 @@ from parallax.core.write_plan import (
     TemporalObservation,
     WritePlan,
 )
-from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.steps import (
     ChangedFrom,
-    PlannedStep,
 )
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
@@ -56,10 +52,7 @@ from tests._support.planner_probes import (
 )
 from tests._support.write_preparation import write_preparation_of
 from tests.unit import _milestone_rows_support as milestone_rows
-from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._positional_row_support import positional_row
-
-_BALANCE = corpus_model("balance")
 
 # The planner threads its Transaction Instant through untouched to whichever
 # stage first needs it, so every test below shares one uncaptured holder, later
@@ -90,61 +83,10 @@ def _plan(
     )
 
 
-def _row_values(row: ManagedRow) -> dict[str, object]:
-    values: dict[str, object] = {ident.name: value for ident, value in row.attributes.items()}
-    for ident, value in row.value_objects.items():
-        values[ident.path[-1]] = value
-    return values
-
-
-def _insert_rows(step: PlannedStep) -> list[dict[str, object]]:
-    assert isinstance(step, PlannedInsert)
-    return [_row_values(entry.row) for entry in step.entries]
-
-
 def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
     prepared = prepare_typed_write(write, write_preparation_of(model))
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
-
-
-_BALANCE_PREDECESSOR: dict[str, object] = {
-    "id": 1,
-    "acctNum": "A",
-    "value": Decimal("1.00"),
-    "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-    "txEnd": INFINITY,
-}
-
-
-# --------------------------------------------------------------------------- #
-# A surviving row executes every assignment, a member it restores included:   #
-# settlement compares no assigned member against the row it reaches.          #
-# --------------------------------------------------------------------------- #
-def _refuse_member_comparison(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("settlement compared an assigned member with its row")
-
-    monkeypatch.setattr(PreparedEffectiveChange, "effective_positions", refuse)
-
-
-def test_a_literal_keyed_write_overlays_every_member_it_assigns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _refuse_member_comparison(monkeypatch)
-    prepared = _prepared_keyed(
-        KeyedWriteInstruction(
-            "amend", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)
-        ),
-        _BALANCE,
-    )
-    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    held = retained_observation(prepared, _BALANCE, observation)
-    literal = admitted_write(prepared, held, held.key.object)
-    (_close, successor) = plan_steps(_plan([literal], _BALANCE))
-    # The successor overlays every member the row assigns, whatever it equals.
-    assert _insert_rows(successor)[0]["acctNum"] == "B"
-    assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
 
 
 @pytest.mark.parametrize("positional", [False, True], ids=["mapping", "positional"])

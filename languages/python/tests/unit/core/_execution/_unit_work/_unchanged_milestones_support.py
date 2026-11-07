@@ -4,7 +4,7 @@ planner and range-binding seams the unchanged-milestone suites drive."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
 
 from parallax.core import temporal_read
@@ -22,15 +22,12 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import (
     ObjectKey,
-    PlannedInsert,
     PredecessorRow,
     TemporalObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
-    BoundRange,
-    SettledWrite,
     TemporalWriteOwnership,
     WritePlan,
 )
@@ -38,10 +35,9 @@ from parallax.core.write_plan.steps import (
     PlannedStep,
 )
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model
-from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held
 
 SPANS = model("buffered-sequence-layout-twin-columns")
 BALANCES = model("balance")
@@ -133,35 +129,8 @@ def planned(
     )
 
 
-def bound_range(
-    meta: Metamodel,
-    plan: WritePlan,
-    rows: Sequence[PredecessorRow],
-    *,
-    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> tuple[SettledWrite, BoundRange]:
-    (write,) = settled_writes(plan)
-    return write, bind_held(
-        meta,
-        plan,
-        rows,
-        ownership=ownership,
-        transaction_instant=instant_at(NOW.isoformat()),
-    )
-
-
 def step_kinds(steps: Iterable[PlannedStep]) -> list[str]:
     return [type(step).__name__ for step in steps]
-
-
-def opened_windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object]]:
-    windows: list[tuple[object, object, object]] = []
-    for step in steps:
-        if isinstance(step, PlannedInsert):
-            (entry,) = step.entries
-            cells = {identity.name: value for identity, value in entry.row.attributes.items()}
-            windows.append((cells["validStart"], cells["validEnd"], cells["amount"]))
-    return windows
 
 
 __all__ = [
@@ -180,9 +149,7 @@ __all__ = [
     "SPANS",
     "T0",
     "balance_row",
-    "bound_range",
     "observed_write",
-    "opened_windows",
     "planned",
     "retained_state",
     "span_row",

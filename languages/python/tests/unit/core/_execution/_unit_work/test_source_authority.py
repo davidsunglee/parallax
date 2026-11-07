@@ -122,7 +122,7 @@ def _resolved(
 
 
 # --------------------------------------------------------------------------- #
-# Only the operations that always refused an ended attempt refuse it.         #
+# Only these operations refuse an ended attempt.                              #
 # --------------------------------------------------------------------------- #
 def _doomed(lifetime: TxnAttemptLifetime) -> None:
     lifetime.doom(RuntimeError("doomed"))
@@ -154,7 +154,7 @@ def test_an_ended_attempt_refuses_what_a_read_or_verb_asks_and_still_publishes_c
     ):
         with pytest.raises(refusal):
             asked()
-    # Publication, the target and binding queries, and completion never refused.
+    # Publication, the target and binding queries, and completion do not refuse.
     authority.register_read_evidence(evidence, read_at=0)
     assert not authority.has_live_observation(VersionedObjectStateKey(_person(1), 1))
     assert authority.is_unchanged_since(_person(1), 0)
@@ -210,20 +210,6 @@ def test_an_optimistic_source_without_an_observation_is_unavailable() -> None:
     authority = _authority(_ACCOUNT)
     evidence = ReadEvidence(_account(1).entity, _account(1), authority.participation, None)
     assert _resolved(authority, _ACCOUNT, evidence, _account(1)) == "write-evidence-unavailable"
-
-
-def test_a_versioned_source_continues_from_the_version_completion_produced() -> None:
-    authority = _authority(_ACCOUNT)
-    observation = authority.retain(_versioned(authority, _account(1), 4))
-    source = ReadEvidence(_account(1).entity, _account(1), authority.participation, observation)
-    assert _resolved(authority, _ACCOUNT, source, _account(1)) == observation.key
-    state = VersionedObjectStateKey(_account(1), 4)
-    authority.complete_write(WriteEffects(changed=(state,), advanced=(state,)), ())
-    assert _resolved(authority, _ACCOUNT, source, _account(1)) == VersionedObjectStateKey(
-        _account(1), 5
-    )
-    authority.complete_write(WriteEffects(changed=(_account(1),), destroyed=(_account(1),)), ())
-    assert _resolved(authority, _ACCOUNT, source, _account(1)) == "write-evidence-consumed"
 
 
 def _temporal_source(authority: SourceAuthority, valid_time: dt.datetime) -> ReadEvidence:

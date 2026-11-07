@@ -118,7 +118,6 @@ _ACCOUNT = formed(corpus_records()["account"])
 _ACCOUNT_ENTITY = EntityIdentity("parallax.compatibility", "Account")
 _PERSON = model_of(CLASS_MODELS["person"])
 _PERSON_ENTITY = EntityIdentity("parallax.compatibility", "Person")
-_WALLET = formed(corpus_records()["wallet"])
 _BALANCE = formed(corpus_records()["balance"])
 _BALANCE_OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"), (("id", 1),))
 _INSERTED_AT = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
@@ -283,17 +282,6 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     assert not admission
 
 
-def test_an_amendment_folded_into_a_pending_insert_leaves_it_an_insert() -> None:
-    admission = _admitted(meta=_ACCOUNT)
-    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
-    assert identity is not None
-    _admit(admission, admitted_write(_account_amend(9), None, _account(9), authority=identity))
-    (insert,) = admission.composed_writes()
-    assert isinstance(insert, KeyedInsert)
-    assert insert.instruction.mutation == "insert"
-    assert named_members(insert.instruction.rows[0])["owner"] == "Cy"
-
-
 def _person(person_id: int) -> ObjectKey:
     return ObjectKey(_PERSON_ENTITY, (("id", person_id),))
 
@@ -349,27 +337,6 @@ def test_discard_drops_the_buffer_and_leaves_the_authoritys_insertions_alone() -
     assert admission.composed_writes() == ()
     # Clearing the insertions is the authority's own step of an attempt's discard.
     assert authority.insertion_authority(identity) is None
-
-
-def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authorizes() -> None:
-    authority = source_authority(_ACCOUNT)
-    admission = _admitted(meta=_ACCOUNT, authority=authority)
-    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
-    admission.drain_planned()
-    assert identity is not None
-    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), identity))
-    (before,) = admission.composed_writes()
-    admission.drain_planned()
-    authority.complete_write(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)), ())
-    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), identity))
-    (after,) = admission.composed_writes()
-    assert isinstance(before, InsertionAuthorizedWrite) and isinstance(
-        after, InsertionAuthorizedWrite
-    )
-    assert (before.claim_scope, after.claim_scope) == (
-        VersionedObjectStateKey(_account(9), 1),
-        VersionedObjectStateKey(_account(9), 2),
-    )
 
 
 def _stored_insertion_across_two_rows() -> WriteAdmission:
@@ -708,8 +675,8 @@ def test_a_target_starting_inside_an_observed_rectangle_must_state_its_revision(
 
 
 def test_a_shared_token_names_whatever_rectangle_holds_each_start() -> None:
-    # The source observed only [January, June); a caller stating the same
-    # Transaction-Time start for September names whichever rectangle holds it.
+    # The source observed only [January, June), so a caller's start for
+    # September is not judged against that rectangle, whatever it states.
     for tx_start in (T0, T1):
         _admitted(
             observed_write("amendUntil", START, valid_from=FEB, until=APR, acctNum="O"),

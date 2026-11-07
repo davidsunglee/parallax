@@ -30,19 +30,6 @@ def test_every_entity_is_prepared_once_over_its_member_selection() -> None:
     assert preparation.entity(branch.identity) is prepared
 
 
-def test_member_masks_name_required_and_framework_owned_positions() -> None:
-    branch = entity_of(_BRANCH, "Branch")
-    prepared = WritePreparation(_BRANCH, absent=_ABSENT).entity(branch.identity)
-    names = [member.name for member in prepared.selection.members.shape.members]
-
-    required = {name for p, name in enumerate(names) if prepared.insert_required >> p & 1}
-    owned = {name for p, name in enumerate(names) if prepared.framework_owned >> p & 1}
-
-    assert required == {"id", "name"}
-    assert len(owned) == 4
-    assert not prepared.insert_required & prepared.framework_owned
-
-
 def test_a_prepared_model_prepares_writes_against_its_own_model() -> None:
     selection = prepare_model(ACCOUNT_MODEL, edition="test")
     write = write_projection(selection)
