@@ -98,7 +98,7 @@ it is one of three meanings:
 - A **Resolved Mutation Selection** addresses the rows a resolved Predicate
   selects, for a predicate-selected write (`m-batch-write`).
 - A **Milestone Target** addresses one current milestone by its complete physical
-  address (`m-temporal-write` *Address and gate are separate*).
+  address (`m-temporal-write` *The close addresses a Milestone Target*).
 
 ### Write Gate and the concurrency decision
 

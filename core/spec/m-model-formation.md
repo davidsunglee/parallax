@@ -99,10 +99,8 @@ owners only by changing this manifest and both affected module specifications
 together. The fixed resolver owns every `metamodel-*` code; the formation
 runner owns none.
 
-When the normalized contract is activated, every manifest owner and required
-module MUST be present in the module catalog with matching dependency edges.
-Until that catalog/schema/corpus activation is complete, no runtime profile may
-claim conformance to this manifest.
+Every manifest owner and required module MUST be present in the module catalog
+with matching dependency edges.
 
 ## Profile drift checks
 
@@ -217,17 +215,3 @@ Facets are immutable derived semantic views over the sole Compiled Metadata
 graph. They retain declaration identities/provenance, do not mutate local
 Metadata, and do not reproduce the accepted Entity/member graph. A facet MAY
 own indices over its own derived values.
-
-## Activation order
-
-Specification and contract artifacts precede runtime migration. Activation
-must proceed in this order:
-
-1. complete this manifest and every owning module specification;
-2. update the module catalog and DAG;
-3. update the descriptor, predicate, and query schemas, compatibility
-   models/cases, generated
-   artifacts, and contract tooling together until their gates are green; and
-4. only then change runtime formation or behavioral consumers.
-
-There is no temporary runtime interpretation of an incomplete manifest.

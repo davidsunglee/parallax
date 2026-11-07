@@ -390,12 +390,3 @@ precedes an earlier write's statement failure (`m-unit-work` *Shared coverage
 acquisition*). Either way the group completes none of its writes and its
 attempt is doomed; which of two independent failures is reported is not
 promised to match executing each write alone.
-
-## What the suite pins down
-
-| Case | What it proves |
-|---|---|
-| root-default resolution | an outer invocation that names no option resolves all four from the configured root, states them on its invocation, and runs its attempt and read on one connection |
-| read-only invocation | a read-only invocation requests a read-only boundary at its explicit level, a read-only join reuses its attempt, nothing is flushed, and the invocation states its access mode and no preference |
-| cross-mode joins | a read-only call under a writable transaction, and a writable call under a read-only one, are each refused before their callbacks run |
-| access-mode setup failure | a refused access-mode setup opens no boundary and finishes the attempt begin-failed, terminally |

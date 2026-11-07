@@ -355,7 +355,7 @@ def _joining_database(
     independent scope its actor selection derives from the same root."""
     if database is None:
         raise AssertionError(
-            "a `join` action needs the ScopedDatabase running the boundary (`python.md` §5)"
+            "a `join` action needs the ScopedDatabase running the boundary (`execution.md`)"
         )
     if step.actor_selection is None:
         return database

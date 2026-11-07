@@ -52,6 +52,10 @@ of helper modules.
 | `release_case_runtimes` | Autouse cleanup for roots and runtimes left open by a test |
 
 Database-backed tests acquire their database only through `profile_run`.
+They provision through the shipped generator:
+`schema_delta(evolve(ABSENT, model), dialect)`, so a test database holds exactly
+the statements the generator emits, and an authored secondary Index exists there
+as the separately named object a violation reports.
 Standby proofs reach a primary and its streaming standby through
 `profile_run.replication()`, which opens one pair per run on first use; they
 live under `tests/provider_contract/replication/` and carry

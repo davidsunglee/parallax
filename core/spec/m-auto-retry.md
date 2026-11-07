@@ -170,25 +170,11 @@ still becoming visible. That is a limit of a small budget rather than a case the
 wait treats specially: a deployment that meets it raises `maxRetries` or
 `baseDelay`.
 
+Waits are not observable through the portable case format: the wait rule's own
+evidence belongs to each implementation's loop.
+
 ## Failures a retry cannot resolve
 
 The Write Precondition Error a target write raises (`m-unit-work`) is
 never in the retriable set, and neither is a doom it caused: a retry re-states
 the same caller revision against the same stored row.
-
-## What the suite pins down
-
-The observable loop-mechanics branches (a conflict replayed away, a conflict a
-zero bound leaves unreplayed, an injected transient auto-retried away, a
-`maxRetries` of `0`, bound exhaustion, the callback value withheld on abort) need
-injected faults a single-connection harness cannot provoke, so they are authored
-as **boundary** cases on the `api-conformance` lane and satisfied by each
-language's API Conformance Suite (`m-api-conformance`). The root-owned defaults
-(`m-execution` *Options a root is configured with*) are proven the same way,
-through what the loop does under a configured root (`m-case-format` *Root
-configuration*): a zero bound on the root disables the loop for an invocation
-naming none, a conflict included, and an explicit bound overrides it; a root
-level stands over every attempt and an explicit level overrides it; a tuned
-policy is inherited and reported whole, an explicit one replaces it whole, and a
-join compares policies by value. Waits are not observable through the portable
-case format: the wait rule's own evidence belongs to each implementation's loop.

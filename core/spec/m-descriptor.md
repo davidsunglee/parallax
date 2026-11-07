@@ -164,8 +164,7 @@ classification, which needs the whole model.
 `persistence` describes whether Parallax accepts persistence writes. It does
 not describe object mutability, security access, transaction demarcation, or a
 temporal dimension. The spellings `mutability`, `transactional`, and a default
-of `read-only` are invalid. Persistence is family-wide and root-owned: a
-descendant MUST omit it even when repeating the root's value.
+of `read-only` are invalid.
 
 ### Conditional `table` / `attributes` requirements (inheritance)
 
@@ -204,10 +203,6 @@ flatten inheritance (a per-entity introspection view) MAY still surface a
 non-root participant's own, absent profile for structural inspection; every OTHER
 consumer — reads, writes, provisioning, identity, propagation — MUST use the
 entity's **effective inherited classification** within its family.
-
-Every entity **MUST** resolve to at least one `attribute` with `primaryKey: true`
-— declared locally, or (for a concrete subtype) inherited from an abstract
-ancestor through its ancestry chain (`m-inheritance`).
 
 ## `attribute` — a typed, mapped scalar field
 
@@ -264,17 +259,8 @@ supported temporal shapes, so every writable temporal Entity has that derived
 version. The composition contract is `m-concurrency` over the temporal write shapes
 (`m-temporal-write`).
 
-**Composition with inheritance (declaration site).** For an inheritance
-participant (`m-inheritance`), `optimisticLocking: true` is family-level
-metadata like a temporal axis, not an ordinary per-entity flag: only the family
-**root** may declare it, and every abstract and concrete descendant inherits the
-root's version column unchanged. A descendant **MUST NOT** declare its own
-`optimisticLocking` attribute — not even to redeclare the root's own verbatim, or
-to add a second version attribute under a different name — regardless of whether
-the root itself is versioned (`inheritance-optimistic-locking-not-root-owned`,
-`m-inheritance` "Family invariants"). The at-most-one-per-entity rule above
-therefore composes family-wide for a participant: at most one `optimisticLocking`
-attribute across the whole family, declared only at the root.
+For an inheritance participant the version attribute is root-owned
+(`m-inheritance` *Family invariants*).
 
 ## `relationship` — a navigable association
 
@@ -738,14 +724,3 @@ validation and can fail only through an implementation defect. It leaves the
 accepted Metamodel unchanged, and it is never raised as or translated to a
 `DescriptorError`, whose three subtypes are ingestion failures over documents.
 The reference harness asserts export byte-determinism over every corpus model.
-
-## Contract activation
-
-This descriptor revision is a breaking canonical-form change. The schema,
-compatibility models/cases, generated artifacts, reference tooling, and active
-language descriptor consumers MUST switch to these spellings together and be
-green before runtime consumers migrate to `m-metamodel`. No dual-read input,
-compatibility alias, or temporary semantic translation is part of the contract.
-In particular, an existing descriptor that omitted `column` for a multiword
-member changes physical storage immediately; preserving its former camelCase
-column requires adding an explicit override before activation.

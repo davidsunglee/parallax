@@ -109,8 +109,7 @@ with increasing endpoints. Naive datetimes, `LATEST` range endpoints, and
 non-tuple range carriers are refused. A dimension may be selected only once,
 and axis-free `as_of` / `as_of_range` calls are errors.
 
-Omitted Transaction Time means Latest. Bitemporal queries must select Valid
-Time explicitly. Latest has no `now` alias: an ordinary finite current-clock
+Latest has no `now` alias: an ordinary finite current-clock
 datetime is a finite pin. Temporal naming is `valid_time` / `tx_time` on queries,
 `Pin`, and `Edge`; mutation keywords are `valid_from`, on inserts and
 target writes, and the keyword-only `until` (*Write verbs* in
@@ -211,7 +210,7 @@ reading `pin` / `edition` outside the entered scope raises
 the checked iterator returns their records. There are no arity accessors or
 whole-stream projection.
 
-`batch_size` defaults to 1024 and requires a positive exact built-in integer;
+`batch_size` requires a positive exact built-in integer;
 it counts root positions. It is a per-call option only. Core determines page
 stability and continuation ordering. A non-total continuation raises
 `StreamContinuationError` with code

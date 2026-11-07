@@ -1598,10 +1598,11 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "a multi-concrete polymorphic PROJECTING read (an abstract-root read, or a narrow "
     "resolving to 2+ concretes) — the `then.rows` original: it states the position's "
-    "scalar superset while `db.find` materializes per-variant Typed nodes (python.md §4: "
-    "the right observation is `type(node)`, not a flattened dict), so a flat `then.rows` "
-    "comparison can never be reproduced from typed instances — a permanent, structural "
-    "non-fit. Its own `then.graph` sibling (m-inheritance-106/-107/-108/-109 respectively) "
+    "scalar superset while `db.find` materializes per-variant Typed nodes "
+    "(queries-and-results.md: the right observation is `type(node)`, not a flattened dict), "
+    "so a flat `then.rows` comparison can never be reproduced from typed instances — a "
+    "permanent, structural non-fit. Its own `then.graph` sibling "
+    "(m-inheritance-106/-107/-108/-109 respectively) "
     "IS executed through `db.find` (`graph_stories.py`), proving the identical capability "
     "the OTHER way, so both assertions of the same behavior are expressed"
 )
@@ -1840,7 +1841,7 @@ _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
     "the idiomatic spelling EXISTS: `subtype-write-set-based-unsupported`'s natural "
     "developer-facing trigger is a set-based `_where` verb (`tx.amend_where` / "
-    "`tx.delete_where`) targeting an inheritance family (python.md §5, refused by "
+    "`tx.delete_where`) targeting an inheritance family (execution.md, refused by "
     "`inheritance.reject_predicate_write`) — "
     "`test_transaction_predicate_writes.py` exercises it through `tx.amend_where`; the "
     "rejected-case's OWN keyless-row shape (`m-inheritance-089`) still has no idiomatic keyed "
