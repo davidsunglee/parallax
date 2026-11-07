@@ -25,6 +25,15 @@ these shapes are now graded exactly.
 than a node, and it stays a statement about SQL. The tag is still never projected as
 SQL: it comes from the node's concrete Entity.
 
+The name is now reserved on every Entity: no Attribute, Attribute column, Value Object
+occurrence, Value Object storage column, or relationship may be spelled `familyVariant`,
+whether or not its Entity is in a family. This replaces a permission to store a Value
+Object in a column of that spelling and a reservation limited to family members. Under
+those, one key could mean the tag or domain data depending on the Entity, code had to
+ask which before reading it, and a row keyed by physical column could need two values
+at one key. Whether a node carries the tag still depends on being in a family, but the
+name means one thing everywhere.
+
 The alternative for each was to change Python to match the older text: stop tagging by
 read position, and pad every node. That would give an object a key it does not have,
 and make its shape depend on the query that fetched it.
