@@ -2675,8 +2675,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "the portable deep-fetch graph collision witness is exercised by the database-backed "
         "run lane; no separate idiomatic API story is needed"
     ),
-    "m-inheritance-119": (
-        "the value-object/familyVariant materialization collision is exercised by the "
+    "m-inheritance-164": (
+        "a family Value Object stored apart from its occurrence name is exercised by the "
         "compile and database-backed run lanes; no separate idiomatic API story is needed"
     ),
     "m-inheritance-120": (
@@ -2772,9 +2772,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-115": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-116": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-119": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-165": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` formation reject (unreachable) ---------- #
     "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #

@@ -1,0 +1,24 @@
+# A concrete family node's Value Object stores its document in a Column spelled like
+# the framework-owned synthetic familyVariant key. A flat row spells that document by
+# its Column beside the variant, so Model Formation must reject the collision even
+# though the occurrence renders under a different canonical name.
+model: models/member-column-defaults.yaml
+tags: [m-inheritance, m-model-formation, m-value-object, m-descriptor, rejected, negative, materialization-key, familyVariant, table-per-hierarchy, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        table: record
+        inheritance: { role: root, strategy: table-per-hierarchy, tag: { column: kind } }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+        valueObjects:
+          - name: profile
+            column: familyVariant
+            attributes:
+              - { name: label, type: string }
+      - name: Note
+        inheritance: { role: concrete-subtype, parent: Record, tagValue: note }
+then:
+  rejectedRule: inheritance-materialization-key-collision

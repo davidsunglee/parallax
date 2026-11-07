@@ -112,7 +112,7 @@ _VARIANT_MODEL = form_metamodel(
             identity=_VARIANT_ROOT,
             container=Table("asset_record"),
             attributes=(key(_VARIANT_ROOT),),
-            value_objects=(_rendering_value_object("mailingAddress", "familyVariant"),),
+            value_objects=(_rendering_value_object("mailingAddress", "mailing_address"),),
             inheritance=AbstractRoot(TablePerHierarchy("kind")),
         ),
         Declaration(
@@ -371,42 +371,6 @@ def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> No
         _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source
     )
     assert (copy.identity, copy.roots[0]["barkVolume"]) == (dog, 9)
-
-
-_TICKET = EntityIdentity("catalog", "Ticket")
-
-# A STANDALONE Entity declaring an ordinary Attribute spelled `familyVariant`,
-# which `m-inheritance` reserves from declared members on an inheritance
-# PARTICIPANT alone. A read of one publishes that key holding domain data.
-_TICKET_MODEL = form_metamodel(
-    source(
-        Declaration(
-            identity=_TICKET,
-            container=Table("ticket"),
-            attributes=(key(_TICKET), attribute(_TICKET, "familyVariant", type=STRING)),
-        )
-    )
-)
-
-
-def _edited_ticket(authored: Mapping[str, object]) -> Any:
-    step = {"action": "mutate", "on": 0, "set": dict(authored)}
-    source_result = _scenario_result({"id": 1, "familyVariant": "premium"}, identity=_TICKET)
-    return snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-        _case("m-snapshot-read-010"), _TICKET_MODEL, step, 0, source_result
-    )
-
-
-def test_edited_copy_reads_a_standalone_entitys_family_variant_as_domain_state() -> None:
-    # Provenance is what that key means on a family, and nothing more: a
-    # standalone Entity may declare a member of its own by that name, and
-    # resolving its value as a variant spelling would refuse every edit of such a
-    # node — even one touching another member entirely. It stays ordinary domain
-    # state here: assignable, and carried by a copy that is still the Entity the
-    # read named.
-    copy = _edited_ticket({"familyVariant": "standard"})
-    assert copy.roots[0] == {"id": 1, "familyVariant": "standard"}
-    assert copy.identity == _TICKET
 
 
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:

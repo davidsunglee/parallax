@@ -279,19 +279,17 @@ particular, a Value Object document column whose physical name equals a
 relationship name is legal when the Value Object's canonical occurrence name is
 different: attaching the relationship MUST neither overwrite the document nor
 cause the relationship to be renamed as the Value Object. The physical document
-key is an input-row key, not the occurrence's rendered graph key. The same
-provenance rule permits a Value Object storage column named `familyVariant` when
-the occurrence renders under a different canonical name: the decoded document
-and the synthetic variant remain separate in the rendered node.
+key is an input-row key, not the occurrence's rendered graph key.
 
 Every key that can coexist on one concrete node MUST nevertheless be distinct in
 the rendered mapping. Formation rejects an Attribute physical column that equals
 an applicable Value Object occurrence name or broad relationship name. It also
 reserves every `<relationshipName>[` prefix from applicable Attribute physical
-columns because narrowed views occupy that derived-key namespace. On an
-inheritance participant, the synthetic `familyVariant` key is likewise reserved
-from Attribute physical columns, Value Object occurrence names, and relationship
-names. These ambiguities are
+columns because narrowed views occupy that derived-key namespace. No Entity,
+inheritance participant or not, may declare an Attribute, Attribute physical
+column, Value Object occurrence, Value Object storage column, or relationship
+spelled `familyVariant`, so that key always means the synthetic variant; whether a
+node carries it still depends on participation. These ambiguities are
 `inheritance-materialization-key-collision`; a materializer MUST NOT choose a
 winner. Foundational canonical member-name collisions remain
 `metamodel-local-member-collision`, and duplicate physical contributors remain
@@ -637,7 +635,8 @@ owns the complete code-set declaration; this module owns each code's meaning.
   keyspaces described under *Materialized field keys* remain unambiguous on
   every concrete node (`inheritance-materialization-key-collision`). Value Object
   storage keys retain provenance and therefore do not collide merely because a
-  relationship has the same local name.
+  relationship has the same local name; only `familyVariant` is reserved from them,
+  on every Entity.
 
 ## The Inheritance Facet
 

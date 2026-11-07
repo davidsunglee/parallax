@@ -3656,10 +3656,10 @@
         "id": "id"
       },
       "documentPath": {
-        "profile.label": "familyVariant:label"
+        "profile.label": "variantProfile:label"
       },
       "valueObject": {
-        "profile": "familyVariant"
+        "profile": "variantProfile"
       }
     }
   },

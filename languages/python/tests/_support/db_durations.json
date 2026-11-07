@@ -2308,7 +2308,7 @@
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-109]": 0.213,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-110]": 0.233,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-118]": 0.139,
- "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-119]": 0.13,
+ "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-164]": 0.13,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-120]": 0.126,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-123]": 0.41,
  "tests/compatibility/test_run_sweep.py::test_run_sweep[m-inheritance-124]": 0.576,

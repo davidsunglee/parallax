@@ -90,7 +90,7 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     concrete = materialize.variant_entity(case.model, entity, row)
     try:
         node = materialize.materialize_variant_owner_node(
-            case, entity, materialize.narrow_to_variant_columns(case, entity, row)
+            case, entity, materialize.narrow_to_variant_columns(case, row)
         )
     except DocumentEncodingError:
         # A stored scalar no value of its declared type spells — a collection
