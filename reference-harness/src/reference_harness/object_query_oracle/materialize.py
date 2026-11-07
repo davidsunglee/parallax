@@ -250,12 +250,13 @@ def materialize_read(read: Case, rows: list[dict[str, Any]]) -> list[PublishedRo
 
     The order is the sequence's own. The Relational Document Layout fan-out runs
     first, because it is what puts each member back under the result name the
-    steps after it read; the Value Object bookkeeping is taken over the fanned-out
-    row, so an occurrence that arrived inside the shared document is recorded
-    where the identity oracle can drop it again; ``_type`` is derived
-    over rows already standing at the columns their own branch spells; and a
-    scalar collection in a Column of its own is decoded last, at the concrete
-    that variant names.
+    steps after it read, and an abstract table-per-hierarchy read derives ``_type``
+    with it, because only the raw tag says which concrete decodes the document; the
+    Value Object bookkeeping is taken over the fanned-out row, so an occurrence that
+    arrived inside the shared document is recorded where the identity oracle can
+    drop it again; ``_type`` is otherwise derived over rows already standing at the
+    columns their own branch spells; and a scalar collection in a Column of its own
+    is decoded last, at the concrete that variant names.
 
     Per-variant COLUMN narrowing is deliberately NOT part of this
     (:func:`narrow_to_variant_columns`): a graph node states the per-variant
@@ -333,13 +334,7 @@ def materialize_hop_level(
     return [
         _published(row)
         if isinstance(row[TYPE_KEY], UnknownFamilyTag)
-        else _published(
-            _with_direct_collections_decoded(
-                case.model,
-                entity,
-                _materialize_document_layout(case, case.model.entity(row[TYPE_KEY]), [row])[0],
-            )
-        )
+        else _published(_with_direct_collections_decoded(case.model, entity, row))
         for row in at_their_variant
     ]
 
@@ -545,17 +540,7 @@ def _materialize_target_tph_document_layout(
     target = case.model.entity(position.target)
     if not case.model.storage_layout.document(target.canonical_name).column:
         return _materialize_target_document_layout(case, rows)
-
-    tagged = _materialize_type(case, rows)
-    materialized: list[dict[str, Any]] = []
-    for row in tagged:
-        variant = row.get(TYPE_KEY)
-        if not isinstance(variant, str):
-            materialized.append(row)
-            continue
-        (decoded,) = _materialize_document_layout(case, case.model.entity(variant), [row])
-        materialized.append(decoded)
-    return materialized
+    return _materialize_type(case, rows)
 
 
 # --- _type ----------------------------------------------------------------
@@ -626,7 +611,12 @@ def _carrying_type(variant: str | None, rows: list[dict[str, Any]]) -> list[dict
     return [_tagged(_materialized_row(row), variant) for row in rows]
 
 
-def _tagged(row: _MaterializedRow, variant: str | UnknownFamilyTag) -> _MaterializedRow:
+def _tagged(row: dict[str, Any], variant: str | UnknownFamilyTag) -> dict[str, Any]:
+    """*row* carrying ``_type``, in place.
+
+    Runs after the row's document fan-out, because a shared Structured Column may
+    be spelled ``_type``.
+    """
     row[TYPE_KEY] = variant
     return row
 
@@ -668,8 +658,9 @@ def _with_type(
     type_map: Mapping[Any, str],
     family_root: str,
     subject: str,
-) -> _MaterializedRow:
-    """*row* with its raw tag column replaced by the ``_type`` the tag names.
+) -> dict[str, Any]:
+    """*row* with its raw tag column replaced by the ``_type`` the tag names, and its
+    document fanned out at that concrete.
 
     The one tag-to-variant transformation, applied wherever a row arrives carrying a
     table-per-hierarchy discriminator. *row* is transformed IN PLACE, so a caller hands
@@ -690,7 +681,10 @@ def _with_type(
         )
     tag_value = row.pop(tag_column)
     variant = type_map.get(tag_value)
-    return _tagged(row, UnknownFamilyTag(tag_value, family_root) if variant is None else variant)
+    if variant is None:
+        return _tagged(row, UnknownFamilyTag(tag_value, family_root))
+    (decoded,) = _materialize_document_layout(case, case.model.entity(variant), [row])
+    return _tagged(decoded, variant)
 
 
 def _materialize_hop_type(
@@ -1131,8 +1125,9 @@ def _tpcs_row_at_its_branch(
             new_row[column] = new_row.pop(result_alias)
         elif position.column_counts[column] > 1 and slot is None:
             new_row.pop(result_alias, None)
-    return _materialize_tpcs_document_row(
-        case, position.layouts_by_variant[variant], _tagged(new_row, position.types[variant])
+    return _tagged(
+        _materialize_tpcs_document_row(case, position.layouts_by_variant[variant], new_row),
+        position.types[variant],
     )
 
 

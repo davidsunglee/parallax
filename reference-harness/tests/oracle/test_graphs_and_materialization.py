@@ -1154,6 +1154,11 @@ def test_a_golden_stating_a_type_on_a_node_outside_a_family_fails(
 _VARIANT_OVERLAP = "m-inheritance-164-value-object-storage-column-family-graph.yaml"
 _PROFILE_HOP = "m-inheritance-118-value-object-relationship-name-overlap-graph.yaml"
 _SCENARIO_WITH_INCLUDES = "m-snapshot-read-026-multi-hop-access-drops-null-branches.yaml"
+_TPH_DOCUMENT_READ = "m-inheritance-123-document-layout-tph-broad-read.yaml"
+_TPH_DOCUMENT_ROWS = "m-inheritance-124-document-layout-tph-sibling-path-reuse.yaml"
+_TPCS_DOCUMENT_READ = "m-inheritance-126-document-layout-tpcs-union-read.yaml"
+_PARTIAL_TPH_DOCUMENT_READ = "m-inheritance-151-partial-tph-document-root-read-unknown-tag.yaml"
+_TPH_DOCUMENT_LEVEL = "m-inheritance-161-dormant-tph-include-layout-twin-document.yaml"
 _PROFILE = {"label": "variant-profile"}
 _STORED_PROFILE = json.dumps(_PROFILE)
 _NOTE_NODE = {"id": 2, "profile": _PROFILE, "_type": "compatibility.overlap.VariantNote"}
@@ -1395,6 +1400,92 @@ def test_a_concrete_read_keeps_its_document_beside_its_variant(damaged_case: Cas
     case = _concrete_note_read(damaged_case(_VARIANT_OVERLAP))
 
     assert_case_read(case, ScriptedReads(results=[[{"id": 2, "variantProfile": _STORED_PROFILE}]]))
+
+
+def _document_column_spelled_type(case: Case) -> Case:
+    """*case* with every Structured Column it reads spelled `_type`, which no rule refuses."""
+
+    def respell(document: dict[str, Any]) -> None:
+        for entity in document["entities"]:
+            if "layout" in entity:
+                entity["layout"]["document"]["column"] = "_type"
+
+    for key in ("statements", "referenceSql"):
+        if key in case.then:
+            case.then[key] = json.loads(json.dumps(case.then[key]).replace("payload", "_type"))
+    return _with_descriptor_change(case, respell)
+
+
+_CARD_DOCUMENT = {"detail": "visa-4242", "authorizationCode": "AUTH-7"}
+_DOCUMENT_PAYMENTS = [
+    {"id": 1, "kind": "card", "_type": _CARD_DOCUMENT},
+    {"id": 2, "kind": "cash", "_type": {"detail": "12.50"}},
+]
+_PUBLICATIONS = [
+    {
+        "id": 10,
+        "_type": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+        "family_variant": "Book",
+    },
+    {
+        "id": 20,
+        "_type": {"title": "Frames", "detail": 850, "minutes": 95},
+        "family_variant": "Film",
+    },
+]
+_BEASTS = [
+    {"id": 1, "kind": "wolf", "leader_id": None, "_type": {"name": "Akela", "howl": "aroo"}},
+    {"id": 2, "kind": "fox", "leader_id": None, "_type": {"name": "Bruno", "brush": "red"}},
+    {"id": 3, "kind": "owl", "leader_id": None, "_type": {"name": "Hedwig"}},
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "results"),
+    [
+        pytest.param(_TPH_DOCUMENT_READ, [_DOCUMENT_PAYMENTS], id="table-per-hierarchy"),
+        pytest.param(
+            _TPH_DOCUMENT_ROWS,
+            [_DOCUMENT_PAYMENTS, _DOCUMENT_PAYMENTS],
+            id="table-per-hierarchy-rows",
+        ),
+        pytest.param(_TPCS_DOCUMENT_READ, [_PUBLICATIONS], id="table-per-concrete-subtype"),
+        pytest.param(_PARTIAL_TPH_DOCUMENT_READ, [_BEASTS], id="unknown-tag"),
+    ],
+)
+def test_a_root_read_decodes_a_document_spelled_like_its_type(
+    name: str, results: list[list[dict[str, Any]]], damaged_case: CaseLoader
+) -> None:
+    case = _document_column_spelled_type(damaged_case(name))
+
+    assert_case_read(case, ScriptedReads(results=results))
+
+
+def test_a_level_decodes_a_document_spelled_like_its_type(damaged_case: CaseLoader) -> None:
+    case = _document_column_spelled_type(damaged_case(_TPH_DOCUMENT_LEVEL))
+    benches = [
+        {"id": 1, "prototype_id": 7, "concept_id": 8, "_type": {"name": "Bench"}},
+        {"id": 2, "prototype_id": 9, "concept_id": None, "_type": {"name": "Shed"}},
+    ]
+    gadgets = [
+        {
+            "id": 1,
+            "kind": "widget",
+            "workbench_id": 1,
+            "_type": {"label": "Cog", "spin": 3},
+        },
+        {"id": 2, "kind": "widget", "workbench_id": 1, "_type": {"label": "Gear"}},
+    ]
+
+    assert_case_read(case, ScriptedReads(results=[benches, gadgets, benches]))
+
+
+def test_a_union_level_decodes_a_document_spelled_like_its_type(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _document_column_spelled_type(damaged_case(_DOCUMENT_KEY_UNION))
+
+    assert_case_read(case, ScriptedReads(results=[_SHEETS, _DOCUMENT_RATES]))
 
 
 def _scenario_row_read_of_a_note(case: Case, model: Model, row: dict[str, Any]) -> Case:
@@ -2356,6 +2447,23 @@ _RANKED_RATES = [
     _sheet_rate(4, 100, 10, None, "SheetLoan"),
     _sheet_rate(5, 101, None, 1, "SheetLoan"),
     _sheet_rate(3, 100, None, 2, "SheetDeposit"),
+]
+
+
+def _sheet_document_rate(
+    key: int, sheet: int, document: dict[str, Any], variant: str
+) -> dict[str, Any]:
+    return {"id": key, "sheet_id": sheet, **_INTERVAL, "_type": document, "family_variant": variant}
+
+
+_DOCUMENT_RATES = [
+    _sheet_document_rate(2, 100, {"priority": 20, "tier": 1, "spread": 125}, "SheetLoan"),
+    _sheet_document_rate(1, 100, {"priority": 20, "grade": "A"}, "SheetDeposit")
+    | {"in_z": "2024-02-01T00:00:00.000000Z"},
+    _sheet_document_rate(4, 100, {"priority": 10}, "SheetLoan"),
+    _sheet_document_rate(3, 100, {"tier": 2, "grade": "C"}, "SheetDeposit"),
+    _sheet_document_rate(6, 101, {"priority": 10, "tier": 1}, "SheetDeposit"),
+    _sheet_document_rate(5, 101, {"tier": 1, "spread": 300}, "SheetLoan"),
 ]
 
 

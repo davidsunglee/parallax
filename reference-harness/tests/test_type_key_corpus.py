@@ -86,6 +86,13 @@ class _Walk:
         }
 
 
+def _step_target(steps: Sequence[Mapping[str, Any]], step: Mapping[str, Any]) -> str:
+    """The Entity *step*'s rows stand at: an action step's are those of the read it names."""
+    while "objectQuery" not in step:
+        step = steps[step["on"]]
+    return step["objectQuery"]["target"]
+
+
 def _walked(case: Case) -> _Walk:
     walk = _Walk(case)
     then = case.then
@@ -95,10 +102,12 @@ def _walked(case: Case) -> _Walk:
         walk.graph(then["graph"], "then.graph")
     for index, milestone in enumerate(then.get("graphs", ())):
         walk.graph(milestone["graph"], f"then.graphs[{index}]")
-    for index, step in enumerate(case.when.get("scenario", ())):
-        query = step.get("objectQuery")
-        if "expectRows" in step and query is not None:
-            walk.rows(query["target"], step["expectRows"], f"scenario[{index}].expectRows")
+    steps = case.when.get("scenario", ())
+    for index, step in enumerate(steps):
+        if "expectRows" in step:
+            walk.rows(
+                _step_target(steps, step), step["expectRows"], f"scenario[{index}].expectRows"
+            )
         if "expectGraph" in step:
             walk.graph(step["expectGraph"], f"scenario[{index}].expectGraph")
     return walk
@@ -108,10 +117,21 @@ _CASES = discover_cases(_COMPATIBILITY)
 _FAMILY_ROWS = "m-inheritance-001-tph-concrete-target-read.yaml"
 _STANDALONE_ROWS = "m-object-query-001-order-by-limit.yaml"
 _FAMILY_CHILD_OF_STANDALONE = "m-inheritance-065-tph-deepfetch-narrowed-pets-dog.yaml"
+_FAMILY_STEP_ROWS = "m-inheritance-130-tph-abstract-find-licenses-concrete-update.yaml"
+_FAMILY_STEP_READ = 2
+_STANDALONE_EDIT = "m-edit-010-mutate-replaces-a-one-occurrence-whole.yaml"
+_EDITED_CAR = {"id": 1, "name": "Coupe", "version": 6, "doors": 4}
 
 
 def _case(name: str) -> Case:
     return copy.deepcopy(load_case(_COMPATIBILITY, _COMPATIBILITY / "cases" / name))
+
+
+def _edit_of(case: Case, source: int, row: Mapping[str, Any]) -> int:
+    """Append a `mutate` of step *source* stating *row*, and answer its index."""
+    steps = case.when["scenario"]
+    steps.append({"action": "mutate", "on": source, "databaseCalls": 0, "expectRows": [row]})
+    return len(steps) - 1
 
 
 def test_every_family_node_states_its_concrete_and_no_other_node_states_one() -> None:
@@ -155,4 +175,25 @@ def test_the_walk_refuses_a_type_on_a_row_outside_a_family() -> None:
 def test_the_walk_refuses_a_type_on_a_standalone_parent_of_family_nodes() -> None:
     case = _case(_FAMILY_CHILD_OF_STANDALONE)
     case.then["graph"]["Person"][0][TYPE_KEY] = "parallax.compatibility.Person"
+    assert "is outside a family" in _walked(case).problems[0]
+
+
+def test_the_walk_refuses_an_edited_family_row_losing_its_type() -> None:
+    case = _case(_FAMILY_STEP_ROWS)
+    index = _edit_of(case, _FAMILY_STEP_READ, _EDITED_CAR)
+    assert f"scenario[{index}].expectRows[0]: a Car node states no _type" in _walked(case).problems
+
+
+def test_the_walk_follows_a_chain_of_edits_to_the_read_it_began_at() -> None:
+    case = _case(_FAMILY_STEP_ROWS)
+    typed = _EDITED_CAR | {TYPE_KEY: "parallax.compatibility.Car"}
+    index = _edit_of(case, _edit_of(case, _FAMILY_STEP_READ, typed), _EDITED_CAR)
+    assert [problem.split(":")[0] for problem in _walked(case).problems] == [
+        f"scenario[{index}].expectRows[0]"
+    ]
+
+
+def test_the_walk_refuses_a_type_on_an_edited_row_outside_a_family() -> None:
+    case = _case(_STANDALONE_EDIT)
+    case.when["scenario"][1]["expectRows"][0][TYPE_KEY] = "parallax.compatibility.Note"
     assert "is outside a family" in _walked(case).problems[0]
