@@ -145,16 +145,16 @@ def _echo(
     return envelope
 
 
-def _boundary_lane_error(case: case_format.Case) -> engine.EngineError:
+def _boundary_lane_error(case: case_format.Case) -> engine.UnclassifiedEngineError:
     # `run` classifies a boundary case out with the api-conformance reason
     # (m-case-format: every boundary case is on the api-conformance lane).
-    return engine.EngineError(
+    return engine.UnclassifiedEngineError(
         f"{case.path.name}: a boundary case carries no golden SQL; the api-conformance "
         "lane (the API Conformance Suite) verifies it, not compile/run"
     )
 
 
-def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
+def _scenario_lane_error(case: case_format.Case) -> engine.UnclassifiedEngineError:
     # A `scenario`-shape case whose top-level `lane` is `api-conformance` (m-
     # snapshot-read-009, `action: access`'s closed-world absence witness): its
     # observable is a per-language surfacing (the developer-facing surface
@@ -165,7 +165,7 @@ def _scenario_lane_error(case: case_format.Case) -> engine.EngineError:
     # application-lifecycle-error step through the `errors` observation
     # (`m-conformance-adapter`), so the dispatch below never classifies one
     # out.
-    return engine.EngineError(
+    return engine.UnclassifiedEngineError(
         f"{case.path.name}: this scenario's lane is `api-conformance` (m-case-format); "
         "the API Conformance Suite verifies it, not compile/run"
     )
@@ -208,14 +208,14 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
 
     The scenario and writeSequence lanes emit the keyed unit-of-work DML (and, for a
     scenario, the read-lock reads); an error case has no compile artifact (a
-    lane-honest ``EngineError`` names the run lane that grades it); every reachable
+    lane-honest ``UnclassifiedEngineError`` names the run lane that grades it); every reachable
     conflict case declares ``compileEligibility: run-only`` (m-concurrency's own
     single-connection concurrency intent — `compile_case` already answers the
     defined ``run-only`` envelope before ever reaching here), so a conflict case
     reaching this dispatch is mis-declared, named loudly rather than silently
-    falling through to the read compiler's unrelated ``EngineError``; any other
+    falling through to the read compiler's unrelated ``UnclassifiedEngineError``; any other
     shape falls through to the read compiler, which raises the loud non-read
-    ``EngineError`` the caller renders as an ``error``.
+    ``UnclassifiedEngineError`` the caller renders as an ``error``.
     """
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
@@ -227,12 +227,12 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
         # Only the single-connection statement-trigger sub-shape reaches here: the
         # two-connection choreography cases are corpus-declared run-only, as is
         # every boundary case, so `compile_case` short-circuits those earlier.
-        raise engine.EngineError(
+        raise engine.UnclassifiedEngineError(
             f"{case.path.name}: an error case's trigger DML is authored, not compiled "
             "(m-case-format); `run` grades the single-connection trigger"
         )
     if case.shape == "conflict":
-        raise engine.EngineError(
+        raise engine.UnclassifiedEngineError(
             f"{case.path.name}: a conflict case's single-connection concurrency intent "
             "(m-concurrency) is always declared `compileEligibility: run-only`; a reachable "
             "conflict case missing that declaration is mis-declared, not compilable"
@@ -321,7 +321,7 @@ def _report_execution_lifecycle(
             lifecycle.resolving_read_calls,
         )
     except StatementIndexError as exc:
-        raise engine.EngineError(f"{case.path.name}: {exc}") from exc
+        raise engine.UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 
 def _run(
@@ -446,7 +446,7 @@ def compile_case(
         return _echo(envelope, case, dialect)
     try:
         emissions, database_calls = _compile(case, dialect)
-    except engine.EngineError as exc:
+    except engine.UnclassifiedEngineError as exc:
         return _non_ok("compile", "error", Diagnostic("compile-failed", str(exc)), adapter)
     envelope = _common("compile", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]
@@ -492,7 +492,7 @@ def run_case(
     try:
         emissions, observations = _run(case, run.port, lifecycle)
         _report_execution_lifecycle(case, observations, lifecycle, emissions)
-    except engine.EngineError as exc:
+    except engine.UnclassifiedEngineError as exc:
         return _non_ok("run", "error", Diagnostic("run-failed", str(exc)), adapter)
     envelope = _common("run", "ok", adapter)
     envelope["emissions"] = [e.to_json() for e in emissions]

@@ -12,7 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._mechanism import model_facts
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 
 
 def _synthetic(document: dict[str, object]) -> case_format.Case:
@@ -28,7 +28,7 @@ def _synthetic(document: dict[str, object]) -> case_format.Case:
 
 def test_load_case_metamodel_rejects_a_non_string_model() -> None:
     case = _synthetic({"model": 42})
-    with pytest.raises(EngineError, match="`model` must be a string"):
+    with pytest.raises(UnclassifiedEngineError, match="`model` must be a string"):
         model_facts.load_case_metamodel(case)
 
 
@@ -55,5 +55,5 @@ def test_the_setup_model_defaults_to_the_case_model() -> None:
 
 
 def test_the_setup_model_rejects_a_non_string_model() -> None:
-    with pytest.raises(EngineError, match="`model` must be a string"):
+    with pytest.raises(UnclassifiedEngineError, match="`model` must be a string"):
         model_facts.case_setup_model_ref(_synthetic({"model": 42}))

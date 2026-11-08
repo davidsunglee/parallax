@@ -17,7 +17,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format, models
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.given_state import (
     apply_given_apply,
     apply_given_corrupt,
@@ -204,7 +204,7 @@ def test_given_corrupt_addresses_an_inherited_member_by_its_declaration() -> Non
 
 
 def test_given_corrupt_refuses_a_member_kept_in_a_column_of_its_own() -> None:
-    with pytest.raises(EngineError, match="does not place inside a Structured Column"):
+    with pytest.raises(UnclassifiedEngineError, match="does not place inside a Structured Column"):
         _corrupting(
             "m-snapshot-read-049",
             {},
@@ -235,7 +235,7 @@ def test_given_corrupt_refuses_a_temporal_entity_before_reading_anything() -> No
             }
         ]
     }
-    with pytest.raises(EngineError, match="a temporal Entity: its model primary key"):
+    with pytest.raises(UnclassifiedEngineError, match="a temporal Entity: its model primary key"):
         apply_given_corrupt(
             dataclasses.replace(case, document=document),
             models.accepted_model_of(load_case_domain_model(case)),
@@ -268,7 +268,7 @@ def test_given_corrupt_refuses_a_temporal_entry_before_an_earlier_legal_one_appl
             },
         ]
     }
-    with pytest.raises(EngineError, match="a temporal Entity: its model primary key"):
+    with pytest.raises(UnclassifiedEngineError, match="a temporal Entity: its model primary key"):
         apply_given_corrupt(
             dataclasses.replace(case, document=document),
             models.accepted_model_of(load_case_domain_model(case)),
@@ -293,7 +293,7 @@ def test_given_corrupt_reports_how_many_rows_its_key_answered_with() -> None:
             return []
 
     case = _load_case("m-snapshot-read-049")
-    with pytest.raises(EngineError, match="answer with 0 row\\(s\\) rather than one"):
+    with pytest.raises(UnclassifiedEngineError, match="answer with 0 row\\(s\\) rather than one"):
         apply_given_corrupt(
             case, models.accepted_model_of(load_case_domain_model(case)), _Empty({})
         )

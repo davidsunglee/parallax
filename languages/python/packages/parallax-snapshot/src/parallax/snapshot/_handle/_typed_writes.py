@@ -25,6 +25,7 @@ from parallax.core._execution._unit_work.instructions import (
     WriteAssignment,
 )
 from parallax.core._execution._unit_work.preparation import EntityPreparation, WritePreparation
+from parallax.core.base import UsageError
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._authored_resolver import typed_predicate_interpretation
@@ -156,10 +157,11 @@ class TypedKeyedWriteSource:
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         if self._assignments and self._value.__parallax_edit_history__():
-            raise instructions.WriteInstructionError(
+            raise UsageError(
+                instructions.WRITE_INSTRUCTION_INVALID,
                 f"`{mutation}` was handed explicit assignments beside a value whose edit chain "
                 "already authored changes, and one write has one author: pass the edited value "
-                "alone, or a value with no edit history and the complete list of assignments"
+                "alone, or a value with no edit history and the complete list of assignments",
             )
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
@@ -331,9 +333,10 @@ def _replacement_row(
     the Entity ``selection`` writes."""
     entity = metadata_of_instance(write_model.model.meta, payload)
     if entity.identity.canonical != selection.entity:
-        raise instructions.WriteInstructionError(
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
             f"`replace_where` over {selection.entity} states a whole state of that Entity, and "
-            f"this payload is a {entity.identity.canonical}"
+            f"this payload is a {entity.identity.canonical}",
         )
     return writable_row(write_model.preparation.entity(entity.identity), entity, payload)
 
@@ -401,9 +404,10 @@ class TypedKeyTargetWriteAdapter:
         def members() -> Mapping[str, object]:
             if isinstance(key, Mapping | tuple | list | set | frozenset):
                 kind = type(cast("object", key)).__name__
-                raise instructions.WriteInstructionError(
+                raise UsageError(
+                    instructions.WRITE_INSTRUCTION_INVALID,
                     f"{entity.identity.name}: key is the object's one scalar primary-key value, "
-                    f"and a {kind} is no such value"
+                    f"and a {kind} is no such value",
                 )
             return instructions.assigned_members(meta, entity, write_assignments(assignments))
 

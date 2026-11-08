@@ -50,6 +50,7 @@ from parallax.core import (
 )
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import Decimal as NeutralDecimal
+from parallax.core.base import UsageError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import _authored_resolver
 from parallax.core.entity._authored_resolver import include_path_node, object_query_node
@@ -72,13 +73,12 @@ from parallax.core.execution import (
 )
 from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
-    WriteAssignmentError,
     judge_assignment,
 )
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.predicate import ModelRejectedError, PredicateNode, validate
+from parallax.core.predicate import PredicateNode, validate
 from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
 from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
 from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, TxnContext
@@ -95,6 +95,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_query, predicate_node, typed_resolved
 from tests._support.root_ownership import own_root
 from tests.unit import _deep_include_support as deep
@@ -407,8 +408,8 @@ def _model_judgement(model: DomainModel, entity: type[Entity], member: str, valu
     assert resolved is not None
     try:
         judge_assignment(resolved, value)
-    except WriteAssignmentError as error:
-        raise WriteAssignmentError(error.rule, f"{metadata.identity.canonical}.{error}") from error
+    except UsageError as error:
+        raise UsageError(error.code, f"{metadata.identity.canonical}.{error.args[1]}") from error
 
 
 def _boundary_verdict(
@@ -417,8 +418,8 @@ def _boundary_verdict(
     """The same, through the write boundary's own family-effective resolution."""
     try:
         _model_judgement(model, entity, member, value)
-    except WriteAssignmentError as error:
-        return str(error)
+    except UsageError as error:
+        return cast("str", error.args[1])
     return None
 
 
@@ -487,10 +488,14 @@ def test_a_rejection_still_says_which_of_the_three_designations_it_is() -> None:
     # key that addresses the row — none of them collapsed into the others.
     rules: list[str] = []
     for member, value in (("version", 1), ("computed", "x"), ("id", 1)):
-        with pytest.raises(WriteAssignmentError) as caught:
+        with pytest.raises(UsageError) as caught:
             _model_judgement(WIDGETS, Widget, member, value)
-        rules.append(caught.value.rule)
-    assert rules == ["framework-owned", "read-only", "primary-key"]
+        rules.append(caught.value.code)
+    assert rules == [
+        "write-assignment-framework-owned",
+        "write-assignment-read-only",
+        "write-assignment-primary-key",
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -748,12 +753,11 @@ def test_an_unfinished_operation_is_refused_at_binding_before_io(
 
 
 def test_an_unfinished_relationship_name_takes_no_scalar_operation() -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "path-target-kind-mismatch"):
         typed_resolved(
             sm.SnapOrder.where(_unfinished(sm.SnapOrder, "items", operands=(1,))),
             sm.SNAP_ORDERS_MODEL,
         )
-    assert caught.value.rule == "path-target-kind-mismatch"
 
 
 def test_an_unfinished_path_continues_through_a_to_one_relationship() -> None:
@@ -813,9 +817,8 @@ def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> Non
 def test_a_value_object_element_scope_refuses_an_unfinished_entity_rooted_operation() -> None:
     interior = _unfinished(vm.Customer, "name", operands=("Ada",))
     query = vm.Customer.where(vm.Customer.address.phones.any(interior))
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "predicate-subject-outside-scope"):
         typed_resolved(query, vm.CUSTOMER_MODEL)
-    assert caught.value.rule == "predicate-subject-outside-scope"
 
 
 @pytest.mark.parametrize(
@@ -830,14 +833,14 @@ def test_an_illegal_element_scope_interior_is_refused_as_its_canonical_export_is
     interior: Predicate[Any],
 ) -> None:
     query = vm.Customer.where(vm.Customer.address.phones.any(interior))
-    with pytest.raises(ModelRejectedError) as canonical:
+    with pytest.raises(UsageError) as canonical:
         resolve_read_query(
             object_query_node(query, vm.CUSTOMER_MODEL),
             model=model_of(vm.CUSTOMER_MODEL),
         )
-    with pytest.raises(ModelRejectedError) as typed:
+    with pytest.raises(UsageError) as typed:
         typed_resolved(query, vm.CUSTOMER_MODEL)
-    assert typed.value.rule == canonical.value.rule == "predicate-subject-outside-scope"
+    assert typed.value.code == canonical.value.code == "predicate-subject-outside-scope"
 
 
 @pytest.mark.parametrize(
@@ -1044,18 +1047,16 @@ def test_an_include_refusal_lands_at_its_clause_position(bind: Any) -> None:
     assert include.value.code == "query-path-invalid"
 
     bad_predicate = deep.Keeper.where(deep.Keeper.animals.id == 1).include(_BAD_INCLUDE)
-    with pytest.raises(ModelRejectedError) as predicate:
+    with raises_code(UsageError, "path-crosses-many"):
         bind(bad_predicate, deep.FAMILY)
-    assert predicate.value.rule == "path-crosses-many"
 
     bad_order = (
         deep.Keeper.where(deep.Keeper.all)
         .order_by(cast("Any", deep.Toy.id.asc()))
         .include(_BAD_INCLUDE)
     )
-    with pytest.raises(ModelRejectedError) as order:
+    with raises_code(UsageError, "attribute-outside-active-position"):
         bind(bad_order, deep.FAMILY)
-    assert order.value.rule == "attribute-outside-active-position"
 
 
 def test_a_missing_target_outranks_a_bad_include() -> None:

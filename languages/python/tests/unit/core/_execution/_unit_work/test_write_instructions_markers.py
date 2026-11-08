@@ -11,21 +11,19 @@ import pytest
 from parallax.conformance import models
 from parallax.core import Attr, DomainModel, TxTemporal, attr
 from parallax.core._execution._unit_work.instructions import (
-    InstructionRejectedError,
     KeyedWriteInstruction,
     PreparedKeyedInstruction,
-    WriteInstructionError,
     prepare_typed_insert,
     prepare_typed_write,
     prepare_wire_write,
 )
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import JSON
+from parallax.core.base import JSON, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel, Table
-from parallax.core.unit_work import WriteRejectedError
 from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.steps import MAX_PLUS_ONE, SelfIncrement
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
@@ -102,9 +100,10 @@ def test_a_temporal_assignment_plans_in_the_successor_rows_insert_context(
     )
     assert _row(prepare, computed, _COUNTER)["level"] is MAX_PLUS_ONE
     increment = KeyedWriteInstruction("amend", canonical, ({"id": 1, "level": {"increment": 1}},))
-    with pytest.raises(
-        WriteInstructionError,
-        match=r"^unsupported DB-computed marker on 'Counter'\.level: a 'increment' marker is "
+    with raises_code(
+        UsageError,
+        "write-instruction-invalid",
+        match=r"unsupported DB-computed marker on 'Counter'\.level: a 'increment' marker is "
         r"not recognized for insert planning$",
     ):
         prepare(increment, preparation)
@@ -136,23 +135,23 @@ def test_a_marker_shaped_value_object_is_a_document(prepare: Callable[..., objec
         "insert", "Customer", ({"id": 9, "name": "Ada", "address": {"computed": "maxPlusOne"}},)
     )
     with pytest.raises(
-        WriteRejectedError,
-        match=r"^Customer\.address\.street: required attribute is absent \(or null\)$",
+        UsageError,
+        match=r"Customer\.address\.street: required attribute is absent \(or null\)$",
     ):
         prepare(insert, write_preparation_of(_CUSTOMER))
 
 
 @pytest.mark.parametrize(
-    ("prepare", "refusal"),
+    ("prepare", "code"),
     [
-        (prepare_typed_write, WriteRejectedError),
-        (prepare_wire_write, InstructionRejectedError),
+        (prepare_typed_write, "write-value-type-mismatch"),
+        (prepare_wire_write, "neutral-literal-type-mismatch"),
     ],
     ids=_LANES,
 )
 @pytest.mark.parametrize("mutation", ["delete", "amend"])
 def test_a_key_an_existing_object_is_addressed_by_is_never_a_marker(
-    prepare: Callable[..., object], refusal: type[Exception], mutation: str
+    prepare: Callable[..., object], code: str, mutation: str
 ) -> None:
     row: dict[str, object] = {"id": {"computed": "maxPlusOne"}}
     if mutation == "amend":
@@ -162,9 +161,8 @@ def test_a_key_an_existing_object_is_addressed_by_is_never_a_marker(
         "Attendee",
         (row,),
     )
-    with pytest.raises(refusal, match=r"Attendee\.id: ") as refused:
+    with raises_code(UsageError, code, match=r"Attendee\.id: "):
         prepare(instruction, write_preparation_of(_PK_MAX))
-    assert "type-mismatch" in getattr(refused.value, "rule", "")
 
 
 @pytest.mark.parametrize("prepare", _PREPARERS, ids=_LANES)

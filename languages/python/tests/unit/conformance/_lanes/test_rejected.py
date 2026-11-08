@@ -1,6 +1,6 @@
 """The rejected lane, driven database-free: the three-way ``when`` dispatch
 and the four-form ``when.write`` inside it, the rule each classified corpus
-input returns, and every refusal the lane translates into an ``EngineError``
+input returns, and every refusal the lane translates into an ``UnclassifiedEngineError``
 naming the case — an input the validators accept, a malformed input, and a
 ``when`` carrying none or several of the three inputs.
 """
@@ -14,7 +14,8 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import rejected
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
+from parallax.core.base import UsageError
 from tests._support.case_corpus import case as corpus_case
 
 
@@ -35,6 +36,28 @@ def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
         model="models/animal.yaml",
         document={"model": "models/animal.yaml", "when": when, "then": {"rejectedRule": "x"}},
     )
+
+
+def test_a_refusal_whose_code_the_schema_names_a_rule_by_is_that_rule() -> None:
+    case = _synthetic_rejected({})
+    refusal = UsageError("narrow-outside-position", "a narrow broadens its position")
+    assert rejected.rejected_rule(refusal, case) == "narrow-outside-position"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "query-clause-invalid",
+        "temporal-read-dimension-selection-cardinality",
+        "write-instruction-invalid",
+        "predicate-document-invalid",
+    ],
+)
+def test_a_refusal_whose_code_names_no_schema_rule_fails_the_case(code: str) -> None:
+    refusal = UsageError(code, "refused")
+    with pytest.raises(UnclassifiedEngineError, match=rf"m-predicate-998.*{code}") as caught:
+        rejected.rejected_rule(refusal, _synthetic_rejected({}))
+    assert caught.value.__cause__ is refusal
 
 
 def test_run_rejected_case_query_dispatch_classifies_the_rule() -> None:
@@ -73,7 +96,7 @@ def test_run_rejected_case_refuses_a_bare_row_naming_an_undeclared_member() -> N
         rejected.run_rejected_case(_synthetic_bare_row(graded, "models/account.yaml"))
         == "write-required-attribute-missing"
     )
-    with pytest.raises(EngineError, match=r"names undeclared member\(s\) \['bogus'\]"):
+    with pytest.raises(UnclassifiedEngineError, match=r"names undeclared member\(s\) \['bogus'\]"):
         rejected.run_rejected_case(
             _synthetic_bare_row({**graded, "bogus": 1}, "models/account.yaml")
         )
@@ -162,13 +185,13 @@ def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_targ
         rejected.run_rejected_case(_synthetic_keyed_rejected(plural_temporal, model))
         == "temporal-keyed-write-multi-row"
     )
-    with pytest.raises(EngineError, match="accepted a write"):
+    with pytest.raises(UnclassifiedEngineError, match="accepted a write"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(plural_non_temporal, model))
 
 
 def test_run_rejected_case_raises_for_a_malformed_keyed_instruction() -> None:
     malformed: dict[str, object] = {"mutation": "amend", "rows": [{"id": 1}]}
-    with pytest.raises(EngineError, match="missing required key"):
+    with pytest.raises(UnclassifiedEngineError, match="missing required key"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(malformed, "models/position.yaml"))
 
 
@@ -185,7 +208,7 @@ def test_run_rejected_case_refuses_the_conflict_multi_key_array(
     # data rather than on the form — a raw carrier error where the case's defect
     # is that no rejected lane defines this input at all.
     case = _synthetic_keyed_rejected(cast("dict[str, object]", write), "models/position.yaml")
-    with pytest.raises(EngineError, match="multi-key form"):
+    with pytest.raises(UnclassifiedEngineError, match="multi-key form"):
         rejected.run_rejected_case(case)
 
 
@@ -205,13 +228,13 @@ def test_a_default_target_over_a_multi_family_model_is_refused() -> None:
             "then": {"rejectedRule": "x"},
         },
     )
-    with pytest.raises(EngineError, match="no single inheritance family root"):
+    with pytest.raises(UnclassifiedEngineError, match="no single inheritance family root"):
         rejected.run_rejected_case(case)
 
 
 def test_run_rejected_case_raises_when_the_query_is_unexpectedly_accepted() -> None:
     valid: dict[str, object] = {"objectQuery": {"target": "Animal", "predicate": {"true": {}}}}
-    with pytest.raises(EngineError, match="accepted an Object Query"):
+    with pytest.raises(UnclassifiedEngineError, match="accepted an Object Query"):
         rejected.run_rejected_case(_synthetic_rejected(valid))
 
 
@@ -229,7 +252,7 @@ def test_run_rejected_case_raises_when_model_unexpectedly_accepted() -> None:
             ]
         }
     }
-    with pytest.raises(EngineError, match="accepted an inline model"):
+    with pytest.raises(UnclassifiedEngineError, match="accepted an inline model"):
         rejected.run_rejected_case(_synthetic_rejected(valid_model))
 
 
@@ -250,7 +273,7 @@ def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
         model="models/account.yaml",
         document=document,
     )
-    with pytest.raises(EngineError, match="accepted a write"):
+    with pytest.raises(UnclassifiedEngineError, match="accepted a write"):
         rejected.run_rejected_case(case)
 
 
@@ -258,7 +281,7 @@ def test_run_rejected_case_raises_for_a_malformed_query() -> None:
     malformed_query: dict[str, object] = {
         "objectQuery": {"target": "Animal", "predicate": {"eq": {}}}
     }
-    with pytest.raises(EngineError, match="missing required key"):
+    with pytest.raises(UnclassifiedEngineError, match="missing required key"):
         rejected.run_rejected_case(_synthetic_rejected(malformed_query))
 
 
@@ -267,7 +290,7 @@ def test_run_rejected_case_raises_for_a_malformed_inline_model() -> None:
     # at all is ITS refusal — reported against the case rather than graded as a
     # family rule, because no rule was violated by a model that never parsed.
     malformed_model: dict[str, object] = {"model": {"entities": [{"attributes": []}]}}
-    with pytest.raises(EngineError, match="`name` must be a string"):
+    with pytest.raises(UnclassifiedEngineError, match="`name` must be a string"):
         rejected.run_rejected_case(_synthetic_rejected(malformed_model))
 
 
@@ -291,7 +314,7 @@ def test_run_rejected_case_raises_for_an_inline_model_the_schema_refuses() -> No
             ]
         }
     }
-    with pytest.raises(EngineError, match="schema violation"):
+    with pytest.raises(UnclassifiedEngineError, match="schema violation"):
         rejected.run_rejected_case(_synthetic_rejected(schema_invalid))
 
 
@@ -329,12 +352,12 @@ def test_run_rejected_case_raises_for_an_inline_model_with_several_formation_iss
             ]
         }
     }
-    with pytest.raises(EngineError, match="produced 2 formation issues"):
+    with pytest.raises(UnclassifiedEngineError, match="produced 2 formation issues"):
         rejected.run_rejected_case(_synthetic_rejected(two_concrete_parents))
 
 
 def test_run_rejected_case_raises_when_when_carries_none_of_the_three_inputs() -> None:
-    with pytest.raises(EngineError, match="EXACTLY ONE"):
+    with pytest.raises(UnclassifiedEngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected({}))
 
 
@@ -343,19 +366,19 @@ def test_run_rejected_case_raises_when_when_carries_a_query_and_a_model() -> Non
     # schema validation (a hand-built synthetic case, here) — the engine's own
     # mirror guard must still refuse a multi-input `when`.
     when: dict[str, object] = {"objectQuery": {}, "model": {"entities": []}}
-    with pytest.raises(EngineError, match="EXACTLY ONE"):
+    with pytest.raises(UnclassifiedEngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected(when))
 
 
 def test_run_rejected_case_raises_when_when_carries_a_query_and_a_write() -> None:
     when: dict[str, object] = {"objectQuery": {}, "write": {}}
-    with pytest.raises(EngineError, match="EXACTLY ONE"):
+    with pytest.raises(UnclassifiedEngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected(when))
 
 
 def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
     when: dict[str, object] = {"model": {"entities": []}, "write": {}}
-    with pytest.raises(EngineError, match="EXACTLY ONE"):
+    with pytest.raises(UnclassifiedEngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected(when))
 
 
@@ -433,7 +456,7 @@ def test_a_mixture_of_instruction_carriers_is_malformed_rather_than_graded(
 ) -> None:
     # Each would be a persistence refusal if the extra carrier were discarded, so
     # the mixture must fail the case before any case-only member is set aside.
-    with pytest.raises(EngineError, match=r"row|ambiguous|unexpected"):
+    with pytest.raises(UnclassifiedEngineError, match=r"row|ambiguous|unexpected"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/scalars.yaml"))
 
 
@@ -445,7 +468,7 @@ def test_an_unclassified_instruction_refusal_fails_the_case() -> None:
         "entity": "Lease",
         "rows": [{"id": 1, "notAMember": 1}],
     }
-    with pytest.raises(EngineError, match="notAMember"):
+    with pytest.raises(UnclassifiedEngineError, match="notAMember"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/lease.yaml"))
 
 
@@ -453,7 +476,7 @@ def test_a_bare_row_naming_an_observed_milestone_coordinate_is_malformed() -> No
     # The schema refuses the coordinate on every row; a caller reaching the lane
     # without it still hears an authoring failure rather than a graded rule.
     row: dict[str, object] = {"id": 1, "balance": "10.00", "observedTxStart": "x"}
-    with pytest.raises(EngineError, match="observedTxStart"):
+    with pytest.raises(UnclassifiedEngineError, match="observedTxStart"):
         rejected.run_rejected_case(_synthetic_bare_row(row, "models/account.yaml"))
 
 
@@ -519,7 +542,7 @@ def test_a_read_write_target_instruction_accepted_by_preparation_fails_the_case(
         "row": {"id": 1, "doors": 4},
         "ifVersion": 1,
     }
-    with pytest.raises(EngineError, match="accepted a write"):
+    with pytest.raises(UnclassifiedEngineError, match="accepted a write"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/vehicle.yaml"))
 
 
@@ -557,5 +580,5 @@ def test_an_unclassified_or_malformed_target_instruction_fails_the_case(
 ) -> None:
     # A target instruction carries no case-only member to set aside, so it is
     # validated whole; its own refusals carry no rule a rejected case could grade.
-    with pytest.raises(EngineError, match=detail):
+    with pytest.raises(UnclassifiedEngineError, match=detail):
         rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/vehicle.yaml"))

@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, overload
 
-from parallax.core.base import NeutralType, NeutralTypeMismatch, ScalarConverter
+from parallax.core.base import NeutralType, NeutralTypeMismatch, ScalarConverter, UsageError
 from parallax.core.metamodel import (
     AuthoringViolation,
     MemberDefinition,
@@ -13,7 +13,6 @@ from parallax.core.metamodel import (
     OccurrenceDefinition,
     ScalarDefinition,
 )
-from parallax.core.wire import WireDecodingError
 
 __all__ = [
     "BORROWED_DOCUMENTS",
@@ -152,7 +151,7 @@ class _Refused(Exception):
         self.cause = cause
 
 
-_CONVERSION_FAILURES: Final = (NeutralTypeMismatch, WireDecodingError)
+_CONVERSION_FAILURES: Final = (NeutralTypeMismatch, UsageError)
 _UNSTATED: Final = object()
 _MARKER_KEYS: Final = frozenset({"computed", "increment"})
 

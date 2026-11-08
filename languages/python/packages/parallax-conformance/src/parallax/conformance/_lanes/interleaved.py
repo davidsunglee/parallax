@@ -32,7 +32,7 @@ from parallax.conformance._lanes.scenario import (
 from parallax.conformance._lanes.turnstile import Turnstile, await_workers
 from parallax.conformance._lifecycle_observation import LifecycleObservation, LifecycleRun
 from parallax.conformance._mechanism import case_document, envelope
-from parallax.conformance._mechanism.envelope import EngineError, ScenarioRun
+from parallax.conformance._mechanism.envelope import ScenarioRun, UnclassifiedEngineError
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
@@ -138,7 +138,7 @@ def _run_interleaved_group(
     def body(tx: TxnContext) -> None:
         nonlocal entered
         if entered:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 "production replayed an interleaved `uow` group's attempt; each group is one "
                 "turnstile-sequenced attempt, so a case whose group can fail with a retry-eligible "
                 "error states `maxRetries: 0`"
@@ -212,7 +212,7 @@ def _refuse_untrusted_terminations(
     ]
     if not defects:
         return
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case_name}: the interleaved-group choreography refuses to start — {'; '.join(defects)}"
     )
 
@@ -236,7 +236,7 @@ def _refuse_a_replayed_abort(case: case_format.Case, labels: Iterable[str]) -> N
             else None
         )
         if shortfall == "optimisticConflict":
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{case.path.name}: group {label!r} is graded rolled back by an optimistic "
                 f"conflict under `maxRetries: {bound}`, and production replays that conflict "
                 "within the bound — the abort is a first attempt's, which `maxRetries: 0` states"
@@ -245,7 +245,7 @@ def _refuse_a_replayed_abort(case: case_format.Case, labels: Iterable[str]) -> N
 
 def _refuse_graph_oracles(steps: Sequence[Mapping[str, object]], case_name: str) -> None:
     if any("expectGraph" in step for step in steps):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case_name}: this entry point fills no `stepGraphs` channel — a step "
             "stating relationship contents is an oracle nothing here would answer, so it "
             "is refused rather than silently unasserted"
@@ -312,8 +312,8 @@ def run_interleaved_scenario_case(
     _refuse_graph_oracles(steps, case.path.name)
     groups = scenario_group_step_indices(steps)
     _refuse_a_replayed_abort(case, groups)
-    if len(groups) != 2:
-        raise EngineError(  # pragma: no cover - defensive: every case reaching this entry has two
+    if len(groups) != 2:  # pragma: no cover - defensive: every case reaching this entry has two
+        raise UnclassifiedEngineError(
             f"{case.path.name}: run_interleaved_scenario_case supports exactly the "
             f"TWO-group interleaved shape, not {len(groups)} uow groups"
         )
@@ -402,7 +402,7 @@ def run_interleaved_scenario_case(
     for index in ungrouped:
         step = steps[index]
         if "write" in step:  # pragma: no cover - no witnessed ungrouped write is doomed-adjacent
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{case.path.name}: an ungrouped write step ({index}) beside an "
                 "interleaved uow race is unsupported — every witnessed case's own "
                 "ungrouped step is a trailing verify find only"

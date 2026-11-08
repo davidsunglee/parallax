@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 import pytest
 
-from parallax.core.base import STRING, TIMESTAMP
+from parallax.core.base import STRING, TIMESTAMP, UsageError
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -27,10 +27,10 @@ from parallax.core.metamodel import (
     ScalarDefinition,
     TemporalDimension,
     ValueObjectAttributeDeclaration,
-    WriteAssignmentError,
     judge_assignment,
 )
 from parallax.core.metamodel._resolve import AS_OF_ATTRIBUTE_TYPE
+from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, codes, identity, key, source
 
 _ORDER = EntityIdentity("parallax.test", "Order")
@@ -111,7 +111,7 @@ def test_an_axis_endpoint_must_be_one_timestamp_rather_than_a_collection() -> No
 def test_a_collection_assignment_refuses_null_and_consumes_the_authoring_verdict() -> None:
     tags = _tags()
 
-    with pytest.raises(WriteAssignmentError, match="required attribute is absent"):
+    with pytest.raises(UsageError, match="required attribute is absent"):
         judge_assignment(tags, None, known_violation=None)
     judge_assignment(tags, ("a",), known_violation=None)
     with pytest.raises(TypeError, match="authoring verdict"):
@@ -132,12 +132,10 @@ def test_a_collection_assignment_refuses_null_and_consumes_the_authoring_verdict
 def test_a_collection_violation_is_a_value_type_mismatch_located_at_its_position(
     violation: AuthoringViolation, message: str
 ) -> None:
-    with pytest.raises(WriteAssignmentError, match=message) as caught:
+    with raises_code(UsageError, "write-assignment-value-type-mismatch", match=message):
         judge_assignment(_tags(), "unused", known_violation=violation)
-    assert caught.value.rule == "value-type-mismatch"
 
 
 def test_a_read_only_collection_refuses_assignment_before_its_value_is_judged() -> None:
-    with pytest.raises(WriteAssignmentError) as caught:
+    with raises_code(UsageError, "write-assignment-read-only"):
         judge_assignment(_tags(read_only=True), (), known_violation=None)
-    assert caught.value.rule == "read-only"

@@ -14,12 +14,14 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import object_query as oq
+from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.serde import serialize
-from parallax.core.predicate import CanonicalDocumentError, QueryDefinitionError, TrueNode
+from parallax.core.predicate import QueryDefinitionError, TrueNode
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
+from tests._support.errors import raises_code
 
 _ORDER = "parallax.compatibility.Order"
 
@@ -362,12 +364,12 @@ _MALFORMED: list[tuple[Any, str]] = [
 
 @pytest.mark.parametrize(("doc", "message"), _MALFORMED, ids=lambda value: None)
 def test_deserialize_rejects_a_malformed_query(doc: object, message: str) -> None:
-    with pytest.raises(CanonicalDocumentError, match=message):
+    with raises_code(UsageError, "object-query-document-invalid", match=message):
         oq.deserialize(doc)
 
 
 def test_a_malformed_predicate_reports_through_the_shared_error_family() -> None:
     # A query carries a predicate, so "this document is malformed" is one
     # question with one answer class whichever half is wrong.
-    with pytest.raises(CanonicalDocumentError, match="unknown predicate node"):
+    with raises_code(UsageError, "predicate-document-invalid", match="unknown predicate node"):
         oq.deserialize({"target": _ORDER, "predicate": {"mystery": {}}})

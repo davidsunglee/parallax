@@ -5,7 +5,7 @@ from typing import cast
 
 from parallax.conformance import case_format
 from parallax.conformance._mechanism import envelope
-from parallax.conformance._mechanism.envelope import Emission, EngineError
+from parallax.conformance._mechanism.envelope import Emission, UnclassifiedEngineError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.sql_gen import LoweredStatement
@@ -23,7 +23,9 @@ def _error_trigger(
     )
     raw = then.get("statements")
     if not isinstance(raw, list) or not raw:
-        raise EngineError(f"{case.path.name}: error case has no `then.statements` trigger")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: error case has no `then.statements` trigger"
+        )
     trigger: list[tuple[str, tuple[object, ...]]] = []
     for entry in cast("list[Mapping[str, object]]", raw):
         sql = entry["sql"]
@@ -66,7 +68,7 @@ def run_error_case(
     """
     when = case.document.get("when")
     if isinstance(when, Mapping) and "concurrency" in when:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: two-connection when.concurrency choreography needs two "
             "barrier-synchronized sessions this single-connection lane cannot drive — "
             "the case-driven rounds runner (parallax.conformance.concurrency_runner) or "
@@ -82,13 +84,13 @@ def run_error_case(
             port.execute_write(dialect.to_driver_sql(sql), envelope.driver_binds(binds))
         except DatabaseError as exc:
             if index != final:
-                raise EngineError(
+                raise UnclassifiedEngineError(
                     f"{case.path.name}: trigger statement {index} raised before the final "
                     f"statement: {exc}"
                 ) from exc
             if exc.category is None or exc.native_code is None:
-                raise EngineError(
+                raise UnclassifiedEngineError(
                     f"{case.path.name}: the trigger raised an unclassified database error: {exc}"
                 ) from exc
             return emissions, exc.category, exc.native_code, len(trigger)
-    raise EngineError(f"{case.path.name}: the final trigger statement did not raise")
+    raise UnclassifiedEngineError(f"{case.path.name}: the final trigger statement did not raise")

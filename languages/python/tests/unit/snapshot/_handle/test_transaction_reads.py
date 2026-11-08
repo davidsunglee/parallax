@@ -40,7 +40,7 @@ from parallax.core import (
 )
 from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core._execution._retention import ReadEvidenceContext
-from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, StructuredDocument
+from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
@@ -49,7 +49,7 @@ from parallax.core.execution import (
     QueryTargetError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.predicate import ModelRejectedError, QueryDefinitionError
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
@@ -1193,9 +1193,9 @@ def test_a_transaction_read_past_a_back_reference_is_refused_before_any_statemen
     database = own_root(
         Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
     ).using_database_login()
-    with raises_contextualized(ModelRejectedError, match="back-reference") as refused:
+    with raises_contextualized(UsageError, match="back-reference") as refused:
         getattr(database, lane)(read)
-    assert refused.value.rule == "deep-fetch-past-back-reference"
+    assert refused.value.code == "deep-fetch-past-back-reference"
     assert [call for call in port.calls if isinstance(call, ReadCall)] == []
 
 

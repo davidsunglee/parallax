@@ -16,8 +16,9 @@ from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lanes import scenario
 from parallax.conformance._mechanism import flat_rows as flat_rows_module
 from parallax.conformance._mechanism import model_facts
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.flat_rows import flat_rows, omitted_value_objects
+from parallax.core.base import UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -26,7 +27,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.wire import WireDecodingError
 from tests._support.case_corpus import case as corpus_case
 
 
@@ -147,7 +147,7 @@ def test_a_temporal_row_keeps_its_instants_and_open_ends() -> None:
 
 
 def test_an_open_end_is_a_member_only_of_a_temporal_end() -> None:
-    with pytest.raises(WireDecodingError):
+    with pytest.raises(UsageError):
         _rendered("position", _POSITION, [{"id": 1, "validStart": "infinity"}])
 
 
@@ -298,7 +298,7 @@ def test_an_abstract_position_refuses_a_node_publishing_no_variant() -> None:
     case = _case("m-inheritance-130")
     node = {key: value for key, value in _PUBLISHED_CAR.items() if key != "_type"}
 
-    with pytest.raises(EngineError, match="_type"):
+    with pytest.raises(UnclassifiedEngineError, match="_type"):
         flat_rows(
             model_facts.load_case_metamodel(case),
             _abstract_step_query("m-inheritance-130"),
@@ -309,12 +309,12 @@ def test_an_abstract_position_refuses_a_node_publishing_no_variant() -> None:
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "infinity"])
 def test_a_non_member_scalar_is_refused_rather_than_repaired(value: float) -> None:
-    with pytest.raises(WireDecodingError):
+    with pytest.raises(UsageError):
         _rendered("scalars", _THING, [{"id": 1, "f64": value}])
 
 
 def test_a_non_canonical_spelling_is_refused_rather_than_repaired() -> None:
-    with pytest.raises(WireDecodingError):
+    with pytest.raises(UsageError):
         _rendered("scalars", _THING, [{"id": 1, "payload": "0AFF"}])
 
 
@@ -324,7 +324,7 @@ def test_a_projected_row_refuses_an_ambiguous_member() -> None:
     first, second = entity.declared_attributes[:2]
     columns = {"ambiguous": (("first", first), ("second", second))}
 
-    with pytest.raises(EngineError, match="does not select one declaration"):
+    with pytest.raises(UnclassifiedEngineError, match="does not select one declaration"):
         flat_rows_module._projected_row(  # pyright: ignore[reportPrivateUsage] - no accepted model reaches this
             model,
             ActualWireProjection(model),

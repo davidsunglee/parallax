@@ -6,7 +6,13 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 from parallax.core.base import UsageError
-from parallax.core.metamodel import canonical_location_key
+from parallax.core.metamodel import (
+    WRITE_ASSIGNMENT_FRAMEWORK_OWNED,
+    WRITE_ASSIGNMENT_PRIMARY_KEY,
+    WRITE_ASSIGNMENT_READ_ONLY,
+    WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
+    canonical_location_key,
+)
 
 if TYPE_CHECKING:
     from parallax.core.metamodel import (
@@ -256,15 +262,15 @@ verdicts, so a caller branches on the rule that fired rather than on wording."""
 
 EDIT_CODE_BY_RULE: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "primary-key": "edit-primary-key",
-        "read-only": "edit-read-only",
-        "framework-owned": "edit-framework-owned",
-        "value-type-mismatch": "edit-value-mismatch",
+        WRITE_ASSIGNMENT_PRIMARY_KEY: "edit-primary-key",
+        WRITE_ASSIGNMENT_READ_ONLY: "edit-read-only",
+        WRITE_ASSIGNMENT_FRAMEWORK_OWNED: "edit-framework-owned",
+        WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH: "edit-value-mismatch",
     }
 )
-"""The edit code reporting each classification the shared assignment judgement
-raises. Every surface translates through this one mapping, so the judgement owns
-the rule and the edit surface owns only its own spelling of it."""
+"""The edit code reporting each code the shared assignment judgement raises.
+Every surface translates through this one mapping, so the judgement owns the
+rule and the edit surface owns only its own spelling of it."""
 
 
 @dataclass(frozen=True, slots=True)

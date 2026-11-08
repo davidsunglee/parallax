@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Final
 
 from parallax.conformance._database_control import InterleavedExecution
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 
 __all__ = ["JOIN_TIMEOUT", "Turnstile", "await_workers"]
 
@@ -131,12 +131,12 @@ def await_workers(
         thread.join()
 
     if terminated:
-        error = EngineError(
+        error = UnclassifiedEngineError(
             f"{case_name}: the interleaved-group choreography did not finish within its "
             f"bound — {', '.join(terminated)} had to be terminated to unstick it"
         )
     else:
-        error = EngineError(
+        error = UnclassifiedEngineError(
             f"{case_name}: the interleaved-group choreography did not "
             "finish within its bound — a turnstile hand-off is missing"
         )

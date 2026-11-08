@@ -34,6 +34,7 @@ from typing import Final, cast
 
 import pytest
 
+from parallax.core.base import UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import EditError
 from parallax.core.execution import (
@@ -41,9 +42,7 @@ from parallax.core.execution import (
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.unit_work import (
-    InstructionRejectedError,
     WriteEvidenceError,
-    WriteInstructionError,
 )
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
@@ -167,37 +166,41 @@ def _applicability_refusal(scenario: KeyedWriteScenario, *, statements: int = 0)
     target, verb = scenario.target, scenario.verb
     if verb == "delete" and target.profile != "non_temporal":
         return _refused(
-            WriteInstructionError,
+            UsageError,
             f"Temporal objects like {_short(target)!r} do not support 'delete', "
             "which physically removes rows. Use 'terminate' instead.",
             statements=statements,
+            code="write-instruction-invalid",
         )
     if verb in _BOUNDED_VERBS and target.profile != "bitemporal":
         shape = (
             "a Transaction-Time-Only" if target.profile == "transaction_time" else "a non-temporal"
         )
         return _refused(
-            WriteInstructionError,
+            UsageError,
             f"{_short(target)}: {shape} {_MUTATIONS[verb]!r} takes no until "
             f"({_short(target)!r} declares no Valid-Time dimension to bound)",
             statements=statements,
+            code="write-instruction-invalid",
         )
     if verb in _BOUNDED_VERBS and scenario.window == "reversed":
         # An insert states both bounds; a source-backed write starts at its
         # source's pin, so its reversed window ends where it starts.
         start = UNTIL if verb in _INSERT_VERBS else VALID_FROM
         return _refused(
-            WriteInstructionError,
+            UsageError,
             f"{_short(target)}: {_MUTATIONS[verb]!r} requires valid_from < until "
             f"— got valid_from={start!r}, until={VALID_FROM!r}",
             statements=statements,
+            code="write-instruction-invalid",
         )
     if verb == "terminate" and target.profile == "non_temporal":
         return _refused(
-            WriteInstructionError,
+            UsageError,
             f"Non-temporal objects like {_short(target)!r} do not support 'terminate', "
             "which closes a row's history instead of removing it. Use 'delete' instead.",
             statements=statements,
+            code="write-instruction-invalid",
         )
     return None
 
@@ -828,11 +831,11 @@ def test_malformed_wire_input_earns_a_static_refusal(
     scenario: KeyedWriteScenario, expected: str
 ) -> None:
     refused = answer(scenario, "wire")
+    assert refused.error is UsageError
     if expected == "framework-owned fields may not be assigned":
-        assert refused.error is InstructionRejectedError
         assert refused.code == "framework-owned-member-assigned"
     else:
-        assert refused.error is WriteInstructionError
+        assert refused.code == "write-instruction-invalid"
     assert refused.phase == "verb"
     assert refused.message is not None
     assert expected in refused.message

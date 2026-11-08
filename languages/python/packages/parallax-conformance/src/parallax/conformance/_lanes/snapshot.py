@@ -32,8 +32,8 @@ from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import (
     READ_ERRORS,
     Emission,
-    EngineError,
     ScenarioRun,
+    UnclassifiedEngineError,
 )
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import (
@@ -49,7 +49,7 @@ from parallax.core import (
     relationship,
 )
 from parallax.core._execution._keyed_writes import validate_source_pin
-from parallax.core._execution._unit_work import instructions
+from parallax.core.base import UsageError
 from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -71,7 +71,7 @@ def _check_action_step(case: case_format.Case, step: Mapping[str, object]) -> No
     """Refuse an action verb this lane does not grade (:data:`_GRADED_ACTION_VERBS`)."""
     action = step.get("action")
     if action not in _GRADED_ACTION_VERBS:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: scenario action {action!r} is not supported by compile/run"
         )
 
@@ -93,12 +93,12 @@ def _snapshot_write_entries(
     if isinstance(raw_write, list):
         return write_entries(cast("list[object]", raw_write))
     if not is_predicate_write_step(raw_write):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a snapshot-read scenario's write step states the BUFFERED "
             f"KEYED instruction list; {type(raw_write).__name__!r} is a legacy label, which "
             "states no instruction to lower at all"
         )
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case.path.name}: a predicate write owes no resolving find, so nothing "
         "about it conflicts with this lane — the lane simply does not wire the "
         "predicate-write translation yet, so the shape is unsupported rather than "
@@ -169,7 +169,7 @@ def compile_scenario(
                         )
                     )
     except (*READ_ERRORS, *LOWERING_ERRORS) as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
 
 
@@ -309,7 +309,7 @@ def run_scenario(
                         identity = case_entity(model, query.target.canonical).identity
                         snapshot = underlying(partial(db.wire.find, query))
                     except READ_ERRORS as exc:
-                        raise EngineError(f"{case.path.name}: {exc}") from exc
+                        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
                     emissions.extend(
                         Emission(f"/scenario/{index}/objectQuery", statement)
                         for statement in observation.since(mark, "read")
@@ -372,7 +372,7 @@ def _run_snapshot_write_step(
             port, context, entries, lifecycle, rollback=step.get("rollback") is True
         )
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 
 def _access_step_graph(
@@ -405,24 +405,26 @@ def _access_step_graph(
         return None
     on = step.get("on")
     if not isinstance(on, int):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `access` states relationship contents on {on!r} — such a "
             "step names ONE materializing read, never a set of sources"
         )
     source = results[on] if 0 <= on < len(results) else None
     if source is None or source.identity is None:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `access` names {on!r}, which holds no view to navigate"
         )
     if not source.materialized:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `access` states relationship contents on step {on}, which "
             "derived its view rather than materializing it — such a step names the read "
             "whose `includes` fetched the contents"
         )
     path = step.get("path")
     if not isinstance(path, str):
-        raise EngineError(f"{case.path.name}: an `access` asserting a graph needs a `path`")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: an `access` asserting a graph needs a `path`"
+        )
     entity_name, nodes = _navigate_step_view(case, model, source, path)
     return {"at": f"/scenario/{index}", "graph": {entity_name: nodes}}
 
@@ -468,7 +470,7 @@ def _navigate_step_view(
                 reached.append(None)
                 continue
             if not isinstance(node, Mapping) or name not in node:
-                raise EngineError(
+                raise UnclassifiedEngineError(
                     f"{case.path.name}: `access` navigates {path!r}, but the view its "
                     f"find step materialized carries no loaded {name!r} — an access "
                     "asserting relationship contents names a read whose `includes` "
@@ -580,7 +582,7 @@ def _edited_node_identity(
     for concrete in position.concrete_subtypes:
         if concrete.canonical == node_type:
             return concrete
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case.path.name}: the view holds a {node_type!r} node, which is no concrete subtype "
         f"of {target.name} — an edit resolves against the Entity its node IS"
     )
@@ -592,7 +594,7 @@ def _related_direction(
     """The relationship direction one hop from ``identity``, by its local name."""
     direction = _relationship_declaration(model, identity, name)
     if direction is None:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: {identity.name} declares no relationship {name!r} to navigate"
         )
     return direction
@@ -616,7 +618,7 @@ def _grade_mutate_step(
     `errorClass` when the step's own declared `expectError` matched it, else
     ``None`` for an accepted mutation; a mismatch in either direction — an
     undeclared refusal, or a declared expectation the verb never raised — is a
-    loud :class:`EngineError`, never a silently dropped observation. The result
+    loud :class:`UnclassifiedEngineError`, never a silently dropped observation. The result
     channel carries the copy on acceptance and the empty result on refusal,
     which is what a later step's `on` index resolves against.
 
@@ -630,20 +632,22 @@ def _grade_mutate_step(
     source = results[on] if isinstance(on, int) and 0 <= on < len(results) else None
     identity = None if source is None else source.identity
     if not isinstance(on, int) or source is None or identity is None:
-        raise EngineError(f"{case.path.name}: `mutate` names {on!r}, which holds no view to edit")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: `mutate` names {on!r}, which holds no view to edit"
+        )
     expected = step.get("expectError")
     try:
         validate_source_pin(identity, source.pin)
     except TransactionTimePinReadOnlyError as exc:
         if expected != exc.code:
             declared = f"expectError {expected!r}" if expected is not None else "no expectError"
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{case.path.name}: the `mutate` verb raised {exc.code!r} but the step "
                 f"declares {declared}"
             ) from exc
         return exc.code, _NO_SCENARIO_RESULT
     if expected is not None:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: the step declares expectError {expected!r} but the "
             "mutation was accepted"
         )
@@ -705,13 +709,13 @@ def _edited_copy(
     members, must still answer for.
     """
     if len(source.roots) != 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `mutate` targets step {on}, which holds "
             f"{len(source.roots)} nodes (expected exactly one to edit)"
         )
     raw = step.get("set", {})
     if not isinstance(raw, Mapping):
-        raise EngineError(f"{case.path.name}: a `mutate` action's `set` is a mapping")
+        raise UnclassifiedEngineError(f"{case.path.name}: a `mutate` action's `set` is a mapping")
     assignments = cast("Mapping[str, object]", raw)
     members = source.roots[0]
     assert source.identity is not None, "the caller resolves the source step's Entity Identity"
@@ -720,14 +724,14 @@ def _edited_copy(
         name for name in assignments if _relationship_declaration(model, identity, name) is not None
     )
     if related:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `mutate` assigns {related!r}, which name relationship members — "
             "an edit carries the views its source read materialized and authors none"
         )
     applicable = _applicable_member_names(model, identity)
     unassignable = sorted(name for name in assignments if name not in applicable)
     if unassignable:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `mutate` on step {on} assigns {unassignable!r}, which "
             f"{identity.name} has no assignable member of"
         )
@@ -736,8 +740,8 @@ def _edited_copy(
     row.update(assignments)
     try:
         edited = _case_ingress.decode_case_row(row, model, case_entity(model, identity.canonical))
-    except instructions.InstructionRejectedError as exc:
-        raise EngineError(
+    except UsageError as exc:
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `mutate` carries a value its member cannot decode — {exc}"
         ) from exc
     return _ScenarioStepResult(({**members, **edited},), source.pin, identity)

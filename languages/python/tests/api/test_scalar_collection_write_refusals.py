@@ -19,11 +19,10 @@ from typing import Any
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core.base import UsageError
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._expressions import AttributeRef
 from parallax.core.execution import ExecutionFailure
-from parallax.core.metamodel import WriteAssignmentError
-from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
@@ -63,7 +62,7 @@ def test_an_insert_refuses_a_malformed_collection_at_its_position(
 ) -> None:
     refusal = _refusal(lambda tx: tx.wire.insert(_ORDER, {"id": 1, "tags": tags}))
 
-    assert getattr(refusal, "rule", None) == rule
+    assert getattr(refusal, "code", None) == rule
     assert re.search(message, str(refusal))
 
 
@@ -101,7 +100,8 @@ def test_a_typed_assignment_no_set_judged_refuses_an_invalid_element_at_its_posi
     )
     refusal = _refusal(lambda tx: tx.amend_where(Order.where(Order.id == 1), unjudged))
 
-    assert isinstance(refusal, WriteInstructionError)
-    assert isinstance(refusal.__cause__, WriteAssignmentError)
-    assert refusal.__cause__.rule == "value-type-mismatch"
-    assert str(refusal.__cause__) == "tags[1]: value 3 does not match the declared type String()"
+    assert isinstance(refusal, UsageError)
+    assert refusal.code == "write-instruction-invalid"
+    assert isinstance(refusal.__cause__, UsageError)
+    assert refusal.__cause__.code == "write-assignment-value-type-mismatch"
+    assert refusal.__cause__.args[1] == "tags[1]: value 3 does not match the declared type String()"

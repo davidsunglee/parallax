@@ -55,9 +55,9 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     WriteEvidenceError,
-    WriteInstructionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _POSITION = MODELS["position"]
@@ -1031,7 +1031,9 @@ def test_an_observed_write_of_a_source_read_at_valid_time_latest_is_refused(
 
     def edit(tx: TxnContext) -> None:
         source = _span_find(tx, entity, representation, None)
-        with pytest.raises(WriteInstructionError, match="read at Valid-Time LATEST"):
+        with raises_code(
+            UsageError, "write-instruction-invalid", match="read at Valid-Time LATEST"
+        ):
             _span_update(tx, source, representation, 150)
 
     db.transact(edit)

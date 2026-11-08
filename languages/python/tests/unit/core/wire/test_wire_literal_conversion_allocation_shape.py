@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Final
 
 from parallax.core import inheritance, predicate, storage_layout
-from parallax.core.base import FLOAT64, STRING
+from parallax.core.base import FLOAT64, STRING, UsageError
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen._context import (
@@ -19,7 +19,7 @@ from parallax.core.sql_gen._context import (
     StatementBuilder,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.wire import WireDecodingError, decode_canonical_wire, loads
+from parallax.core.wire import decode_canonical_wire, loads
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
@@ -156,8 +156,8 @@ def _extreme_number_conversion(exponent: int) -> Span:
         opened()
         try:
             decode_canonical_wire(FLOAT64, wire_value)
-        except WireDecodingError as error:
-            assert error.reason == "out-of-space"
+        except UsageError as error:
+            assert error.code == "neutral-literal-out-of-space"
         else:
             raise AssertionError("extreme exponent unexpectedly entered Float64")
         closed()

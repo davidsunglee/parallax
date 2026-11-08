@@ -167,9 +167,8 @@ from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ROLLBACK_ONLY,
-    InstructionRejectedError,
+    WRITE_INSTRUCTION_INVALID,
     WriteEvidenceError,
-    WriteInstructionError,
     WritePreconditionError,
 )
 from parallax.postgres import PostgresAdapter
@@ -847,7 +846,8 @@ def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> Non
 
     with pytest.raises(ExecutionFailure) as refused:
         db.transact(delete_the_limit)
-    assert isinstance(refused.value.cause, WriteInstructionError)
+    assert isinstance(refused.value.cause, UsageError)
+    assert refused.value.cause.code == WRITE_INSTRUCTION_INVALID
     assert "terminate" in str(refused.value.cause)
 
     withdraw_a_credit_limit(db, 1)
@@ -902,7 +902,8 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
     # A Bitemporal insert must say where it starts.
     with pytest.raises(ExecutionFailure) as refused:
         db.transact(lambda tx: tx.insert(Price(sku="TEA-3", amount=Decimal("5.00"))))
-    assert isinstance(refused.value.cause, WriteInstructionError)
+    assert isinstance(refused.value.cause, UsageError)
+    assert refused.value.cause.code == WRITE_INSTRUCTION_INVALID
 
     change_a_price_from(db, "TEA-1", twelve, _APR)
     first_year = {
@@ -1044,7 +1045,8 @@ def test_a_target_write_to_an_unversioned_entity_is_refused(profile_run: Any) ->
             )
         )
 
-    assert isinstance(refused.value.cause, WriteInstructionError)
+    assert isinstance(refused.value.cause, UsageError)
+    assert refused.value.cause.code == WRITE_INSTRUCTION_INVALID
 
 
 def test_predicate_writes_run_at_the_call_and_answer_their_row_count(profile_run: Any) -> None:
@@ -1092,8 +1094,8 @@ def test_a_read_only_entity_is_read_but_never_written(profile_run: Any) -> None:
     with pytest.raises(ExecutionFailure) as refused:
         rename_a_supplier(db, 1, "Leaf Ltd")
 
-    assert isinstance(refused.value.cause, InstructionRejectedError)
-    assert refused.value.cause.rule == "read-only-write-target"
+    assert isinstance(refused.value.cause, UsageError)
+    assert refused.value.cause.code == "read-only-write-target"
     assert db.find(Supplier.where(Supplier.id == 1)).result().name == "Leaf & Co"
 
 
@@ -1106,8 +1108,8 @@ def test_a_predicate_write_to_a_versioned_entity_is_refused(profile_run: Any) ->
             lambda tx: tx.amend_where(Order.where(Order.all), Order.total.set(Decimal("0.00")))
         )
 
-    assert isinstance(refused.value.cause, InstructionRejectedError)
-    assert refused.value.cause.rule == "set-based-write-target-unsupported"
+    assert isinstance(refused.value.cause, UsageError)
+    assert refused.value.cause.code == "set-based-write-target-unsupported"
 
 
 def test_wire_writes_insert_from_json_and_amend_a_node_read_in_the_transaction(

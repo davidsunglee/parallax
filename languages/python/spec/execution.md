@@ -225,9 +225,8 @@ selection document — never an Object Query node or its document — and a
 replacement's data as a document or as a node Parallax published for the
 selected Entity. A replacement payload's key addresses nothing and is never
 written. A set-based write is one readless statement, so it takes no window, and
-over a versioned or temporal Entity it is refused at the call with an
-`InstructionRejectedError`, the `WriteInstructionError` whose `rule` is
-`set-based-write-target-unsupported`, naming the keyed and target verbs that
+over a versioned or temporal Entity it is refused at the call with a
+`UsageError` whose `code` is `set-based-write-target-unsupported`, naming the keyed and target verbs that
 write such an Entity (`m-batch-write`). Every verb of the family returns an `int`, the
 affected-row count `m-batch-write` defines: the statement runs at the call,
 after the writes the transaction buffered before it, so its database errors
@@ -250,7 +249,7 @@ versioned Entity or `tx_start` for a temporal one. Presence is counted before
 any value is judged: none, both, a stated `None`, or a revision the Entity does
 not take is refused, and no missing revision falls back on a source. An
 unversioned Non-Temporal Entity has no revision, so every target verb
-refuses it with `WriteInstructionError`; it is written through a read of the
+refuses it with a `UsageError` whose `code` is `write-instruction-invalid`; it is written through a read of the
 writing transaction, whose shared lock the Locking fallback takes. The keyword
 names a revision, never a value to store; the canonical instruction keeps
 `ifVersion` and `ifTxStart`.

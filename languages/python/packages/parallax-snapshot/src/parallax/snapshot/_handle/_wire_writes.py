@@ -33,6 +33,7 @@ from parallax.core._execution._unit_work.instructions import (
     WriteAssignment,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
+from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery
@@ -246,9 +247,10 @@ def _published_replacement(
     entity = published_entity(meta, node, "`replace_where`")
     target = instructions.resolve_target(meta, selection.entity)
     if entity.identity != target.identity:
-        raise instructions.WriteInstructionError(
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
             f"a Wire `replace_where` over {target.identity.canonical} states a whole state of "
-            f"that Entity, and this node was published for {entity.identity.canonical}"
+            f"that Entity, and this node was published for {entity.identity.canonical}",
         )
     return _published_writable(meta, entity, node, copy=False)
 
@@ -288,27 +290,30 @@ class WireTargetWriteAdapter:
         target, document = self._target, self._document
         if isinstance(target, str):
             if isinstance(document, Omitted):
-                raise instructions.WriteInstructionError(
-                    f"a Wire `{mutation}` of an Entity spelling states the data it writes"
+                raise UsageError(
+                    instructions.WRITE_INSTRUCTION_INVALID,
+                    f"a Wire `{mutation}` of an Entity spelling states the data it writes",
                 )
             described = f"a Wire `{mutation}`'s {_target_document(mutation)}"
             entity_name = target
             row = _authored_document(document, described)
         elif isinstance(target, WireEntity) and mutation in REPLACE_MUTATIONS:
             if not isinstance(document, Omitted):
-                raise instructions.WriteInstructionError(
+                raise UsageError(
+                    instructions.WRITE_INSTRUCTION_INVALID,
                     f"a Wire `{mutation}` of a published node writes the state that node "
                     "published, so it takes no data beside it; to state other data, name the "
-                    "Entity instead"
+                    "Entity instead",
                 )
             entity = published_entity(meta, target, f"`{mutation}`")
             entity_name = entity.identity.canonical
             row = _published_writable(meta, entity, target, copy=False)
         else:
-            raise instructions.WriteInstructionError(
+            raise UsageError(
+                instructions.WRITE_INSTRUCTION_INVALID,
                 f"a Wire `{mutation}` addresses an Entity spelling"
                 + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
-                + f", and {type(target).__name__} is neither"
+                + f", and {type(target).__name__} is neither",
             )
         return TargetWriteInput(entity_name, row, "wire", authored_members=row.keys())
 
@@ -350,10 +355,11 @@ def published_entity(meta: Metamodel, node: object, verb: str) -> EntityMetadata
         else None
     )
     if entity is None:
-        raise instructions.WriteInstructionError(
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
             f"{verb} on `tx.wire` takes a frozen Entity mapping Parallax published — a "
             "`tx.wire.find` result, or the node `tx.wire.insert` answered — and "
-            f"{type(node).__name__} carries no such provenance"
+            f"{type(node).__name__} carries no such provenance",
         )
     return _concrete_entity(meta, entity)
 
@@ -618,13 +624,14 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
         else None
     )
     if entity is None:
-        raise instructions.WriteInstructionError(
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
             f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping Parallax "
             f"published — a `tx.wire.find` result, or the node `tx.wire.insert` answered — and "
             f"{type(observed).__name__} carries no such provenance: an ordinary mapping, a "
             "`dict(...)` conversion, and a serialized round trip all lose the identity a "
             "keyed write is addressed by and the evidence or buffered insert that licenses "
-            "it; read the row through `tx.wire.find` and write what it returned"
+            "it; read the row through `tx.wire.find` and write what it returned",
         )
     assert isinstance(observed, WireEntity)  # provenance rides an Entity node alone
     return observed, entity
@@ -639,8 +646,9 @@ def _concrete_entity(meta: Metamodel, entity: EntityIdentity) -> EntityMetadata:
     """
     record = meta.entity(entity)
     if record is None:  # pragma: no cover - a source is filed under THIS model
-        raise instructions.WriteInstructionError(
-            f"{entity.canonical}: the source was published by another model"
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            f"{entity.canonical}: the source was published by another model",
         )
     return record
 
@@ -654,8 +662,8 @@ def _wire_selection(target: Mapping[str, object]) -> PredicateSelection:
     unknown-Entity, unwritable-target, or illegal-assignment verdict would
     report the defect the fixed order places later. The node is `m-predicate`'s
     to judge, so a malformed one carries that module's
-    :class:`~parallax.core.predicate.CanonicalDocumentError` while the selection
-    envelope around it stays this verb's own verdict.
+    ``predicate-document-invalid`` while the selection envelope around it stays
+    this verb's own verdict.
 
     Reads the CAPTURED target, whose keys :func:`_authored_document` has already
     judged to be names, so the two key sets below compare and sort rather than
@@ -663,20 +671,23 @@ def _wire_selection(target: Mapping[str, object]) -> PredicateSelection:
     """
     extra = sorted(set(target) - {"entity", "predicate"})
     if extra or "entity" not in target or "predicate" not in target:
-        raise instructions.WriteInstructionError(
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
             "a predicate-selected write target carries exactly `entity` and `predicate` "
             f"(an Object Query's own clauses shape a result, and a set-based write has none); got "
-            f"{sorted(target)}"
+            f"{sorted(target)}",
         )
     name = target["entity"]
     if not isinstance(name, str) or not name:
-        raise instructions.WriteInstructionError(
-            "predicate write: `target.entity` must be a non-empty entity name"
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            "predicate write: `target.entity` must be a non-empty entity name",
         )
     node = target["predicate"]
     if not isinstance(node, Mapping):
-        raise instructions.WriteInstructionError(
-            "predicate write: `target.predicate` must be a mapping"
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            "predicate write: `target.predicate` must be a mapping",
         )
     return PredicateSelection(
         name, predicate_algebra.deserialize(cast("Mapping[str, object]", node))
@@ -686,8 +697,9 @@ def _wire_selection(target: Mapping[str, object]) -> PredicateSelection:
 def _authored_document(value: object, described: str) -> Mapping[str, object]:
     """Return a shape-validated Wire document without taking ownership yet."""
     if not isinstance(value, Mapping):
-        raise instructions.WriteInstructionError(
-            f"{described} must be a document of names to values, got {type(value).__name__}"
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            f"{described} must be a document of names to values, got {type(value).__name__}",
         )
     document = cast("Mapping[str, object]", value)
     _validate_authored(document, described, ())
@@ -725,15 +737,17 @@ def _entered_ancestry(
     path is held alive by the caller's own value for the whole walk."""
     address = id(container)
     if address in enclosing:
-        raise instructions.WriteInstructionError(
-            f"{described} contains itself, so it states no finite document"
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            f"{described} contains itself, so it states no finite document",
         )
     return (*enclosing, address)
 
 
 def _document_key(key: object, described: str) -> str:
     if not isinstance(key, str):
-        raise instructions.WriteInstructionError(
-            f"{described} is keyed by names, and {key!r} is not one"
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            f"{described} is keyed by names, and {key!r} is not one",
         )
     return key

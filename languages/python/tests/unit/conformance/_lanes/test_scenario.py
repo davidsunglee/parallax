@@ -28,7 +28,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
 )
 from parallax.conformance._mechanism import case_document, model_facts
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core import ConflictError
 from parallax.core._execution._unit_work import instructions
@@ -84,7 +84,6 @@ from parallax.core.unit_work import (
     UnobservedVersionError,
     WriteEffectCode,
     WriteEvidenceError,
-    WriteRejectedError,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -284,7 +283,7 @@ def test_an_unaddressed_write_neither_reads_nor_submits_dml(row: dict[str, objec
     )
     port = FakeWritePort()
 
-    with pytest.raises(EngineError, match="a keyed write addresses None"):
+    with pytest.raises(UnclassifiedEngineError, match="a keyed write addresses None"):
         scenario.run_write_sequence_case(case, port)
 
     assert port.reads == []
@@ -607,7 +606,7 @@ def test_run_scenario_case_refuses_a_read_step_graph_over_no_include_path() -> N
     steps = cast("list[dict[str, Any]]", when["scenario"])
     del steps[0]["objectQuery"]["includes"]
 
-    with pytest.raises(EngineError, match="declares no `includes`"):
+    with pytest.raises(UnclassifiedEngineError, match="declares no `includes`"):
         scenario.run_scenario_case(case, _ryow_relationship_port())
 
 
@@ -658,7 +657,7 @@ def test_only_the_run_lane_closes_a_fixture_milestone() -> None:
     case = _synthetic_ledger_scenario([_ledger_update("300.00", "2024-05-01T00:00:00+00:00")])
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
 
-    with pytest.raises(EngineError, match="insertion's authority"):
+    with pytest.raises(UnclassifiedEngineError, match="insertion's authority"):
         scenario.compile_scenario_case(case, "postgres")
     run = scenario.run_scenario_case(case, port)
 
@@ -780,7 +779,7 @@ def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_sc
             "then": {"databaseCalls": 3},
         },
     )
-    with pytest.raises(EngineError, match="run_interleaved_scenario_case"):
+    with pytest.raises(UnclassifiedEngineError, match="run_interleaved_scenario_case"):
         scenario.run_scenario_case(case, FakeWritePort())
 
 
@@ -817,7 +816,7 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
             "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]}],
         },
     ]
-    with pytest.raises(EngineError, match="interleave beyond the witnessed"):
+    with pytest.raises(UnclassifiedEngineError, match="interleave beyond the witnessed"):
         scenario._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             "m-unit-work-999-synthetic.yaml", steps
         )
@@ -895,14 +894,14 @@ def test_a_settled_write_settles_against_the_node_the_named_find_observed() -> N
 def test_a_settled_write_refuses_a_find_that_observed_no_row_of_its_key() -> None:
     # The reference names evidence that does not exist — an authoring defect,
     # refused where the diagnosis can name it rather than silently unobserved.
-    with pytest.raises(EngineError, match="settles against observed 0 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="settles against observed 0 rows"):
         _settled(())
 
 
 def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() -> None:
     # No single value could have come from two milestones, so a reference that
     # resolves to both names nothing a write could have been handed.
-    with pytest.raises(EngineError, match="settles against observed 2 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="settles against observed 2 rows"):
         _settled((_policy_node(_JAN, _JUN, "head"), _policy_node(_JUN, INFINITY, "tail")))
 
 
@@ -940,7 +939,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
     # The reference names evidence that does not exist, and a write with no
     # evidence at all is refused where every unobserved keyed write is.
     meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(EngineError, match="observed 0 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="observed 0 rows"):
         scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
@@ -1059,7 +1058,7 @@ def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error(
         "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
         "out_z": INFINITY,
     }
-    with pytest.raises(EngineError, match="starts at"):
+    with pytest.raises(UnclassifiedEngineError, match="starts at"):
         scenario.run_scenario_case(
             _with_grading(case, state_graded), FakeWritePort(read_script=[[row], [row]])
         )
@@ -1335,7 +1334,7 @@ def test_a_write_against_stored_state_is_refused_rather_than_compiled(
 ) -> None:
     # Compile reads nothing, so what such a case declares run-only for is what
     # exposes it were it declared eligible.
-    with pytest.raises(EngineError, match=refusal):
+    with pytest.raises(UnclassifiedEngineError, match=refusal):
         scenario.compile_write_sequence_case(_load_case(case_id), "postgres")
 
 
@@ -1360,7 +1359,7 @@ def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error(
             },
         },
     )
-    with pytest.raises(EngineError, match="cannot admit this write") as raised:
+    with pytest.raises(UnclassifiedEngineError, match="cannot admit this write") as raised:
         scenario.compile_scenario_case(case, "postgres")
     refusal = raised.value.__cause__
     assert isinstance(refusal, WriteEvidenceError)
@@ -1390,7 +1389,7 @@ def test_only_a_lowering_diagnostic_becomes_an_engine_error(
     monkeypatch.setattr(_simulated_write_steps, "stream_physical", failing)
     case = _load_case("m-temporal-write-001")
     if translated:
-        with pytest.raises(EngineError, match="no such lowering") as engine_error:
+        with pytest.raises(UnclassifiedEngineError, match="no such lowering") as engine_error:
             scenario.compile_write_sequence_case(case, "postgres")
         assert engine_error.value.__cause__ is failure
         return
@@ -1485,7 +1484,7 @@ def test_an_amendment_its_public_verb_drops_as_empty_emits_nothing(
 
 
 def test_a_read_step_names_its_own_object_query() -> None:
-    with pytest.raises(EngineError, match="needs `objectQuery`"):
+    with pytest.raises(UnclassifiedEngineError, match="needs `objectQuery`"):
         scenario.step_query({"databaseCalls": 1}, models.load_models()["account"])
 
 
@@ -1548,7 +1547,7 @@ def test_a_run_grades_an_authored_statement_count_against_what_it_delivered() ->
         },
     )
     port = FakeWritePort()
-    with pytest.raises(EngineError, match="does not match the 1 statement"):
+    with pytest.raises(UnclassifiedEngineError, match="does not match the 1 statement"):
         scenario.run_write_sequence_case(case, port)
     assert len(port.writes) == 1
 
@@ -1653,7 +1652,7 @@ def test_scenario_compile_wraps_a_lowering_failure_as_engine_error() -> None:
             }
         },
     )
-    with pytest.raises(EngineError, match="undeclared member"):
+    with pytest.raises(UnclassifiedEngineError, match="undeclared member"):
         scenario.compile_scenario_case(bad, "postgres")
 
 
@@ -1668,7 +1667,7 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
             }
         },
     )
-    with pytest.raises(EngineError, match="undeclared member"):
+    with pytest.raises(UnclassifiedEngineError, match="undeclared member"):
         scenario.compile_write_sequence_case(bad, "postgres")
 
 
@@ -1739,7 +1738,7 @@ def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
             }
         },
     )
-    with pytest.raises(EngineError, match="an insert row authors no `observedVersion`"):
+    with pytest.raises(UnclassifiedEngineError, match="an insert row authors no `observedVersion`"):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -1773,7 +1772,7 @@ def test_a_write_row_authoring_an_observed_tx_start_is_refused_even_when_version
             }
         },
     )
-    with pytest.raises(EngineError, match="a write row authors no `observedTxStart`"):
+    with pytest.raises(UnclassifiedEngineError, match="a write row authors no `observedTxStart`"):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -1804,7 +1803,9 @@ def test_an_unversioned_row_authoring_an_observation_control_key_is_refused() ->
             },
         },
     )
-    with pytest.raises(EngineError, match="an unversioned row authors no `observedVersion`"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="an unversioned row authors no `observedVersion`"
+    ):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -1906,7 +1907,7 @@ def test_insert_entry_refuses_a_row_missing_a_required_attribute() -> None:
             },
         },
     )
-    with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: required attribute"):
+    with pytest.raises(UnclassifiedEngineError, match=r"Wallet\.balance: required attribute"):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -1979,7 +1980,7 @@ def test_update_entry_non_uniform_within_a_physical_group_rejects_a_per_row_coun
             },
         },
     )
-    with pytest.raises(EngineError, match="does not match the 2 statement"):
+    with pytest.raises(UnclassifiedEngineError, match="does not match the 2 statement"):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -2113,7 +2114,7 @@ def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
             }
         },
     )
-    with pytest.raises(EngineError, match="does not match the 0 statement"):
+    with pytest.raises(UnclassifiedEngineError, match="does not match the 0 statement"):
         scenario.compile_write_sequence_case(counted, "postgres")
 
 
@@ -2141,7 +2142,7 @@ def test_authored_statement_count_mismatch_is_rejected() -> None:
             }
         },
     )
-    with pytest.raises(EngineError, match="does not match"):
+    with pytest.raises(UnclassifiedEngineError, match="does not match"):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -2202,7 +2203,7 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly(lane: str) -> None
             },
         },
     )
-    with pytest.raises(EngineError, match=r"scenario-write-only"):
+    with pytest.raises(UnclassifiedEngineError, match=r"scenario-write-only"):
         if lane == "compile":
             scenario.compile_write_sequence_case(case, "postgres")
         else:
@@ -2313,7 +2314,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
 def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
     # Defensive coverage: a `_LOWERING_ERRORS` member raised anywhere inside
     # the per-entry loop (here, `instructions.deserialize`'s own unknown-
-    # entity `KeyError`) surfaces as this seam's own `EngineError`, never
+    # entity `KeyError`) surfaces as this seam's own `UnclassifiedEngineError`, never
     # propagating a bare driver/stdlib exception.
     case = _synthetic_write(
         "writeSequence",
@@ -2326,7 +2327,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
         },
     )
     port = FakeWritePort()
-    with pytest.raises(EngineError, match="Ghost"):
+    with pytest.raises(UnclassifiedEngineError, match="Ghost"):
         scenario.run_write_sequence_case(case, port)
 
 
@@ -2378,7 +2379,9 @@ def test_a_versioned_conflict_attempt_requires_its_declared_version(
     row = when["write"] if attempt is None else when["attempts"][attempt]["write"]
     del row["observedVersion"]
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    with pytest.raises(EngineError, match=r"every versioned conflict write.*`observedVersion`"):
+    with pytest.raises(
+        UnclassifiedEngineError, match=r"every versioned conflict write.*`observedVersion`"
+    ):
         scenario.run_conflict_case(case, port)
     assert port.reads == port.writes == []
 
@@ -2392,7 +2395,9 @@ def test_every_row_of_a_versioned_conflict_attempt_requires_its_declared_version
     when["mutation"] = mutation
     when["write"] = [when["write"], {"id": 3, "balance": "20.00"}]
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    with pytest.raises(EngineError, match=r"every versioned conflict write.*`observedVersion`"):
+    with pytest.raises(
+        UnclassifiedEngineError, match=r"every versioned conflict write.*`observedVersion`"
+    ):
         scenario.run_conflict_case(case, port)
     assert port.reads == port.writes == []
 
@@ -2477,7 +2482,9 @@ def test_a_conflict_attempt_whose_source_read_finds_no_row_is_refused() -> None:
     # write, so a case authoring that state is unauthorable through the public
     # verbs rather than merely unpleasant.
     port = FakeWritePort(find_rows=[])
-    with pytest.raises(EngineError, match="which no read of its own choreography unit published"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="which no read of its own choreography unit published"
+    ):
         scenario.run_conflict_case(_load_case("m-concurrency-006"), port)
 
 
@@ -2486,7 +2493,7 @@ def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refu
     # real write settles against what the read saw, so the two must name one
     # state or the case grades a statement no read of this lane produced.
     port = FakeWritePort(find_rows=[{**_ACCOUNT_ROW_2, "version": 7}])
-    with pytest.raises(EngineError, match="its resolved source observed 7"):
+    with pytest.raises(UnclassifiedEngineError, match="its resolved source observed 7"):
         scenario.run_conflict_case(_load_case("m-concurrency-005"), port)
     assert len(port.reads) == 1 and port.writes == []
 
@@ -2532,7 +2539,9 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
             {"id": 2, "balance": "500.00", "observedVersion": 1},
         ]
     )
-    with pytest.raises(EngineError, match="an unversioned row authors no `observedVersion`"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="an unversioned row authors no `observedVersion`"
+    ):
         scenario.run_conflict_case(case, FakeWritePort())
 
 
@@ -2558,7 +2567,9 @@ def test_a_locking_conflict_target_is_refused_before_any_read(case: case_format.
     # on, so a Locking conflict case describes interference no client can meet. An
     # unversioned Non-Temporal target is Locking under either preference.
     port = FakeWritePort()
-    with pytest.raises(EngineError, match="only the Optimistic strategy leaves room for"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="only the Optimistic strategy leaves room for"
+    ):
         scenario.run_conflict_case(case, port)
     assert port.reads == []
     assert port.writes == []
@@ -2642,7 +2653,7 @@ class TestConflictShortfallClassification:
     def test_a_refusal_no_failed_flush_attributes_to_a_completed_write_is_unreadable(
         self,
     ) -> None:
-        with pytest.raises(EngineError, match="names no completed write call"):
+        with pytest.raises(UnclassifiedEngineError, match="names no completed write call"):
             scenario._final_flush_failure_count(LifecycleObservation())  # pyright: ignore[reportPrivateUsage] - the lane's own count seam
 
 
@@ -2660,7 +2671,7 @@ def test_run_conflict_case_refuses_a_temporal_target_before_any_read() -> None:
         document={"model": "models/balance.yaml", "when": {"write": {"id": 1}}},
     )
     port = FakeWritePort()
-    with pytest.raises(EngineError, match="targets a non-temporal Entity"):
+    with pytest.raises(UnclassifiedEngineError, match="targets a non-temporal Entity"):
         scenario.run_conflict_case(case, port)
     assert port.reads == []
     assert port.writes == []
@@ -2705,14 +2716,18 @@ def test_a_conflict_case_production_replays_past_its_last_attempt_is_refused() -
     # the callback rather than graded against the first attempt's statements.
     case = _rooted(_load_case("m-concurrency-005"), uow={"concurrency": "optimistic"}, root={})
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL)
-    with pytest.raises(EngineError, match="replayed the conflict case's last authored attempt"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="replayed the conflict case's last authored attempt"
+    ):
         scenario.run_conflict_case(case, port)
     assert len(port.levels) == 2
 
 
 def test_a_conflict_case_whose_invocation_ends_before_its_last_attempt_is_refused() -> None:
     port = FakeWritePort(read_script=[[_ACCOUNT_ROW_2]], affected_script=[1])
-    with pytest.raises(EngineError, match=r"after 1 attempt\(s\), and the case authors 2"):
+    with pytest.raises(
+        UnclassifiedEngineError, match=r"after 1 attempt\(s\), and the case authors 2"
+    ):
         scenario.run_conflict_case(_load_case("m-concurrency-009"), port)
 
 
@@ -2729,7 +2744,9 @@ def test_a_conflict_case_whose_bound_admits_fewer_attempts_than_it_authors_is_re
 ) -> None:
     case = _rooted(_load_case("m-concurrency-009"), uow=uow, root=root)
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    with pytest.raises(EngineError, match=r"authors 2 attempts and its transaction resolves"):
+    with pytest.raises(
+        UnclassifiedEngineError, match=r"authors 2 attempts and its transaction resolves"
+    ):
         scenario.run_conflict_case(case, port)
     assert port.levels == []
 
@@ -2738,7 +2755,7 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
     case = _synthetic_write(
         "conflict", {"when": {"write": {"id": 2, "bogus": True, "observedVersion": 1}}}
     )
-    with pytest.raises(EngineError, match="undeclared member"):
+    with pytest.raises(UnclassifiedEngineError, match="undeclared member"):
         scenario.run_conflict_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW_2]))
 
 
@@ -2764,7 +2781,7 @@ def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused(
             },
         },
     )
-    with pytest.raises(EngineError, match=re.escape("a temporal row authors no")):
+    with pytest.raises(UnclassifiedEngineError, match=re.escape("a temporal row authors no")):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -2797,7 +2814,9 @@ def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
             },
         },
     )
-    with pytest.raises(EngineError, match=re.escape("a temporal write entry carries ONE")):
+    with pytest.raises(
+        UnclassifiedEngineError, match=re.escape("a temporal write entry carries ONE")
+    ):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
@@ -2824,28 +2843,30 @@ def test_a_multi_row_temporal_scenario_write_entry_is_refused() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/balance.yaml", "when": when})
-    with pytest.raises(EngineError, match=re.escape("a temporal write entry carries ONE")):
+    with pytest.raises(
+        UnclassifiedEngineError, match=re.escape("a temporal write entry carries ONE")
+    ):
         scenario.compile_scenario_case(case, "postgres")
 
 
 def test_scenario_case_without_when_is_rejected() -> None:
-    with pytest.raises(EngineError, match="has no `when`"):
+    with pytest.raises(UnclassifiedEngineError, match="has no `when`"):
         scenario.compile_scenario_case(_synthetic_write("scenario", {}), "postgres")
 
 
 def test_scenario_case_without_a_scenario_list_is_rejected() -> None:
-    with pytest.raises(EngineError, match=r"when\.scenario"):
+    with pytest.raises(UnclassifiedEngineError, match=r"when\.scenario"):
         scenario.compile_scenario_case(_synthetic_write("scenario", {"when": {}}), "postgres")
 
 
 def test_scenario_read_step_missing_its_query_is_rejected() -> None:
     bad = _synthetic_write("scenario", {"when": {"scenario": [{"databaseCalls": 1}]}})
-    with pytest.raises(EngineError, match="objectQuery"):
+    with pytest.raises(UnclassifiedEngineError, match="objectQuery"):
         scenario.compile_scenario_case(bad, "postgres")
 
 
 def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
-    with pytest.raises(EngineError, match="writeSequence"):
+    with pytest.raises(UnclassifiedEngineError, match="writeSequence"):
         scenario.compile_write_sequence_case(
             _synthetic_write("writeSequence", {"when": {}}), "postgres"
         )
@@ -3140,7 +3161,7 @@ def test_a_grouped_write_addressing_a_key_no_read_published_is_refused() -> None
             _ledger_update("300.00", "2026-02-01T00:00:00+00:00", uow="g"),
         ]
     )
-    with pytest.raises(EngineError, match="which no read of its own choreography unit"):
+    with pytest.raises(UnclassifiedEngineError, match="which no read of its own choreography unit"):
         scenario.run_scenario_case(case, FakeWritePort())
 
 
@@ -3178,7 +3199,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
             }
         },
     )
-    with pytest.raises(EngineError, match="published 0 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="published 0 rows"):
         scenario.run_scenario_case(case, FakeWritePort())
 
 
@@ -3326,7 +3347,7 @@ def test_marker_composition_refuses_actual_row_acquisition() -> None:
         }
     )
 
-    with pytest.raises(EngineError, match="reads no stored row"):
+    with pytest.raises(UnclassifiedEngineError, match="reads no stored row"):
         scenario._lower_marker_unit(  # pyright: ignore[reportPrivateUsage] - exercise the marker composition
             target,
             model,
@@ -3363,10 +3384,10 @@ def test_marker_composition_is_refused_before_resolution_or_execution(
         step["uow"] = "g"
     case = _synthetic_scenario("models/pk-sequence.yaml", "m-pk-gen-999", [step])
     refusal = "never both|buffer's only entry|choreography unit of its own"
-    with pytest.raises(EngineError, match=refusal):
+    with pytest.raises(UnclassifiedEngineError, match=refusal):
         scenario.compile_scenario_case(case, "postgres")
     port = FakeWritePort()
-    with pytest.raises(EngineError, match=refusal):
+    with pytest.raises(UnclassifiedEngineError, match=refusal):
         scenario.run_scenario_case(case, port)
     assert port.writes == []
     assert port.reads == []
@@ -3394,7 +3415,7 @@ def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() 
             }
         ],
     )
-    with pytest.raises(EngineError, match="never both"):
+    with pytest.raises(UnclassifiedEngineError, match="never both"):
         scenario.run_scenario_case(case, FakeWritePort())
 
 
@@ -3413,7 +3434,7 @@ def test_a_unit_holding_two_framework_markers_is_refused() -> None:
             }
         ],
     )
-    with pytest.raises(EngineError, match="buffer's only entry"):
+    with pytest.raises(UnclassifiedEngineError, match="buffer's only entry"):
         scenario.run_scenario_case(case, FakeWritePort())
 
 
@@ -3447,7 +3468,7 @@ def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
     case = _synthetic_scenario(
         "models/pk-sequence.yaml", "m-pk-gen-997", [_pk_sequence_advance(uow="g")]
     )
-    with pytest.raises(EngineError, match="choreography unit of its own"):
+    with pytest.raises(UnclassifiedEngineError, match="choreography unit of its own"):
         scenario.run_scenario_case(case, FakeWritePort())
 
 
@@ -3616,7 +3637,7 @@ def test_a_staged_writer_under_a_snapshot_level_is_refused_before_any_read(
     # serialization failure, never the zero-row shortfall the case grades.
     case = _rooted(_load_case("m-concurrency-005"), uow=uow, root=root)
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    with pytest.raises(EngineError, match=f"at `{level}` that read fixes the snapshot"):
+    with pytest.raises(UnclassifiedEngineError, match=f"at `{level}` that read fixes the snapshot"):
         scenario.run_conflict_case(case, port)
     assert port.levels == []
     assert port.reads == []
@@ -3797,7 +3818,9 @@ def test_a_compiled_versioned_write_no_evidence_licenses_is_refused_when_submitt
     submitted = _submitted(monkeypatch)
     admitted = _admitted(monkeypatch)
     case = _synthetic_write("writeSequence", {"when": {"writeSequence": writes}})
-    with pytest.raises(EngineError, match="requires the version its source observed") as raised:
+    with pytest.raises(
+        UnclassifiedEngineError, match="requires the version its source observed"
+    ) as raised:
         scenario.compile_write_sequence_case(case, "postgres")
     assert isinstance(raised.value.__cause__, UnobservedVersionError)
     assert [named_members(instruction.rows[0])["id"] for instruction in submitted] == [1]
@@ -3826,7 +3849,7 @@ def test_a_compiled_temporal_write_no_evidence_licenses_is_refused_when_submitte
             },
         },
     )
-    with pytest.raises(EngineError, match="temporal close requires") as raised:
+    with pytest.raises(UnclassifiedEngineError, match="temporal close requires") as raised:
         scenario.compile_write_sequence_case(case, "postgres")
     assert isinstance(raised.value.__cause__, WritePlanningError)
     assert admitted == []
@@ -3851,7 +3874,9 @@ def test_a_compiled_unversioned_write_naming_no_key_is_refused_for_its_missing_k
             "when": {"writeSequence": [{"mutation": mutation, "entity": "Wallet", "rows": [row]}]},
         },
     )
-    with pytest.raises(EngineError, match="omits the primary-key member 'id'") as raised:
+    with pytest.raises(
+        UnclassifiedEngineError, match="omits the primary-key member 'id'"
+    ) as raised:
         scenario.compile_write_sequence_case(case, "postgres")
     assert isinstance(raised.value.__cause__, WritePlanningError)
     assert admitted == []
@@ -4338,7 +4363,7 @@ def test_a_missing_self_or_forward_insertion_pointer_never_uses_a_same_key_read(
     case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
     port = FakeWritePort(find_rows=[_account(90, "Noether", "5.00", 1)])
 
-    with pytest.raises(EngineError, match="opened no value"):
+    with pytest.raises(UnclassifiedEngineError, match="opened no value"):
         scenario.run_scenario_case(case, port)
 
     assert port.writes == [] and port.rollbacks == 1 and port.commits == 0
@@ -4364,7 +4389,7 @@ def test_an_insertion_pointer_cannot_cross_a_group_boundary(state_graded: bool) 
     case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
     port = FakeWritePort(find_rows=[_account(90, "Noether", "5.00", 1)])
 
-    with pytest.raises(EngineError, match="opened no value"):
+    with pytest.raises(UnclassifiedEngineError, match="opened no value"):
         scenario.run_scenario_case(case, port)
 
     assert len(port.writes) == 1 and port.writes[0][0].startswith("insert")
@@ -4391,7 +4416,7 @@ def test_an_insertion_pointer_must_name_the_writes_own_object(state_graded: bool
     case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
     port = FakeWritePort(find_rows=[_account(91, "Noether", "5.00", 1)])
 
-    with pytest.raises(EngineError, match="published 0 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="published 0 rows"):
         scenario.run_scenario_case(case, port)
 
     assert len(port.writes) == 1 and port.writes[0][0].startswith("insert")

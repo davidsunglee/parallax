@@ -169,7 +169,7 @@ def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:
 
 
 def rename_a_supplier(db: ScopedDatabase, supplier_id: int, name: str) -> None:
-    """Refused with ``InstructionRejectedError``: Parallax writes no ``Supplier``."""
+    """Refused with a ``UsageError``: Parallax writes no ``Supplier``."""
 
     def rename(tx: TxnContext) -> None:
         supplier = tx.find(Supplier.where(Supplier.id == supplier_id)).result()

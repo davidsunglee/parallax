@@ -6,7 +6,7 @@ from typing import Final, cast
 from parallax.conformance import _case_ingress, case_format
 from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._mechanism import case_document
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import (
     case_entity,
     default_family_root,
@@ -14,23 +14,26 @@ from parallax.conformance._mechanism.model_facts import (
     gate_read,
     load_case_metamodel,
 )
-from parallax.core import inheritance
 from parallax.core._execution._unit_work import instructions
+from parallax.core.base import ParallaxError
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
-from parallax.core.unit_work import (
-    KeyedWriteInstruction,
-    WriteRejectedError,
-)
-from parallax.descriptor import (
-    DescriptorError,
-    domain_model_from_document,
-    validate_inheritance_families,
-)
+from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.descriptor import domain_model_from_document, validate_inheritance_families
 
-__all__ = ["run_rejected_case"]
+__all__ = ["rejected_rule", "run_rejected_case"]
+
+
+def rejected_rule(failure: ParallaxError, case: case_format.Case) -> str:
+    """``failure``'s code where it is a rule the case schema names a rejection
+    by: the one point production's codes become ``rejectedRule`` observations.
+
+    Any other refusal grades nothing the case can expect, and fails it.
+    """
+    if failure.code in case_format.rejected_rules():
+        return failure.code
+    raise UnclassifiedEngineError(f"{case.path.name}: {failure}") from failure
 
 
 def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
@@ -71,7 +74,7 @@ def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> s
     """
     present = [kind for kind in _REJECTED_WHEN_KINDS if kind in when]
     if len(present) != 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a `rejected` case must carry EXACTLY ONE of "
             f"`when.objectQuery` / `when.model` / `when.write` (m-case-format schema "
             f"`oneOf`); found {present!r}"
@@ -108,8 +111,12 @@ def run_rejected_case(case: case_format.Case) -> str:
     case-format preparation seam, which normalizes carriers and delegates
     recursive Wire decoding, validation, and retained-value freezing to
     :func:`~parallax.core._execution._unit_work.instructions.prepare_wire_write`, so the
-    rejected lane cannot drift from ordinary Wire write ingress. A classified
-    refusal is the rule; an unclassified one, or acceptance, fails the case.
+    rejected lane cannot drift from ordinary Wire write ingress.
+
+    Whatever the input, a refusal is graded by :func:`rejected_rule`, except a
+    formation refusal, which is graded by its single issue: a refusal whose code
+    the case schema names a rule by is that rule, and any other refusal, or
+    acceptance, fails the case.
 
     Membership can decide the form only because `target`, `rows`, and `row` are
     RESERVED from a bare row at this position (`compatibility-case.schema.json`
@@ -119,9 +126,9 @@ def run_rejected_case(case: case_format.Case) -> str:
     vocabulary carries for the conflict lane is refused here by shape, before any
     member is asked for.
 
-    Raises :class:`EngineError` if the input is unexpectedly accepted (no rule
-    violation detected) — the caller compares the returned rule against the
-    case's `then.rejectedRule`.
+    Raises :class:`UnclassifiedEngineError` if the input is unexpectedly accepted
+    (no rule violation detected) — the caller compares the returned rule against
+    the case's `then.rejectedRule`.
     """
     when = case_document.when(case)
     kind = _rejected_when_kind(case, when)
@@ -137,15 +144,11 @@ def _rejected_object_query(
     case: case_format.Case, authored: object, model: AcceptedMetamodel
 ) -> str:
     try:
-        query = deserialize_query(authored)
-    except CanonicalDocumentError as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    query = _case_ingress.normalize_case_query(query, model)
-    try:
+        query = _case_ingress.normalize_case_query(deserialize_query(authored), model)
         gate_read(query, model)
-    except ModelRejectedError as exc:
-        return exc.rule
-    raise EngineError(
+    except ParallaxError as exc:
+        return rejected_rule(exc, case)
+    raise UnclassifiedEngineError(
         f"{case.path.name}: the model-aware validator accepted an Object Query the case "
         "expects rejected pre-SQL"
     )
@@ -154,23 +157,18 @@ def _rejected_object_query(
 def _rejected_model(case: case_format.Case, inline_model: Mapping[str, object]) -> str:
     try:
         validate_inheritance_families(inline_model)
-    except inheritance.InheritanceError as exc:
-        return exc.rule
-    except DescriptorError as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    try:
         domain_model_from_document(inline_model)
-    except DescriptorError as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
     except MetamodelValidationError as exc:
         codes = tuple(issue.code for issue in exc.issues)
         if len(codes) != 1:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{case.path.name}: inline model produced {len(codes)} formation issues "
                 f"{codes!r}; a rejected case must isolate exactly one rule"
             ) from exc
         return codes[0]
-    raise EngineError(
+    except ParallaxError as exc:
+        return rejected_rule(exc, case)
+    raise UnclassifiedEngineError(
         f"{case.path.name}: the model-aware validator accepted an inline model the case "
         "expects rejected pre-SQL"
     )
@@ -180,21 +178,19 @@ def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMe
     """Adapt the one `when.write` input to its instruction, then grade it
     through the single case-format preparation every form shares."""
     if not isinstance(raw_write, Mapping):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a rejected `when.write` is a predicate-selected, keyed, or "
             f"target instruction, or a bare neutral write row — all objects, and the members "
             f"decide which. {type(raw_write).__name__} is the conflict lane's multi-key form, "
             f"which asserts an aggregate affected-row count no rejected case emits SQL to "
             f"produce (m-case-format Rejected cases)"
         )
-    instruction = _rejected_instruction(case, cast("Mapping[str, object]", raw_write), model)
     try:
+        instruction = _rejected_instruction(case, cast("Mapping[str, object]", raw_write), model)
         _case_ingress.prepare_case_write(instruction, model, case_wire_preparer(model))
-    except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
-        return exc.rule
-    except instructions.WriteInstructionError as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    raise EngineError(
+    except ParallaxError as exc:
+        return rejected_rule(exc, case)
+    raise UnclassifiedEngineError(
         f"{case.path.name}: the model-aware validator accepted a write the case expects "
         "rejected pre-SQL"
     )
@@ -230,30 +226,18 @@ def _rejected_instruction(
     insert, its flush-time `observedVersion` context set aside.
     """
     if "target" in authored:
-        return _deserialized(case, authored)
+        return instructions.deserialize(authored)
     if "rows" in authored:
         if "row" in authored:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{case.path.name}: a keyed `when.write` carries `rows` and also `row`, which "
                 "names another instruction form (m-case-format Rejected cases)"
             )
-        return _deserialized(
-            case, {key: authored[key] for key in _KEYED_INSTRUCTION_MEMBERS if key in authored}
+        return instructions.deserialize(
+            {key: authored[key] for key in _KEYED_INSTRUCTION_MEMBERS if key in authored}
         )
     if "row" in authored:
-        return _deserialized(case, authored)
+        return instructions.deserialize(authored)
     target = case_entity(model, _rejected_target(case, model))
     durable_row = {name: value for name, value in authored.items() if name != "observedVersion"}
-    try:
-        return KeyedWriteInstruction("insert", target.identity.canonical, (durable_row,))
-    except instructions.WriteInstructionError as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-
-
-def _deserialized(
-    case: case_format.Case, document: Mapping[str, object]
-) -> instructions.WriteInstruction:
-    try:
-        return instructions.deserialize(document)
-    except instructions.WriteInstructionError as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+    return KeyedWriteInstruction("insert", target.identity.canonical, (durable_row,))

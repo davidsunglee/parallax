@@ -20,12 +20,11 @@ import pytest
 from parallax.core import continuation, inheritance, read_planning, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.base import StructuredDocument
+from parallax.core.base import StructuredDocument, UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.predicate import ModelRejectedError
 from parallax.core.read_delivery._page import MISSING_STORED_VALUE
 from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen import SqlGenError
@@ -39,6 +38,7 @@ from parallax.core.sql_gen._inheritance import (
     plan_document_reads,
 )
 from parallax.core.sql_gen._predicate import render_predicate
+from tests._support.errors import raises_code
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _family_predecessor_support as family
 from tests.unit import _read_projection_support as support
@@ -207,13 +207,12 @@ def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
     # skipped that step, and refusing loudly is what keeps it from silently
     # lowering to an empty position.
     op = oa.Narrow(to=("Unicorn",), operand=oa.TrueNode())
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "narrow-empty-effective-set"):
         compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
-    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "narrow-outside-position"):
         compile_read(
             oa.TrueNode(),
             DOCUMENT,
@@ -221,7 +220,6 @@ def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
             target(DOCUMENT, "Document"),
             narrow_to=_narrow(DOCUMENT, "Invoice", "Folder"),
         )
-    assert excinfo.value.rule == "narrow-outside-position"
 
 
 def test_tph_tag_predicate_whole_family_root_injects_none() -> None:
@@ -1027,7 +1025,7 @@ def test_tpcs_union_predicate_on_a_sibling_only_member_is_refused() -> None:
     # silent reference to a column that table has no slot for. Position validity
     # is enforced upstream (`m-inheritance-041`), so this is the compiler's own
     # backstop, and the message names the contributor and the branch table.
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         compile_read(
             oa.Comparison(
                 op="greaterThan", subject=oa.FieldSubject("Invoice.amountDue"), value="1.00"
@@ -1036,7 +1034,6 @@ def test_tpcs_union_predicate_on_a_sibling_only_member_is_refused() -> None:
             POSTGRES,
             target(DOCUMENT, "FinancialDocument"),
         )
-    assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_tph_temporal_slots_follow_every_domain_slot_across_ancestry() -> None:
@@ -1786,14 +1783,13 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
         target(meta, "Leaf"),
     )
     assert compiled.statement.sql.endswith("where t0.id = ? and t0.kind = ?")
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         compile_read(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Barren.y"), value=1),
             meta,
             POSTGRES,
             target(meta, "Leaf"),
         )
-    assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 # --------------------------------------------------------------------------- #

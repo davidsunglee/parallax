@@ -13,6 +13,7 @@ from parallax.core.base import (
     SqlNull,
     StructuredDocument,
     UnknownFamilyTag,
+    UsageError,
     check_stored_scalar,
 )
 from parallax.core.dialect import decode_bytes_cell
@@ -44,7 +45,7 @@ from parallax.core.read_delivery._page import (
     StoredDataIssueInput,
 )
 from parallax.core.read_planning import ResolvedReadProjection
-from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
+from parallax.core.wire import WireValue, decode_canonical_wire
 
 __all__ = [
     "POSITIONAL_OUTPUT",
@@ -456,7 +457,7 @@ def _decoded_cell(neutral_type: NeutralType, cell: object) -> object:
         return decode_bytes_cell(cell)
     try:
         return decode_canonical_wire(neutral_type, cast("WireValue", cell))
-    except WireDecodingError:
+    except UsageError:
         return cell
 
 

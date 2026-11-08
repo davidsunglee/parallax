@@ -36,7 +36,7 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import DATE as DATE_TYPE
-from parallax.core.base import INFINITY, INT64, STRING, ManagedValue
+from parallax.core.base import INFINITY, INT64, STRING, ManagedValue, UsageError
 from parallax.core.concurrency import _compile as concurrency_compile
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
@@ -59,7 +59,6 @@ from parallax.core.navigate import (
 from parallax.core.object_query import TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.object_query._resolved import ResolvedLatestSelection, ResolvedObjectQuery
-from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._resolved import (
     ResolvedComparison,
     ResolvedConstant,
@@ -222,7 +221,7 @@ def test_instance_form_projects_value_object_document_last() -> None:
 
 
 def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(ModelRejectedError, match="names no declared member"):
+    with pytest.raises(UsageError, match="names no declared member"):
         compile_read(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Order.mystery"), value=1),
             ORDERS,

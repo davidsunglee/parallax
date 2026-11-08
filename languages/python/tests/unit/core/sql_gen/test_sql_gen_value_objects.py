@@ -18,11 +18,11 @@ from __future__ import annotations
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import STRING
+from parallax.core.base import STRING, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import History
-from parallax.core.predicate import ModelRejectedError
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed, model, target
 
@@ -279,21 +279,21 @@ def test_string_predicates_lower_inside_a_quantifier() -> None:
 
 
 def test_malformed_value_object_paths() -> None:
-    with pytest.raises(ModelRejectedError):
+    with pytest.raises(UsageError):
         compile_read(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address"), value="x"),
             CUSTOMER,
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
-    with pytest.raises(ModelRejectedError):
+    with pytest.raises(UsageError):
         compile_read(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.mystery.city"), value="x"),
             CUSTOMER,
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
-    with pytest.raises(ModelRejectedError):
+    with pytest.raises(UsageError):
         compile_read(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.mystery"), value="x"),
             CUSTOMER,
@@ -303,7 +303,7 @@ def test_malformed_value_object_paths() -> None:
 
 
 def test_a_path_continuing_past_a_scalar_is_refused() -> None:
-    with pytest.raises(ModelRejectedError):
+    with pytest.raises(UsageError):
         compile_read(
             oa.Comparison(
                 op="eq", subject=oa.FieldSubject("Customer.address.city.extra"), value="x"
@@ -315,7 +315,7 @@ def test_a_path_continuing_past_a_scalar_is_refused() -> None:
 
 
 def test_a_path_ending_on_a_value_object_is_refused() -> None:
-    with pytest.raises(ModelRejectedError):
+    with pytest.raises(UsageError):
         compile_read(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.geo"), value="x"),
             CUSTOMER,
@@ -570,14 +570,13 @@ def test_an_element_where_reads_only_the_element_it_binds(node: oa.PredicateNode
     # Inside a value-object quantifier a path is relative to the bound element,
     # so an Entity-qualified subject, a narrowing, and a scalar element all name
     # something outside the scope.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "predicate-subject-outside-scope"):
         compile_read(
             oa.Quantifier("any", path="Customer.address.phones", where=node),
             CUSTOMER,
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
-    assert caught.value.rule == "predicate-subject-outside-scope"
 
 
 def test_constants_lower_inside_an_element_where() -> None:
@@ -701,13 +700,12 @@ def test_presence_of_a_single_value_object_tests_for_an_object() -> None:
     ],
 )
 def test_an_operation_over_the_wrong_terminal_kind_is_refused(op: oa.PredicateNode) -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "path-target-kind-mismatch"):
         compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
-    assert caught.value.rule == "path-target-kind-mismatch"
 
 
 def test_a_dotted_path_through_a_many_value_object_is_refused() -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "path-crosses-many"):
         compile_read(
             oa.Comparison(
                 op="eq", subject=oa.FieldSubject("Customer.address.phones.number"), value="x"
@@ -716,7 +714,6 @@ def test_a_dotted_path_through_a_many_value_object_is_refused() -> None:
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
-    assert caught.value.rule == "path-crosses-many"
 
 
 def test_an_unknown_element_member_is_refused() -> None:
@@ -725,7 +722,7 @@ def test_an_unknown_element_member_is_refused() -> None:
         path="Customer.address.phones",
         where=oa.Comparison(op="eq", subject=oa.FieldSubject("mystery"), value="x"),
     )
-    with pytest.raises(ModelRejectedError):
+    with pytest.raises(UsageError):
         compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
 
 

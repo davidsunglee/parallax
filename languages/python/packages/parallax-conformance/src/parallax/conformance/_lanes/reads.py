@@ -13,7 +13,7 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._mechanism import case_document, envelope
 from parallax.conformance._mechanism.dialects import dialect_for
-from parallax.conformance._mechanism.envelope import READ_ERRORS, Emission, EngineError
+from parallax.conformance._mechanism.envelope import READ_ERRORS, Emission, UnclassifiedEngineError
 from parallax.conformance._mechanism.flat_rows import flat_rows, omitted_value_objects
 from parallax.conformance._mechanism.given_state import apply_given_corrupt
 from parallax.conformance._mechanism.model_facts import (
@@ -92,10 +92,10 @@ def case_database(
 def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQueryNode:
     when = case.document.get("when")
     if not isinstance(when, Mapping):
-        raise EngineError(f"{case.path.name}: read case has no `when`")
+        raise UnclassifiedEngineError(f"{case.path.name}: read case has no `when`")
     body = cast("Mapping[str, object]", when)
     if "objectQuery" not in body:
-        raise EngineError(f"{case.path.name}: read case has no `objectQuery`")
+        raise UnclassifiedEngineError(f"{case.path.name}: read case has no `objectQuery`")
     return _case_ingress.normalize_case_query(deserialize_query(body["objectQuery"]), model)
 
 
@@ -126,7 +126,7 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
     transaction resolves.
     """
     if case.shape != "read":
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: only `read`-shape compile is implemented (a write/rejected/"
             f"scenario case compiles through its own dedicated lane; shape={case.shape})"
         )
@@ -142,7 +142,7 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
             access_mode=case_format.access_mode(case),
         )
     except READ_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     return [Emission("/objectQuery", statement) for statement in statements], len(statements)
 
 
@@ -225,7 +225,7 @@ def _conforming_row(
         issue.object_key == record.object_key and _outermost_occurrence(issue.member) in omitted
         for issue in record.issues
     ):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a `then.rows` read published an InvalidData record that is no "
             "row — stored data contradicting what a row states is graded through a "
             "`then.graph` case's own `storedDataIssues`"
@@ -280,7 +280,7 @@ def _wire_read(
                 observed,
             )
         except READ_ERRORS as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
+            raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 
 def run_graph_case(
@@ -297,7 +297,7 @@ def run_graph_case(
     query = _read_query(case, model)
     snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
     if not _is_single_graph(case, query, model):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a `then.graph` case read a milestone SET — "
             "a milestone-set read asserts `then.graphs`"
         )
@@ -327,7 +327,9 @@ def _stream_batch_size(case: case_format.Case) -> int:
         else None
     )
     if size is None:
-        raise EngineError(f"{case.path.name}: a streamed case declares `when.stream.batchSize`")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: a streamed case declares `when.stream.batchSize`"
+        )
     return size
 
 
@@ -360,7 +362,7 @@ def run_stream_case(
     model = load_case_metamodel(case)
     query = _read_query(case, model)
     if not _is_single_graph(case, query, model):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a streamed `then.graph` case read a milestone SET — "
             "a milestone-set delivery asserts `then.graphs`"
         )
@@ -395,7 +397,7 @@ def run_streamed_graphs_case(
     model = load_case_metamodel(case)
     query = _read_query(case, model)
     if _is_single_graph(case, query, model):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a streamed `then.graphs` case read a single instant — "
             "a single-instant delivery asserts `then.graph`"
         )
@@ -439,7 +441,7 @@ def _wire_delivery(
         try:
             return _case_read(case, db, drained), observed
         except _STREAM_ERRORS as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
+            raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 
 def run_graphs_case(
@@ -461,7 +463,7 @@ def run_graphs_case(
     query = _read_query(case, model)
     snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
     if _is_single_graph(case, query, model):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
             "a single-instant read asserts `then.graph`"
         )
@@ -486,7 +488,7 @@ def _is_single_graph(
     try:
         return not read_scans(query, model)
     except READ_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 
 def _milestone_partition(roots: Sequence[object]) -> list[tuple[Pin, list[MappingRow | None]]]:
@@ -548,10 +550,10 @@ def _milestone_pin(root: object) -> Pin:
     """
     node = envelope.graph_root(root)
     if node is None:
-        raise EngineError("a milestone-set root published no value to pin")
+        raise UnclassifiedEngineError("a milestone-set root published no value to pin")
     pin = pin_of(node)
     if pin == Pin():
-        raise EngineError("a milestone-set root published no decoded milestone start")
+        raise UnclassifiedEngineError("a milestone-set root published no decoded milestone start")
     return pin
 
 

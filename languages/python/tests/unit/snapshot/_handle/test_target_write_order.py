@@ -30,12 +30,10 @@ from typing import Final
 
 import pytest
 
-from parallax.core.base import InstantError
+from parallax.core.base import InstantError, UsageError
 from parallax.core.unit_work import (
     WriteEvidenceError,
-    WriteInstructionError,
     WritePreconditionError,
-    WriteRejectedError,
 )
 from tests._support.db_port import (
     BeginCall,
@@ -161,57 +159,64 @@ _UNDECLARED_MODEL_WIRE: Final = (
 
 def _no_valid_time(entity: str, profile: str, verb: str, keyword: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"{entity}: a {profile} '{verb}' takes no {keyword} ('{entity}' declares no Valid-Time "
         "dimension to bound)",
+        code="write-instruction-invalid",
     )
 
 
 def _bounded_pair(verb: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"WherePosition: a bounded '{verb}' states its window as a pair, and until is absent "
         "— an unbounded write omits until rather than stating none",
+        code="write-instruction-invalid",
     )
 
 
 def _temporal_delete(entity: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"Temporal objects like {entity!r} do not support 'delete_if', which physically "
         "removes rows. Use 'terminate_if' instead.",
+        code="write-instruction-invalid",
     )
 
 
 def _requires_version(entity: str, verb: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"{entity}: '{verb}' requires version, the version of the state the write starts from "
         "as its caller last observed it",
+        code="write-instruction-invalid",
     )
 
 
 def _requires_tx_start(entity: str, verb: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"{entity}: '{verb}' requires tx_start, the Transaction-Time start of the milestone the "
         "write starts from as its caller last observed it",
+        code="write-instruction-invalid",
     )
 
 
 def _version_not_tx_start(verb: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"Account: '{verb}' takes version, not tx_start — 'Account' is versioned, so its "
         "revision is its version",
+        code="write-instruction-invalid",
     )
 
 
 def _tx_start_not_version(entity: str, verb: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"{entity}: '{verb}' takes tx_start, not version — '{entity}' is temporal, so its "
         "revision is its milestone's Transaction-Time start",
+        code="write-instruction-invalid",
     )
 
 
@@ -220,9 +225,10 @@ def _undeclared(entity: str) -> Mapping[Representation, _Expected]:
     assignment's reference, and a Wire row member."""
     return {
         "typed": _refused(
-            WriteInstructionError,
+            UsageError,
             f"{entity}: assignment 'parallax.compatibility.{entity}.nickname' does not name a "
             f"member parallax.compatibility.{entity} declares or inherits",
+            code="write-instruction-invalid",
         ),
         "wire": _undeclared_member(entity),
     }
@@ -230,23 +236,27 @@ def _undeclared(entity: str) -> Mapping[Representation, _Expected]:
 
 def _undeclared_member(entity: str) -> _Expected:
     return _refused(
-        WriteInstructionError, f"{entity}: target write row names undeclared member(s) ['nickname']"
+        UsageError,
+        f"{entity}: target write row names undeclared member(s) ['nickname']",
+        code="write-instruction-invalid",
     )
 
 
 def _key_alone(entity: str, verb: str, member: str) -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"{entity}: a target '{verb}' names its object by its primary key alone, and "
         f"this row also states ['{member}']",
+        code="write-instruction-invalid",
     )
 
 
 def _not_scalar(verb_key: str = "dict") -> _Expected:
     return _refused(
-        WriteInstructionError,
+        UsageError,
         f"Account: key is the object's one scalar primary-key value, and a {verb_key} is no "
         "such value",
+        code="write-instruction-invalid",
     )
 
 
@@ -435,7 +445,7 @@ _EMPTY_AMENDMENT: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         TargetWriteScenario(_POSITION, "amend", payload="empty", concurrency="locking"),
-        _both(_refused(WriteInstructionError, _POSITION_REQUIRES_START)),
+        _both(_refused(UsageError, _POSITION_REQUIRES_START, code="write-instruction-invalid")),
     ),
     _Row(
         TargetWriteScenario(
@@ -477,19 +487,19 @@ _STATED_NONE_START: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(
             _ACCOUNT, "amend", valid_from="none", revision="omitted", payload="undeclared"
         ),
-        _both(_refused(WriteInstructionError, _START_REFUSAL)),
+        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
     ),
     _Row(
         TargetWriteScenario(_ACCOUNT, "amend", valid_from="none", address="unaddressable"),
-        _both(_refused(WriteInstructionError, _START_REFUSAL)),
+        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
     ),
     _Row(
         TargetWriteScenario(UNDECLARED_TARGET_WRITE, "replace", valid_from="none"),
-        _both(_refused(WriteInstructionError, _START_REFUSAL)),
+        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
     ),
     _Row(
         TargetWriteScenario(_POSITION, "terminate", valid_from="none", revision="omitted"),
-        _both(_refused(WriteInstructionError, _START_REFUSAL)),
+        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
     ),
 )
 
@@ -512,8 +522,9 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         {
             "typed": _refused(TypeError, "<class 'int'> is not an Entity Class"),
             "wire": _refused(
-                WriteInstructionError,
+                UsageError,
                 "a Wire `amendUntil` addresses an Entity spelling, and int is neither",
+                code="write-instruction-invalid",
             ),
         },
     ),
@@ -521,9 +532,10 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "replace", until="stated", address="unaddressable"),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "a Wire `replaceUntil` addresses an Entity spelling or a node Parallax "
                 "published, and int is neither",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -531,14 +543,14 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(UNDECLARED_TARGET_WRITE, "amend", until="stated"),
         {
             "typed": _refused(TypeError, _UNDECLARED_MODEL_TYPED),
-            "wire": _refused(WriteInstructionError, _UNDECLARED_MODEL_WIRE),
+            "wire": _refused(UsageError, _UNDECLARED_MODEL_WIRE, code="write-instruction-invalid"),
         },
     ),
     _Row(
         TargetWriteScenario(UNDECLARED_TARGET_WRITE, "replace", until="stated"),
         {
             "typed": _refused(TypeError, _UNDECLARED_MODEL_TYPED),
-            "wire": _refused(WriteInstructionError, _UNDECLARED_MODEL_WIRE),
+            "wire": _refused(UsageError, _UNDECLARED_MODEL_WIRE, code="write-instruction-invalid"),
         },
     ),
     _Row(
@@ -547,8 +559,9 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         ),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "a Wire `amendUntil`'s change set must be a document of names to values, got list",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -556,8 +569,9 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "delete", revision="omitted", payload="unshaped"),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "a Wire `delete`'s key must be a document of names to values, got list",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -565,11 +579,12 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "replace", until="stated", address="published_with_data"),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "a Wire `replaceUntil` of a published node writes the state that node "
                 "published, so it takes no data beside it; to state other data, name the Entity "
                 "instead",
                 published=True,
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -577,9 +592,10 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "amend", until="stated", address="published"),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "a Wire `amendUntil` addresses an Entity spelling, and _WireEntityNode is neither",
                 published=True,
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -587,10 +603,11 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "amend", until="stated", payload="observation_key"),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "target write: row carries forbidden observation control key(s) "
                 "['observedVersion'] (a target write's condition is its own revision argument, "
                 "never a row member)",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -623,9 +640,10 @@ _TARGET_RULES: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "terminate"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Non-temporal objects like 'Account' do not support 'terminate_if', which closes "
                 "a row's history instead of removing it. Use 'delete_if' instead.",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -659,7 +677,7 @@ _TARGET_RULES: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         TargetWriteScenario(_POSITION, "amend"),
-        _both(_refused(WriteInstructionError, _POSITION_REQUIRES_START)),
+        _both(_refused(UsageError, _POSITION_REQUIRES_START, code="write-instruction-invalid")),
     ),
     _Row(
         TargetWriteScenario(_POSITION, "amend", valid_from="stated", until="none"),
@@ -671,10 +689,11 @@ _TARGET_RULES: Final[tuple[_Row, ...]] = (
         ),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "WherePosition: 'replaceUntil' requires valid_from < until — got "
                 "valid_from=datetime.datetime(2024, 7, 1, 0, 0, tzinfo=datetime.timezone.utc), "
                 "until=datetime.datetime(2024, 4, 1, 0, 0, tzinfo=datetime.timezone.utc)",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -684,10 +703,11 @@ _TARGET_RULES: Final[tuple[_Row, ...]] = (
         ),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "WherePosition: 'replaceUntil' requires valid_from < until — got "
                 "valid_from=datetime.datetime(2024, 7, 1, 0, 0, tzinfo=datetime.timezone.utc), "
                 "until=datetime.datetime(2024, 7, 1, 0, 0, tzinfo=datetime.timezone.utc)",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -719,9 +739,10 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "amend", revision="none"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Account: 'amend' states version=None, which names no revision; state the "
                 "version its caller observed",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -729,9 +750,10 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "amend", revision="both"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Account: 'amend' states ['version', 'tx_start'], and a target has one "
                 "condition to state",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -739,9 +761,10 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "amend", revision="both_none"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Account: 'amend' states ['version', 'tx_start'], and a target has one "
                 "condition to state",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -753,8 +776,9 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "amend", revision="ill_typed"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Account: 'amend' takes an integer version, and bool is no version",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -791,9 +815,10 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_POSITION, "amend", valid_from="stated", revision="none"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "WherePosition: 'amend' states tx_start=None, which names no revision; state the "
                 "tx_start its caller observed",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -801,11 +826,12 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_PERSON, "amend"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Person: 'amend' states a revision its caller observed, and 'Person' is "
                 "unversioned and non-temporal, so it has none to state and no write could detect "
                 "a change since that observation; read it in the writing transaction and write "
                 "through that read instead",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -813,11 +839,12 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_PERSON, "delete", revision="omitted"),
         _both(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Person: 'delete' states a revision its caller observed, and 'Person' is "
                 "unversioned and non-temporal, so it has none to state and no write could detect "
                 "a change since that observation; read it in the writing transaction and write "
                 "through that read instead",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -935,8 +962,9 @@ _PAYLOAD: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "replace", payload="incomplete"),
         _wire(
             _refused(
-                WriteRejectedError,
+                UsageError,
                 "Account.owner: a replacement states every required member, and this one is absent",
+                code="write-required-attribute-missing",
             )
         ),
     ),

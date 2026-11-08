@@ -10,15 +10,14 @@ from parallax.core.db_port import MappingRow
 from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import entity_by_name
-from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError
 
 __all__ = [
     "READ_ERRORS",
     "Emission",
-    "EngineError",
     "ScenarioRun",
+    "UnclassifiedEngineError",
     "driver_binds",
     "emissions",
     "graph_root",
@@ -26,13 +25,12 @@ __all__ = [
 ]
 
 
-class EngineError(ValueError):
-    """The engine cannot compile or run a case (unsupported shape or bad reference)."""
+class UnclassifiedEngineError(ValueError):
+    """The engine cannot compile, run, or classify a case: an unsupported shape, a
+    bad reference, or a failure no observation the case grades accounts for."""
 
 
 READ_ERRORS = (
-    CanonicalDocumentError,
-    ModelRejectedError,
     SqlGenError,
     TemporalReadError,
     QueryTargetError,
@@ -41,7 +39,7 @@ READ_ERRORS = (
     KeyError,
     ValueError,
 )
-"""The failures a read lane translates into an :class:`EngineError` naming the case."""
+"""The failures a read lane translates into an :class:`UnclassifiedEngineError` naming the case."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,5 +139,5 @@ def graph_root_key(target: str, model: AcceptedMetamodel) -> str:
     """
     entity = entity_by_name(model, target)
     if entity is None:  # pragma: no cover - the read already resolved this target
-        raise EngineError(f"{target!r} names no entity the accepted model declares")
+        raise UnclassifiedEngineError(f"{target!r} names no entity the accepted model declares")
     return entity.identity.name

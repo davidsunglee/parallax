@@ -8,7 +8,6 @@ from typing import Final, cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core import inheritance, predicate, relationship, temporal_read
-from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
     PreparedTargetInstruction,
@@ -20,6 +19,7 @@ from parallax.core.base import (
     NeutralType,
     ScalarConverter,
     Timestamp,
+    UsageError,
     adopt_frozen_map,
     coerce_neutral_input,
     matches_neutral_type,
@@ -50,7 +50,7 @@ from parallax.core.unit_work import (
     TargetWriteInstruction,
     WriteAssignment,
 )
-from parallax.core.wire import WireDecodingError, WireValue, decode_wire
+from parallax.core.wire import WireValue, decode_wire, is_decoding_refusal, located_refusal
 from parallax.core.write_plan.columns import freeze_retained_value
 
 __all__ = [
@@ -107,9 +107,8 @@ def decode_case_row(
     and the members an edit assigns its copy. A stored row holds the open bound
     in its axis ends, so a declared Transaction-Time or Valid-Time end spelled
     ``infinity`` is the managed :data:`~parallax.core.base.INFINITY`; every other
-    Timestamp leaf stays finite-only. A ``WireDecodingError`` surfaces as the
-    :class:`~parallax.core._execution._unit_work.instructions.InstructionRejectedError` Wire
-    preparation raises for it.
+    Timestamp leaf stays finite-only. A literal that does not decode is refused
+    with its decoding code, located as Wire preparation locates it.
 
     A logical member name the family-effective selection does not declare is
     refused rather than dropped: the row is the whole persisted state a later
@@ -173,8 +172,8 @@ class _StateReading:
             )
         except AuthoringRefusal as refusal:
             cause = refusal.cause
-            if isinstance(cause, WireDecodingError):
-                raise _rejected(_joined(path, refusal.violation.path), cause) from cause
+            if is_decoding_refusal(cause):
+                raise located_refusal(cause, _joined(path, refusal.violation.path)) from cause
             return self._kept(member, value, path)
         (cell,) = authored.cells
         return _named_member(member, cell)
@@ -215,14 +214,8 @@ class _ElementReading:
             return None
         try:
             return self.convert(element)
-        except WireDecodingError as error:
-            raise _rejected(path, error) from error
-
-
-def _rejected(path: str, error: WireDecodingError) -> instructions.InstructionRejectedError:
-    return instructions.InstructionRejectedError(
-        f"neutral-literal-{error.reason}", f"{path}: {error}"
-    )
+        except UsageError as error:
+            raise located_refusal(error, path) from error
 
 
 def _sequence(value: object) -> Sequence[object] | None:

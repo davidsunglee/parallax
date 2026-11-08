@@ -13,7 +13,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import error
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.db_error import DatabaseError
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -48,7 +48,9 @@ def test_run_error_case_refuses_a_case_authoring_no_trigger(document: dict[str, 
     # that is not a list — has nothing to run and is refused by name before any
     # statement reaches the port.
     port = FakeWritePort()
-    with pytest.raises(EngineError, match=r"m-db-error-999-synthetic\.yaml.*`then\.statements`"):
+    with pytest.raises(
+        UnclassifiedEngineError, match=r"m-db-error-999-synthetic\.yaml.*`then\.statements`"
+    ):
         error.run_error_case(_error_case(document), port)
     assert port.writes == []
 

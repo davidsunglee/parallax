@@ -27,11 +27,10 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedWriteSource,
 )
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core.base import StructuredDocument
+from parallax.core.base import StructuredDocument, UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._typed_writes import TypedKeyedInsertSource, TypedKeyedWriteSource
 from parallax.snapshot._handle._wire_writes import WireKeyedInsertSource, WireKeyedWriteSource
@@ -39,6 +38,7 @@ from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import cataloged_for
 from tests.unit._indexed_graph_support import published
 from tests.unit._transact_support import ACCOUNT, INFINITY_INSTANT, db_for, new_account
@@ -374,7 +374,7 @@ def test_a_wire_value_published_by_no_read_or_insert_is_no_keyed_source(
     source = WireKeyedWriteSource(obtain(), {})
     source.capture("amend")
 
-    with pytest.raises(WriteInstructionError, match="carries no such provenance"):
+    with raises_code(UsageError, "write-instruction-invalid", match="carries no such provenance"):
         source.resolve(cataloged_for(CONTACT_MODEL).meta, "amend")
 
 

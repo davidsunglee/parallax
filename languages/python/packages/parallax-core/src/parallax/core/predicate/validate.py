@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import assert_never, cast
+from typing import Final, Literal, assert_never, cast
 
 from parallax.core import inheritance, relationship
-from parallax.core.base import ManagedValue, NeutralType, String
+from parallax.core.base import ManagedValue, NeutralType, String, UsageError
 from parallax.core.metamodel import (
     AttributeMetadata,
     DefiningRelationshipDeclaration,
@@ -83,14 +83,31 @@ from parallax.core.predicate._resolved import (
     SubjectPosition,
 )
 from parallax.core.relationship import RelationshipMetadata
-from parallax.core.wire import WireDecodingError, WireValue, decode_wire
+from parallax.core.wire import WireValue, decode_wire, located_refusal
 
 __all__ = [
+    "ATTRIBUTE_OUTSIDE_ACTIVE_POSITION",
+    "BETWEEN_BOUNDS_INVERTED",
+    "FIND_ROOT_VALUE_OBJECT",
+    "NARROW_EMPTY_EFFECTIVE_SET",
+    "NARROW_OUTSIDE_POSITION",
+    "NARROW_OUTSIDE_RELATIONSHIP_TARGET",
+    "NULL_CHECK_NON_NULLABLE_MEMBER",
+    "PATH_CROSSES_MANY",
+    "PATH_TARGET_KIND_MISMATCH",
+    "PATH_UNKNOWN_MEMBER",
+    "PREDICATE_SUBJECT_OUTSIDE_SCOPE",
+    "REFERENCE_AMBIGUOUS_ENTITY_NAME",
+    "SCALAR_COLLECTION_UNQUANTIFIED",
+    "STRING_PREDICATE_NON_STRING_MEMBER",
+    "SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE",
+    "SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE",
+    "SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES",
     "EntityFrame",
-    "ModelRejectedError",
     "ObjectElementFrame",
     "PositionScope",
     "PredicateFrame",
+    "PredicateRejectionCode",
     "ScalarElementFrame",
     "adopted_operands",
     "canonical_interpretation",
@@ -112,12 +129,46 @@ __all__ = [
 ]
 
 
-class ModelRejectedError(ValueError):
-    """A schema-valid predicate or Object Query violates a model-aware rule."""
+type PredicateRejectionCode = Literal[
+    "attribute-outside-active-position",
+    "between-bounds-inverted",
+    "find-root-value-object",
+    "narrow-empty-effective-set",
+    "narrow-outside-position",
+    "narrow-outside-relationship-target",
+    "null-check-non-nullable-member",
+    "path-crosses-many",
+    "path-target-kind-mismatch",
+    "path-unknown-member",
+    "predicate-subject-outside-scope",
+    "reference-ambiguous-entity-name",
+    "scalar-collection-unquantified",
+    "string-predicate-non-string-member",
+    "subtype-attribute-outside-narrow-scope",
+    "subtype-selection-duplicate-alternative",
+    "subtype-selection-overlapping-alternatives",
+]
+"""The model-aware rules a schema-valid predicate or Object Query breaks, each
+raised as a :class:`~parallax.core.base.UsageError` under the core
+``rejectedRule`` spelling of the rule."""
 
-    def __init__(self, rule: str, message: str) -> None:
-        super().__init__(message)
-        self.rule = rule
+ATTRIBUTE_OUTSIDE_ACTIVE_POSITION: Final = "attribute-outside-active-position"
+BETWEEN_BOUNDS_INVERTED: Final = "between-bounds-inverted"
+FIND_ROOT_VALUE_OBJECT: Final = "find-root-value-object"
+NARROW_EMPTY_EFFECTIVE_SET: Final = "narrow-empty-effective-set"
+NARROW_OUTSIDE_POSITION: Final = "narrow-outside-position"
+NARROW_OUTSIDE_RELATIONSHIP_TARGET: Final = "narrow-outside-relationship-target"
+NULL_CHECK_NON_NULLABLE_MEMBER: Final = "null-check-non-nullable-member"
+PATH_CROSSES_MANY: Final = "path-crosses-many"
+PATH_TARGET_KIND_MISMATCH: Final = "path-target-kind-mismatch"
+PATH_UNKNOWN_MEMBER: Final = "path-unknown-member"
+PREDICATE_SUBJECT_OUTSIDE_SCOPE: Final = "predicate-subject-outside-scope"
+REFERENCE_AMBIGUOUS_ENTITY_NAME: Final = "reference-ambiguous-entity-name"
+SCALAR_COLLECTION_UNQUANTIFIED: Final = "scalar-collection-unquantified"
+STRING_PREDICATE_NON_STRING_MEMBER: Final = "string-predicate-non-string-member"
+SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE: Final = "subtype-attribute-outside-narrow-scope"
+SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE: Final = "subtype-selection-duplicate-alternative"
+SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES: Final = "subtype-selection-overlapping-alternatives"
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,8 +329,8 @@ def resolve_operation(
         )
     terminal = _resolve_path(subject.path, frame, model)
     if not isinstance(terminal, _ScalarTerminal):
-        raise ModelRejectedError(
-            "path-target-kind-mismatch",
+        raise UsageError(
+            PATH_TARGET_KIND_MISMATCH,
             f"{subject.path!r} ends on {terminal.kind}, not a scalar field",
         )
     member = terminal.member
@@ -315,8 +366,8 @@ def resolve_quantifier(
             collection = resolved
             inner = _related_frame(model, resolved.target)
         case _:
-            raise ModelRejectedError(
-                "path-target-kind-mismatch",
+            raise UsageError(
+                PATH_TARGET_KIND_MISMATCH,
                 f"{path!r} names {terminal.kind}, which a quantifier does not range over; "
                 "quantify a collection, or test a single object with exists/notExists",
             )
@@ -349,15 +400,15 @@ def resolve_presence(
             occurrence.multiplicity is Multiplicity.ONE
         ):
             if where is not None:
-                raise ModelRejectedError(
-                    "path-target-kind-mismatch",
+                raise UsageError(
+                    PATH_TARGET_KIND_MISMATCH,
                     f"{path!r} names {terminal.kind}, whose presence takes no predicate; "
                     "only a to-one relationship's target is matched against one",
                 )
             return ResolvedPresence(negated, occurrence, terminal.position)
         case _:
-            raise ModelRejectedError(
-                "path-target-kind-mismatch",
+            raise UsageError(
+                PATH_TARGET_KIND_MISMATCH,
                 f"{path!r} names {terminal.kind}, which has no presence of its own; "
                 "exists/notExists test a single object, any/none a collection",
             )
@@ -395,8 +446,8 @@ def resolve_narrow(
         )
     terminal = _resolve_path(path, frame, model)
     if not isinstance(terminal, _RelationshipTerminal) or terminal.to_many:
-        raise ModelRejectedError(
-            "path-target-kind-mismatch",
+        raise UsageError(
+            PATH_TARGET_KIND_MISMATCH,
             f"{path!r} names {terminal.kind}; a path-targeted narrow reaches a single "
             "related Entity",
         )
@@ -490,11 +541,8 @@ def _decoded_operands(
     for value in values:
         try:
             decoded.append(decode_wire(member.type, cast("WireValue", value)))
-        except WireDecodingError as error:
-            raise ModelRejectedError(
-                f"neutral-literal-{error.reason}",
-                f"{subject!r}: {error}",
-            ) from error
+        except UsageError as error:
+            raise located_refusal(error, repr(subject)) from error
     return tuple(decoded)
 
 
@@ -507,8 +555,8 @@ def _ordered_bounds(
     except TypeError:  # pragma: no cover - one declared type yields comparable managed members
         inverted = False
     if inverted:
-        raise ModelRejectedError(
-            "between-bounds-inverted",
+        raise UsageError(
+            BETWEEN_BOUNDS_INVERTED,
             f"{subject!r}: decoded lower bound {managed_lower!r} is greater than decoded upper "
             f"bound {managed_upper!r}, so the range is empty",
         )
@@ -524,8 +572,8 @@ def require_single_scalar(
     its elements are reached only through a quantifier over it.
     """
     if member.multiplicity is Multiplicity.MANY:
-        raise ModelRejectedError(
-            "scalar-collection-unquantified",
+        raise UsageError(
+            SCALAR_COLLECTION_UNQUANTIFIED,
             f"{subject!r} names a scalar collection, which is not one scalar value; "
             "quantify it with any/all/none",
         )
@@ -540,8 +588,8 @@ def _member_spelling(member: ResolvedPredicateMember) -> str:
     )
 
 
-def _outside_scope(message: str) -> ModelRejectedError:
-    return ModelRejectedError("predicate-subject-outside-scope", message)
+def _outside_scope(message: str) -> UsageError:
+    return UsageError(PREDICATE_SUBJECT_OUTSIDE_SCOPE, message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,14 +692,14 @@ def _walk_entity(
             else _member_at(model, entity, position, segment)
         )
         if member is None:
-            raise ModelRejectedError(
-                "path-unknown-member",
+            raise UsageError(
+                PATH_UNKNOWN_MEMBER,
                 f"{path!r}: {segment!r} names no declared member of {entity.identity.canonical}",
             )
         if isinstance(member, AttributeMetadata):
             if not last:
-                raise ModelRejectedError(
-                    "path-unknown-member",
+                raise UsageError(
+                    PATH_UNKNOWN_MEMBER,
                     f"{path!r}: {segment!r} is a scalar attribute but the path continues",
                 )
             return _ScalarTerminal(member, reached)
@@ -685,15 +733,15 @@ def _walk_occurrence(
         attribute = container.attribute(segment)
         if attribute is not None:
             if not last:
-                raise ModelRejectedError(
-                    "path-unknown-member",
+                raise UsageError(
+                    PATH_UNKNOWN_MEMBER,
                     f"{path!r}: {segment!r} is a scalar attribute but the path continues",
                 )
             return _ScalarTerminal(attribute, reached)
         nested = container.value_object(segment)
         if nested is None:
-            raise ModelRejectedError(
-                "path-unknown-member",
+            raise UsageError(
+                PATH_UNKNOWN_MEMBER,
                 f"{path!r}: {segment!r} names no declared member",
             )
         if last:
@@ -704,9 +752,9 @@ def _walk_occurrence(
     raise AssertionError("a predicate path names at least one member")  # pragma: no cover
 
 
-def _crosses_many(path: str, segment: str) -> ModelRejectedError:
-    return ModelRejectedError(
-        "path-crosses-many",
+def _crosses_many(path: str, segment: str) -> UsageError:
+    return UsageError(
+        PATH_CROSSES_MANY,
         f"{path!r}: {segment!r} holds many objects, so a path cannot continue past it; "
         "bind it with any/all/none and continue relative to its element",
     )
@@ -743,7 +791,7 @@ def _member_at(
     families = inheritance.view(model)
     view = families.entity(entity.identity)
     root = entity.identity if view is None else view.root
-    refusal: ModelRejectedError | None = None
+    refusal: UsageError | None = None
     for candidate in model.entities:
         candidate_view = families.entity(candidate.identity)
         candidate_root = candidate.identity if candidate_view is None else candidate_view.root
@@ -758,7 +806,7 @@ def _member_at(
             continue
         try:
             _check_attribute_position(model, candidate, position)
-        except ModelRejectedError as inapplicable:
+        except UsageError as inapplicable:
             refusal = refusal or inapplicable
             continue
         if isinstance(local, DefiningRelationshipDeclaration | ReverseRelationshipDeclaration):
@@ -854,9 +902,7 @@ def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
     return entity_by_name(model, name)
 
 
-def _ambiguous_reference(
-    model: Metamodel, reference: str, class_name: str
-) -> ModelRejectedError | None:
+def _ambiguous_reference(model: Metamodel, reference: str, class_name: str) -> UsageError | None:
     """The `reference-ambiguous-entity-name` rejection ``reference`` earns when
     ``class_name`` is a bare local spelling two namespaces of ``model`` share, or
     absence when it names at most one Entity.
@@ -872,8 +918,8 @@ def _ambiguous_reference(
     canonical = ambiguous_entity_spellings(model, class_name)
     if not canonical:
         return None
-    return ModelRejectedError(
-        "reference-ambiguous-entity-name",
+    return UsageError(
+        REFERENCE_AMBIGUOUS_ENTITY_NAME,
         f"{reference!r}: the bare Entity spelling {class_name!r} is shared by {list(canonical)}, "
         "so it names no single Entity in this model and the reference resolves nowhere "
         "(m-predicate reference resolution)",
@@ -893,7 +939,9 @@ def _check_reference_entity_name(model: Metamodel, reference: str, class_name: s
         raise ambiguous
 
 
-def _unresolved_reference(model: Metamodel, reference: str, class_name: str) -> ValueError:
+def _unresolved_reference(
+    model: Metamodel, reference: str, class_name: str
+) -> UsageError | ValueError:
     """The error a reference whose Entity spelling resolves to nothing raises.
 
     Two unrelated failures share that miss: a spelling more than one Entity answers
@@ -959,8 +1007,8 @@ def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[
     seen_identities: set[str] = set()
     for name, identity, _effective in resolved_alternatives:
         if identity in seen_identities:
-            raise ModelRejectedError(
-                "subtype-selection-duplicate-alternative",
+            raise UsageError(
+                SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE,
                 f"Subtype Selection repeats alternative {name!r}",
             )
         seen_identities.add(identity)
@@ -971,8 +1019,8 @@ def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[
         for previous_name, previous_effective in alternatives:
             overlap = effective & previous_effective
             if overlap:
-                raise ModelRejectedError(
-                    "subtype-selection-overlapping-alternatives",
+                raise UsageError(
+                    SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
                     f"Subtype Selection alternatives {previous_name!r} and {name!r} "
                     f"overlap at {sorted(overlap)}",
                 )
@@ -991,14 +1039,14 @@ def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel)
     """
     resolved = resolve_subtype_selection(to, model)
     if not resolved:
-        raise ModelRejectedError(
-            "narrow-empty-effective-set",
+        raise UsageError(
+            NARROW_EMPTY_EFFECTIVE_SET,
             f"narrow.to {list(to)} resolves to the empty concrete-subtype set",
         )
     if scope.relationship_target is not None:
         if not resolved <= scope.effective:
-            raise ModelRejectedError(
-                "narrow-outside-relationship-target",
+            raise UsageError(
+                NARROW_OUTSIDE_RELATIONSHIP_TARGET,
                 f"narrow.to {list(to)} resolves to {sorted(resolved)}, which is not a "
                 f"subset of the relationship target's effective concrete set "
                 f"{sorted(scope.effective)}",
@@ -1006,8 +1054,8 @@ def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel)
         return PositionScope(effective=resolved)
 
     if not resolved <= scope.effective:
-        raise ModelRejectedError(
-            "narrow-outside-position",
+        raise UsageError(
+            NARROW_OUTSIDE_POSITION,
             f"narrow.to {sorted(resolved)} is not a subset of the active position "
             f"{sorted(scope.effective)} threaded into this node",
         )
@@ -1027,8 +1075,8 @@ def check_attribute_reference(
     entity = _lookup_entity(model, class_name)
     if entity is None:
         if _is_value_object_name_anywhere(model, class_name):
-            raise ModelRejectedError(
-                "find-root-value-object",
+            raise UsageError(
+                FIND_ROOT_VALUE_OBJECT,
                 f"{attr_ref!r} is rooted at the value object {class_name!r}, not a "
                 "queryable entity; a value object has no identity or table and is "
                 "queried only through its owner (m-value-object contract 5)",
@@ -1057,13 +1105,13 @@ def _check_attribute_position(
     if scope.effective <= own_effective:
         return
     if scope.effective <= _family_set(model, entity):
-        raise ModelRejectedError(
-            "subtype-attribute-outside-narrow-scope",
+        raise UsageError(
+            SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
             f"{entity.identity.canonical} is not available to every concrete in the active "
             f"position {sorted(scope.effective)}; narrow to {sorted(own_effective)} first",
         )
-    raise ModelRejectedError(
-        "attribute-outside-active-position",
+    raise UsageError(
+        ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
         f"{entity.identity.canonical} shares no inheritance family with the active position "
         f"{sorted(scope.effective)}, so no narrow makes its attributes addressable here",
     )
@@ -1090,7 +1138,7 @@ def relationship_target(
             raise ValueError(f"{reference!r} names a relationship whose target is undeclared")
         return target
     if entity.value_object(member_name) is not None:
-        raise ModelRejectedError(
+        raise UsageError(
             wrong_kind_rule,
             f"{reference!r} names the value object {member_name!r}, not a relationship; a "
             "value object has no identity to correlate and materializes with its owner, "
@@ -1110,8 +1158,8 @@ def _check_string_member(subject: str, member: ResolvedPredicateMember) -> None:
     types also use a string Wire carrier.
     """
     if not isinstance(member.type, String):
-        raise ModelRejectedError(
-            "string-predicate-non-string-member",
+        raise UsageError(
+            STRING_PREDICATE_NON_STRING_MEMBER,
             f"{subject!r}: a string predicate reads text, but the member's declared type is "
             f"{member.type!r}",
         )
@@ -1119,8 +1167,8 @@ def _check_string_member(subject: str, member: ResolvedPredicateMember) -> None:
 
 def _require_nullable_null_check(path: str, nullable: bool) -> None:
     if not nullable:
-        raise ModelRejectedError(
-            "null-check-non-nullable-member",
+        raise UsageError(
+            NULL_CHECK_NON_NULLABLE_MEMBER,
             f"{path!r}: isNull/isNotNull is invalid for a non-nullable member "
             "(m-predicate null-check validity)",
         )

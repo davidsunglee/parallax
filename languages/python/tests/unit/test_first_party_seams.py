@@ -24,8 +24,8 @@ from parallax.conformance.story_models import Order
 from parallax.core import LATEST, TX_TIME
 from parallax.core._execution._unit_work.instructions import (
     SET_BASED_WRITE_TARGET_UNSUPPORTED,
-    InstructionRejectedError,
 )
+from parallax.core.base import UsageError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
@@ -38,7 +38,6 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
     RetainedObservation,
-    WriteRejectedError,
 )
 from parallax.core.write_plan import ObjectKey, ObjectStateKey, VersionObservation
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
@@ -342,14 +341,14 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
     # Wire verb's preparation judges it, so it is refused with the same
     # classified rule the Typed keyed verbs and the rejected run lane report.
     port = ScriptedAdapter(Transact())
-    with raises_contextualized(WriteRejectedError) as raised:
+    with raises_contextualized(UsageError) as raised:
         _run(
             port,
             lambda tx: tx.wire.insert(
                 "parallax.compatibility.Account", {"id": 7, "balance": "5.00"}
             ),
         )
-    assert raised.value.rule == "write-required-attribute-missing"
+    assert raised.value.code == "write-required-attribute-missing"
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
@@ -357,9 +356,9 @@ def test_a_predicate_write_of_a_versioned_target_is_refused_at_the_shared_predic
     # A versioned target needs an observation one readless statement cannot
     # make (`m-batch-write`), and the Wire ingress does not invent a read.
     port = ScriptedAdapter(Transact())
-    with raises_contextualized(InstructionRejectedError) as refused:
+    with raises_contextualized(UsageError) as refused:
         _run(port, lambda tx: tx.wire.amend_where(_predicate_target(), {"balance": "11.00"}))
-    assert refused.value.rule == SET_BASED_WRITE_TARGET_UNSUPPORTED
+    assert refused.value.code == SET_BASED_WRITE_TARGET_UNSUPPORTED
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 

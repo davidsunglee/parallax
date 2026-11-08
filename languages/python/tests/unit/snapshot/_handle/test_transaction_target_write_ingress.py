@@ -29,15 +29,12 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     serialize,
 )
+from parallax.core.base import UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import AttributeAssignment, DomainModel
 from parallax.core.entity._expressions import AttributeRef
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import (
-    TargetWriteInstruction,
-    WriteInstructionError,
-    WriteRejectedError,
-)
+from parallax.core.unit_work import TargetWriteInstruction
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
@@ -52,6 +49,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._transact_support import (
     FIND_SQL_UNLOCKED,
@@ -80,12 +78,12 @@ def _row(version: int = 3) -> dict[str, object]:
 def _refused(
     call: Callable[[TxnContext], object],
     match: str,
-    error: type[Exception] | tuple[type[Exception], ...] = WriteInstructionError,
+    code: str = "write-instruction-invalid",
 ) -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(error, match=match):
+        with raises_code(UsageError, code, match=match):
             call(tx)
 
     account_db(port).transact(fn)
@@ -158,7 +156,7 @@ def test_an_unversioned_target_takes_no_target_write(
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="has none to state"):
+        with raises_code(UsageError, "write-instruction-invalid", match="has none to state"):
             _target(verb, Wallet, **condition)(tx)
 
     db_for(MODELS["wallet"], port).transact(fn)
@@ -186,21 +184,19 @@ def test_no_target_verb_takes_an_unversioned_assertion(method: Callable[..., Non
 # A target deletion names its object by its primary key alone.           #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    ("document", "match"),
+    ("document", "match", "code"),
     [
-        ({"id": 1, "owner": "Bo"}, "primary key alone"),
-        ({"owner": "Bo"}, "states no 'id'"),
-        ({"id": 1, "nickname": "Bo"}, "undeclared"),
-        ({"id": "one"}, "id"),
+        ({"id": 1, "owner": "Bo"}, "primary key alone", "write-instruction-invalid"),
+        ({"owner": "Bo"}, "states no 'id'", "write-instruction-invalid"),
+        ({"id": 1, "nickname": "Bo"}, "undeclared", "write-instruction-invalid"),
+        ({"id": "one"}, "id", "neutral-literal-type-mismatch"),
     ],
     ids=["member", "no-key", "undeclared", "ill-typed-key"],
 )
-def test_a_target_deletion_states_its_key_alone(document: dict[str, object], match: str) -> None:
-    _refused(
-        lambda tx: tx.wire.delete_if("Account", document, version=3),
-        match,
-        (WriteInstructionError, WriteRejectedError),
-    )
+def test_a_target_deletion_states_its_key_alone(
+    document: dict[str, object], match: str, code: str
+) -> None:
+    _refused(lambda tx: tx.wire.delete_if("Account", document, version=3), match, code)
 
 
 # --------------------------------------------------------------------------- #
@@ -246,18 +242,21 @@ def test_a_target_key_is_one_scalar_value(verb: str, key: object) -> None:
 @pytest.mark.parametrize("verb", list(_TYPED_KEYED))
 @pytest.mark.parametrize("key", ["one", True, 1.5], ids=["string", "boolean", "fraction"])
 def test_a_target_key_is_judged_against_the_key_type(verb: str, key: object) -> None:
-    _refused(lambda tx: _TYPED_KEYED[verb](tx, key), "declared type", WriteRejectedError)
+    _refused(lambda tx: _TYPED_KEYED[verb](tx, key), "declared type", "write-value-type-mismatch")
 
 
 @pytest.mark.parametrize(
     "entity", [int, "Account", Wallet], ids=["foreign-class", "spelling", "another-models"]
 )
 def test_a_typed_target_amendment_takes_an_entity_class_of_its_model(entity: object) -> None:
-    _refused(
-        lambda tx: tx.amend_if(cast("Any", entity), mm.Account.owner.set("Bo"), key=1, version=3),
-        "Entity Class",
-        TypeError,
-    )
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(TypeError, match="Entity Class"):
+            tx.amend_if(cast("Any", entity), mm.Account.owner.set("Bo"), key=1, version=3)
+
+    account_db(port).transact(fn)
+    assert _calls(port) == []
 
 
 def _raw(member: str, value: object) -> AttributeAssignment[Any]:
@@ -266,21 +265,25 @@ def _raw(member: str, value: object) -> AttributeAssignment[Any]:
 
 
 @pytest.mark.parametrize(
-    ("assignments", "match"),
+    ("assignments", "match", "code"),
     [
-        ((mm.Account.owner.set("Bo"), mm.Account.owner.set("Cy")), "duplicated"),
-        ((_raw("id", 2),), "primary-key"),
-        ((_raw("version", 9),), "framework-owned"),
-        ((Wallet.balance.set(Decimal(1)),), "declares or inherits"),
-        ((_raw("balance", "much"),), "balance"),
-        ((_raw("nickname", "x"),), "declares or inherits"),
+        (
+            (mm.Account.owner.set("Bo"), mm.Account.owner.set("Cy")),
+            "duplicated",
+            "write-instruction-invalid",
+        ),
+        ((_raw("id", 2),), "primary-key", "write-instruction-invalid"),
+        ((_raw("version", 9),), "framework-owned", "framework-owned-member-assigned"),
+        ((Wallet.balance.set(Decimal(1)),), "declares or inherits", "write-instruction-invalid"),
+        ((_raw("balance", "much"),), "balance", "write-instruction-invalid"),
+        ((_raw("nickname", "x"),), "declares or inherits", "write-instruction-invalid"),
     ],
     ids=["duplicate", "primary-key", "version", "foreign", "ill-typed", "undeclared"],
 )
 def test_an_assignment_is_judged_before_anything_is_buffered(
-    assignments: tuple[Any, ...], match: str
+    assignments: tuple[Any, ...], match: str, code: str
 ) -> None:
-    _refused(lambda tx: tx.amend_if(mm.Account, *assignments, key=1, version=3), match)
+    _refused(lambda tx: tx.amend_if(mm.Account, *assignments, key=1, version=3), match, code)
 
 
 def test_an_inherited_assignment_applies_to_a_concrete_target() -> None:
@@ -312,15 +315,15 @@ def test_a_sibling_member_and_an_abstract_target_are_refused() -> None:
     ancestor = Vessel.name.set("Skua").attr.entity
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="declares or inherits"):
+        with raises_code(UsageError, "write-instruction-invalid", match="declares or inherits"):
             tx.amend_if(Ferry, cast("Any", Tug.pull.set(1)), key=4, version=3)
-        with pytest.raises(WriteInstructionError, match="declares or inherits"):
+        with raises_code(UsageError, "write-instruction-invalid", match="declares or inherits"):
             tx.amend_if(
                 Ferry, AttributeAssignment(AttributeRef(ancestor, "berths"), 8), key=4, version=3
             )
-        with pytest.raises(WriteRejectedError, match="concrete"):
+        with pytest.raises(UsageError, match="concrete"):
             tx.amend_if(Vessel, Vessel.name.set("Skua"), key=4, version=3)
-        with pytest.raises(WriteRejectedError, match="concrete"):
+        with pytest.raises(UsageError, match="concrete"):
             tx.delete_if(Vessel, key=4, version=3)
 
     db_for(VESSEL, port).transact(fn)
@@ -389,7 +392,7 @@ def test_a_source_assignment_addressing_another_entity_is_refused() -> None:
 
     def fn(tx: TxnContext) -> None:
         found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        with pytest.raises(WriteInstructionError, match="declares or inherits"):
+        with raises_code(UsageError, "write-instruction-invalid", match="declares or inherits"):
             tx.amend(found, Wallet.balance.set(Decimal(1)))  # pyright: ignore[reportArgumentType]
 
     account_db(port).transact(fn)
@@ -422,7 +425,7 @@ def test_assignments_beside_any_edit_history_are_refused(
     edit: Callable[[mm.Account], mm.Account],
 ) -> None:
     def write(tx: TxnContext, found: mm.Account) -> None:
-        with pytest.raises(WriteInstructionError, match="one write has one author"):
+        with raises_code(UsageError, "write-instruction-invalid", match="one write has one author"):
             tx.amend(edit(found), mm.Account.balance.set(Decimal("5.00")))
 
     assert _read_then(write) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
@@ -451,27 +454,32 @@ _ONE = {"eq": {"path": "Account.id", "value": 1}}
     [
         ({"owner": "Bo", "balance": "1.00"}, ("Bo", Decimal("1.00"))),
         ({"id": 1, "owner": "Bo", "balance": "1.00"}, ("Bo", Decimal("1.00"))),
-        ({}, "required"),
-        ({"owner": "Bo"}, "required"),
-        ({"id": 2, "owner": "Bo", "balance": "1"}, "never changes it"),
+        ({}, ("write-required-attribute-missing", "required")),
+        ({"owner": "Bo"}, ("write-required-attribute-missing", "required")),
+        (
+            {"id": 2, "owner": "Bo", "balance": "1"},
+            ("write-instruction-invalid", "never changes it"),
+        ),
     ],
     ids=["stated", "matching-key", "empty", "incomplete", "another-key"],
 )
 def test_wire_replacement_data_stands_alone(
-    data: dict[str, object], outcome: tuple[object, ...] | str
+    data: dict[str, object], outcome: tuple[object, ...]
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write()))
+    refused = isinstance(outcome[1], str)
 
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
-        if isinstance(outcome, str):
-            with pytest.raises((WriteInstructionError, WriteRejectedError), match=outcome):
+        if refused:
+            code, match = cast("tuple[str, str]", outcome)
+            with raises_code(UsageError, code, match=match):
                 tx.wire.replace(node, data)
         else:
             tx.wire.replace(node, data)
 
     account_db(port).transact(fn)
-    if isinstance(outcome, tuple):
+    if not refused:
         assert _calls(port)[-1] == WriteCall(_GATED_FULL, (*outcome, 4, 1, 3))
     else:
         assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
@@ -505,7 +513,7 @@ def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
 
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
-        with pytest.raises(WriteInstructionError):
+        with raises_code(UsageError, "neutral-literal-type-mismatch"):
             tx.wire.amend(node, {"id": "one", "balance": "5.00"})
 
     account_db(port).transact(fn)
@@ -531,7 +539,7 @@ def test_a_source_payload_is_judged_after_its_window(payload: str) -> None:
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
         found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        with pytest.raises(WriteInstructionError, match="takes no until"):
+        with raises_code(UsageError, "write-instruction-invalid", match="takes no until"):
             write(tx, node, found)
 
     account_db(port).transact(fn)
@@ -593,7 +601,7 @@ def test_no_retired_method_remains(owner: type[object], name: str) -> None:
     ids=["keyed", "bounded", "target", "predicate"],
 )
 def test_no_retired_instruction_token_is_accepted(document: dict[str, object]) -> None:
-    with pytest.raises(WriteInstructionError, match="mutation"):
+    with raises_code(UsageError, "write-instruction-invalid", match="mutation"):
         deserialize(document)
 
 
@@ -609,7 +617,7 @@ def test_an_instruction_stating_no_revision_is_refused_for_every_target(
     entity: str, row: dict[str, object], outcome: str
 ) -> None:
     model = model_of(MODELS["wallet"] if entity == "Wallet" else MODELS["account"])
-    with pytest.raises(WriteInstructionError, match=outcome):
+    with raises_code(UsageError, "write-instruction-invalid", match=outcome):
         prepare_typed_write(
             TargetWriteInstruction("amend", entity, row), write_preparation_of(model)
         )
@@ -617,7 +625,7 @@ def test_an_instruction_stating_no_revision_is_refused_for_every_target(
 
 @pytest.mark.parametrize("mutation", ["amend", "delete"])
 def test_a_target_document_states_exactly_one_revision(mutation: str) -> None:
-    with pytest.raises(WriteInstructionError, match="states no revision"):
+    with raises_code(UsageError, "write-instruction-invalid", match="states no revision"):
         deserialize({"mutation": mutation, "entity": "Account", "row": {"id": 1}})
 
 

@@ -38,6 +38,7 @@ from parallax.core.base import (
     FrozenMap,
     NeutralType,
     StructuredDocument,
+    UsageError,
 )
 from parallax.core.document_codec import (
     MISSING,
@@ -77,7 +78,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.wire import WireDecodingError, WireValue, decode_wire, loads
+from parallax.core.wire import WireValue, decode_wire, loads
 from tests._support.managed_documents import OMITTED, encoded_document
 
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
@@ -202,7 +203,7 @@ def test_a_float_encoding_decodes_back_at_the_width_that_chose_it() -> None:
         )
     # A magnitude that rounds past binary32's finite range is refused by Wire
     # decoding instead of producing an infinite carrier.
-    with pytest.raises(WireDecodingError):
+    with pytest.raises(UsageError):
         decode_wire(FLOAT32, 3.5e38)
 
 

@@ -67,7 +67,8 @@ class EntityPreparation:
         its value is converted; the key addresses its object and assigns
         nothing.
 
-        Raises :class:`~parallax.core.metamodel.WriteAssignmentError`.
+        Raises the assignment judgement's
+        :class:`~parallax.core.base.UsageError`.
         """
         if position != self.key:
             judge_assignment(

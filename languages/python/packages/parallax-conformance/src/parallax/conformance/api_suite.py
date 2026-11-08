@@ -242,16 +242,12 @@ RECIPES: Final[list[Recipe]] = [
             "    NoResultFound,\n"
             "    TemporalBound,\n"
             "    TxTemporal,\n"
+            "    UsageError,\n"
             "    attr,\n"
             ")\n"
             "from parallax.core.execution import ExecutionFailure, "
             "TransactionTimePinReadOnlyError\n"
-            "from parallax.core.unit_work import (\n"
-            "    InstructionRejectedError,\n"
-            "    WriteEvidenceError,\n"
-            "    WriteInstructionError,\n"
-            "    WritePreconditionError,\n"
-            ")\n"
+            "from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of\n"
         ),
     ),
@@ -786,12 +782,7 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.metamodel import MetamodelIssue\n"
             "from parallax.core.read_delivery import InvalidData, InvalidDataError, "
             "StreamStateError\n"
-            "from parallax.core.unit_work import (\n"
-            "    InstructionRejectedError,\n"
-            "    WriteEvidenceError,\n"
-            "    WriteInstructionError,\n"
-            "    WritePreconditionError,\n"
-            ")\n"
+            "from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError\n"
             "from parallax.evolution import SchemaDelta\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext, is_view_loaded\n"
         ),
@@ -914,37 +905,36 @@ EXAMPLES: Final[list[Example]] = [
         "m-value-object-038",
         "A nested comparison whose literal type mismatches the declared attribute",
         "Customer.where(Customer.address.city == 42)\n"
-        '# raises ModelRejectedError(rule="nested-literal-type-mismatch")',
+        '# raises UsageError(code="nested-literal-type-mismatch")',
     ),
     Example(
         "m-inheritance-040",
         "A narrow that broadens beyond its position",
-        "Animal.where(Animal.is_a(Person))\n"
-        '# raises ModelRejectedError(rule="narrow-outside-position")',
+        'Animal.where(Animal.is_a(Person))\n# raises UsageError(code="narrow-outside-position")',
     ),
     Example(
         "m-inheritance-041",
         "A concrete-subtype attribute referenced outside a narrow scope",
         "Animal.where(Dog.bark_volume > 5)\n"
-        '# raises ModelRejectedError(rule="subtype-attribute-outside-narrow-scope")',
+        '# raises UsageError(code="subtype-attribute-outside-narrow-scope")',
     ),
     Example(
         "m-inheritance-042",
         "A nested narrow that broadens back out of the enclosing position",
         "Animal.where(Pet.is_a(Dog, where=Animal.is_a(Cat)))\n"
-        '# raises ModelRejectedError(rule="narrow-outside-position")',
+        '# raises UsageError(code="narrow-outside-position")',
     ),
     Example(
         "m-inheritance-064",
         "A relationship-scope narrow past its target's reachable set",
         "Person.pets.any(Pet.is_a(WildBoar))\n"
-        '# raises ModelRejectedError(rule="narrow-outside-relationship-target")',
+        '# raises UsageError(code="narrow-outside-relationship-target")',
     ),
     Example(
         "m-inheritance-132",
         "A Subtype Selection with overlapping alternatives",
         "Animal.where(Animal.is_a(Dog, Pet))\n"
-        '# raises ModelRejectedError(rule="subtype-selection-overlapping-alternatives")',
+        '# raises UsageError(code="subtype-selection-overlapping-alternatives")',
     ),
     Example(
         "m-inheritance-133",
@@ -963,7 +953,7 @@ EXAMPLES: Final[list[Example]] = [
         "A keyed write aimed at an abstract inheritance position",
         'db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))\n'
         "# raises ExecutionFailure"
-        ' caused by WriteRejectedError(rule="abstract-write-target")',
+        ' caused by UsageError(code="abstract-write-target")',
     ),
     Example(
         "m-value-object-039",
@@ -981,7 +971,7 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by WriteRejectedError(rule="write-required-attribute-missing")',
+        ' caused by UsageError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-040",
@@ -1000,7 +990,7 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by WriteRejectedError(rule="write-required-attribute-missing")',
+        ' caused by UsageError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-041",
@@ -1019,7 +1009,7 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by WriteRejectedError(rule="write-required-attribute-missing")',
+        ' caused by UsageError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-042",
@@ -1034,14 +1024,14 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by WriteRejectedError(rule="write-required-value-object-missing")',
+        ' caused by UsageError(code="write-required-value-object-missing")',
     ),
     Example(
         "m-value-object-044",
         "A write missing a required TOP-LEVEL value object entirely",
         'db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))\n'
         "# raises ExecutionFailure"
-        ' caused by WriteRejectedError(rule="write-required-value-object-missing")',
+        ' caused by UsageError(code="write-required-value-object-missing")',
     ),
     # Rejected-case preparation proofs for predicate writes: the Typed verb
     # refuses the SAME instruction the corpus's own rejected lane prepares
@@ -1058,14 +1048,14 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+        ' caused by UsageError(code="set-based-write-target-unsupported")',
     ),
     Example(
         "m-batch-write-048",
         "A predicate deletion of a Transaction-Time Entity",
         'db.transact(lambda tx: tx.delete_where(Balance.where(Balance.acct_num == "A-1")))\n'
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+        ' caused by UsageError(code="set-based-write-target-unsupported")',
     ),
     Example(
         "m-batch-write-049",
@@ -1077,7 +1067,7 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
+        ' caused by UsageError(code="set-based-write-target-unsupported")',
     ),
     # Persistence-admission proofs: each Typed verb refuses the SAME write to a
     # ReadOnly Entity the corpus's rejected lane prepares through Wire, naming the
@@ -1100,7 +1090,7 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+        ' caused by UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-067",
@@ -1109,7 +1099,7 @@ EXAMPLES: Final[list[Example]] = [
         "    lambda tx: tx.amend(tx.find(ScalarThing.where(ScalarThing.id == 1)).result())\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+        ' caused by UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-068",
@@ -1120,7 +1110,7 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+        ' caused by UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-069",
@@ -1131,14 +1121,14 @@ EXAMPLES: Final[list[Example]] = [
         "    )\n"
         ")\n"
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+        ' caused by UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-070",
         "A keyed insert at a ReadOnly family's abstract root",
         'db.transact(lambda tx: tx.insert(Publication(id=2, title="Annual report")))\n'
         "# raises ExecutionFailure"
-        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+        ' caused by UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-batch-write-055",
@@ -1861,7 +1851,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # `inheritance-optimistic-locking-not-root-owned`, ADR 0027) — are rejected
 # either at class creation as an `EntityDefinitionError` or at model construction
 # as the shared formation-time `inheritance-*` issue
-# (`test_inheritance_frontend.py`), never as `InheritanceError.rule`. No case in
+# (`test_inheritance_frontend.py`), never as a family refusal's code. No case in
 # this group can therefore reproduce `then.rejectedRule` through the public
 # class surface.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
@@ -1875,7 +1865,7 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "idiomatic spelling at all); the table-placement rules AND a descendant's own "
     "temporal base / `optimisticLocking` ARE independently authorable, but the class "
     "frontend's own existing checks raise a different, unclassified error in each case, "
-    "not `InheritanceError.rule` — so reaching the classified vocabulary idiomatically "
+    "not the family refusal's code — so reaching the classified vocabulary idiomatically "
     "would need a frontend path that does not exist, which is a structural non-fit "
     "rather than a missing story"
 )

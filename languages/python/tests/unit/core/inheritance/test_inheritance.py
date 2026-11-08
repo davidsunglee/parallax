@@ -14,7 +14,7 @@ from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, typed_converter
+from parallax.core.base import STRING, UsageError, typed_converter
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.document_codec._plan import (
     MAPPING_DOCUMENTS,
@@ -75,7 +75,6 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
-    WriteAssignmentError,
     judge_assignment,
     sort_issues,
 )
@@ -83,7 +82,7 @@ from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._resolve import UNRESOLVED_ENTITY_REFERENCE
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.unit_work import KeyedWriteInstruction, WriteRejectedError
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
@@ -94,6 +93,7 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as corpus_model
@@ -171,16 +171,14 @@ families."""
 # any SQL, the SAME classification a keyless keyed write raises.              #
 # --------------------------------------------------------------------------- #
 def test_reject_predicate_write_raises_for_a_concrete_subtype() -> None:
-    with pytest.raises(inheritance.InheritanceError) as caught:
+    with raises_code(UsageError, "subtype-write-set-based-unsupported") as caught:
         inheritance.reject_predicate_write(_metadata("animal", "Dog"))
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
-    assert caught.value.entity == "Dog"
+    assert caught.value.args[1].startswith("Dog: ")
 
 
 def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
-    with pytest.raises(inheritance.InheritanceError) as caught:
+    with raises_code(UsageError, "subtype-write-set-based-unsupported"):
         inheritance.reject_predicate_write(_metadata("animal", "Animal"))
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
 # --------------------------------------------------------------------------- #
@@ -191,9 +189,8 @@ def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
 def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(stem: str, name: str) -> None:
     model = corpus_model(stem)
     entity = _metadata(stem, name)
-    with pytest.raises(inheritance.InheritanceError) as caught:
+    with raises_code(UsageError, "subtype-write-set-based-unsupported") as caught:
         inheritance.validate_subtype_write(model, entity, {"name": "Rex"})
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
     assert "primary-key attribute(s) ['id']" in str(caught.value)
 
 
@@ -305,19 +302,19 @@ def test_value_object_assignment_judgement_requires_codec_evidence() -> None:
 
 
 def test_judge_assignment_rejects_a_many_value_object_non_list() -> None:
-    with pytest.raises(WriteAssignmentError, match="must bind a list of documents"):
+    with pytest.raises(UsageError, match="must bind a list of documents"):
         _assignment("tags", "not-a-list")
 
 
 def test_judge_assignment_rejects_a_missing_required_attribute() -> None:
     document: dict[str, object] = {"detail": {"hint": "h"}}
-    with pytest.raises(WriteAssignmentError, match="required attribute is absent"):
+    with pytest.raises(UsageError, match="required attribute is absent"):
         _assignment("spec", document)
 
 
 def test_judge_assignment_rejects_a_missing_required_nested_value_object() -> None:
     document: dict[str, object] = {"note": "n"}
-    with pytest.raises(WriteAssignmentError, match="required value object is absent"):
+    with pytest.raises(UsageError, match="required value object is absent"):
         _assignment("spec", document)
 
 
@@ -330,14 +327,14 @@ def test_judge_assignment_rejects_a_nested_many_element_type_mismatch() -> None:
         "detail": {"hint": "h"},
         "grid": [{"cell": 42}],
     }
-    with pytest.raises(WriteAssignmentError, match=r"spec\.grid\[0\]\.cell"):
+    with pytest.raises(UsageError, match=r"spec\.grid\[0\]\.cell"):
         _assignment("spec", document)
 
 
 def test_judge_assignment_rejects_a_top_level_many_element_type_mismatch() -> None:
     # A TOP-level `cardinality: many` member's own element violation paths
     # bracket-first, with no leading dot (`Gadget.tags[0].label`).
-    with pytest.raises(WriteAssignmentError, match=r"tags\[0\]\.label"):
+    with pytest.raises(UsageError, match=r"tags\[0\]\.label"):
         _assignment("tags", [{"label": 42}])
 
 
@@ -352,7 +349,7 @@ def test_judge_assignment_rejects_none_for_a_non_nullable_value_object() -> None
     # `None` assignment must be refused the SAME way a missing required value
     # object is, reusing the shared authoring verdict's `"value-object-missing"`
     # wording rather than forking new text.
-    with pytest.raises(WriteAssignmentError, match="required value object is absent"):
+    with pytest.raises(UsageError, match="required value object is absent"):
         _assignment("core", None)
 
 
@@ -367,7 +364,7 @@ def test_judge_assignment_rejects_none_for_a_non_nullable_scalar() -> None:
     # must be refused too (the scalar branch's own analogue): a guard of
     # `value is not None and not _type_matches(...)` would let a
     # `None` value bypass validation entirely, regardless of nullability.
-    with pytest.raises(WriteAssignmentError, match="required attribute is absent"):
+    with pytest.raises(UsageError, match="required attribute is absent"):
         judge_assignment(_member("code"), None)
 
 
@@ -415,7 +412,7 @@ def _assignment_rejects(value: object) -> bool:
     assert member is not None
     try:
         judge_assignment(member, value)
-    except WriteAssignmentError:
+    except UsageError:
         return True
     return False
 
@@ -427,7 +424,7 @@ def _row_rejects(value: object) -> bool:
             KeyedWriteInstruction("insert", "Invoice", (row,)),
             write_preparation_of(_INVOICE_ACCEPTED),
         )
-    except WriteRejectedError:
+    except UsageError:
         return True
     return False
 

@@ -33,12 +33,13 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity import IncludePath
 from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.predicate import ModelRejectedError
+from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_query
 from tests.unit import _deep_include_support as deep
 
@@ -270,6 +271,5 @@ def test_a_subtypes_relationship_is_unreachable_past_the_broad_hop() -> None:
 def test_a_narrow_outside_the_hops_target_keeps_its_portable_refusal_when_continued() -> None:
     # The continuation binds through the class the narrow names, and the rule the
     # narrow breaks stays the validator's.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-relationship-target"):
         _bound(deep.Keeper.animals.narrow(deep.Toy).maker)  # pyright: ignore[reportArgumentType]
-    assert caught.value.rule == "narrow-outside-relationship-target"

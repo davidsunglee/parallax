@@ -23,14 +23,15 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Document, DomainModel, Entity, ValueObject, attr
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import (
     WriteEvidenceError,
-    WriteInstructionError,
     WritePreconditionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
 
@@ -291,7 +292,7 @@ def test_an_unversioned_row_takes_no_target_write_and_is_written_through_a_read(
             lambda: tx.wire.replace_if(_name(entity), {"id": 1, "label": "replaced"}, version=1),
             lambda: tx.wire.delete_if(_name(entity), {"id": 1}, version=1),
         ):
-            with pytest.raises(WriteInstructionError, match="has none to state"):
+            with raises_code(UsageError, "write-instruction-invalid", match="has none to state"):
                 target_write()
         tx.amend(_read(tx, entity).edit(label="patched"))
 

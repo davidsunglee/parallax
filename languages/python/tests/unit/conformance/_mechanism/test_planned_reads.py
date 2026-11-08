@@ -12,7 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes.reads import compile_read_case
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 
 
 def _read_case(when: dict[str, object]) -> case_format.Case:
@@ -36,5 +36,5 @@ def test_a_read_refused_inside_its_transaction_is_the_case_error() -> None:
             },
         }
     )
-    with pytest.raises(EngineError, match=r"m-concurrency-1043-synthetic\.yaml"):
+    with pytest.raises(UnclassifiedEngineError, match=r"m-concurrency-1043-synthetic\.yaml"):
         compile_read_case(case, "postgres")

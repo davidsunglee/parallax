@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Final, cast
 
 from parallax.conformance import _case_ingress
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import case_entity, family_declarer
 from parallax.core import concurrency, inheritance, read_delivery
 from parallax.core._execution._keyed_writes import validate_source_pin
@@ -160,7 +160,7 @@ class WireSubmitter:
 
     def submit(self, submission: Submission) -> Outcome:
         if submission.is_framework_marker:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 "a DB-computed write marker is framework bookkeeping, not a Wire submission"
             )
         try:
@@ -187,7 +187,7 @@ class WireSubmitter:
         self, submissions: Sequence[Submission], *, before_writes: Callable[[], None] | None = None
     ) -> tuple[Outcome, ...]:
         if any(s.is_framework_marker for s in submissions):
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 "a DB-computed write marker is framework bookkeeping, not a Wire submission"
             )
         translated = tuple(s.instruction for s in submissions)
@@ -271,7 +271,7 @@ def _temporal_entry_row(
     entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
 ) -> Mapping[str, object]:
     if len(raw_rows) != 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{entity_name!r} {mutation!r}: a temporal write entry carries ONE row "
             f"({len(raw_rows)} authored) — each row closes its own milestone and chains its "
             "own successors, and a temporal entity never collapses into a set-based statement "
@@ -318,7 +318,7 @@ def _without_observation_controls(
             continue
         refusal = _observation_refusal(model, entity_name, mutation, key)
         if refusal is not None:
-            raise EngineError(f"{entity_name!r} {mutation!r}: {refusal}")
+            raise UnclassifiedEngineError(f"{entity_name!r} {mutation!r}: {refusal}")
     durable = dict(row)
     durable.pop(_VERSION_OBSERVATION_KEY, None)
     return durable
@@ -370,7 +370,7 @@ def _unit_source_query(
         attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
     ]
     if len(pk) != 1:  # pragma: no cover - no witnessed write target is composite-keyed
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{entity_name!r}: a unit's source read selects by a single-attribute primary key, "
             f"and this Entity declares {len(pk)}"
         )
@@ -548,7 +548,7 @@ def _group_source_node(
     if named is not None:
         matched = [node for node in named if _node_object_key(node) == key]
         if len(matched) != 1:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{entity_name!r}: the find step this write settles against published "
                 f"{len(matched)} rows of {key!r} — a keyed write settles against the ONE "
                 "observed state the value it was handed came from (m-case-format 'Settling "
@@ -556,7 +556,7 @@ def _group_source_node(
             )
         (node,) = matched
         if read_evidence_of(node) is not None and not _pinned_at(node, valid_from):
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{entity_name!r}: the write starts at {valid_from!r}, but the find it settles "
                 "against was read at another Valid-Time instant — an observed write starts at "
                 "its source's own pin and states no start of its own (m-case-format 'Settling "
@@ -573,7 +573,7 @@ def _group_source_node(
             and _pinned_at(node, valid_from)
         ):
             return node
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{entity_name!r}: a keyed write addresses {key!r}, which no read of its own "
         "choreography unit published and no write of it opened — every keyed write here is "
         "stated through the public verb its mutation names, against a value the caller holds, "
@@ -600,13 +600,13 @@ def _source_find_nodes(
     if source is None or isinstance(source, str):
         return None
     if not isinstance(source, int) or isinstance(source, bool):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"scenario[{index}]: a write settles against ONE find step, named by its "
             f"index — {source!r} is not one (m-case-format 'Settling against a grouped find')"
         )
     published = group_finds.get(source)
     if published is None:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"scenario[{index}]: settles against step {source}, which is not an EARLIER find "
             "step of its own `uow` group — the evidence a write settles against is "
             "transaction-scoped (m-case-format 'Settling against a grouped find')"
@@ -621,7 +621,7 @@ def _source_nodes(
     if isinstance(source, str):
         opened = state.insertions.get(source)
         if opened is None:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"scenario[{index}]: writes through {source!r}, which opened no value "
                 "in this attempt of its own `uow` group"
             )
@@ -634,7 +634,7 @@ def _refuse_unobserved_version(entity: str, declared: VersionObservation, node: 
     retained = None if hint is None or hint.observation is None else hint.observation.evidence
     observed = retained.observed_version if isinstance(retained, VersionObservation) else None
     if declared.observed_version != observed:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{entity!r}: a keyed submission declares "
             f"`observedVersion: {declared.observed_version!r}` "
             f"and its resolved source observed {observed!r} — the declared version and source "

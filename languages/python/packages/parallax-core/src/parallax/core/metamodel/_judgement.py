@@ -1,26 +1,50 @@
 from __future__ import annotations
 
-from parallax.core.base import coerce_neutral_input, matches_neutral_type
+from typing import Final, Literal
+
+from parallax.core.base import UsageError, coerce_neutral_input, matches_neutral_type
 from parallax.core.metamodel._authoring_violation import AuthoringViolation
 from parallax.core.metamodel._states import ValueObjectMetadata
 from parallax.core.metamodel._values import AttributeMetadata, Multiplicity, PrimaryKey
 
-__all__ = ["WriteAssignmentError", "judge_assignment"]
+__all__ = [
+    "WRITE_ASSIGNMENT_CODES",
+    "WRITE_ASSIGNMENT_FRAMEWORK_OWNED",
+    "WRITE_ASSIGNMENT_PRIMARY_KEY",
+    "WRITE_ASSIGNMENT_READ_ONLY",
+    "WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH",
+    "WriteAssignmentCode",
+    "judge_assignment",
+]
 
 _UNJUDGED = object()
 
 
-class WriteAssignmentError(ValueError):
-    """A write assignment names an unassignable target or an ill-typed value.
+type WriteAssignmentCode = Literal[
+    "write-assignment-primary-key",
+    "write-assignment-read-only",
+    "write-assignment-framework-owned",
+    "write-assignment-value-type-mismatch",
+]
+"""Why a write assignment is refused: it names a primary-key, read-only, or
+framework-owned target, or a value its member's type does not admit.
 
-    ``rule`` is the shared classification every caller reuses verbatim in its own
-    error text: ``"primary-key"``, ``"read-only"``, ``"framework-owned"``, or
-    ``"value-type-mismatch"``.
-    """
+The refusal is a :class:`~parallax.core.base.UsageError` with one of these
+codes. Every caller restates it in its own vocabulary, so its message names the
+member relative to the member's own owner, for the caller to prefix."""
 
-    def __init__(self, rule: str, message: str) -> None:
-        super().__init__(message)
-        self.rule = rule
+WRITE_ASSIGNMENT_PRIMARY_KEY: Final = "write-assignment-primary-key"
+WRITE_ASSIGNMENT_READ_ONLY: Final = "write-assignment-read-only"
+WRITE_ASSIGNMENT_FRAMEWORK_OWNED: Final = "write-assignment-framework-owned"
+WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH: Final = "write-assignment-value-type-mismatch"
+WRITE_ASSIGNMENT_CODES: Final[frozenset[str]] = frozenset(
+    {
+        WRITE_ASSIGNMENT_PRIMARY_KEY,
+        WRITE_ASSIGNMENT_READ_ONLY,
+        WRITE_ASSIGNMENT_FRAMEWORK_OWNED,
+        WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
+    }
+)
 
 
 def judge_assignment(
@@ -61,17 +85,22 @@ def _judge_attribute(
 ) -> None:
     name = attribute.identity.name
     if isinstance(attribute.primary_key, PrimaryKey):
-        raise WriteAssignmentError("primary-key", f"{name}: primary-key fields may not be assigned")
+        raise UsageError(
+            WRITE_ASSIGNMENT_PRIMARY_KEY, f"{name}: primary-key fields may not be assigned"
+        )
     if attribute.read_only:
-        raise WriteAssignmentError("read-only", f"{name}: read-only fields may not be assigned")
+        raise UsageError(
+            WRITE_ASSIGNMENT_READ_ONLY, f"{name}: read-only fields may not be assigned"
+        )
     if attribute.framework_owned:
-        raise WriteAssignmentError(
-            "framework-owned", f"{name}: framework-owned fields may not be assigned"
+        raise UsageError(
+            WRITE_ASSIGNMENT_FRAMEWORK_OWNED, f"{name}: framework-owned fields may not be assigned"
         )
     if value is None:
         if not attribute.nullable:
-            raise WriteAssignmentError(
-                "value-type-mismatch", f"{name}: required attribute is absent (or null)"
+            raise UsageError(
+                WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
+                f"{name}: required attribute is absent (or null)",
             )
         return
     if attribute.multiplicity is Multiplicity.MANY:
@@ -83,8 +112,8 @@ def _judge_attribute(
         else known_valid
     )
     if not valid:
-        raise WriteAssignmentError(
-            "value-type-mismatch",
+        raise UsageError(
+            WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
             f"{name}: value {value!r} does not match the declared type {attribute.type!r}",
         )
 
@@ -117,13 +146,13 @@ def _consume_verdict(
 
 def _authoring_error(
     name: str, violation: AuthoringViolation, *, many_scalar: bool = False
-) -> WriteAssignmentError:
+) -> UsageError:
     """This module's own rule vocabulary and wording for a shared, error-neutral
     authoring violation — the codec finding owns no text of its own.
 
     A malformed structured assignment is, in this vocabulary, one more shape of
     "the value does not match the declared type", so every case classifies as
-    ``value-type-mismatch``.
+    ``write-assignment-value-type-mismatch``.
     """
     path = _joined(name, violation.path)
     if violation.reason == "not-a-list":
@@ -132,26 +161,27 @@ def _authoring_error(
             if many_scalar
             else "a `many` value object must bind a list of documents"
         )
-        return WriteAssignmentError(
-            "value-type-mismatch",
+        return UsageError(
+            WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
             f"{path}: value {violation.value!r} does not match the declared type — {expected}",
         )
     if violation.reason == "not-a-document":
-        return WriteAssignmentError(
-            "value-type-mismatch",
+        return UsageError(
+            WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
             f"{path}: value {violation.value!r} does not match the declared type — expected a "
             "document (mapping)",
         )
     if violation.reason == "attribute-missing":
-        return WriteAssignmentError(
-            "value-type-mismatch", f"{path}: required attribute is absent (or null)"
+        return UsageError(
+            WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH, f"{path}: required attribute is absent (or null)"
         )
     if violation.reason == "value-object-missing":
-        return WriteAssignmentError(
-            "value-type-mismatch", f"{path}: required value object is absent (or null)"
+        return UsageError(
+            WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
+            f"{path}: required value object is absent (or null)",
         )
-    return WriteAssignmentError(
-        "value-type-mismatch",
+    return UsageError(
+        WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
         f"{path}: value {violation.value!r} does not match the declared type "
         f"{violation.declared_type!r}",
     )

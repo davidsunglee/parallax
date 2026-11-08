@@ -60,7 +60,7 @@ from parallax.core.entity import (
 )
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
-from parallax.core.predicate import ModelRejectedError, QueryDefinitionError
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, UndeclaredAxisError
 
@@ -101,7 +101,6 @@ __all__ = [
     "MetamodelDefinitionError",
     "MetamodelLookupError",
     "MetamodelValidationError",
-    "ModelRejectedError",
     "NoResultFound",
     "ObjectQuery",
     "ParallaxError",

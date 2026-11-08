@@ -32,7 +32,7 @@ from parallax.conformance.vo_models import (
 from parallax.core import LATEST, Attr, ConflictError, DomainModel, Entity, attr, unit_work
 from parallax.core._execution._options import OMITTED
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import INT64, DocumentValue, InstantError, StructuredDocument
+from parallax.core.base import INT64, DocumentValue, InstantError, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
@@ -48,7 +48,6 @@ from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,
     WriteEvidenceError,
-    WriteInstructionError,
 )
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
@@ -67,6 +66,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import cataloged_for
 from tests._support.root_ownership import own_root
 from tests.unit._indexed_graph_support import published
@@ -442,7 +442,7 @@ def test_a_bounded_insert_rejects_an_equal_or_reversed_window() -> None:
     port = ScriptedAdapter(Transact())
     db = db_for(MODELS["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    with raises_contextualized(ValueError, match="valid_from < until"):
+    with raises_contextualized(UsageError, match="valid_from < until"):
         db.transact(lambda tx: tx.insert(branch, valid_from=same_instant, until=same_instant))
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -663,7 +663,7 @@ def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds(
         ).result()
         tx.amend(fetched.edit(), until=valid_from)
 
-    with raises_contextualized(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(UsageError, match="requires valid_from < until"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -722,7 +722,7 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
 
 def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     # A stated `until` is a bound whatever its value: `None` is the missing half
-    # of a pair, the verb's own `WriteInstructionError`, never a spelling of
+    # of a pair, the verb's own `write-instruction-invalid`, never a spelling of
     # omission. The pair is asked of the MUTATION and before either bound is
     # typed, and a target with no Valid Time takes no `until` at all.
     account = ScriptedAdapter(
@@ -735,16 +735,16 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
 
     def non_temporal(tx: TxnContext) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-        with pytest.raises(WriteInstructionError, match="takes no until"):
+        with raises_code(UsageError, "write-instruction-invalid", match="takes no until"):
             tx.amend(fetched.edit(balance=Decimal("20.00")), until=until)
 
     def absent_until(tx: TxnContext) -> None:
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=FIXED)
         ).result()
-        with pytest.raises(WriteInstructionError, match="until is absent"):
+        with raises_code(UsageError, "write-instruction-invalid", match="until is absent"):
             tx.terminate(fetched, until=cast("dt.datetime", None))
-        with pytest.raises(WriteInstructionError, match="until is absent"):
+        with raises_code(UsageError, "write-instruction-invalid", match="until is absent"):
             tx.amend(fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", None))
 
     account_db(account).transact(non_temporal)
@@ -902,7 +902,9 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
         with pytest.raises(KeyedWriteValueError) as refused:
             tx.wire.amend(opened, {"value": "2.00"})
         assert refused.value.code == "write-value-not-stored"
-        with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
+        with raises_code(
+            UsageError, "write-instruction-invalid", match="names no Valid-Time instant"
+        ):
             tx.wire.terminate(opened)
 
     own_root(
@@ -943,7 +945,9 @@ def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> No
         ).result()
         tx.amend(fetched.edit(value=Decimal("200.00")))
 
-    with raises_contextualized(WriteInstructionError, match="read at Valid-Time LATEST"):
+    with raises_contextualized(
+        UsageError, code="write-instruction-invalid", match="read at Valid-Time LATEST"
+    ):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -960,7 +964,7 @@ def test_a_bounded_keyed_terminate_on_a_non_temporal_target_takes_no_until() -> 
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.terminate(fetched, until=FIXED)
 
-    with raises_contextualized(ValueError, match="takes no until"):
+    with raises_contextualized(UsageError, match="takes no until"):
         account_db(port).transact(fn)
 
 
@@ -999,7 +1003,7 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
         else:
             tx.insert(rate)
 
-    with raises_contextualized(WriteInstructionError, match=f"^{refusal}"):
+    with raises_contextualized(UsageError, code="write-instruction-invalid", match=refusal):
         database.using_database_login().transact(fn)
 
 
@@ -1021,7 +1025,7 @@ def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
         ).result()
         tx.amend(fetched.edit(value=Decimal("200.00")), until=valid_from)
 
-    with raises_contextualized(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(UsageError, match="requires valid_from < until"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -1038,7 +1042,7 @@ def test_a_bounded_keyed_terminate_rejects_a_reversed_window_bound() -> None:
         ).result()
         tx.terminate(fetched, until=until)
 
-    with raises_contextualized(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(UsageError, match="requires valid_from < until"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -1331,7 +1335,7 @@ def test_a_foreign_twins_row_refusal_precedes_a_window_its_target_does_not_admit
         return type(refusal.value)
 
     assert insert(_TwinLeft(id=1, left_only="x")) is EntityRowError
-    assert insert(_TwinRight(id=1, right_only="x")) is WriteInstructionError
+    assert insert(_TwinRight(id=1, right_only="x")) is UsageError
 
 
 def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:

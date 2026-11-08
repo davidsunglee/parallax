@@ -11,8 +11,9 @@ import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._execution._unit_work import instructions as wi
-from parallax.core.base import Int32
+from parallax.core.base import Int32, UsageError
 from parallax.core.entity._model import model_of
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 
 _NS = "row.order"
@@ -70,8 +71,10 @@ type _Prepare = Callable[..., Any]
 def test_a_framework_owned_member_is_refused_before_an_earlier_members_value(
     prepare: _Prepare, instruction: wi.WriteInstruction, authored: frozenset[str] | None
 ) -> None:
-    with pytest.raises(
-        wi.WriteInstructionError, match=r"Crate\.version: framework-owned fields may not be"
+    with raises_code(
+        UsageError,
+        "framework-owned-member-assigned",
+        match=r"Crate\.version: framework-owned fields may not be",
     ):
         prepare(instruction, write_preparation_of(_MODEL), authored_members=authored)
 
@@ -93,7 +96,7 @@ def test_a_framework_owned_member_is_refused_before_an_earlier_members_value(
 def test_an_amendment_judges_its_key_after_every_assignment(
     prepare: _Prepare, instruction: wi.WriteInstruction
 ) -> None:
-    with pytest.raises(ValueError, match=r"Crate\.owner: ") as refused:
+    with pytest.raises(UsageError, match=r"Crate\.owner: ") as refused:
         prepare(instruction, write_preparation_of(_MODEL))
 
     assert "bad-key" not in str(refused.value)

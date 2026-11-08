@@ -20,11 +20,13 @@ from parallax.core.base import (
     TIMESTAMP,
     InstantError,
     NeutralType,
+    UsageError,
     coerce_neutral_input,
     normalize_instant,
 )
 from parallax.core.document_codec._plan import AuthoringRefusal, RootPolicy
 from parallax.core.metamodel import (
+    WRITE_ASSIGNMENT_CODES,
     AttributeMetadata,
     AuthoringViolation,
     EntityIdentity,
@@ -36,15 +38,24 @@ from parallax.core.metamodel import (
     PrimaryKey,
     ScalarDefinition,
     ValueObjectMetadata,
-    WriteAssignmentError,
     entity_by_name,
     judge_assignment,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.predicate import PredicateInterpretation, PredicateNode
+from parallax.core.predicate import (
+    REFERENCE_AMBIGUOUS_ENTITY_NAME,
+    PredicateInterpretation,
+    PredicateNode,
+)
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
+from parallax.core.wire import (
+    WireValue,
+    decode_wire,
+    encode_wire,
+    is_decoding_refusal,
+    located_refusal,
+)
 from parallax.core.write_plan.columns import freeze_retained_value
 from parallax.core.write_plan.managed_row import ManagedRow, empty_row, managed_row
 from parallax.core.write_plan.steps import (
@@ -59,11 +70,18 @@ __all__ = [
     "ASSIGNMENT_MUTATIONS",
     "BOUNDED_MUTATIONS",
     "DESTRUCTIVE_MUTATIONS",
+    "FRAMEWORK_OWNED_MEMBER_ASSIGNED",
     "INSERT_MUTATIONS",
+    "READ_ONLY_WRITE_TARGET",
     "REPLACE_MUTATIONS",
+    "SET_BASED_WRITE_TARGET_UNSUPPORTED",
+    "TEMPORAL_KEYED_WRITE_MULTI_ROW",
+    "WRITE_INSTRUCTION_INVALID",
+    "WRITE_REQUIRED_ATTRIBUTE_MISSING",
+    "WRITE_REQUIRED_VALUE_OBJECT_MISSING",
+    "WRITE_VALUE_TYPE_MISMATCH",
     "ExpectedTxStart",
     "ExpectedVersion",
-    "InstructionRejectedError",
     "KeyedMutation",
     "KeyedWriteInstruction",
     "PredicateMutation",
@@ -78,8 +96,7 @@ __all__ = [
     "TargetWriteInstruction",
     "WriteAssignment",
     "WriteInstruction",
-    "WriteInstructionError",
-    "WriteRejectedError",
+    "WriteRejectionCode",
     "addressed_members",
     "assigned_members",
     "derive_keyed_instruction",
@@ -181,57 +198,41 @@ _FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 
-# The classification a plural keyed instruction on a temporal target is refused
-# with, from the closed pre-SQL rejection vocabulary (`m-case-format` Rejected
-# cases).
-TEMPORAL_KEYED_WRITE_MULTI_ROW: Final[str] = "temporal-keyed-write-multi-row"
+type WriteRejectionCode = Literal[
+    "write-instruction-invalid",
+    "temporal-keyed-write-multi-row",
+    "set-based-write-target-unsupported",
+    "read-only-write-target",
+    "framework-owned-member-assigned",
+    "write-required-attribute-missing",
+    "write-required-value-object-missing",
+    "write-value-type-mismatch",
+]
+"""Why a write instruction is refused before any SQL, as a
+:class:`~parallax.core.base.UsageError`.
 
-# The same vocabulary's classification of a bare Entity spelling two namespaces
-# share, owned normatively by `m-predicate` (a property of the reference site,
-# not of the model) and raised here for a write's own target reference.
-REFERENCE_AMBIGUOUS_ENTITY_NAME: Final[str] = "reference-ambiguous-entity-name"
+``write-instruction-invalid`` is this binding's own: the instruction is not a
+well-formed canonical instruction its target can mean. Every other code is the
+core ``rejectedRule`` spelling of a model-aware rule the instruction breaks.
+"""
 
-# The same vocabulary's classification of a predicate-selected write whose
-# target needs an observation: a versioned or temporal Entity, which one
-# readless statement cannot write (`m-batch-write`).
-SET_BASED_WRITE_TARGET_UNSUPPORTED: Final[str] = "set-based-write-target-unsupported"
+WRITE_INSTRUCTION_INVALID: Final = "write-instruction-invalid"
 
-# The same vocabulary's classification of any write whose target family's
-# effective Persistence Mode is ReadOnly (`m-unit-work`).
-READ_ONLY_WRITE_TARGET: Final[str] = "read-only-write-target"
+TEMPORAL_KEYED_WRITE_MULTI_ROW: Final = "temporal-keyed-write-multi-row"
+"""A plural keyed instruction on a temporal target."""
 
-FRAMEWORK_OWNED_MEMBER_ASSIGNED: Final[str] = "framework-owned-member-assigned"
+SET_BASED_WRITE_TARGET_UNSUPPORTED: Final = "set-based-write-target-unsupported"
+"""A predicate-selected write whose target needs an observation: a versioned or
+temporal Entity, which one readless statement cannot write (`m-batch-write`)."""
 
+READ_ONLY_WRITE_TARGET: Final = "read-only-write-target"
+"""Any write whose target family's effective Persistence Mode is ReadOnly
+(`m-unit-work`)."""
 
-class WriteInstructionError(ValueError):
-    """A write-instruction document is not a well-formed canonical instruction."""
-
-
-class InstructionRejectedError(WriteInstructionError):
-    """An instruction violates a model-aware rule of the closed pre-SQL rejection
-    vocabulary, and ``rule`` is its exact classification.
-
-    A subclass rather than a sibling because the violation IS a well-formedness
-    verdict on the instruction — every layer already treating a
-    :class:`WriteInstructionError` as the build-time refusal keeps doing so
-    unchanged — while the added ``rule`` is what lets a negative-validation
-    caller report which normative MUST was broken rather than only that one was.
-    """
-
-    def __init__(self, rule: str, message: str) -> None:
-        super().__init__(message)
-        self.rule = rule
-
-
-class WriteRejectedError(ValueError):
-    """A write payload violates a `then.rejectedRule` write-validation rule
-    (`m-value-object` write validation, `m-inheritance` concrete-subtype write
-    protocol) and MUST be refused pre-SQL. ``rule`` is the exact classification.
-    """
-
-    def __init__(self, rule: str, message: str) -> None:
-        super().__init__(message)
-        self.rule = rule
+FRAMEWORK_OWNED_MEMBER_ASSIGNED: Final = "framework-owned-member-assigned"
+WRITE_REQUIRED_ATTRIBUTE_MISSING: Final = "write-required-attribute-missing"
+WRITE_REQUIRED_VALUE_OBJECT_MISSING: Final = "write-required-value-object-missing"
+WRITE_VALUE_TYPE_MISMATCH: Final = "write-value-type-mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,9 +265,10 @@ class KeyedWriteInstruction:
 def _refuse_observation_keys(names: Set[str]) -> None:
     forbidden = sorted(_FORBIDDEN_ROW_KEYS.intersection(names))
     if forbidden:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"keyed write: row carries forbidden observation control key(s) {forbidden} "
-            "(the transaction observation is attached at flush, never on the instruction)"
+            "(the transaction observation is attached at flush, never on the instruction)",
         )
 
 
@@ -313,27 +315,31 @@ class PredicateWriteInstruction:
 
     def __post_init__(self) -> None:
         if self.assignments and self.mutation not in AMEND_MUTATIONS:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"predicate write: `{self.mutation}` assigns no members and carries no "
-                "`assignments`"
+                "`assignments`",
             )
         replaces = self.mutation in REPLACE_MUTATIONS
         if self.row is None:
             if replaces:
-                raise WriteInstructionError(
+                raise UsageError(
+                    WRITE_INSTRUCTION_INVALID,
                     f"predicate write: `{self.mutation}` states each selected object's whole "
-                    "writable state and carries a `row`"
+                    "writable state and carries a `row`",
                 )
             return
         if not replaces:
-            raise WriteInstructionError(
-                f"predicate write: `{self.mutation}` states no whole state and carries no `row`"
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
+                f"predicate write: `{self.mutation}` states no whole state and carries no `row`",
             )
         forbidden = sorted(set(self.row) & _FORBIDDEN_ROW_KEYS)
         if forbidden:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"predicate write: row carries forbidden observation control key(s) {forbidden} "
-                "(a predicate-selected write observes nothing)"
+                "(a predicate-selected write observes nothing)",
             )
         if not isinstance(self.row, MappingProxyType):
             object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
@@ -366,9 +372,10 @@ class TargetWriteInstruction:
     def __post_init__(self) -> None:
         forbidden = sorted(set(self.row) & _FORBIDDEN_ROW_KEYS)
         if forbidden:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"target write: row carries forbidden observation control key(s) {forbidden} "
-                "(a target write's condition is its own revision argument, never a row member)"
+                "(a target write's condition is its own revision argument, never a row member)",
             )
         if not isinstance(self.row, MappingProxyType):
             object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
@@ -574,8 +581,9 @@ def deserialize(doc: object) -> WriteInstruction:
     authored bound, since an open upper end is spelled by omitting ``until``.
     """
     if not isinstance(doc, Mapping):
-        raise WriteInstructionError(
-            f"write instruction must be a mapping, got {type(doc).__name__}"
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"write instruction must be a mapping, got {type(doc).__name__}",
         )
     node = cast("Mapping[str, object]", doc)
     # A predicate-selected replacement states its `row` beside its `target`.
@@ -585,9 +593,10 @@ def deserialize(doc: object) -> WriteInstruction:
         if key in node and not (key == "row" and "target" in node)
     ]
     if len(carriers) > 1:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"write instruction is ambiguous: it carries {carriers}, and `rows` (keyed), "
-            "`target` (predicate), and `row` (target write) each name a different shape"
+            "`target` (predicate), and `row` (target write) each name a different shape",
         )
     if carriers == ["rows"]:
         return _keyed(node)
@@ -595,8 +604,10 @@ def deserialize(doc: object) -> WriteInstruction:
         return _predicate(node)
     if carriers == ["row"]:
         return _target_write(node)
-    raise WriteInstructionError(
-        "write instruction must carry `rows` (keyed), `target` (predicate), or `row` (target write)"
+    raise UsageError(
+        WRITE_INSTRUCTION_INVALID,
+        "write instruction must carry `rows` (keyed), `target` (predicate), or `row` "
+        "(target write)",
     )
 
 
@@ -605,26 +616,30 @@ def _reject_extra(node: Mapping[str, object], allowed: frozenset[str], shape: st
     if extra:
         # `at` is the corpus's Clock-context alias, an UNEXPECTED key here — the
         # canonical instruction never carries a Transaction-Time instant.
-        raise WriteInstructionError(f"{shape}: unexpected key(s) {extra}")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, f"{shape}: unexpected key(s) {extra}")
 
 
 def _require(node: Mapping[str, object], keys: tuple[str, ...], shape: str) -> None:
     missing = sorted(k for k in keys if k not in node)
     if missing:
-        raise WriteInstructionError(f"{shape}: missing required key(s) {missing}")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, f"{shape}: missing required key(s) {missing}")
 
 
 def _mutation(node: Mapping[str, object], allowed: frozenset[str], shape: str) -> str:
     value = node.get("mutation")
     if not isinstance(value, str) or value not in allowed:
-        raise WriteInstructionError(f"{shape}: `mutation` must be one of {sorted(allowed)}")
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID, f"{shape}: `mutation` must be one of {sorted(allowed)}"
+        )
     return value
 
 
 def _entity_name(node: Mapping[str, object], key: str, shape: str) -> str:
     value = node.get(key)
     if not isinstance(value, str) or not value:
-        raise WriteInstructionError(f"{shape}: `{key}` must be a non-empty entity name")
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID, f"{shape}: `{key}` must be a non-empty entity name"
+        )
     return value
 
 
@@ -633,7 +648,9 @@ def _bound(node: Mapping[str, object], key: str, shape: str) -> dt.datetime | No
         return None
     value = node[key]
     if not isinstance(value, str) or not value:
-        raise WriteInstructionError(f"{shape}: `{key}` must be a non-empty instant string")
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID, f"{shape}: `{key}` must be a non-empty instant string"
+        )
     return cast("dt.datetime", _decoded_wire(TIMESTAMP, value, f"{shape} `{key}`"))
 
 
@@ -650,29 +667,32 @@ def _check_valid_time_bounds(
     """
     if mutation in BOUNDED_MUTATIONS:
         if valid_from is None or until is None:
-            raise WriteInstructionError(
-                f"{shape}: `{mutation}` is bounded and MUST carry both `validFrom` and `until`"
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
+                f"{shape}: `{mutation}` is bounded and MUST carry both `validFrom` and `until`",
             )
     elif until is not None:
-        raise WriteInstructionError(
-            f"{shape}: `{mutation}` is unbounded and MUST NOT carry `until`"
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{shape}: `{mutation}` is unbounded and MUST NOT carry `until`",
         )
 
 
 def _rows(node: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
     raw = node.get("rows")
     if not isinstance(raw, list) or not raw:
-        raise WriteInstructionError("keyed write: `rows` must be a non-empty list")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, "keyed write: `rows` must be a non-empty list")
     rows: list[Mapping[str, object]] = []
     for item in cast("list[object]", raw):
         if not isinstance(item, Mapping):
-            raise WriteInstructionError("keyed write: each row must be a mapping")
+            raise UsageError(WRITE_INSTRUCTION_INVALID, "keyed write: each row must be a mapping")
         row = cast("Mapping[str, object]", item)
         forbidden = sorted(set(row) & _FORBIDDEN_ROW_KEYS)
         if forbidden:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"keyed write: row carries forbidden observation control key(s) {forbidden} "
-                "(the transaction observation is attached at flush, never on the instruction)"
+                "(the transaction observation is attached at flush, never on the instruction)",
             )
         # A neutral write-row value is opaque JSON (a scalar, a one-key DB-computed
         # marker, or a whole value-object document); its metamodel role decides its
@@ -704,14 +724,16 @@ def _keyed(node: Mapping[str, object]) -> KeyedWriteInstruction:
 def _target(node: Mapping[str, object]) -> PredicateSelection:
     raw = node.get("target")
     if not isinstance(raw, Mapping):
-        raise WriteInstructionError("predicate write: `target` must be a mapping")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, "predicate write: `target` must be a mapping")
     target = cast("Mapping[str, object]", raw)
     _reject_extra(target, frozenset({"entity", "predicate"}), "predicate write target")
     _require(target, ("entity", "predicate"), "predicate write target")
     entity = _entity_name(target, "entity", "predicate write target")
     predicate_doc = target.get("predicate")
     if not isinstance(predicate_doc, Mapping):
-        raise WriteInstructionError("predicate write: `target.predicate` must be a mapping")
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID, "predicate write: `target.predicate` must be a mapping"
+        )
     # The embedded predicate is a canonical m-predicate node — the sole write-side
     # reach into the algebra; predicate rejects a malformed one.
     predicate = predicate_algebra.deserialize(cast("Mapping[str, object]", predicate_doc))
@@ -721,19 +743,22 @@ def _target(node: Mapping[str, object]) -> PredicateSelection:
 def _assignments(node: Mapping[str, object]) -> tuple[WriteAssignment, ...]:
     raw = node.get("assignments")
     if not isinstance(raw, list):
-        raise WriteInstructionError("predicate write: `assignments` must be a list")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, "predicate write: `assignments` must be a list")
     out: list[WriteAssignment] = []
     for item in cast("list[object]", raw):
         if not isinstance(item, Mapping):
-            raise WriteInstructionError("predicate write: each assignment must be a mapping")
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID, "predicate write: each assignment must be a mapping"
+            )
         assignment = cast("Mapping[str, object]", item)
         _reject_extra(assignment, frozenset({"attr", "value"}), "predicate write assignment")
         _require(assignment, ("attr", "value"), "predicate write assignment")
         attr = assignment.get("attr")
         if not isinstance(attr, str) or _ASSIGNMENT_REF.match(attr) is None:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"predicate write: assignment `attr` must be a `Class.member` "
-                f"reference, got {attr!r}"
+                f"reference, got {attr!r}",
             )
         out.append(WriteAssignment(attr=attr, value=assignment["value"]))
     return tuple(out)
@@ -753,9 +778,13 @@ def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
     )
     for key in ("assignments", "row"):
         if key == payload and key not in node:
-            raise WriteInstructionError(f"predicate write: `{mutation}` MUST carry `{key}`")
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID, f"predicate write: `{mutation}` MUST carry `{key}`"
+            )
         if key != payload and key in node:
-            raise WriteInstructionError(f"predicate write: `{mutation}` MUST NOT carry `{key}`")
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID, f"predicate write: `{mutation}` MUST NOT carry `{key}`"
+            )
     return PredicateWriteInstruction(
         mutation=cast("PredicateMutation", mutation),
         target=target,
@@ -767,7 +796,7 @@ def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
 def _predicate_row(node: Mapping[str, object]) -> Mapping[str, object]:
     raw = node.get("row")
     if not isinstance(raw, Mapping):
-        raise WriteInstructionError("predicate write: `row` must be a mapping")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, "predicate write: `row` must be a mapping")
     return dict(cast("Mapping[str, object]", raw))
 
 
@@ -782,18 +811,21 @@ def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
     entity = _entity_name(node, "entity", "target write")
     raw = node.get("row")
     if not isinstance(raw, Mapping):
-        raise WriteInstructionError("target write: `row` must be a mapping")
+        raise UsageError(WRITE_INSTRUCTION_INVALID, "target write: `row` must be a mapping")
     row = dict(cast("Mapping[str, object]", raw))
     if "ifVersion" in node and "ifTxStart" in node:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             "target write: states both `ifVersion` and `ifTxStart`, and a target has one "
-            "revision to state"
+            "revision to state",
         )
     if_version: int | None = None
     if "ifVersion" in node:
         version = node["ifVersion"]
         if isinstance(version, bool) or not isinstance(version, int):
-            raise WriteInstructionError("target write: `ifVersion` must be an integer version")
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID, "target write: `ifVersion` must be an integer version"
+            )
         if_version = version
     valid_from = _bound(node, "validFrom", "target write")
     until = _bound(node, "until", "target write")
@@ -808,9 +840,10 @@ def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
         until=until,
     )
     if instruction.if_version is None and instruction.if_tx_start is None:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             "target write: states no revision, and a target write states exactly one "
-            "of `ifVersion` and `ifTxStart`"
+            "of `ifVersion` and `ifTxStart`",
         )
     return instruction
 
@@ -839,9 +872,10 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         return keyed_body
     predicate = instruction.target.predicate
     if not isinstance(predicate, PredicateNode):
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{instruction.target.entity}: a predicate write selecting through an interpreted "
-            "predicate has no canonical write-instruction document"
+            "predicate has no canonical write-instruction document",
         )
     predicate_body: dict[str, object] = {
         "mutation": instruction.mutation,
@@ -1162,7 +1196,7 @@ def prepare_typed_keyed_write(
         omitted = entry.framework_owned | entry.read_only
         if target.inheritance is not None:
             values = tuple(values)
-            _judge_subtype_shape(model, target, _stated_names(entry, values, omitted))
+            inheritance.validate_subtype_write(model, target, _stated_names(entry, values, omitted))
         row = _replacement_row(model, entry, target, values, lane=TYPED_LANE, omitted=omitted)
     elif members is not None:
         addressed = tuple(pairs)
@@ -1172,12 +1206,14 @@ def prepare_typed_keyed_write(
             (cast("int", stated.position(name)), value) for name, value in assigned.items()
         )
         if target.inheritance is not None:
-            _judge_subtype_shape(model, target, _named_pairs(entry, (*addressed, *assigned_pairs)))
+            inheritance.validate_subtype_write(
+                model, target, _named_pairs(entry, (*addressed, *assigned_pairs))
+            )
         row = _assigned_row(model, entry, target, (*assigned_pairs, *addressed), lane=TYPED_LANE)
     else:
         stated_pairs = tuple(pairs)
         if target.inheritance is not None:
-            _judge_subtype_shape(model, target, _named_pairs(entry, stated_pairs))
+            inheritance.validate_subtype_write(model, target, _named_pairs(entry, stated_pairs))
         if mutation in AMEND_MUTATIONS and entry.framework_owned:
             _refuse_owned_names(entry, target, stated_pairs, entry.framework_owned)
         row = _sparse_row(
@@ -1212,7 +1248,7 @@ def prepare_typed_insert(
     entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
     if target.inheritance is not None:
         values = tuple(values)
-        _judge_subtype_shape(
+        inheritance.validate_subtype_write(
             preparation.meta, target, _stated_names(entry, values, entry.framework_owned)
         )
     row = _opened_row(entry, target, values, lane=TYPED_LANE)
@@ -1357,8 +1393,10 @@ def _assigned_row(
             addressing=1 << entry.key,
             check=entry.assignment_rules,
         )
-    except WriteAssignmentError as error:
-        raise WriteInstructionError(f"{entity.identity.canonical}.{error}") from error
+    except UsageError as error:
+        if error.code not in WRITE_ASSIGNMENT_CODES:
+            raise
+        raise _restated_assignment_refusal(entity, error) from error
     except AuthoringRefusal as refusal:
         refused = _assignment_refusal(entry, entity, refusal)
         raise refused from refused.__cause__
@@ -1404,8 +1442,10 @@ def _replacement_row(
             addressing=1 << entry.key,
             check=entry.assignment_rules,
         )
-    except WriteAssignmentError as error:
-        raise WriteInstructionError(f"{entity.identity.canonical}.{error}") from error
+    except UsageError as error:
+        if error.code not in WRITE_ASSIGNMENT_CODES:
+            raise
+        raise _restated_assignment_refusal(entity, error) from error
     except AuthoringRefusal as refusal:
         refused = _replacement_refusal(entry, entity, refusal)
         raise refused from refused.__cause__
@@ -1425,10 +1465,17 @@ def _refuse_owned_names(
         if owned >> position & 1:
             try:
                 entry.assignment_rules(position, raw)
-            except WriteAssignmentError as error:
-                raise InstructionRejectedError(
-                    FRAMEWORK_OWNED_MEMBER_ASSIGNED, f"{entity.identity.canonical}.{error}"
+            except UsageError as error:
+                raise UsageError(
+                    FRAMEWORK_OWNED_MEMBER_ASSIGNED,
+                    f"{entity.identity.canonical}.{error.args[1]}",
                 ) from error
+
+
+def _restated_assignment_refusal(entity: EntityMetadata, error: UsageError) -> UsageError:
+    """The assignment judgement's ``error`` restated as the refusal of a write
+    to ``entity``."""
+    return UsageError(WRITE_INSTRUCTION_INVALID, f"{entity.identity.canonical}.{error.args[1]}")
 
 
 def _row_refusal(
@@ -1438,11 +1485,10 @@ def _row_refusal(
     the conversion failure where one raised it."""
     member = shape.members[refusal.position]
     cause = refusal.cause
-    error = (
-        _decoding_refusal(entity, member, refusal.violation, cause)
-        if isinstance(cause, WireDecodingError)
-        else _member_refusal(entity.identity.name, member, refusal.violation)
-    )
+    if is_decoding_refusal(cause):
+        path = joined_path(f"{entity.identity.canonical}.{member.name}", refusal.violation.path)
+        return located_refusal(cause, path)
+    error = _member_refusal(entity.identity.name, member, refusal.violation)
     error.__cause__ = cause
     return error
 
@@ -1455,7 +1501,7 @@ def _assignment_refusal(
     stated row's at the key."""
     position = refusal.position
     shape = entry.selection.members.shape
-    if position == entry.key or isinstance(refusal.cause, WireDecodingError):
+    if position == entry.key or is_decoding_refusal(refusal.cause):
         return _row_refusal(entity, shape, refusal)
     member = entry.selection.members.bindings[position]
     violation = refusal.violation
@@ -1466,8 +1512,8 @@ def _assignment_refusal(
     value = violation.value if scalar else _STATED
     try:
         judge_assignment(member, value, known_violation=violation, known_value_valid=False)
-    except WriteAssignmentError as error:
-        refused = WriteInstructionError(f"{entity.identity.canonical}.{error}")
+    except UsageError as error:
+        refused = _restated_assignment_refusal(entity, error)
         refused.__cause__ = error
         return refused
     raise AssertionError(f"{violation} is no assignment's refusal")  # pragma: no cover
@@ -1483,26 +1529,16 @@ def _replacement_refusal(
     if not violation.path and violation.reason in ("attribute-missing", "value-object-missing"):
         name = entry.selection.members.shape.members[refusal.position].name
         rule = (
-            "write-required-attribute-missing"
+            WRITE_REQUIRED_ATTRIBUTE_MISSING
             if violation.reason == "attribute-missing"
-            else "write-required-value-object-missing"
+            else WRITE_REQUIRED_VALUE_OBJECT_MISSING
         )
-        return WriteRejectedError(
+        return UsageError(
             rule,
             f"{entity.identity.name}.{name}: a replacement states every required member, and "
             "this one is absent",
         )
     return _assignment_refusal(entry, entity, refusal)
-
-
-def _decoding_refusal(
-    entity: EntityMetadata,
-    member: MemberDefinition,
-    violation: AuthoringViolation,
-    cause: WireDecodingError,
-) -> InstructionRejectedError:
-    path = joined_path(f"{entity.identity.canonical}.{member.name}", violation.path)
-    return InstructionRejectedError(f"neutral-literal-{cause.reason}", f"{path}: {cause}")
 
 
 _STATED: Final = object()
@@ -1512,43 +1548,41 @@ its structural finding is weighed."""
 
 def _member_refusal(
     owner: str, member: MemberDefinition, violation: AuthoringViolation
-) -> WriteRejectedError:
+) -> UsageError:
     """The refusal of a stated row's top-level ``member`` for ``violation``."""
     base = f"{owner}.{member.name}"
     scalar = isinstance(member, ScalarDefinition)
     many = member.multiplicity is Multiplicity.MANY
     if not violation.path and violation.reason in ("attribute-missing", "value-object-missing"):
-        rule = (
-            "write-required-attribute-missing" if scalar else "write-required-value-object-missing"
-        )
+        rule = WRITE_REQUIRED_ATTRIBUTE_MISSING if scalar else WRITE_REQUIRED_VALUE_OBJECT_MISSING
         kind = "attribute" if scalar else "value object"
         if many:
-            return WriteRejectedError(rule, f"{base}: a `many` {kind} is never null")
-        return WriteRejectedError(rule, f"{base}: required {kind} is absent (or null)")
+            return UsageError(rule, f"{base}: a `many` {kind} is never null")
+        return UsageError(rule, f"{base}: required {kind} is absent (or null)")
     path = joined_path(base, violation.path)
     if violation.reason == "not-a-list":
         expected = "a list of scalar values" if scalar else "a list of documents"
         kind = "attribute" if scalar else "value object"
-        return WriteRejectedError(
-            "write-value-type-mismatch",
+        return UsageError(
+            WRITE_VALUE_TYPE_MISMATCH,
             f"{path}: a `many` {kind} must bind {expected}, got {type(violation.value).__name__}",
         )
     if violation.reason == "not-a-document":
-        return WriteRejectedError(
-            "write-value-type-mismatch",
+        return UsageError(
+            WRITE_VALUE_TYPE_MISMATCH,
             f"{path}: expected a document (mapping), got {type(violation.value).__name__}",
         )
     if violation.reason == "attribute-missing":
-        return WriteRejectedError(
-            "write-required-attribute-missing", f"{path}: required attribute is absent (or null)"
+        return UsageError(
+            WRITE_REQUIRED_ATTRIBUTE_MISSING, f"{path}: required attribute is absent (or null)"
         )
     if violation.reason == "value-object-missing":
-        return WriteRejectedError(
-            "write-required-value-object-missing",
+        return UsageError(
+            WRITE_REQUIRED_VALUE_OBJECT_MISSING,
             f"{path}: required value object is absent (or null)",
         )
-    return WriteRejectedError(
-        "write-value-type-mismatch",
+    return UsageError(
+        WRITE_VALUE_TYPE_MISMATCH,
         f"{path}: value {violation.value!r} does not match the declared type "
         f"{violation.declared_type!r}",
     )
@@ -1665,9 +1699,10 @@ def _planned_marker(
     ((kind, payload),) = marker.items()
     if kind == "computed" and context == "insert":
         if payload != "maxPlusOne":
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: "
-                f"{payload!r} is not a recognized `computed` strategy (m-pk-gen)"
+                f"{payload!r} is not a recognized `computed` strategy (m-pk-gen)",
             )
         return MAX_PLUS_ONE
     if kind == "increment" and context == "update":
@@ -1677,10 +1712,11 @@ def _planned_marker(
 
 def _unplannable_marker(
     entity: EntityMetadata, name: str, kind: str, context: _MarkerContext
-) -> WriteInstructionError:
-    return WriteInstructionError(
+) -> UsageError:
+    return UsageError(
+        WRITE_INSTRUCTION_INVALID,
         f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: a {kind!r} "
-        f"marker is not recognized for {context} planning"
+        f"marker is not recognized for {context} planning",
     )
 
 
@@ -1703,7 +1739,7 @@ def _judge_write_persistence(
     """Refuse any write to an Entity whose family's effective Persistence Mode
     is ReadOnly (`m-unit-work`)."""
     if position.persistence is PersistenceMode.READ_ONLY:
-        raise InstructionRejectedError(
+        raise UsageError(
             READ_ONLY_WRITE_TARGET,
             f"{entity.identity.canonical}: its family's Persistence Mode is ReadOnly, which "
             "accepts no persistence write of any kind",
@@ -1736,7 +1772,7 @@ def _prepare_keyed_write(
     if _is_temporal(shape):
         plural = _temporal_singleton_refusal(entity.identity.name, instruction)
         if plural is not None:
-            raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
+            raise UsageError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
     if members is not None:
         assigned = members()
         (row,) = instruction.rows
@@ -1784,7 +1820,7 @@ def _judge_readless_target(
     revision the caller holds."""
     shape = temporal_read.view(model).shape(entity.identity)
     if _requires_observation(position, shape):
-        raise InstructionRejectedError(
+        raise UsageError(
             SET_BASED_WRITE_TARGET_UNSUPPORTED,
             _readless_target_advice(entity, position, shape, mutation),
         )
@@ -1849,12 +1885,12 @@ def _judge_applicability(
     if temporal:
         refusal = _temporal_delete_refusal(name, mutation, surface=surface)
         if refusal is not None:
-            raise WriteInstructionError(refusal)
+            raise UsageError(WRITE_INSTRUCTION_INVALID, refusal)
     window = _judge_window(_family_root(model, entity), shape, mutation, valid_from, until)
     if not temporal:
         refusal = _non_temporal_milestone_refusal(name, mutation, surface=surface)
         if refusal is not None:
-            raise WriteInstructionError(refusal)
+            raise UsageError(WRITE_INSTRUCTION_INVALID, refusal)
     return window
 
 
@@ -1879,39 +1915,44 @@ def _judge_window(
 
     A bounded form on a target without Valid Time, a half-stated window, an
     inadmissible bound, and an unordered one are this write's own verdict on its
-    input (:class:`WriteInstructionError`); a bound that is no instant keeps
+    input (``write-instruction-invalid``); a bound that is no instant keeps
     `m-core`'s :class:`~parallax.core.base.InstantError`. Refusals name the
     family by its root.
     """
     if mutation in BOUNDED_MUTATIONS:
         if not isinstance(shape, temporal_read.Bitemporal):
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{root.name}: {_profile(shape)} {mutation!r} takes no until "
-                f"({root.name!r} declares no Valid-Time dimension to bound)"
+                f"({root.name!r} declares no Valid-Time dimension to bound)",
             )
         missing = "valid_from" if valid_from is None else "until" if until is None else None
         if missing is not None:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{root.name}: a bounded {mutation!r} states its window as a pair, "
                 f"and {missing} is absent — an unbounded write omits until rather than "
-                "stating none"
+                "stating none",
             )
     elif until is not None:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{root.name}: {mutation!r} is unbounded and takes no until "
-            "(its window runs to infinity)"
+            "(its window runs to infinity)",
         )
     if isinstance(shape, temporal_read.Bitemporal):
         if valid_from is None:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{root.name}: a bitemporal {mutation!r} requires valid_from "
-                "(the mutation's own Valid-Time instant)"
+                "(the mutation's own Valid-Time instant)",
             )
         managed_from = normalize_instant(_stated_instant(root, mutation, "valid_from", valid_from))
     elif valid_from is not None:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{root.name}: {_profile(shape)} {mutation!r} takes no valid_from "
-            f"({root.name!r} declares no Valid-Time dimension to bound)"
+            f"({root.name!r} declares no Valid-Time dimension to bound)",
         )
     else:
         # A target without Valid Time is refused any stated `until` above.
@@ -1920,9 +1961,10 @@ def _judge_window(
         return TimeInterval(managed_from, INFINITY)
     managed_until = normalize_instant(_stated_instant(root, mutation, "until", until))
     if managed_until <= managed_from:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{root.name}: {mutation!r} requires valid_from < until "
-            f"— got valid_from={valid_from!r}, until={until!r}"
+            f"— got valid_from={valid_from!r}, until={until!r}",
         )
     return TimeInterval(managed_from, managed_until)
 
@@ -1987,39 +2029,43 @@ def _judge_target_expectation(
     """
     mutation = instruction.mutation
     if not _requires_observation(position, shape):
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{root.name}: {mutation!r} states a revision its caller observed, and "
             f"{root.name!r} is unversioned and non-temporal, so it has none to state and no "
             "write could detect a change since that observation; read it in the writing "
-            "transaction and write through that read instead"
+            "transaction and write through that read instead",
         )
     stated = _stated_conditions(instruction)
     if len(stated) > 1:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{root.name}: {mutation!r} states {list(stated)}, and a target has one condition "
-            "to state"
+            "to state",
         )
     required = "version" if _is_versioned(position) else "tx_start"
     if stated and required not in stated:
         (misstated,) = stated
-        raise WriteInstructionError(_misstated(root, mutation, misstated, required))
+        raise UsageError(WRITE_INSTRUCTION_INVALID, _misstated(root, mutation, misstated, required))
     if not stated:
-        raise WriteInstructionError(_missing(root, mutation, required))
+        raise UsageError(WRITE_INSTRUCTION_INVALID, _missing(root, mutation, required))
     # A runtime caller may state a condition as any value, whatever the
     # annotation promises, so each is judged as the object it is.
     value = cast(
         "object", instruction.if_version if required == "version" else instruction.if_tx_start
     )
     if value is None:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{root.name}: {mutation!r} states {required}=None, which names no revision; state "
-            f"the {required} its caller observed"
+            f"the {required} its caller observed",
         )
     if required == "version":
         if isinstance(value, bool) or not isinstance(value, int):
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{root.name}: {mutation!r} takes an integer version, and "
-                f"{type(value).__name__} is no version"
+                f"{type(value).__name__} is no version",
             )
         return ExpectedVersion(value)
     return ExpectedTxStart(normalize_instant(_stated_instant(root, mutation, "tx_start", value)))
@@ -2085,17 +2131,19 @@ def _prepare_target_payload(
     key = position.primary_key.identity.name
     _judge_row_members(model, entity, entry, row, authored_members, "target")
     if key not in row:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{entity.identity.name}: a target write names the object it writes by its primary "
-            f"key, and this row states no {key!r}"
+            f"key, and this row states no {key!r}",
         )
     mutation = instruction.mutation
     if mutation in DESTRUCTIVE_MUTATIONS:
         stated = sorted(name for name in row if name != key)
         if stated:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.name}: a target {mutation!r} names its "
-                f"object by its primary key alone, and this row also states {stated}"
+                f"object by its primary key alone, and this row also states {stated}",
             )
         return _sparse_row(entry, entity, _positioned(entry, row), lane=lane, context=None)
     if mutation in REPLACE_MUTATIONS:
@@ -2130,7 +2178,7 @@ def _judge_row_members(
     """Refuse a row whose members its target's family cannot write: a
     sibling-branch or derived member first, then an authored framework-owned
     one, then an undeclared one."""
-    _judge_subtype_shape(model, entity, row)
+    inheritance.validate_subtype_write(model, entity, row)
     if authored_members is not None and entry.framework_owned:
         shape = entry.selection.members.shape
         stated = (
@@ -2142,18 +2190,10 @@ def _judge_row_members(
     members = entry.selection.members.shape.by_name
     unknown = sorted(name for name in row if name not in members)
     if unknown:
-        raise WriteInstructionError(
-            f"{entity.identity.name}: {described} write row names undeclared member(s) {unknown}"
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{entity.identity.name}: {described} write row names undeclared member(s) {unknown}",
         )
-
-
-def _judge_subtype_shape(
-    model: AcceptedMetamodel, entity: EntityMetadata, row: Mapping[str, object]
-) -> None:
-    try:
-        inheritance.validate_subtype_write(model, entity, row)
-    except inheritance.InheritanceError as error:
-        raise WriteRejectedError(error.rule, str(error)) from error
 
 
 def _profile(shape: temporal_read.TemporalShape | None) -> str:
@@ -2222,8 +2262,9 @@ def _prepare_keyed_payload(
             mutation, _assigns_beside_key(rows, position), entity, rows, valid_time_window
         )
     if authored_members is not None and len(instruction.rows) != 1:
-        raise WriteInstructionError(
-            "a keyed assignment set applies only to one addressed write row"
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            "a keyed assignment set applies only to one addressed write row",
         )
     context = None if mutation in DESTRUCTIVE_MUTATIONS else _assignment_context(model, entity)
     judged: list[ManagedRow] = []
@@ -2337,14 +2378,16 @@ def _row_from_assignments(
         owner = entity_by_name(model, owner_spelling)
         member = selection.binding(name)
         if owner is None or owner.identity != entity.identity or member is None:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
-                f"declared member of {entity.identity.canonical}"
+                f"declared member of {entity.identity.canonical}",
             )
         if name in row:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.name}: assignment {assignment.attr!r} is duplicated — each "
-                "member may be assigned at most once"
+                "member may be assigned at most once",
             )
         if isinstance(member, AttributeMetadata) and isinstance(member.primary_key, PrimaryKey):
             _judge_prepared_assignment(entity, member, assignment.value)
@@ -2365,8 +2408,10 @@ def _judge_prepared_assignment(
     """
     try:
         judge_assignment(member, value, known_violation=None, known_value_valid=True)
-    except WriteAssignmentError as error:
-        raise WriteInstructionError(f"{target.identity.canonical}.{error}") from error
+    except UsageError as error:
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID, f"{target.identity.canonical}.{error.args[1]}"
+        ) from error
 
 
 def assigned_members(
@@ -2397,19 +2442,22 @@ def assigned_members(
             or owner.identity not in ancestry
             or _member_selection(model, owner).binding(name) is None
         ):
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.name}: assignment {attr!r} does not name a member "
-                f"{entity.identity.canonical} declares or inherits"
+                f"{entity.identity.canonical} declares or inherits",
             )
         if name == key:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.canonical}.{name}: primary-key fields may not be assigned — "
-                "the key addresses the object a write changes"
+                "the key addresses the object a write changes",
             )
         if name in row:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.name}: assignment {attr!r} is duplicated — each member may "
-                "be assigned at most once"
+                "be assigned at most once",
             )
         row[name] = assignment.value
     return row
@@ -2439,16 +2487,14 @@ def addressed_members(
     for name, addressed in stated.items():
         try:
             value = convert(document[name])
-        except WireDecodingError as error:
-            raise InstructionRejectedError(
-                f"neutral-literal-{error.reason}",
-                f"{entity.identity.canonical}.{name}: {error}",
-            ) from error
+        except UsageError as error:
+            raise located_refusal(error, f"{entity.identity.canonical}.{name}") from error
         if value != addressed:
-            raise WriteInstructionError(
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
                 f"{entity.identity.canonical}.{name}: the document names {document[name]!r}, and "
                 "the source this write addresses is another object — a key member addresses "
-                "the write and never changes it"
+                "the write and never changes it",
             )
     return {name: member for name, member in document.items() if name not in stated}
 
@@ -2480,11 +2526,8 @@ def _family_root(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityIden
 def _decoded_wire(neutral_type: NeutralType, value: object, path: str) -> object:
     try:
         return freeze_retained_value(decode_wire(neutral_type, cast("WireValue", value)))
-    except WireDecodingError as error:
-        raise InstructionRejectedError(
-            f"neutral-literal-{error.reason}",
-            f"{path}: {error}",
-        ) from error
+    except UsageError as error:
+        raise located_refusal(error, path) from error
 
 
 def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
@@ -2494,11 +2537,10 @@ def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     That rule answers a miss for two different mistakes, and this is the boundary
     every externally produced instruction crosses, so the two are classified
     apart: a bare spelling two namespaces share is the normative
-    `reference-ambiguous-entity-name` refusal
-    (:class:`InstructionRejectedError`, `m-predicate` "Entity spellings in a
-    reference position"), naming the canonical spellings that would resolve;
-    anything else names no declared Entity at all and stays a plain
-    :class:`WriteInstructionError`. Classifying here is also what keeps an
+    `reference-ambiguous-entity-name` refusal (`m-predicate` "Entity spellings
+    in a reference position"), naming the canonical spellings that would
+    resolve; anything else names no declared Entity at all and is refused as
+    ``write-instruction-invalid``. Classifying here is also what keeps an
     ambiguous instruction out of the planner, whose own target lookup would
     answer the same miss by leaving the write unbound to any observation.
 
@@ -2511,10 +2553,12 @@ def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
         return entity
     shared = ambiguous_entity_spellings(model, name)
     if shared:
-        raise InstructionRejectedError(
+        raise UsageError(
             REFERENCE_AMBIGUOUS_ENTITY_NAME,
             f"the bare Entity spelling {name!r} is shared by {list(shared)}, so it names no "
             "single Entity in this model and the write resolves nowhere (m-predicate reference "
             "resolution); spell the one this write means",
         )
-    raise WriteInstructionError(f"the connected model declares no entity {name!r} for this write")
+    raise UsageError(
+        WRITE_INSTRUCTION_INVALID, f"the connected model declares no entity {name!r} for this write"
+    )

@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from parallax.conformance import case_format
-from parallax.conformance._mechanism.envelope import EngineError, driver_binds
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError, driver_binds
 from parallax.conformance._mechanism.model_facts import case_entity
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import DocumentValue
@@ -63,7 +63,9 @@ def _refuse_temporal_corruptions(
     for entry in entries:
         entity = case_entity(model, cast("str", entry["entity"]))
         if _is_temporal(model, entity):
-            raise EngineError(f"{case.path.name}: {_temporal_corruption_refusal(entity)}")
+            raise UnclassifiedEngineError(
+                f"{case.path.name}: {_temporal_corruption_refusal(entity)}"
+            )
 
 
 def _corrupt_stored_state(
@@ -82,7 +84,9 @@ def _corrupt_stored_state(
     entity = case_entity(model, cast("str", entry["entity"]))
     view = storage_layout.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - a corrupted Entity owns rows
-        raise EngineError(f"{case.path.name}: {entity.identity.canonical} owns no table")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: {entity.identity.canonical} owns no table"
+        )
     member = tuple(cast("list[object]", entry["member"]))
     column, path = _corruption_target(case, model, entity, member)
     key_column, key = _corruption_key(case, model, entity, entry["key"])
@@ -93,7 +97,7 @@ def _corrupt_stored_state(
         dialect.to_driver_sql(f"select {dialect.quote(column)} from {table} {where}"), [key]
     )
     if len(rows) != 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: given.corrupt addresses {entity.identity.canonical} "
             f"{entry['key']!r}, which the loaded fixtures answer with {len(rows)} row(s) "
             "rather than one"
@@ -194,7 +198,7 @@ def _corruption_target(
         return placement.slot.column.name, (*placement.path, *member[1:])
     if isinstance(placement, DirectColumn) and placement.slot.tier is ColumnTier.DOCUMENT:
         return placement.slot.column.name, member[1:]
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case.path.name}: given.corrupt addresses {entity.identity.canonical}."
         f"{'.'.join(str(segment) for segment in member)}, which this model does not place "
         "inside a Structured Column"
@@ -223,7 +227,7 @@ def _corruption_key(
     # Defensive: every accepted Entity declares one primary key and every Storage
     # Layout keeps it in a Column of its own.
     if declared is None or not isinstance(placement, DirectColumn):  # pragma: no cover
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: {entity.identity.canonical} declares no primary key a "
             "corruption can address a row by"
         )

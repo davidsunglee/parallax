@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, assert_never, cast
 
-from parallax.core.base import ManagedValue, NeutralType
+from parallax.core.base import ManagedValue, NeutralType, UsageError
 from parallax.core.entity._declaration import shape_of, wire_names_of
 from parallax.core.entity._expressions import (
     AuthoredAnd,
@@ -35,6 +35,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.object_query import (
+    DEEP_FETCH_VALUE_OBJECT_SEGMENT,
     IncludeSegment,
     InterpretedQuery,
     ObjectQueryNode,
@@ -46,13 +47,14 @@ from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import (
     CURRENT_SCALAR_ELEMENT,
+    PATH_TARGET_KIND_MISMATCH,
+    PREDICATE_SUBJECT_OUTSIDE_SCOPE,
     And,
     Comparison,
     FalseNode,
     FieldSubject,
     Group,
     Membership,
-    ModelRejectedError,
     Narrow,
     Not,
     NullCheck,
@@ -386,7 +388,7 @@ class _Resolver:
         A narrow naming no Entity of this model continues through that target, so
         ``validate_include_path`` states the narrow's own refusal.
         """
-        target = self._relationship_target(relationship, "deep-fetch-value-object-segment")
+        target = self._relationship_target(relationship, DEEP_FETCH_VALUE_OBJECT_SEGMENT)
         if len(segment.narrow_to) != 1:
             return target.identity
         narrowed = entity_by_name(self._model, segment.narrow_to[0])
@@ -428,8 +430,8 @@ class _Resolver:
         if isinstance(subject, AuthoredMemberPath):
             return FieldSubject(self._spelled(subject, frame))
         if not isinstance(frame, ScalarElementFrame):
-            raise ModelRejectedError(
-                "predicate-subject-outside-scope",
+            raise UsageError(
+                PREDICATE_SUBJECT_OUTSIDE_SCOPE,
                 f"{subject.collection.described()}.element is read only inside a quantifier "
                 "over its own collection",
             )
@@ -447,8 +449,8 @@ class _Resolver:
             check_receiver(receiver, frame, self._model)
             return ".".join(names)
         if not isinstance(frame, ObjectElementFrame) or not _same_shape(receiver, frame):
-            raise ModelRejectedError(
-                "predicate-subject-outside-scope",
+            raise UsageError(
+                PREDICATE_SUBJECT_OUTSIDE_SCOPE,
                 f"{'.'.join(names)} is read from a Value Object element, and the current scope "
                 "binds no element of that Value Object",
             )
@@ -501,7 +503,7 @@ class _Resolver:
             if relationship is None:
                 raise _unresolved_name(described, current.__name__, name)
             canonical.append(relationship.name)
-            target = self._relationship_target(relationship, "path-target-kind-mismatch")
+            target = self._relationship_target(relationship, PATH_TARGET_KIND_MISMATCH)
             entity, current = target.identity, None
         return tuple(canonical)
 

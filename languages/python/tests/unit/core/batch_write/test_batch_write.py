@@ -23,7 +23,7 @@ from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.base import INT64
+from parallax.core.base import INT64, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
@@ -38,7 +38,6 @@ from parallax.core.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     WritePlanningRequest,
-    WriteRejectedError,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan.payload import AssignmentPayload, WritePayloadPreparer
@@ -297,7 +296,7 @@ def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() ->
         ),
         KeyedWriteInstruction("insert", "Wallet", ({"id": 11, "owner": "Omar"},)),
     ]
-    with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: required attribute"):
+    with pytest.raises(UsageError, match=r"Wallet\.balance: required attribute"):
         _flush_and_lower(buffer, model)
 
 

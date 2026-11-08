@@ -33,6 +33,7 @@ from parallax.core.base import (
     Decimal,
     ManagedValue,
     NeutralType,
+    UsageError,
     canonical_managed_member,
     coerce_neutral_input,
     matches_neutral_type,
@@ -40,6 +41,7 @@ from parallax.core.base import (
 )
 from parallax.core.base._neutral import ManagedValueExclusion
 from tests._support.binary32 import rounded_once, rounding_witnesses, shortest_spelling
+from tests._support.errors import raises_code
 
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
@@ -65,7 +67,8 @@ def test_wire_public_seams_bound_defensive_codec_failures(
 ) -> None:
     def invalid_json(_value: object, *, top_level: bool = False) -> wire.WireValue:
         del top_level
-        raise wire_codec._JsonFailure("type-mismatch", "changed during normalization")  # pyright: ignore[reportPrivateUsage]
+        failure = wire_codec._JsonFailure  # pyright: ignore[reportPrivateUsage]
+        raise failure(wire.NEUTRAL_LITERAL_TYPE_MISMATCH, "changed during normalization")
 
     monkeypatch.setattr(wire_codec, "_normalize_json", invalid_json)
     with pytest.raises(wire.WireEncodingError, match="changed during normalization"):
@@ -73,13 +76,11 @@ def test_wire_public_seams_bound_defensive_codec_failures(
 
 
 def test_canonical_fast_paths_retain_string_and_integer_space_checks() -> None:
-    with pytest.raises(wire.WireDecodingError) as text:
+    with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_canonical_wire(STRING, cast("wire.WireValue", "\ud800"))
-    assert text.value.reason == "out-of-space"
 
-    with pytest.raises(wire.WireDecodingError) as integer:
+    with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_canonical_wire(INT32, 2**31)
-    assert integer.value.reason == "out-of-space"
 
 
 _CANONICAL: tuple[tuple[NeutralType, ManagedValue, wire.WireValue], ...] = (
@@ -194,62 +195,60 @@ def test_admitted_alternatives_normalize_to_canonical_output(
     decoded = wire.decode_wire(neutral_type, written)
     assert decoded == managed
     assert wire.encode_wire(neutral_type, decoded) == canonical
-    with pytest.raises(wire.WireDecodingError) as exc_info:
+    with raises_code(UsageError, "neutral-literal-noncanonical"):
         wire.decode_canonical_wire(neutral_type, written)
-    assert exc_info.value.reason == "noncanonical"
 
 
 @pytest.mark.parametrize(
-    ("neutral_type", "written", "reason"),
+    ("neutral_type", "written", "code"),
     [
-        (BOOLEAN, '"true"', "type-mismatch"),
-        (INT32, "1.5", "type-mismatch"),
-        (INT32, "2147483648", "out-of-space"),
-        (INT64, '"1"', "type-mismatch"),
-        (INT64, "9223372036854775808", "out-of-space"),
-        (FLOAT32, '"1.0"', "type-mismatch"),
-        (FLOAT32, "1e39", "out-of-space"),
-        (FLOAT64, '"1.0"', "type-mismatch"),
-        (FLOAT64, "1e309", "out-of-space"),
-        (Decimal(4, 2), "10.25", "type-mismatch"),
-        (Decimal(4, 2), '"10.2"', "noncanonical"),
-        (Decimal(4, 2), '"123.45"', "out-of-space"),
-        (STRING, "42", "type-mismatch"),
-        (STRING, '"\\ud800"', "out-of-space"),
-        (BYTES, "42", "type-mismatch"),
-        (BYTES, '"abc"', "type-mismatch"),
-        (BYTES, '"0A1B"', "noncanonical"),
-        (DATE, "42", "type-mismatch"),
-        (DATE, '"20260115"', "type-mismatch"),
-        (DATE, '"2026-1-15"', "noncanonical"),
-        (DATE, '"2026-2-30"', "out-of-space"),
-        (DATE, '"2026-02-30"', "out-of-space"),
-        (TIME, "42", "type-mismatch"),
-        (TIME, '"09:30"', "type-mismatch"),
-        (TIME, '"09:30:00.1234560"', "type-mismatch"),
-        (TIME, '"24:00:00"', "out-of-space"),
-        (TIMESTAMP, "42", "type-mismatch"),
-        (TIMESTAMP, '"2026-1-1T9:30:00Z"', "type-mismatch"),
-        (TIMESTAMP, '"2026-01-01T09:30:00.1234560Z"', "type-mismatch"),
-        (TIMESTAMP, '"2026-01-15T09:30:00+00:00"', "noncanonical"),
-        (TIMESTAMP, '"2026-01-15T09:30:00+99:00"', "out-of-space"),
-        (TIMESTAMP, '"0001-01-01T00:00:00+14:00"', "out-of-space"),
-        (TIMESTAMP, '"2026-02-30T09:30:00Z"', "out-of-space"),
-        (UUID, "42", "type-mismatch"),
-        (UUID, '"123E4567-E89B-12D3-A456-426614174000"', "noncanonical"),
-        (UUID, '"not-a-uuid"', "type-mismatch"),
-        (JSON, "null", "type-mismatch"),
-        (JSON, "1e309", "out-of-space"),
+        (BOOLEAN, '"true"', "neutral-literal-type-mismatch"),
+        (INT32, "1.5", "neutral-literal-type-mismatch"),
+        (INT32, "2147483648", "neutral-literal-out-of-space"),
+        (INT64, '"1"', "neutral-literal-type-mismatch"),
+        (INT64, "9223372036854775808", "neutral-literal-out-of-space"),
+        (FLOAT32, '"1.0"', "neutral-literal-type-mismatch"),
+        (FLOAT32, "1e39", "neutral-literal-out-of-space"),
+        (FLOAT64, '"1.0"', "neutral-literal-type-mismatch"),
+        (FLOAT64, "1e309", "neutral-literal-out-of-space"),
+        (Decimal(4, 2), "10.25", "neutral-literal-type-mismatch"),
+        (Decimal(4, 2), '"10.2"', "neutral-literal-noncanonical"),
+        (Decimal(4, 2), '"123.45"', "neutral-literal-out-of-space"),
+        (STRING, "42", "neutral-literal-type-mismatch"),
+        (STRING, '"\\ud800"', "neutral-literal-out-of-space"),
+        (BYTES, "42", "neutral-literal-type-mismatch"),
+        (BYTES, '"abc"', "neutral-literal-type-mismatch"),
+        (BYTES, '"0A1B"', "neutral-literal-noncanonical"),
+        (DATE, "42", "neutral-literal-type-mismatch"),
+        (DATE, '"20260115"', "neutral-literal-type-mismatch"),
+        (DATE, '"2026-1-15"', "neutral-literal-noncanonical"),
+        (DATE, '"2026-2-30"', "neutral-literal-out-of-space"),
+        (DATE, '"2026-02-30"', "neutral-literal-out-of-space"),
+        (TIME, "42", "neutral-literal-type-mismatch"),
+        (TIME, '"09:30"', "neutral-literal-type-mismatch"),
+        (TIME, '"09:30:00.1234560"', "neutral-literal-type-mismatch"),
+        (TIME, '"24:00:00"', "neutral-literal-out-of-space"),
+        (TIMESTAMP, "42", "neutral-literal-type-mismatch"),
+        (TIMESTAMP, '"2026-1-1T9:30:00Z"', "neutral-literal-type-mismatch"),
+        (TIMESTAMP, '"2026-01-01T09:30:00.1234560Z"', "neutral-literal-type-mismatch"),
+        (TIMESTAMP, '"2026-01-15T09:30:00+00:00"', "neutral-literal-noncanonical"),
+        (TIMESTAMP, '"2026-01-15T09:30:00+99:00"', "neutral-literal-out-of-space"),
+        (TIMESTAMP, '"0001-01-01T00:00:00+14:00"', "neutral-literal-out-of-space"),
+        (TIMESTAMP, '"2026-02-30T09:30:00Z"', "neutral-literal-out-of-space"),
+        (UUID, "42", "neutral-literal-type-mismatch"),
+        (UUID, '"123E4567-E89B-12D3-A456-426614174000"', "neutral-literal-noncanonical"),
+        (UUID, '"not-a-uuid"', "neutral-literal-type-mismatch"),
+        (JSON, "null", "neutral-literal-type-mismatch"),
+        (JSON, "1e309", "neutral-literal-out-of-space"),
     ],
 )
 def test_each_codec_failure_retains_its_classification(
     neutral_type: NeutralType,
     written: str,
-    reason: wire.WireDecodingReason,
+    code: wire.NeutralLiteralCode,
 ) -> None:
-    with pytest.raises(wire.WireDecodingError) as exc_info:
+    with raises_code(UsageError, code):
         wire.decode_wire(neutral_type, wire.loads(written))
-    assert exc_info.value.reason == reason
 
 
 _RULE_DECODED: list[tuple[NeutralType, str, object]] = [
@@ -262,15 +261,15 @@ _RULE_DECODED: list[tuple[NeutralType, str, object]] = [
     (STRING, '"caf\u00e9"', "café"),
     (JSON, '{"name": "caf\u00e9"}', {"name": "café"}),
 ]
-_RULE_REFUSED: list[tuple[NeutralType, str, wire.WireDecodingReason]] = [
-    (INT32, "-2147483649", "out-of-space"),
-    (INT64, "-9223372036854775809", "out-of-space"),
-    (Decimal(4, 2), '"100.00"', "out-of-space"),
-    (Decimal(4, 2), '"1.005"', "out-of-space"),
-    (Decimal(4, 2), '"1.5"', "noncanonical"),
-    (Decimal(1, 0), '"10"', "out-of-space"),
-    (STRING, '"\udfff"', "out-of-space"),
-    (JSON, '["\ud800"]', "out-of-space"),
+_RULE_REFUSED: list[tuple[NeutralType, str, wire.NeutralLiteralCode]] = [
+    (INT32, "-2147483649", "neutral-literal-out-of-space"),
+    (INT64, "-9223372036854775809", "neutral-literal-out-of-space"),
+    (Decimal(4, 2), '"100.00"', "neutral-literal-out-of-space"),
+    (Decimal(4, 2), '"1.005"', "neutral-literal-out-of-space"),
+    (Decimal(4, 2), '"1.5"', "neutral-literal-noncanonical"),
+    (Decimal(1, 0), '"10"', "neutral-literal-out-of-space"),
+    (STRING, '"\udfff"', "neutral-literal-out-of-space"),
+    (JSON, '["\ud800"]', "neutral-literal-out-of-space"),
 ]
 
 
@@ -279,14 +278,14 @@ def test_decoding_judges_each_space_by_its_own_rule(
     decode: Callable[[NeutralType, wire.WireValue], ManagedValue],
 ) -> None:
     decoded = [decode(declared, wire.loads(written)) for declared, written, _ in _RULE_DECODED]
-    reasons: list[str] = []
+    codes: list[str] = []
     for declared, written, _ in _RULE_REFUSED:
-        with pytest.raises(wire.WireDecodingError) as refused:
+        with pytest.raises(UsageError) as refused:
             decode(declared, wire.loads(written))
-        reasons.append(refused.value.reason)
+        codes.append(refused.value.code)
 
     assert [repr(value) for value in decoded] == [repr(value) for _, _, value in _RULE_DECODED]
-    assert reasons == [reason for _, _, reason in _RULE_REFUSED]
+    assert codes == [code for _, _, code in _RULE_REFUSED]
 
 
 def test_float_zero_normalizes_positive_and_canonical_decoding_observes_source_sign() -> None:
@@ -295,18 +294,16 @@ def test_float_zero_normalizes_positive_and_canonical_decoding_observes_source_s
         assert decoded == 0.0
         assert math.copysign(1.0, cast("float", decoded)) == 1.0
         assert wire.encode_wire(neutral_type, decoded) == 0.0
-        with pytest.raises(wire.WireDecodingError) as exc_info:
+        with raises_code(UsageError, "neutral-literal-noncanonical"):
             wire.decode_canonical_wire(neutral_type, wire.loads("-0.0"))
-        assert exc_info.value.reason == "noncanonical"
 
 
 def test_a_negative_zero_integer_token_is_a_noncanonical_float32() -> None:
     authored = wire.loads("-0")
     decoded = wire.decode_wire(FLOAT32, authored)
     assert repr(decoded) == "0.0"
-    with pytest.raises(wire.WireDecodingError) as exc_info:
+    with raises_code(UsageError, "neutral-literal-noncanonical"):
         wire.decode_canonical_wire(FLOAT32, authored)
-    assert exc_info.value.reason == "noncanonical"
 
 
 @pytest.mark.parametrize("written", ["-1e-50", "-1.0E-400", "1e-400"])
@@ -410,9 +407,8 @@ def test_a_float64_decodes_the_number_its_json_text_writes_rounded_once(source: 
     if not negative_zero and Fraction(source) == Fraction(repr(expected)):
         assert repr(wire.decode_canonical_wire(FLOAT64, written)) == repr(expected)
     else:
-        with pytest.raises(wire.WireDecodingError) as caught:
+        with raises_code(UsageError, "neutral-literal-noncanonical"):
             wire.decode_canonical_wire(FLOAT64, written)
-        assert caught.value.reason == "noncanonical"
 
 
 @pytest.mark.parametrize(
@@ -422,17 +418,15 @@ def test_a_float64_decodes_the_number_its_json_text_writes_rounded_once(source: 
 def test_a_float64_past_the_largest_finite_value_is_out_of_space(source: str) -> None:
     assert _nearest_binary64(source) is None
     for decode in (wire.decode_wire, wire.decode_canonical_wire):
-        with pytest.raises(wire.WireDecodingError) as caught:
+        with raises_code(UsageError, "neutral-literal-out-of-space"):
             decode(FLOAT64, wire.loads(source))
-        assert caught.value.reason == "out-of-space"
 
 
 def test_a_negative_zero_integer_token_is_a_noncanonical_float64() -> None:
     authored = wire.loads("-0")
     assert repr(wire.decode_wire(FLOAT64, authored)) == "0.0"
-    with pytest.raises(wire.WireDecodingError) as exc_info:
+    with raises_code(UsageError, "neutral-literal-noncanonical"):
         wire.decode_canonical_wire(FLOAT64, authored)
-    assert exc_info.value.reason == "noncanonical"
 
 
 def test_json_text_keeps_digits_a_bare_float_would_name_differently() -> None:
@@ -441,11 +435,10 @@ def test_json_text_keeps_digits_a_bare_float_would_name_differently() -> None:
     midpoint = wire.loads("1.000000059604644775390625")
     assert wire.decode_wire(FLOAT32, midpoint) == 1.0
     assert wire.decode_wire(FLOAT32, float(cast("float", midpoint))) == 1.0 + 2.0**-23
-    with pytest.raises(wire.WireDecodingError) as exc_info:
+    with raises_code(UsageError, "neutral-literal-noncanonical"):
         wire.decode_canonical_wire(
             FLOAT64, wire.loads("0.1000000000000000055511151231257827021181583404541015625")
         )
-    assert exc_info.value.reason == "noncanonical"
     integral = wire.loads("72057594037927936.0")
     assert wire.decode_canonical_wire(INT64, integral) == 72057594037927936
 
@@ -462,16 +455,14 @@ def test_out_of_space_authored_numbers_are_not_scalar_or_json_members() -> None:
         json.loads(json.dumps(loaded))
         for neutral_type in scalar_types:
             assert matches_neutral_type(loaded, neutral_type) is False
-            with pytest.raises(wire.WireDecodingError) as scalar_decoding:
+            with raises_code(UsageError, "neutral-literal-out-of-space"):
                 wire.decode_wire(neutral_type, loaded)
-            assert scalar_decoding.value.reason == "out-of-space"
             with pytest.raises(wire.WireEncodingError):
                 wire.encode_wire(neutral_type, cast("ManagedValue", loaded))
         for candidate in (loaded, [loaded], {"value": loaded}):
             assert matches_neutral_type(candidate, JSON) is False
-            with pytest.raises(wire.WireDecodingError) as decoding:
+            with raises_code(UsageError, "neutral-literal-out-of-space"):
                 wire.decode_wire(JSON, cast("wire.WireValue", candidate))
-            assert decoding.value.reason == "out-of-space"
             with pytest.raises(wire.WireEncodingError):
                 wire.encode_wire(JSON, cast("ManagedValue", candidate))
 
@@ -508,13 +499,11 @@ def test_decimal_encoding_does_not_cross_the_host_integer_string_limit() -> None
 
 
 def test_extreme_exponents_classify_without_expanding_the_represented_power() -> None:
-    with pytest.raises(wire.WireDecodingError) as overflow:
+    with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_wire(FLOAT64, wire.loads("1e1000000000"))
-    assert overflow.value.reason == "out-of-space"
     assert wire.decode_wire(FLOAT64, wire.loads("1e-1000000000")) == 0.0
-    with pytest.raises(wire.WireDecodingError) as nested:
+    with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_wire(JSON, wire.loads('{"n":1e1000000000}'))
-    assert nested.value.reason == "out-of-space"
 
 
 def test_json_normalization_is_fresh_recursive_and_ordinary() -> None:
@@ -752,9 +741,8 @@ def test_decoding_rejects_unknown_exclusions_before_normalizing_their_payload() 
         (UUID, ExcludedText("123e4567-e89b-12d3-a456-426614174000")),
         (TIMESTAMP, ExcludedText("2026-01-01T00:00:00Z")),
     ):
-        with pytest.raises(wire.WireDecodingError) as decoding:
+        with raises_code(UsageError, "neutral-literal-type-mismatch"):
             wire.decode_wire(neutral_type, cast("wire.WireValue", value))
-        assert decoding.value.reason == "type-mismatch"
 
 
 def test_uuid_subclass_nondata_descriptor_storage_remains_encodable() -> None:
@@ -852,9 +840,8 @@ def test_json_rejects_excluded_scalars_containers_and_member_names() -> None:
 
     for candidate in candidates:
         assert matches_neutral_type(candidate, JSON) is False
-        with pytest.raises(wire.WireDecodingError) as decoding:
+        with raises_code(UsageError, "neutral-literal-type-mismatch"):
             wire.decode_wire(JSON, cast("wire.WireValue", candidate))
-        assert decoding.value.reason == "type-mismatch"
         with pytest.raises(wire.WireEncodingError):
             wire.encode_wire(JSON, cast("ManagedValue", candidate))
 
@@ -867,9 +854,8 @@ def test_json_cycles_are_rejected_while_repeated_acyclic_containers_are_allowed(
 
     for value in (recursive_list, recursive_object):
         assert matches_neutral_type(value, JSON) is False
-        with pytest.raises(wire.WireDecodingError) as decoding:
+        with raises_code(UsageError, "neutral-literal-type-mismatch"):
             wire.decode_wire(JSON, cast("wire.WireValue", value))
-        assert decoding.value.reason == "type-mismatch"
         with pytest.raises(wire.WireEncodingError):
             wire.encode_wire(JSON, cast("ManagedValue", value))
 
@@ -906,9 +892,8 @@ def test_deep_acyclic_json_is_processed_without_python_recursion(container: str)
 
 def test_json_object_names_must_normalize_to_distinct_utf8_text() -> None:
     surrogate = {"\ud800": 1}
-    with pytest.raises(wire.WireDecodingError) as decoding_surrogate:
+    with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_wire(JSON, cast("wire.WireValue", surrogate))
-    assert decoding_surrogate.value.reason == "out-of-space"
     with pytest.raises(wire.WireEncodingError):
         wire.encode_wire(JSON, cast("ManagedValue", surrogate))
 
@@ -922,9 +907,8 @@ def test_json_object_names_must_normalize_to_distinct_utf8_text() -> None:
     second = Key("x")
     colliding = {first: 1, second: 2}
     assert len(colliding) == 2
-    with pytest.raises(wire.WireDecodingError) as decoding_collision:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         wire.decode_wire(JSON, cast("wire.WireValue", colliding))
-    assert decoding_collision.value.reason == "type-mismatch"
     with pytest.raises(wire.WireEncodingError):
         wire.encode_wire(JSON, cast("ManagedValue", colliding))
 
@@ -940,9 +924,8 @@ def test_programmatic_oversized_json_integers_are_outside_host_serialization_spa
         with pytest.raises(wire.WireEncodingError):
             wire.encode_wire(JSON, cast("ManagedValue", candidate))
 
-    with pytest.raises(wire.WireDecodingError) as decoding:
+    with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_wire(JSON, cast("wire.WireValue", value))
-    assert decoding.value.reason == "out-of-space"
 
 
 def test_codec_errors_bound_large_integer_diagnostics_without_changing_exception_type() -> None:
@@ -951,9 +934,8 @@ def test_codec_errors_bound_large_integer_diagnostics_without_changing_exception
         pytest.skip("the interpreter has no integer string-conversion limit")
     value = 10**limit
 
-    with pytest.raises(wire.WireDecodingError) as decoding:
+    with raises_code(UsageError, "neutral-literal-out-of-space") as decoding:
         wire.decode_wire(INT32, cast("wire.WireValue", value))
-    assert decoding.value.reason == "out-of-space"
     assert len(str(decoding.value)) < 256
     with pytest.raises(wire.WireEncodingError) as encoding:
         wire.encode_wire(INT32, cast("ManagedValue", value))
@@ -972,9 +954,8 @@ def test_json_accepts_structural_mappings_and_rejects_non_json_content() -> None
             return 1
 
     assert wire.decode_wire(JSON, View()) == {"x": 1}
-    with pytest.raises(wire.WireDecodingError) as exc_info:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         wire.decode_wire(JSON, cast("wire.WireValue", {1: "not a JSON object"}))
-    assert exc_info.value.reason == "type-mismatch"
 
 
 @pytest.mark.parametrize("source", ["NaN", "Infinity", "-Infinity"])
@@ -1058,9 +1039,8 @@ def test_programmatic_nonfinite_numbers_are_not_admitted_wire_numbers(
     neutral_type: NeutralType,
 ) -> None:
     for value in (math.nan, math.inf, -math.inf):
-        with pytest.raises(wire.WireDecodingError) as decoding:
+        with raises_code(UsageError, "neutral-literal-type-mismatch"):
             wire.decode_wire(neutral_type, cast("wire.WireValue", value))
-        assert decoding.value.reason == "type-mismatch"
 
 
 class _NamelessType(type):
@@ -1079,12 +1059,12 @@ def test_codec_diagnostics_remain_bounded_for_hostile_carriers() -> None:
             raise RuntimeError("boom")
 
     for value in ("x" * 300, b"x" * 300, Unrenderable()):
-        with pytest.raises(wire.WireDecodingError) as decoding:
+        with pytest.raises(UsageError) as decoding:
             wire.decode_wire(INT32, cast("wire.WireValue", value))
         assert len(str(decoding.value)) < 400
-    with pytest.raises(wire.WireDecodingError) as nameless:
+    with pytest.raises(UsageError) as nameless:
         wire.decode_wire(INT32, cast("wire.WireValue", _Nameless()))
-    assert str(nameless.value).startswith("<unrenderable value> is type-mismatch")
+    assert str(nameless.value).startswith("neutral-literal-type-mismatch: <unrenderable value> ")
 
 
 _KIND_WITNESSES: tuple[tuple[NeutralType, object], ...] = (
@@ -1171,10 +1151,10 @@ def test_a_wire_converter_decodes_and_owns_exactly_as_decoding_then_retaining(
             expected: object = retain_document_value(
                 wire.decode_wire(declared, wire.loads(spelling))
             )
-        except wire.WireDecodingError as error:
-            with pytest.raises(wire.WireDecodingError) as refused:
+        except UsageError as error:
+            with pytest.raises(UsageError) as refused:
                 convert(wire.loads(spelling))
-            assert (refused.value.reason, str(refused.value)) == (error.reason, str(error))
+            assert str(refused.value) == str(error)
             continue
         converted = convert(wire.loads(spelling))
         assert converted == expected
@@ -1186,6 +1166,5 @@ def test_a_wire_converter_refuses_an_excluded_carrier(declared: NeutralType) -> 
     class _Excluded(str, ManagedValueExclusion):
         pass
 
-    with pytest.raises(wire.WireDecodingError) as refused:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         wire_codec.wire_converter(declared)(_Excluded("text"))
-    assert refused.value.reason == "type-mismatch"

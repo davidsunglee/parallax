@@ -9,6 +9,7 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     String,
+    UsageError,
     canonical_managed_member,
     coerce_neutral_input,
     matches_neutral_type,
@@ -27,7 +28,6 @@ from parallax.core.metamodel import (
     ValueObjectLocation,
     ValueObjectMetadata,
     ValueObjectShapeDeclaration,
-    WriteAssignmentError,
     judge_assignment,
 )
 from parallax.core.object_query import (
@@ -1133,12 +1133,12 @@ def judged_edit_violation(
             known_violation=known_violation,
             known_value_valid=known_violation is None,
         )
-    except WriteAssignmentError as error:
+    except UsageError as error:
         return EditViolation(
-            code=EDIT_CODE_BY_RULE[error.rule],
+            code=EDIT_CODE_BY_RULE[error.code],
             location=location,
             member_name=member_canonical_name(member),
-            message=f"{owner}.{error}",
+            message=f"{owner}.{error.args[1]}",
         )
     return None
 

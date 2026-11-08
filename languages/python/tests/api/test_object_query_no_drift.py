@@ -59,12 +59,12 @@ from parallax.conformance.vo_models import (
 from parallax.core import (
     DomainModel,
     Entity,
-    ModelRejectedError,
     ObjectQuery,
     Predicate,
     QueryDefinitionError,
 )
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.base import UsageError
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import LATEST, deserialize
@@ -422,16 +422,16 @@ def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str)
 def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     query = REJECTED_BUILDERS[case_id]()
-    with pytest.raises(ModelRejectedError) as typed:
+    with pytest.raises(UsageError) as typed:
         typed_resolved(query, REJECTED_MODELS[case_id])
-    assert typed.value.rule == expected_rule
-    with pytest.raises(ModelRejectedError) as exported:
+    assert typed.value.code == expected_rule
+    with pytest.raises(UsageError) as exported:
         object_query_node(query, REJECTED_MODELS[case_id])
-    assert exported.value.rule == expected_rule
+    assert exported.value.code == expected_rule
     corpus_query = deserialize(case_document(corpus_case(case_id))["when"]["objectQuery"])
-    with pytest.raises(ModelRejectedError) as corpus:
+    with pytest.raises(UsageError) as corpus:
         resolve_read_query(corpus_query, model=model_of(REJECTED_MODELS[case_id]))
-    assert corpus.value.rule == expected_rule
+    assert corpus.value.code == expected_rule
 
 
 def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> None:

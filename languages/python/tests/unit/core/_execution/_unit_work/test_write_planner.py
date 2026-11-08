@@ -44,7 +44,7 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
 )
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -580,7 +580,7 @@ def test_an_instruction_naming_an_undeclared_entity_is_a_planning_error() -> Non
         ),
         KeyedWriteInstruction("insert", "Gadget", ({"id": 1, "name": "G"},)),
     ]
-    with pytest.raises(ValueError, match="Gadget"):
+    with pytest.raises(UsageError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
 
@@ -593,7 +593,7 @@ def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal
     # any undeclared insert of the same entity would let the insert's own
     # refusal fire first and leave elision's behavior unobserved.
     buffer: list[_TestAdmittedWrite] = [KeyedWriteInstruction("amend", "Gadget", ({"id": 1},))]
-    with pytest.raises(ValueError, match="Gadget"):
+    with pytest.raises(UsageError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
 
@@ -673,7 +673,7 @@ def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimi
     update = KeyedWriteInstruction(
         "amend", "Balance", ({"id": 1}, {"id": 2, "value": Decimal("9.00")})
     )
-    with pytest.raises(ValueError, match="temporal target carries 2 rows"):
+    with pytest.raises(UsageError, match="temporal target carries 2 rows"):
         _plan([update], _BALANCE)
 
 
@@ -685,7 +685,7 @@ def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_elimin
     # mixed-row shape above cannot pin this: there, a surviving row keeps the
     # instruction alive on its way to the refusal.
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1}, {"id": 2}))
-    with pytest.raises(ValueError, match="temporal target carries 2 rows"):
+    with pytest.raises(UsageError, match="temporal target carries 2 rows"):
         _plan([update], _BALANCE)
 
 

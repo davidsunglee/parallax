@@ -33,17 +33,15 @@ import pytest
 from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core._execution._unit_work import instructions
-from parallax.core.base import InstantError, StructuredDocument
+from parallax.core.base import InstantError, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WriteEvidenceError, WriteRejectedError
+from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
@@ -71,6 +69,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -469,8 +468,9 @@ def test_a_wire_predicate_replacement_refuses_a_node_of_another_entity() -> None
 
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _PERSON_QUERY)
-        with pytest.raises(
-            instructions.WriteInstructionError,
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
             match=r"over parallax\.compatibility\.Passport states a whole state of that "
             r"Entity, and this node was published for parallax\.compatibility\.Person",
         ):
@@ -484,8 +484,9 @@ def test_a_wire_predicate_replacement_states_no_relationship() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            instructions.WriteInstructionError,
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
             match=r"Person: predicate write row names undeclared member\(s\) \['passport'\]",
         ):
             tx.wire.replace_where(_PERSON_TARGET, {"name": "Grace", "passport": {"number": "X"}})
@@ -515,8 +516,10 @@ def test_a_predicate_replacement_never_writes_a_read_only_member() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            instructions.WriteInstructionError, match="issued: read-only fields may not be assigned"
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
+            match="issued: read-only fields may not be assigned",
         ):
             tx.wire.replace_where(_BADGE_TARGET, {"label": "gold", "issued": "2024"})
         tx.replace_where(
@@ -551,8 +554,8 @@ def test_a_mapping_that_lost_its_provenance_is_no_keyed_source() -> None:
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         for candidate in _lost_provenance(node):
-            with pytest.raises(
-                instructions.WriteInstructionError, match="carries no such provenance"
+            with raises_code(
+                UsageError, "write-instruction-invalid", match="carries no such provenance"
             ):
                 tx.wire.amend(cast("WireEntity", candidate), {"balance": "125.00"})
 
@@ -599,7 +602,7 @@ def test_a_hydratable_classified_row_cannot_author_its_own_correction() -> None:
         assert isinstance(published, InvalidData)
         record = cast("InvalidData[object]", published)
         assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
-        with pytest.raises(instructions.WriteInstructionError, match="no such provenance"):
+        with raises_code(UsageError, "write-instruction-invalid", match="no such provenance"):
             tx.wire.amend(cast("WireEntity", record.data), {"address": corrected})
 
     db_for(CONTACT, port).transact(fn)
@@ -612,7 +615,7 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
 
     def fn(tx: TxnContext) -> None:
         for candidate in (None, 7, "Account"):
-            with pytest.raises(instructions.WriteInstructionError):
+            with raises_code(UsageError, "write-instruction-invalid"):
                 tx.wire.delete(cast("WireEntity", candidate))
 
     db_for(ACCOUNT, port).transact(fn)
@@ -622,23 +625,23 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
 # Static validation precedes the strategy and its evidence, always.           #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    ("changes", "error", "match"),
+    ("changes", "code", "match"),
     [
-        ({"id": 2}, instructions.WriteInstructionError, "addresses the write and never changes it"),
-        ({"id": "1"}, instructions.InstructionRejectedError, "Account.id: .*type-mismatch"),
-        ({"version": 9}, instructions.WriteInstructionError, "framework-owned"),
-        ({"nope": 1}, instructions.WriteInstructionError, "undeclared member"),
-        ({"passport": {}}, instructions.WriteInstructionError, "undeclared member"),
-        ({"owner": 5}, instructions.InstructionRejectedError, "type-mismatch"),
+        ({"id": 2}, "write-instruction-invalid", "addresses the write and never changes it"),
+        ({"id": "1"}, "neutral-literal-type-mismatch", "Account.id: "),
+        ({"version": 9}, "framework-owned-member-assigned", "framework-owned"),
+        ({"nope": 1}, "write-instruction-invalid", "undeclared member"),
+        ({"passport": {}}, "write-instruction-invalid", "undeclared member"),
+        ({"owner": 5}, "neutral-literal-type-mismatch", "Account.owner: "),
     ],
 )
 def test_an_illegal_wire_assignment_is_refused_statically(
-    changes: dict[str, object], error: type[Exception], match: str
+    changes: dict[str, object], code: str, match: str
 ) -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(error, match=match):
+        with raises_code(UsageError, code, match=match):
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), changes)
 
     db_for(ACCOUNT, port).transact(fn)
@@ -649,7 +652,7 @@ def test_a_temporal_axis_member_is_not_assignable() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
+        with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
             tx.wire.amend(_node(tx, _BALANCE_QUERY), {"txStart": "2024-01-01T00:00:00Z"})
 
     db_for(BALANCE, port).transact(fn)
@@ -665,14 +668,14 @@ def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
     position = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
     def non_temporal(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="takes no until"):
+        with raises_code(UsageError, "write-instruction-invalid", match="takes no until"):
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), {"balance": "125.00"}, until=_UNTIL)
 
     def absent_until(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
-        with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
+        with raises_code(UsageError, "write-instruction-invalid", match="until is absent"):
             tx.wire.amend(node, {}, until=cast("dt.datetime", None))
-        with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
+        with raises_code(UsageError, "write-instruction-invalid", match="until is absent"):
             tx.wire.terminate(node, until=cast("dt.datetime", None))
 
     db_for(ACCOUNT, account).transact(non_temporal)
@@ -720,17 +723,17 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
     selected = ScriptedAdapter(Transact())
 
     def update(tx: TxnContext) -> None:
-        with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
+        with pytest.raises(UsageError, match="out-of-space"):
             tx.wire.amend(_node(tx, _SAMPLE_QUERY), {"taken": _UNSPELLABLE_INSTANT})
 
     def insert(tx: TxnContext) -> None:
-        with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
+        with pytest.raises(UsageError, match="out-of-space"):
             tx.wire.insert(
                 "parallax.compatibility.Sample", {"id": 2, "taken": _UNSPELLABLE_INSTANT}
             )
 
     def update_where(tx: TxnContext) -> None:
-        with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
+        with pytest.raises(UsageError, match="out-of-space"):
             tx.wire.amend_where(_SAMPLE_TARGET, {"taken": _UNSPELLABLE_INSTANT})
 
     for port, fn in ((keyed, update), (inserted, insert), (selected, update_where)):
@@ -744,7 +747,7 @@ def test_a_non_temporal_target_takes_no_valid_from() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="takes no valid_from"):
+        with raises_code(UsageError, "write-instruction-invalid", match="takes no valid_from"):
             tx.wire.insert(
                 "parallax.compatibility.Account",
                 {"id": 2, "owner": "Ada", "balance": "1.00"},
@@ -758,13 +761,13 @@ def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="exactly `entity`"):
+        with raises_code(UsageError, "write-instruction-invalid", match="exactly `entity`"):
             tx.wire.delete_where({**_PERSON_TARGET, "limit": 1})
-        with pytest.raises(instructions.WriteInstructionError, match="exactly `entity`"):
+        with raises_code(UsageError, "write-instruction-invalid", match="exactly `entity`"):
             tx.wire.delete_where({"entity": "parallax.compatibility.Person"})
-        with pytest.raises(instructions.WriteInstructionError, match="non-empty entity name"):
+        with raises_code(UsageError, "write-instruction-invalid", match="non-empty entity name"):
             tx.wire.delete_where({"entity": "", "predicate": {"true": {}}})
-        with pytest.raises(instructions.WriteInstructionError, match="must be a mapping"):
+        with raises_code(UsageError, "write-instruction-invalid", match="must be a mapping"):
             tx.wire.delete_where({**_PERSON_TARGET, "predicate": []})
 
     db_for(PERSON, port).transact(fn)
@@ -781,7 +784,7 @@ def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), cast("dict[str, object]", changes))
 
     db_for(ACCOUNT, port).transact(fn)
@@ -794,13 +797,13 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
         none_changes = cast("dict[str, object]", None)
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.amend(node, none_changes)
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.amend(node, none_changes, until=_UNTIL)
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.amend_where(_POSITION_TARGET, none_changes)
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.replace_where(_POSITION_TARGET, none_changes)
 
     own_root(
@@ -824,7 +827,7 @@ def test_a_tuple_is_not_a_wire_array_the_predicate_algebra_accepts() -> None:
     }
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(CanonicalDocumentError, match="operands"):
+        with raises_code(UsageError, "predicate-document-invalid", match="operands"):
             tx.wire.delete_where(target)
         tx.wire.delete_where({**target, "predicate": {"and": {"operands": list(operands)}}})
 
@@ -839,9 +842,9 @@ def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.insert("parallax.compatibility.Person", cast("dict[str, object]", [("id", 9)]))
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
             tx.wire.insert("Unknown", cast("dict[str, object]", []))
 
     db_for(PERSON, port).transact(fn)
@@ -852,8 +855,9 @@ def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_membe
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            instructions.WriteInstructionError,
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
             match=r"'parallax\.compatibility\.Person\.undeclared' does not name a declared member",
         ):
             tx.wire.amend_where(_PERSON_TARGET, {"undeclared": 1})
@@ -866,13 +870,12 @@ def test_a_predicate_writes_members_are_all_resolved_before_any_value_is_judged(
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="declared member"):
+        with raises_code(UsageError, "write-instruction-invalid", match="declared member"):
             tx.wire.amend_where(_PERSON_TARGET, {"undeclared": 1, "name": 5})
-        with pytest.raises(instructions.WriteInstructionError, match="declared member"):
+        with raises_code(UsageError, "write-instruction-invalid", match="declared member"):
             tx.wire.amend_where(_PERSON_TARGET, {"name": 5, "undeclared": 1})
-        with pytest.raises(instructions.InstructionRejectedError) as value_fault:
+        with raises_code(UsageError, "neutral-literal-type-mismatch"):
             tx.wire.amend_where(_PERSON_TARGET, {"name": 5})
-        assert value_fault.value.rule == "neutral-literal-type-mismatch"
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
@@ -904,14 +907,14 @@ def test_a_document_key_that_is_not_a_name_is_refused() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)])))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="keyed by names"):
             tx.wire.insert(
                 "parallax.compatibility.Person",
                 cast("dict[str, object]", {"id": 9, "name": "Newton", 3: "x"}),
             )
-        with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="keyed by names"):
             tx.wire.amend(_node(tx, _PERSON_QUERY), cast("dict[str, object]", {3: "x"}))
-        with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
+        with raises_code(UsageError, "write-instruction-invalid", match="keyed by names"):
             tx.wire.delete_where(cast("dict[str, object]", {**_PERSON_TARGET, 3: "x"}))
 
     db_for(PERSON, port).transact(fn)
@@ -926,9 +929,9 @@ def test_a_document_that_contains_itself_is_refused() -> None:
     target["predicate"] = {"and": {"operands": [target]}}
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="contains itself"):
+        with raises_code(UsageError, "write-instruction-invalid", match="contains itself"):
             tx.wire.insert("parallax.compatibility.Person", data)
-        with pytest.raises(instructions.WriteInstructionError, match="contains itself"):
+        with raises_code(UsageError, "write-instruction-invalid", match="contains itself"):
             tx.wire.delete_where(target)
 
     db_for(PERSON, port).transact(fn)
@@ -975,7 +978,7 @@ def test_an_insert_refuses_a_framework_owned_member() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
+        with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
             tx.wire.insert(
                 "parallax.compatibility.Account",
                 {"id": 7, "owner": "Newton", "balance": "5.00", "version": 3},
@@ -986,29 +989,29 @@ def test_an_insert_refuses_a_framework_owned_member() -> None:
 
 
 @pytest.mark.parametrize(
-    ("extra", "refusal", "message"),
+    ("extra", "code", "message"),
     [
         (
             {"txStart": "2024-01-01T00:00:00.000000Z", "tagValue": "deposit"},
-            WriteRejectedError,
+            "subtype-write-metadata-field",
             "tagValue",
         ),
         (
             {"txStart": "2024-01-01T00:00:00.000000Z", "nonsense": 1},
-            instructions.WriteInstructionError,
+            "framework-owned-member-assigned",
             r"DepositRate\.txStart: framework-owned fields",
         ),
     ],
     ids=["subtype-before-framework-owned", "framework-owned-before-undeclared"],
 )
 def test_an_insert_judges_its_payload_subtype_then_framework_owned_then_undeclared(
-    extra: dict[str, object], refusal: type[Exception], message: str
+    extra: dict[str, object], code: str, message: str
 ) -> None:
     port = ScriptedAdapter(Transact())
     payload = {"id": 1, "amount": "1.00", "grade": "A", **extra}
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(refusal, match=message):
+        with raises_code(UsageError, code, match=message):
             tx.wire.insert("parallax.compatibility.DepositRate", payload, valid_from=_VALID_FROM)
 
     db_for(RATE, port).transact(fn)
@@ -1019,8 +1022,9 @@ def test_an_unresolvable_entity_spelling_is_refused_at_the_verb() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            instructions.WriteInstructionError,
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
             match=r"the connected model declares no entity 'parallax\.compatibility\.Nope'",
         ):
             tx.wire.insert("parallax.compatibility.Nope", {"id": 7})
@@ -1245,7 +1249,7 @@ def test_a_wire_verb_refuses_before_any_io() -> None:
     db = own_root(Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError):
+        with raises_code(UsageError, "write-instruction-invalid"):
             tx.wire.amend(cast("WireEntity", {"id": 1}), {"balance": "1.00"})
 
     db.transact(fn)
@@ -1721,7 +1725,7 @@ def test_a_malformed_occurrence_document_is_refused_by_the_judgement(address: ob
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteRejectedError, match=r"Contact\.address"):
+        with pytest.raises(UsageError, match=r"Contact\.address"):
             tx.wire.insert(
                 "parallax.compatibility.Contact",
                 {"id": 1, "name": "Ada", "address": copy.deepcopy(address)},
@@ -1735,7 +1739,7 @@ def test_a_predicate_target_that_is_not_a_document_is_refused() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="canonical"):
+        with raises_code(UsageError, "write-instruction-invalid", match="canonical"):
             tx.wire.delete_where(cast("dict[str, object]", ["Person"]))
 
     db_for(PERSON, port).transact(fn)
@@ -1748,7 +1752,7 @@ def test_an_insert_naming_an_undeclared_member_reaches_the_honesty_gate() -> Non
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="undeclared member"):
+        with raises_code(UsageError, "write-instruction-invalid", match="undeclared member"):
             tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton", "nope": 1})
 
     db_for(PERSON, port).transact(fn)

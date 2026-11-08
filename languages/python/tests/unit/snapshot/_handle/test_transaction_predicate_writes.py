@@ -41,7 +41,6 @@ from parallax.core import (
     TxTemporal,
     ValueObject,
     attr,
-    inheritance,
 )
 from parallax.core._execution._family import comparison_shape
 from parallax.core._execution._publication import write_projection
@@ -50,6 +49,7 @@ from parallax.core.base import (
     INFINITY,
     DocumentValue,
     FrozenMap,
+    UsageError,
 )
 from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES
@@ -65,7 +65,6 @@ from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.execution import QueryTargetError, ServingModel, prepare_model
 from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._interpretation import COMPARE
 from parallax.core.unit_work import (
     PredicateWriteInstruction,
@@ -87,6 +86,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._document_layout_support import document_model
@@ -397,7 +397,8 @@ def test_replace_where_refuses_a_payload_of_another_entity() -> None:
         )
 
     with raises_contextualized(
-        instructions.WriteInstructionError,
+        UsageError,
+        code="write-instruction-invalid",
         match=r"`replace_where` over parallax\.compatibility\.Person states a whole state of "
         r"that Entity, and this payload is a parallax\.compatibility\.Passport",
     ):
@@ -501,7 +502,8 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
         )
 
     with raises_contextualized(
-        instructions.WriteInstructionError,
+        UsageError,
+        code="write-instruction-invalid",
         match=r"'parallax\.compatibility\.Badge\.holder' does not name a declared member of "
         r"parallax\.compatibility\.Ticket",
     ):
@@ -521,7 +523,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
             mm.Person.name.set("Grace"),
         )
 
-    with raises_contextualized(instructions.WriteInstructionError, match="is duplicated"):
+    with raises_contextualized(UsageError, code="write-instruction-invalid", match="is duplicated"):
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -754,8 +756,9 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
         tx.amend_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     with raises_contextualized(
-        instructions.WriteInstructionError,
-        match=r"^the connected model declares no entity 'parallax\.compatibility\.Person' "
+        UsageError,
+        code="write-instruction-invalid",
+        match=r"the connected model declares no entity 'parallax\.compatibility\.Person' "
         "for this write$",
     ):
         own_root(
@@ -787,11 +790,11 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
     def fn(tx: TxnContext) -> None:
         tx.amend_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
-    with raises_contextualized(ModelRejectedError) as caught:
+    with raises_contextualized(UsageError) as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-    assert caught.value.rule == "between-bounds-inverted"
+    assert caught.value.code == "between-bounds-inverted"
 
 
 def test_delete_where_refuses_an_attribute_outside_the_written_position() -> None:
@@ -800,11 +803,11 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
     def fn(tx: TxnContext) -> None:
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
-    with raises_contextualized(ModelRejectedError) as caught:
+    with raises_contextualized(UsageError) as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-    assert caught.value.rule == "attribute-outside-active-position"
+    assert caught.value.code == "attribute-outside-active-position"
 
 
 # --------------------------------------------------------------------------- #
@@ -851,9 +854,9 @@ def test_a_predicate_write_needing_an_observation_is_refused_at_the_call(
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(instructions.InstructionRejectedError) as refused:
+        with pytest.raises(UsageError) as refused:
             write(tx)
-        assert refused.value.rule == instructions.SET_BASED_WRITE_TARGET_UNSUPPORTED
+        assert refused.value.code == instructions.SET_BASED_WRITE_TARGET_UNSUPPORTED
         assert port.calls == [BeginCall()]
         raise _Abandon
 
@@ -904,7 +907,7 @@ _READLESS_REFUSALS = _refused_predicates("Wallet")
 def test_the_engines_readless_case_adapter_refuses_before_execution(
     message: str, predicate: dict[str, object]
 ) -> None:
-    with pytest.raises(ValueError, match=re.escape(message)):
+    with pytest.raises(UsageError, match=re.escape(message)):
         scenario._prepared_case_predicate_write(  # pyright: ignore[reportPrivateUsage] - the scenario lane's case-format preparation ingress
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
             _READLESS_ENGINE_META,
@@ -930,9 +933,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
-        ):
+        with pytest.raises(UsageError, match="subtype-write-set-based-unsupported"):
             tx.wire.delete_where(target)
         assert port.calls == [BeginCall()]
         raise _Abandon
@@ -967,11 +968,8 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction(
         }
     )
     assert isinstance(instruction, PredicateWriteInstruction)
-    with pytest.raises(
-        (inheritance.InheritanceError, instructions.InstructionRejectedError)
-    ) as refused:
+    with raises_code(UsageError, rule):
         instructions.prepare_wire_write(instruction, write_preparation_of(model_of(model)))
-    assert refused.value.rule == rule
 
 
 class _Abandon(Exception):

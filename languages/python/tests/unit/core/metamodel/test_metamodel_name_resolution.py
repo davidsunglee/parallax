@@ -14,23 +14,23 @@ what makes "preflight accepted this reference" imply "lowering resolves it".
 
 from __future__ import annotations
 
-import pytest
-
 from parallax.core import predicate as oa
 from parallax.core import read_planning
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
 from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.predicate import ModelRejectedError, Narrow, TrueNode, validate_predicate
+from parallax.core.predicate import Narrow, TrueNode, validate_predicate
 from parallax.core.predicate._perspective import TemporalPerspective
 from parallax.core.predicate._resolved import ResolvedPresence, ResolvedRelationship
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests._support.write_preparation import write_preparation_of
 
@@ -82,9 +82,8 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
     keyed = instructions.deserialize(
         {"mutation": "delete", "entity": "Person", "rows": [{"id": 1}]}
     )
-    with pytest.raises(instructions.InstructionRejectedError) as excinfo:
+    with raises_code(UsageError, "reference-ambiguous-entity-name"):
         instructions.prepare_typed_write(keyed, write_preparation_of(model))
-    assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
     canonical = instructions.deserialize(
         {"mutation": "delete", "entity": "a.Person", "rows": [{"id": 1}]}
@@ -105,10 +104,9 @@ def test_read_query_resolution_classifies_an_ambiguous_bare_name_by_the_same_rul
     # same helper, and reports the same rule through `predicate`'s own rejected
     # carrier — so one rule and one class answer an ambiguous spelling whether
     # read-query resolution or lowering resolves it.
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "reference-ambiguous-entity-name"):
         model = _model()
         resolve_read_query(_query("Person"), model=model)
-    assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
 def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position() -> None:
@@ -127,11 +125,10 @@ def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position
 
     # The other twin is a different Entity, so its attribute is outside this
     # position rather than merely ambiguous.
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "attribute-outside-active-position"):
         validate_predicate(
             root, oa.Comparison(op="eq", subject=oa.FieldSubject("b.Person.id"), value=1), model
         )
-    assert excinfo.value.rule == "attribute-outside-active-position"
 
 
 def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:

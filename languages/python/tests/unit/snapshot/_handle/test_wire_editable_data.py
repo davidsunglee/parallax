@@ -16,10 +16,9 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.base import StructuredDocument
+from parallax.core.base import StructuredDocument, UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import (
     BeginCall,
@@ -32,6 +31,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests.unit._transact_support import CONTACT, FIND_SQL_UNLOCKED, PAYMENT, account_db, db_for
 
 _ACCOUNT_ROW: MappingRow = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 3}
@@ -150,7 +150,7 @@ def test_editable_data_takes_a_node_parallax_published(value: object) -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="published"):
+        with raises_code(UsageError, "write-instruction-invalid", match="published"):
             tx.wire.editable_data(cast("WireEntity", value))
 
     account_db(port).transact(fn)
@@ -173,15 +173,15 @@ def test_a_node_stated_replacement_takes_neither_data_nor_its_source_authority()
 
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
-        with pytest.raises(WriteInstructionError, match="takes no data"):
+        with raises_code(UsageError, "write-instruction-invalid", match="takes no data"):
             tx.wire.replace_if(node, {"owner": "Bo", "balance": "1"}, version=3)
-        with pytest.raises(WriteInstructionError, match="requires version"):
+        with raises_code(UsageError, "write-instruction-invalid", match="requires version"):
             tx.wire.replace_if(node)
-        with pytest.raises(WriteInstructionError, match="states the data"):
+        with raises_code(UsageError, "write-instruction-invalid", match="states the data"):
             tx.wire.replace_if("Account", version=3)
-        with pytest.raises(WriteInstructionError, match="neither"):
+        with raises_code(UsageError, "write-instruction-invalid", match="neither"):
             tx.wire.replace_if(cast("Any", dict(node)), version=3)
-        with pytest.raises(WriteInstructionError, match="neither"):
+        with raises_code(UsageError, "write-instruction-invalid", match="neither"):
             tx.wire.amend_if(cast("Any", node), {"owner": "Bo"}, version=3)
 
     account_db(port).transact(fn)
@@ -194,7 +194,7 @@ def test_editable_data_amends_every_member_it_holds_and_is_no_source() -> None:
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find(_ACCOUNT_QUERY).result()
         data = tx.wire.editable_data(node)
-        with pytest.raises(WriteInstructionError, match="published"):
+        with raises_code(UsageError, "write-instruction-invalid", match="published"):
             tx.wire.amend(cast("WireEntity", data), {"owner": "Bo"})
         tx.wire.amend(node, data)
 

@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._mechanism import envelope
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import case_entity
 from parallax.core import inheritance, storage_layout
 from parallax.core.db_port import MappingRow
@@ -108,7 +108,7 @@ def _projected_row(
         if not options:
             continue
         if len(options) != 1:
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"{node_type!r} does not select one declaration for published member {name!r}"
             )
         column, member = options[0]
@@ -132,14 +132,14 @@ def _concrete_members(
 ) -> frozenset[MemberIdentity]:
     node_type = node.get(inheritance.WIRE_TYPE_KEY)
     if not isinstance(node_type, str):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             "an abstract-position read publishes a concrete node carrying "
             f"`_type`; this one published {sorted(node)}"
         )
     entity = case_entity(model, node_type)
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - every accepted Entity has a view
-        raise EngineError(f"{entity.identity.canonical}: no inheritance position")
+        raise UnclassifiedEngineError(f"{entity.identity.canonical}: no inheritance position")
     return frozenset(
         member.identity for member in (*view.applicable_attributes, *view.applicable_value_objects)
     )
@@ -176,7 +176,7 @@ def _read_projection(
             [case_entity(model, spelling).identity for spelling in query.narrow_to]
         )
         if narrowed is None:  # pragma: no cover - a read whose roots exist resolved it
-            raise EngineError(
+            raise UnclassifiedEngineError(
                 f"narrowing {query.target.canonical!r} to {list(query.narrow_to)} resolves "
                 "no position of one inheritance family"
             )

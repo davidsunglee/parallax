@@ -14,7 +14,7 @@ import pytest
 
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.turnstile import Turnstile, await_workers
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.snapshot import ScopedDatabase
 
@@ -118,7 +118,7 @@ def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_ra
     thread_a.start()
     thread_b.start()
 
-    with pytest.raises(EngineError, match="turnstile hand-off is missing"):
+    with pytest.raises(UnclassifiedEngineError, match="turnstile hand-off is missing"):
         await_workers(
             _workers((thread_a, ours), (thread_b, peer)),
             turnstile,
@@ -147,7 +147,7 @@ def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_jo
     thread_a.start()
     thread_b.start()
 
-    with pytest.raises(EngineError, match="turnstile hand-off is missing"):
+    with pytest.raises(UnclassifiedEngineError, match="turnstile hand-off is missing"):
         await_workers(
             _workers((thread_a, ours), (thread_b, peer)),
             turnstile,
@@ -179,7 +179,7 @@ def test_await_interleaved_workers_terminates_a_survivor_cancellation_cannot_rea
     thread_a.start()
     thread_b.start()
 
-    with pytest.raises(EngineError, match="uow-ours had to be terminated") as raised:
+    with pytest.raises(UnclassifiedEngineError, match="uow-ours had to be terminated") as raised:
         await_workers(
             _workers((thread_a, ours), (thread_b, peer)),
             turnstile,

@@ -177,9 +177,7 @@ def test_a_published_wire_node_is_a_wire_value() -> None:
     assert published is _as_wire_value
 
 
-def test_unit_work_exports_the_classified_instruction_refusal() -> None:
-    unit_work = import_module("parallax.core.unit_work")
-    assert {"InstructionRejectedError", "WriteInstructionError"} <= set(
+def test_unit_work_exports_the_codes_a_refused_write_instruction_carries() -> None:
+    assert {"WRITE_INSTRUCTION_INVALID", "WriteRejectionCode"} <= set(
         _public_api("parallax.core.unit_work")
     )
-    assert issubclass(unit_work.InstructionRejectedError, unit_work.WriteInstructionError)

@@ -22,9 +22,8 @@ from parallax.core import (
     TemporalBound,
     attr,
 )
-from parallax.core.base import StructuredDocument
+from parallax.core.base import StructuredDocument, UsageError
 from parallax.core.execution import KeyedWriteValueError
-from parallax.core.unit_work import InstructionRejectedError
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -38,6 +37,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests.unit._transact_support import db_for
 
 _NS = "parallax.test"
@@ -446,9 +446,8 @@ def test_a_caught_refusal_keeps_pending_work_and_the_transaction_usable(
         refuse = refusal.reaching(tx)
         tx.insert(Journal(id=1, note="before"))
         seen = list(port.calls)
-        with pytest.raises(InstructionRejectedError) as rejected:
+        with raises_code(UsageError, _RULE):
             refuse()
-        assert rejected.value.rule == _RULE
         assert port.calls == seen
         tx.insert(Journal(id=2, note="after"))
 
@@ -467,10 +466,10 @@ def test_an_uncaught_refusal_fails_the_transaction_once_without_retry(refusal: _
         tx.insert(Journal(id=1, note="never"))
         refuse()
 
-    with raises_contextualized(InstructionRejectedError) as failure:
+    with raises_contextualized(UsageError) as failure:
         db_for(_MODEL, port).transact(fn)
 
-    assert failure.value.rule == _RULE
+    assert failure.value.code == _RULE
     assert [type(call) for call in port.calls] == [
         BeginCall,
         *(ReadCall for _ in refusal.source_rows),
@@ -482,7 +481,7 @@ def test_the_refusal_names_the_target_it_refused() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(InstructionRejectedError) as rejected:
+        with pytest.raises(UsageError) as rejected:
             tx.insert(Magazine(id=2, title="Monthly"))
         assert "parallax.compatibility.Magazine" in str(rejected.value)
 
