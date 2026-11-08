@@ -25,7 +25,6 @@ from __future__ import annotations
 import gc
 import sys
 import weakref
-from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -89,9 +88,6 @@ _PARCEL = Parcel.identity
 _TAG_ROW: tuple[object, ...] = ("red", 2)
 
 
-_ONE_PARCEL: Node = (_PARCEL, (1, "north", ABSENT, ABSENT, _TAG_ROW), (UNLOADED,))
-
-
 class _Pin(ValueObject):
     code: Attr[str]
 
@@ -134,8 +130,8 @@ _ROUTE_ROW: tuple[object, ...] = (
 )
 
 
-def _published(*nodes: Node, state: Callable[[object], object] | None = None) -> Any:
-    return published_nodes(PARCELS, *(nodes or (_ONE_PARCEL,)), state=state)[0]
+def _published(node: Node) -> Any:
+    return published_nodes(PARCELS, node)[0]
 
 
 # --------------------------------------------------------------------------- #
