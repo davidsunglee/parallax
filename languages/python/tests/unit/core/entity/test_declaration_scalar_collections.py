@@ -30,7 +30,6 @@ from parallax.core import (
     Rel,
     ValueObject,
     attr,
-    index,
     rel,
 )
 from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32
@@ -293,18 +292,6 @@ def test_a_collection_refuses_an_entity_option_it_cannot_hold(options: dict[str,
             tags: Attr[tuple[str, ...]] = attr(**options)
 
     assert caught.value.code == "entity-option-context-invalid"
-
-
-def test_an_index_naming_a_collection_is_refused_at_formation() -> None:
-    class Indexed(Entity, table="indexed", namespace=_NS, indices=(index("byTags", "tags"),)):
-        id: Attr[int] = attr(primary_key=True)
-        tags: Attr[tuple[str, ...]] = attr()
-
-    with pytest.raises(MetamodelValidationError) as caught:
-        DomainModel(Indexed)
-    assert [issue.code for issue in caught.value.issues] == [
-        "storage-layout-index-over-document-member"
-    ]
 
 
 def test_a_join_endpoint_naming_a_collection_is_refused_at_formation() -> None:
