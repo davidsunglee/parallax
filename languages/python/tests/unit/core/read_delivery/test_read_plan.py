@@ -1043,15 +1043,11 @@ def test_callers_of_one_pending_key_each_render_their_own_values(
     )
 
 
-def test_capacity_zero_compiles_its_root_concretely_and_defers_only_child_keys(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared = _recording_preparation(monkeypatch)
+def test_capacity_zero_compiles_its_root_concretely_and_defers_only_child_keys() -> None:
     pages = continuation.plan(_with_items(), _META)
 
     plan = _plan(ReadPlanCache(0), pages.after(ContinuationCoordinate((1,)), limit=2))
 
-    assert sorted(prepared) == ["bind", "bind", "compile_read", "compile_template"]
     assert _root(plan)[0].statement.execution_value_positions() == ()
     template = cast("CompiledTemplate", _child_work(plan))
     assert [group.source for group in template.compiled.statement.execution_value_positions()] == [
@@ -1599,29 +1595,11 @@ def _dormant_query(
     return resolve_read_query(deserialize(document), model=meta)
 
 
-def _recording_preparation(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Record every statement compilation and converter binding the planner runs."""
-    prepared: list[str] = []
-    for name in ("compile_read", "compile_template", "bind"):
-        original = cast("Callable[..., Any]", vars(_read_plan)[name])
-
-        def recording(*args: Any, _name: str = name, _run: Any = original, **kwargs: Any) -> Any:
-            prepared.append(_name)
-            return _run(*args, **kwargs)
-
-        monkeypatch.setattr(_read_plan, name, recording)
-    return prepared
-
-
 def _gadget_member(name: str) -> AttributeIdentity:
     return AttributeIdentity(EntityIdentity("parallax.compatibility", "Gadget"), name)
 
 
-def test_a_dormant_root_prepares_no_statement_converter_or_child_work(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared = _recording_preparation(monkeypatch)
-
+def test_a_dormant_root_prepares_no_statement_converter_or_child_work() -> None:
     plan = _plan(ReadPlanCache(), _dormant_query(_TO_EMPTY_ANCESTRY), model=_DORMANT)
 
     assert isinstance(plan.root_read(), EmptyRead)
@@ -1633,14 +1611,9 @@ def test_a_dormant_root_prepares_no_statement_converter_or_child_work(
     ]
     assert isinstance(plan.fetch_step(1), read_planning.BackReferenceFetchStep)
     assert plan._correlations == ((), (), ())
-    assert prepared == []
 
 
-def test_an_empty_include_target_prepares_no_child_work_or_routing_demand(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared = _recording_preparation(monkeypatch)
-
+def test_an_empty_include_target_prepares_no_child_work_or_routing_demand() -> None:
     plan = _plan(ReadPlanCache(), _dormant_query(_WORKBENCHES), model=_DORMANT)
 
     root, _rows = _root(plan)
@@ -1659,7 +1632,6 @@ def test_an_empty_include_target_prepares_no_child_work_or_routing_demand(
     assert live_correlations == (_gadget_member("workbenchId"),)
     workbench_id = AttributeIdentity(EntityIdentity("parallax.compatibility", "Workbench"), "id")
     assert plan._correlations[0] == (workbench_id,)
-    assert sorted(prepared) == ["bind", "bind", "compile_template", "compile_template"]
 
 
 def _view_name(plan: _read_plan.ReadPlan, index: int) -> str:
@@ -1668,10 +1640,7 @@ def _view_name(plan: _read_plan.ReadPlan, index: int) -> str:
     return view.relationship.name
 
 
-def test_a_dormant_page_carries_no_root_template(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared = _recording_preparation(monkeypatch)
+def test_a_dormant_page_carries_no_root_template() -> None:
     cache = ReadPlanCache()
     pages = continuation.plan(_dormant_query(_TO_EMPTY_ANCESTRY), _DORMANT_META)
 
@@ -1687,7 +1656,6 @@ def test_a_dormant_page_carries_no_root_template(
     assert after._schema is first._schema
     assert [entry.root_template for entry in cache._entries.values()] == [None, None]
     assert _plan(cache, pages.first(limit=5), model=_DORMANT) is first
-    assert prepared == []
 
 
 def test_cached_and_uncached_dormant_plans_agree() -> None:

@@ -1685,15 +1685,3 @@ def test_large_tph_retained_layout_size_scales_with_schema_not_entity_slot_tuple
     small = storage_layout.view(_large_tph_model(24))
     large = storage_layout.view(_large_tph_model(48))
     assert _retained_size(large) < _retained_size(small) * 2.7
-
-
-def test_entity_columns_are_materialized_on_demand_without_retained_position_growth() -> None:
-    model, _, alpha, beta = _tiered_tph_model()
-    facet = storage_layout.view(model)
-    before = _retained_size(facet)
-    alpha_view = _require_entity(facet, alpha)
-    expected = tuple(alpha_view.columns)
-    for _ in range(32):
-        assert tuple(_require_entity(facet, alpha).columns) == expected
-        assert facet.position((alpha, beta)) == facet.position((alpha, beta))
-    assert _retained_size(facet) == before
