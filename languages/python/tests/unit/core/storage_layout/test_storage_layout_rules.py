@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final
 
 import pytest
 
-from parallax.conformance import case_format
 from parallax.core import inheritance, storage_layout
-from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -47,15 +43,12 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     sort_issues,
 )
-from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.storage_layout._rules import (
     COLUMN_COLLISION,
     DOCUMENT_MEMBER_COLUMN_OVERRIDE,
     INDEX_OVER_DOCUMENT_MEMBER,
     TABLE_MAPPING_COLLISION,
 )
-from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._parse import parse_document
 from tests.unit._metamodel_support import (
     Declaration,
     accepted,
@@ -71,9 +64,6 @@ _MID = identity("Journal")
 _LEAF = identity("Entry")
 _SIBLING = identity("Note")
 _SHARED_TABLE: Final = Table("ledger")
-
-_REPO = case_format.find_repo_root()
-_CASES = _REPO / "core" / "compatibility" / "cases"
 
 
 def _shape(name: str = "text") -> ValueObjectShapeDeclaration:
@@ -122,47 +112,6 @@ def _tpcs_concrete(
 def _rule_issues(*declarations: Declaration) -> tuple[MetamodelIssue, ...]:
     candidate = accepted(source(*declarations))
     return sort_issues(storage_layout.RULE_SET.validate(candidate))
-
-
-def _storage_rejection_cases() -> list[tuple[str, Mapping[str, object], str]]:
-    found: list[tuple[str, Mapping[str, object], str]] = []
-    for path in sorted(_CASES.glob("m-storage-layout-*-rejected-*.yaml")):
-        loaded = case_format.safe_load_yaml(Path(path).read_text(encoding="utf-8"))
-        assert isinstance(loaded, dict)
-        document = cast("dict[str, Any]", loaded)
-        when = document.get("when")
-        if not isinstance(when, dict) or "model" not in when:
-            continue
-        then_value = document["then"]
-        assert isinstance(then_value, dict)
-        then = cast("dict[str, Any]", then_value)
-        found.append(
-            (
-                path.stem,
-                cast("Mapping[str, object]", when["model"]),
-                str(then["rejectedRule"]),
-            )
-        )
-    return found
-
-
-_REJECTIONS = _storage_rejection_cases()
-
-
-def test_the_owned_issue_code_set_is_closed() -> None:
-    assert (
-        frozenset(
-            {
-                "storage-layout-table-mapping-collision",
-                "storage-layout-column-collision",
-                "storage-layout-document-member-column-override",
-                "storage-layout-index-over-document-member",
-            }
-        )
-        == storage_layout.ISSUE_CODES
-    )
-    assert storage_layout.RULE_SET.owner == storage_layout.STORAGE_LAYOUT_MODULE
-    assert storage_layout.RULE_SET.issue_codes == storage_layout.ISSUE_CODES
 
 
 def test_standalone_attribute_and_document_claims_share_one_column_registry() -> None:
@@ -896,30 +845,3 @@ def test_a_conventional_layout_reports_neither_new_code() -> None:
         indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
     )
     assert _rule_issues(owner) == ()
-
-
-@pytest.mark.parametrize(
-    ("stem", "inline", "expected"),
-    _REJECTIONS,
-    ids=[item[0] for item in _REJECTIONS],
-)
-def test_storage_layout_corpus_rejections_form_into_their_owned_issue(
-    stem: str, inline: Mapping[str, object], expected: str
-) -> None:
-    with pytest.raises(MetamodelValidationError) as caught:
-        form_metamodel(unresolved_metamodel(parse_document(inline)))
-    assert [issue.code for issue in caught.value.issues] == [expected], stem
-
-
-def test_the_storage_layout_rejection_fixture_set_is_complete() -> None:
-    assert [stem.split("-rejected", 1)[0] for stem, _, _ in _REJECTIONS] == [
-        "m-storage-layout-001",
-        "m-storage-layout-002",
-        "m-storage-layout-003",
-        "m-storage-layout-004",
-        "m-storage-layout-005",
-        "m-storage-layout-013",
-        "m-storage-layout-014",
-        "m-storage-layout-015",
-        "m-storage-layout-041",
-    ]

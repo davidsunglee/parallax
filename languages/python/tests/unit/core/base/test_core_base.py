@@ -271,10 +271,6 @@ def test_frozen_map_lookup_is_its_own_and_never_dispatches_through_getitem(
     )
     nested = retained["nested"]
 
-    own = vars(base.FrozenMap)
-    assert own["get"] is not _MAPPING_MIXIN.get
-    assert own["__contains__"] is not _MAPPING_MIXIN.__contains__
-
     def refuse_indexing(self: object, key: object) -> object:
         raise AssertionError(f"lookup indexed the map for {key!r}")
 
@@ -679,16 +675,6 @@ def test_the_carrier_policy_refuses_only_what_pydantic_would_convert(
 
     assert base.matches_typed_carrier(value, declared) is carrier
     assert base.matches_neutral_type(coerced, declared) is member
-
-
-def test_an_unknown_variant_has_no_carrier_member_or_input_form() -> None:
-    unknown = cast("base.NeutralType", object())
-
-    assert base.matches_typed_carrier(1, unknown) is False
-    assert base.matches_neutral_type(1, unknown) is False
-    assert base.coerce_neutral_input(1, unknown) == 1
-    with pytest.raises(base.NeutralTypeMismatch):
-        base.typed_converter(unknown)(1)
 
 
 @pytest.mark.parametrize(

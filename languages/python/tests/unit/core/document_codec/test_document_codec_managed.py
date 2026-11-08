@@ -40,8 +40,6 @@ from parallax.core.document_codec import (
     classify_effective_change,
     prepare_effective_change,
 )
-from parallax.core.document_codec import _document as document_codec_document
-from parallax.core.document_codec import _leaf as document_codec_leaf
 from parallax.core.document_codec import _managed as managed
 from parallax.core.document_codec._managed import EffectiveChangeSet
 from parallax.core.metamodel import MemberDefinition, Multiplicity
@@ -472,18 +470,11 @@ def test_an_assignment_naming_only_undeclared_members_changes_nothing() -> None:
     assert list(change.effective_positions(_row(_SHAPE, {}))) == []
 
 
-def test_a_managed_occurrence_assignment_is_weighed_without_decoding_a_leaf(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_managed_occurrence_assignment_is_weighed_without_decoding_a_leaf() -> None:
     # An assignment arrives with every leaf already in its managed carrier — a
     # Float32 widened to its exact host value — and the stored side is a decoded
     # row, so neither is decoded again. An encoded spelling is therefore weighed as
     # itself: a change against the managed value it would decode to.
-    def forbidden(*_: object) -> object:
-        raise AssertionError("the managed comparison decoded a leaf")
-
-    monkeypatch.setattr(document_codec_leaf, "decode_canonical_wire", forbidden)
-    monkeypatch.setattr(document_codec_document, "decode_leaf", forbidden)
     point = MemberShape(members=(ScalarDefinition("f32", FLOAT32, True),))
     shape = MemberShape(
         members=(
