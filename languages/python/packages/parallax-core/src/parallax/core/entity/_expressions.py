@@ -400,9 +400,6 @@ class RelationshipRef:
     entity: str
     relationship: str
 
-    def __str__(self) -> str:
-        return f"{self.entity}.{self.relationship}"
-
 
 @dataclass(frozen=True, slots=True)
 class AttributeAssignment[E]:

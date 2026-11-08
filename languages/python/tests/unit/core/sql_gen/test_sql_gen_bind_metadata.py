@@ -107,7 +107,7 @@ def test_statement_builder_rejects_a_bind_that_bypassed_role_classification() ->
         builder.finish("select ?")
 
 
-def test_entity_row_scope_reference_front_doors_resolve_direct_members() -> None:
+def test_an_entity_row_scope_renders_a_direct_member_through_its_alias() -> None:
     entity = WALLET.entities[0]
     view = storage_layout.view(WALLET).entity(entity.identity)
     assert view is not None
@@ -115,11 +115,10 @@ def test_entity_row_scope_reference_front_doors_resolve_direct_members() -> None
         WALLET, inheritance.view(WALLET), storage_layout.view(WALLET), POSTGRES
     )
     scope = EntityRowScope(builder, entity, view.layout)
+    attribute = entity.attribute("id")
+    assert attribute is not None
 
-    assert scope.column_of(f"{entity.identity.canonical}.id") == "t0.id"
-    assert scope.subject_for(
-        scope.entity_attribute(f"{entity.identity.canonical}.id")
-    ).compared == ("t0.id")
+    assert scope.subject_for(attribute).compared == "t0.id"
 
 
 COLLECTIONS = corpus_model("predicate-collections")

@@ -238,12 +238,6 @@ class TimeInterval:
         end = self.end
         return end is not INFINITY and end == other.start
 
-    def precedes(self, other: TimeInterval) -> bool:
-        """Whether this interval ends strictly before ``other`` begins, so that a
-        gap separates them; adjacency is :meth:`meets`, not precedence."""
-        end = self.end
-        return end is not INFINITY and end < other.start
-
     def starts_after(self, instant: _dt.datetime) -> bool:
         """Whether this interval begins strictly after a finite instant."""
         return self.start > instant

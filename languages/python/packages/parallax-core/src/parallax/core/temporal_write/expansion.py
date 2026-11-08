@@ -151,7 +151,7 @@ class PredecessorExpander:
     (:meth:`settle`).
 
     Every predecessor is settled by one decision (:func:`_disposition`) and
-    realized by one construction of its own step (:func:`_own_step`) and its
+    realized by one construction of its own step (:meth:`_own`) and its
     successors (:func:`_represented`). Each assignment row is planned, and its
     comparison with stored values prepared, once per expansion however many
     predecessors and gaps share it. Nothing returned retains the expansion
@@ -1171,13 +1171,11 @@ def _own_step(
     kept: WriteRow | None,
     predecessor: PredecessorRow | None,
 ) -> PlannedStep:
-    """The one step of its own a predecessor of disposition ``code`` takes,
-    addressed as ``closing`` addresses it: that close — decorated already — a
-    guard proving it unchanged, its removal, or its revision into ``kept``,
-    the successor keeping its address."""
+    """The one step of its own a predecessor of disposition ``code`` takes where
+    it is not closed, addressed as ``closing`` addresses it: a guard proving it
+    unchanged, its removal, or its revision into ``kept``, the successor keeping
+    its address."""
     disposal = code & _DISPOSAL
-    if disposal == _CLOSE:
-        return closing
     if disposal == _GUARD:
         concurrency = closing.concurrency
         assert isinstance(concurrency, TemporalGate)  # only a gating write is proven by a guard

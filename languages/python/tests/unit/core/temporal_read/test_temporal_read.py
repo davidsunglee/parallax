@@ -737,7 +737,7 @@ def test_overlap_and_disjointness_are_symmetric_complements(
     assert first.disjoint(second) is second.disjoint(first) is (not overlapping)
 
 
-def test_meeting_is_directional_adjacency_and_precedence_requires_a_gap() -> None:
+def test_meeting_is_directional_adjacency() -> None:
     a = TimeInterval(JAN, MAR)
     b = TimeInterval(MAR, JUN)
     c = TimeInterval(APR, JUN)
@@ -745,12 +745,8 @@ def test_meeting_is_directional_adjacency_and_precedence_requires_a_gap() -> Non
     assert a.meets(b)
     assert not b.meets(a)
     assert not a.meets(c)
-    assert not a.precedes(b)
-    assert a.precedes(c)
-    assert not c.precedes(a)
     for later in (b, c, _open(JUN), _open(AUG)):
         assert not _open(MAR).meets(later)
-        assert not _open(MAR).precedes(later)
 
 
 def test_point_containment_includes_the_start_and_excludes_the_end() -> None:

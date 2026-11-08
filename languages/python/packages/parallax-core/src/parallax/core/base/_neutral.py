@@ -844,14 +844,10 @@ def _exact_number(
     declared: Float32 | Float64,
 ) -> _decimal.Decimal | None:
     """``value`` as an exact finite Decimal, or ``None`` when it is not a finite
-    number or is an integer too wide for any value of ``declared``."""
-    if isinstance(value, (bool, ManagedValueExclusion)):
+    number, is an integer too wide for any value of ``declared``, or is a float,
+    which a caller projects directly."""
+    if isinstance(value, (bool, float, ManagedValueExclusion)):
         return None
-    if isinstance(value, float):
-        base_value = float.__float__(value)
-        if not _math.isfinite(base_value):
-            return None
-        return _decimal.Decimal.from_float(base_value)
     if isinstance(value, int):
         base_value = int.__int__(value)
         magnitude_bits = abs(base_value).bit_length()

@@ -16,7 +16,6 @@ from parallax.core.metamodel import (
     OccurrenceMetadata,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
-    entity_by_name,
 )
 from parallax.core.predicate import MembershipOp, StringOp
 from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
@@ -210,8 +209,8 @@ class EntityRowScope:
 
         The single consultant of :attr:`unaliased` — every reference to a column
         of the active target must route through here so a write's bare-column
-        form can never be bypassed. :meth:`column_of` and :meth:`subject_for` are
-        the attribute-resolving front doors; a Structured Column is not an
+        form can never be bypassed. :meth:`column_for` and :meth:`subject_for` are
+        the Attribute front doors; a Structured Column is not an
         ``Attribute`` and so has no Attribute to resolve, but it is just as much
         this target's own column and takes the same rendering decision, which is
         why :meth:`document_root` returns a rendered reference rather than a name.
@@ -225,21 +224,6 @@ class EntityRowScope:
         if self.unaliased:
             return self.dialect.quote(column)
         return self.dialect.qualified(self.alias, column)
-
-    def column_of(self, attr_ref: str) -> str:
-        """Render one DIRECT Attribute Column of the active target.
-
-        The join lane's front door. Member Placement is the sole authority here
-        too (`m-storage-layout`), and what it must answer is `DirectColumn`:
-        both endpoints of a Relationship Join hold a direct-column role under
-        either layout, so a hop's correlation always has a Column to name and
-        never extracts from a document.
-
-        The reference resolves by name against the active target's family
-        (:meth:`entity_attribute`), so an endpoint addressed at a descendant
-        position reaches the ancestor declaration the placement is keyed by.
-        """
-        return self.column_for(self.entity_attribute(attr_ref))
 
     def column_for(self, attribute: AttributeMetadata) -> str:
         """Render a validated direct-column Attribute by identity."""
@@ -324,20 +308,6 @@ class EntityRowScope:
         if slot is None:
             raise SqlGenError(f"{contributor} has no Column in table {self.layout.table.name!r}")
         return slot.column.name
-
-    def entity_attribute(self, attr_ref: str) -> AttributeMetadata:
-        owner_ref, _, name = attr_ref.rpartition(".")
-        owner = entity_by_name(self.meta, owner_ref)
-        if owner is not None:
-            attribute = _entity_view(self.facet, owner.identity).applicable_attribute(name)
-            root = _entity_view(self.facet, self.entity.identity).root
-            searchable = {
-                candidate.identity
-                for candidate in _entity_view(self.facet, root).superset_attributes
-            }
-            if attribute is not None and attribute.identity in searchable:
-                return attribute
-        raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.identity.name}")
 
     def next_alias(self) -> str:
         return self.ctx.next_alias()

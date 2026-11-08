@@ -24,7 +24,6 @@ from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.claims import (
     admits,
     admits_composed,
-    claim_scope,
     settled_evidence,
 )
 from parallax.core._execution._unit_work.instructions import (
@@ -322,23 +321,6 @@ def test_an_entity_the_model_lacks_settles_against_nothing_it_could_claim() -> N
     versioning, identity = _versioning("account", "Undeclared")
     with pytest.raises(KeyError, match="Undeclared"):
         settled_evidence(versioning, identity, "amend", object_key=_OBJECT, observation=_RETAINED)
-
-
-@pytest.mark.parametrize(
-    ("evidence", "scope"),
-    [
-        (_RETAINED, _RETAINED.key),
-        (VersionedObjectStateKey(_OBJECT, 9), VersionedObjectStateKey(_OBJECT, 9)),
-        (_OBJECT, _OBJECT),
-        (None, None),
-    ],
-    ids=["observed", "continued", "object", "nothing"],
-)
-def test_a_settled_evidence_claims_the_scope_it_names(evidence: object, scope: object) -> None:
-    # An observation claims the state it observed; a continued versioned
-    # source, the protected state its authority reaches; an unversioned
-    # source, its object.
-    assert claim_scope(evidence) == scope  # pyright: ignore[reportArgumentType]
 
 
 def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:

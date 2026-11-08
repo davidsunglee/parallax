@@ -10,15 +10,19 @@ from tests.unit._corpus_model_support import corpus_records
 _MODELS = corpus_records()
 
 
+def _entity(stem: str, name: str) -> Entity:
+    return next(entity for entity in _MODELS[stem].entities if entity.name == name)
+
+
 def test_records_preserve_local_declarations_and_their_effective_columns() -> None:
-    account = _MODELS["account"].entity("Account")
+    account = _entity("account", "Account")
     assert tuple((a.name, a.column) for a in account.attributes) == (
         ("id", "id"),
         ("owner", "owner"),
         ("balance", "balance"),
         ("version", "version"),
     )
-    customer = _MODELS["customer"].entity("Customer")
+    customer = _entity("customer", "Customer")
     assert tuple((a.name, a.column) for a in customer.attributes) == (
         ("id", "id"),
         ("name", "name"),
