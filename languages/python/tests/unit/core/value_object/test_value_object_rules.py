@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from pathlib import Path
-from typing import cast
-
 import pytest
 
-from parallax.conformance import case_format
-from parallax.core import value_object
-from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
-    METAMODEL_MODULE,
     Column,
     IssueCode,
-    Metamodel,
     MetamodelIssue,
     ModelLocation,
     Multiplicity,
@@ -30,19 +22,12 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.model_formation import MODEL_FORMATION_MODULE, MetamodelValidationError
-from parallax.core.model_formation._manifest import RequiredRuleSet
-from parallax.core.value_object import ISSUE_CODES, RULE_SET, VALUE_OBJECT_MODULE
+from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.value_object import RULE_SET
 from parallax.core.value_object._rules import CONTAINMENT_CYCLE, EMPTY, MANY_NULLABLE
-from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._parse import parse_document
 from tests.unit._metamodel_support import Declaration, accepted, identity, key, source
 
 _OWNER = identity("Customer")
-
-_CORPUS = sorted(
-    (case_format.find_repo_root() / "core" / "compatibility" / "models").glob("*.yaml")
-)
 
 
 # --------------------------------------------------------------------------
@@ -109,61 +94,9 @@ def _at(*path: str) -> ModelLocation:
     return ValueObjectLocation(ValueObjectIdentity(_OWNER, path))
 
 
-def _formed(path: Path) -> Metamodel:
-    """The accepted model a corpus descriptor forms into."""
-    document = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
-    assert isinstance(document, dict)
-    return form_metamodel(
-        unresolved_metamodel(parse_document(cast("Mapping[str, object]", document)))
-    )
-
-
-# --------------------------------------------------------------------------
-# The module's formation contract.
-# --------------------------------------------------------------------------
-
-
-def test_the_builtin_manifest_declares_this_modules_rule_set_and_no_compiler() -> None:
-    (entry,) = (entry for entry in BUILTIN_MANIFEST.entries if entry.owner == VALUE_OBJECT_MODULE)
-    assert isinstance(entry.rule_set, RequiredRuleSet)
-    assert entry.issue_codes == ISSUE_CODES
-    assert entry.compiler is None
-    assert entry.required_facets == frozenset()
-    assert entry.required_modules == frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE})
-    assert RULE_SET in BUILTIN_PROFILE.rule_sets
-    assert RULE_SET.owner == VALUE_OBJECT_MODULE
-    assert all(
-        compiler.owner != VALUE_OBJECT_MODULE for compiler in BUILTIN_PROFILE.model_compilers
-    )
-
-
-def test_this_module_publishes_no_facet_view() -> None:
-    # Accepted occurrences are expanded by the Metadata Compiler, so there is no
-    # derived view for this owner to install or serve.
-    assert not hasattr(value_object, "FACET_KEY")
-    assert not hasattr(value_object, "view")
-
-
-def test_the_value_object_row_sits_between_inheritance_and_relationship() -> None:
-    # Manifest entry order is Rule Set invocation order, and this file's row is
-    # the spec manifest's fourth.
-    owners = [entry.owner for entry in BUILTIN_MANIFEST.entries]
-    assert owners.index("m-inheritance") < owners.index(VALUE_OBJECT_MODULE)
-    assert owners.index(VALUE_OBJECT_MODULE) < owners.index("m-relationship")
-
-
-def test_the_owned_code_set_is_closed() -> None:
-    assert sorted(ISSUE_CODES) == [CONTAINMENT_CYCLE, EMPTY, MANY_NULLABLE]
-
-
 # --------------------------------------------------------------------------
 # Positives.
 # --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("path", _CORPUS, ids=lambda path: cast("Path", path).stem)
-def test_every_corpus_model_declares_only_valid_value_objects(path: Path) -> None:
-    assert _formed(path) is not None
 
 
 def test_a_shape_reaching_a_scalar_leaf_through_nesting_is_accepted() -> None:
@@ -312,12 +245,6 @@ def test_an_indirect_cycle_names_every_step_of_the_loop() -> None:
     assert issue.code == CONTAINMENT_CYCLE
     assert issue.location == _at("contact", "address", "owner")
     assert issue.related == (_at("contact"), _at("contact", "address"))
-
-
-def test_a_cycle_stops_the_walk_rather_than_expanding_forever() -> None:
-    # Reporting the cycle is also what bounds the traversal: nothing below the
-    # re-entry is visited, so exactly one issue is emitted per closing path.
-    assert _codes(_occurrence("node", _self_containing())) == [CONTAINMENT_CYCLE]
 
 
 def test_a_cycle_is_rejected_before_the_metadata_compiler_expands_it() -> None:

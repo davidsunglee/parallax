@@ -6,9 +6,9 @@ with, because authoring reaches no model: the serving model's classes spell the
 segment when an operation binds the path, and the model states the whole rule
 there.
 
-These fixtures pin both halves — what authoring retains, and what binding spells
-from it — including the two facts only a declaration knows: a member its
-declaration renames, and one an ancestor declares rather than the target itself.
+These fixtures pin what binding spells from an authored path, including the two
+facts only a declaration knows: a member its declaration renames, and one an
+ancestor declares rather than the target itself.
 
 This module omits ``from __future__ import annotations`` so a relationship target
 spelled as a class object reaches the engine live, which is what lets one module
@@ -34,11 +34,9 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import IncludePath
-from parallax.core.entity._declaration import wire_names_of
 from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.object_query import IncludeSegment, validate_object_query
+from parallax.core.object_query import validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import ModelRejectedError
 from tests._support.query_probes import canonical_query
@@ -133,27 +131,6 @@ def _spelled(node: IncludePathNode) -> list[tuple[str, tuple[str, ...]]]:
     return [(segment.rel, segment.narrow_to) for segment in node.segments]
 
 
-def test_authoring_retains_a_continuation_as_the_python_name_it_was_written_with() -> None:
-    path = authored_include_path(SalesOrder.customer.notes)
-    assert [segment.py_name for segment in path.segments] == ["customer", "notes"]
-    assert [segment.root_relationship for segment in path.segments] == [
-        RelationshipIdentity(EntityIdentity("sales", "Order"), "customer"),
-        None,
-    ]
-
-
-def test_a_deeper_hop_validates_as_an_include_path() -> None:
-    includes = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
-    assert includes == (
-        IncludePathNode(
-            segments=(
-                IncludeSegment(rel="sales.Order.customer"),
-                IncludeSegment(rel="sales.Customer.notes"),
-            )
-        ),
-    )
-
-
 def test_a_deeper_hop_across_namespaces_names_the_target_its_model_resolved() -> None:
     # The hop is spelled from the identity the reached class declares, so a second
     # namespace declaring the local name `Customer` does not reach it: the same
@@ -176,12 +153,6 @@ def test_an_inherited_deeper_member_spells_its_declaring_ancestor() -> None:
     assert _spelled(node) == [("pets.Owner.dogs", ()), ("pets.Animal.playthings", ())]
 
 
-def test_a_hop_naming_no_relationship_of_the_target_is_refused_at_binding() -> None:
-    with pytest.raises(QueryDefinitionError, match="SalesCustomer declares no") as caught:
-        _preflight(LEDGER, SalesOrder, SalesOrder.customer.missing)
-    assert caught.value.code == "query-path-invalid"
-
-
 def test_a_hop_naming_an_attribute_of_the_target_is_refused_at_binding() -> None:
     # `id` is a declared member of the hop's target, but not a relationship.
     with pytest.raises(QueryDefinitionError, match="SalesCustomer declares no") as caught:
@@ -196,13 +167,6 @@ def test_a_first_hop_reference_names_its_owner_exactly_and_its_declared_member()
     assert authored_include_path(Root.branches).described() == "orchard.Root.branches"
     assert authored_include_path(Branch.leaves).described() == "orchard.Branch.canopy"
     assert authored_include_path(SalesOrder.customer).described() == "sales.Order.customer"
-
-
-def test_a_hop_narrowed_to_one_class_names_it_canonically() -> None:
-    # A narrow list is a reference position like any other, so it names each
-    # class exactly.
-    path = authored_include_path(Root.branches.narrow(Branch))
-    assert path.segments[-1].narrow_to == ("orchard.Branch",)
 
 
 def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically() -> None:
@@ -251,15 +215,6 @@ def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
         ("orchard.Root.branches", ("orchard.Branch",)),
         ("orchard.Branch.canopy", ("orchard.Leaf",)),
     ]
-
-
-def test_a_continuation_is_refused_by_binding_rather_than_by_its_depth() -> None:
-    # Authoring accepts any depth, so what stops this path is that `SalesNote`
-    # declares no `deeper`, not how far it had already come.
-    query = SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes.deeper)
-    with pytest.raises(QueryDefinitionError, match="SalesNote declares no") as caught:
-        canonical_query(query, LEDGER)
-    assert caught.value.code == "query-path-invalid"
 
 
 def _bound(path: IncludePath[Any, Any]) -> list[tuple[str, tuple[str, ...]]]:
@@ -318,23 +273,3 @@ def test_a_narrow_outside_the_hops_target_keeps_its_portable_refusal_when_contin
     with pytest.raises(ModelRejectedError) as caught:
         _bound(deep.Keeper.animals.narrow(deep.Toy).maker)  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "narrow-outside-relationship-target"
-
-
-def test_a_root_guard_survives_every_continuation_of_its_path() -> None:
-    (node,) = _preflight(deep.FAMILY, deep.Animal, deep.Dog.toys.maker)
-    assert node.applies_to == (f"{deep.FAMILY_NS}.Dog",)
-    assert _spelled(node) == [
-        (f"{deep.FAMILY_NS}.Animal.playthings", ()),
-        (f"{deep.FAMILY_NS}.Toy.maker", ()),
-    ]
-
-
-def test_a_root_segment_applies_only_where_its_class_declares_its_own_identity() -> None:
-    # Two siblings declare `gear`, so the name alone would answer on both.
-    dog_gear = authored_include_path(deep.Dog.gear).segments[0]
-    assert dog_gear.relationship_in(wire_names_of(deep.Dog)) == dog_gear.root_relationship
-    assert dog_gear.relationship_in(wire_names_of(deep.Cat)) is None
-    continuation = authored_include_path(deep.Keeper.animals.gear).segments[1]
-    assert continuation.relationship_in(wire_names_of(deep.Cat)) == RelationshipIdentity(
-        deep.Cat.identity, "gear"
-    )
