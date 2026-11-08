@@ -8,7 +8,6 @@ from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import TemporalShape
 
 __all__ = [
-    "assignment_member",
     "comparison_shape",
     "entity_layout",
     "family_view",
@@ -43,12 +42,6 @@ def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView 
     table-per-hierarchy discriminator assignment, so nothing downstream
     reassembles a column sequence from declarations."""
     return storage_layout.view(model).entity(entity.identity)
-
-
-def assignment_member(attr: str) -> str:
-    """The declared member name of an assignment's ``Class.member`` reference."""
-    _, _, member = attr.rpartition(".")
-    return member
 
 
 def comparison_shape(model: Metamodel, entity: EntityMetadata) -> MemberShape:

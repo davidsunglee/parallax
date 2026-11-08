@@ -298,19 +298,3 @@ class Metamodel:
     """A parsed model descriptor: one or more mapped entities."""
 
     entities: tuple[Entity, ...] = field(default_factory=tuple)
-
-    @property
-    def by_name(self) -> dict[str, Entity]:
-        """Entities keyed by exact identity plus only unambiguous local aliases."""
-        result = {entity.canonical_name: entity for entity in self.entities}
-        local_counts: dict[str, int] = {}
-        for entity in self.entities:
-            local_counts[entity.name] = local_counts.get(entity.name, 0) + 1
-        for entity in self.entities:
-            if local_counts[entity.name] == 1:
-                result[entity.name] = entity
-        return result
-
-    def entity(self, name: str) -> Entity:
-        """The entity named ``name`` (raises ``KeyError`` when absent)."""
-        return self.by_name[name]

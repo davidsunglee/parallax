@@ -22,7 +22,6 @@ __all__ = [
     "WriteIntent",
     "admits",
     "admits_composed",
-    "claim_scope",
     "claimed_object",
     "keyed_intent",
     "settled_evidence",
@@ -134,19 +133,6 @@ def settled_evidence(
     if mutation in INSERT_MUTATIONS:
         return None
     return observation if kind == "observation" else object_key
-
-
-def claim_scope(evidence: SettledEvidence | None) -> ClaimScope | None:
-    """The scope the write settling against ``evidence`` claims, or ``None``
-    where it claims nothing.
-
-    Total over the three shapes above, so a caller reads one answer rather than
-    pairing an evidence value with a separately derived address that could name
-    a different state than the evidence it travels with.
-    """
-    if isinstance(evidence, RetainedObservation):
-        return evidence.key
-    return evidence
 
 
 def claimed_object(scope: ClaimScope) -> ObjectKey:

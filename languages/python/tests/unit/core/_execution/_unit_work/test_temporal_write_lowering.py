@@ -401,7 +401,8 @@ def test_temporal_close_requires_an_effective_table() -> None:
         "2024-10-01T00:00:00+00:00",
         observation=_observed(tx_start="2024-02-01T00:00:00+00:00"),
     )
-    balance = dataclasses.replace(BALANCE.entity("Balance"), table=None)
+    (declared,) = BALANCE.entities
+    balance = dataclasses.replace(declared, table=None)
     with pytest.raises(WritePlanningError, match="write target has no effective table"):
         lowered(
             close,

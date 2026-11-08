@@ -20,7 +20,6 @@ def test_an_open_lifetime_admits_work_a_join_and_a_commit() -> None:
     lifetime.ensure_open()
     lifetime.refuse_join()
     lifetime.refuse_commit()
-    assert not lifetime.rollback_only
 
 
 def test_a_doomed_lifetime_refuses_each_with_its_first_cause() -> None:
@@ -28,7 +27,6 @@ def test_a_doomed_lifetime_refuses_each_with_its_first_cause() -> None:
     first = RuntimeError("first")
     lifetime.doom(first)
     lifetime.doom(RuntimeError("second"))
-    assert lifetime.rollback_only
     for refusal, message in (
         (lifetime.ensure_open, "accepts no further work"),
         (lifetime.refuse_join, "cannot join"),

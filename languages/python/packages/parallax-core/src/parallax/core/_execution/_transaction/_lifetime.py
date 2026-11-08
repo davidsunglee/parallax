@@ -36,10 +36,6 @@ class TxnAttemptLifetime:
         """Record that execution recognized ``failure`` as a recoverable conflict."""
         self._recognized_conflicts.append(failure)
 
-    @property
-    def rollback_only(self) -> bool:
-        return self._rollback_only
-
     def doom(self, cause: BaseException) -> None:
         """Make the attempt rollback-only, keeping the first cause."""
         self._rollback_only = True

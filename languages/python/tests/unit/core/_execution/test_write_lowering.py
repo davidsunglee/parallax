@@ -200,7 +200,8 @@ def _insert_columns(statement: LoweredStatement) -> tuple[str, ...]:
 
 
 def test_non_temporal_write_requires_an_effective_table() -> None:
-    account = dataclasses.replace(records("account").entity("Account"), table=None)
+    (declared,) = records("account").entities
+    account = dataclasses.replace(declared, table=None)
     malformed = formed(_records.Metamodel(entities=(account,)))
     with pytest.raises(WritePlanningError, match="write target has no effective table"):
         _lower(

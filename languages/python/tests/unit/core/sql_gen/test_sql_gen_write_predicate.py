@@ -377,7 +377,7 @@ def test_a_match_through_a_temporal_target_tests_its_latest_milestone_in_place()
 
 def test_value_object_document_column_renders_unaliased() -> None:
     # A value object's structured-DOCUMENT column is not an `Attribute`, so it does
-    # not reach the unaliased formatter through `column_of` the way a scalar does.
+    # not reach the unaliased formatter through `subject_for` the way a scalar does.
     # It must render bare all the same: Customer is transactional/non-temporal and
     # unversioned, so this fragment is spliced into the READLESS
     # `update customer set … where <fragment>` template — where a leaked `t0` names
@@ -428,7 +428,7 @@ def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> No
 def test_inheritance_tag_guard_renders_unaliased() -> None:
     # The framework-owned TAG column is this target's own column and takes the
     # same rendering decision every declared attribute does. It is not reachable
-    # through `column_of` (the tag is metadata, not an `Attribute`), so it leaks
+    # through `subject_for` (the tag is metadata, not an `Attribute`), so it leaks
     # independently — exactly as the value-object DOCUMENT column above does.
     #
     # This is a STRUCTURAL pin, deliberately independent of the write lane's own
