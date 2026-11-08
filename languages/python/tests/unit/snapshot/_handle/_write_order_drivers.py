@@ -45,7 +45,7 @@ from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
-from parallax.core import DomainModel, Predicate, object_query
+from parallax.core import DomainModel, ParallaxError, Predicate, object_query
 from parallax.core._execution._unit_work.instructions import InstructionRejectedError
 from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.db_port import MappingRow
@@ -1159,7 +1159,14 @@ def _refused(raised: Exception, phase: Phase, port: ScriptedAdapter) -> Refused:
     ``ExecutionFailure``; what the order judged is that cause, so it is
     reported unwrapped, exactly as a refusal raised obtaining an outside source is.
     """
-    return Refused(type(raised), _code(raised), str(raised), phase, tuple(port.calls))
+    return Refused(type(raised), _code(raised), _message(raised), phase, tuple(port.calls))
+
+
+def _message(raised: Exception) -> str:
+    """What ``raised`` says beyond its code, which a row states separately."""
+    if isinstance(raised, ParallaxError):
+        return cast("str", raised.args[1])
+    return str(raised)
 
 
 def _code(raised: Exception) -> str | None:

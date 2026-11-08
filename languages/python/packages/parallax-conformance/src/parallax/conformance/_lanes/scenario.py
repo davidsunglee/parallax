@@ -67,9 +67,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import (
-    normalize_instant,
-)
+from parallax.core.base import InternalError, UsageError, normalize_instant
 from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
@@ -200,6 +198,8 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     CanonicalDocumentError,
     SqlGenError,
     TemporalReadError,
+    UsageError,
+    InternalError,
     KeyError,
     TypeError,
 )
@@ -1751,22 +1751,22 @@ def flush_failure(
     and Shortfall or error the failure names, in the case's own spelling."""
     if isinstance(failure, TemporalConflictError):
         assert failure.key is not None  # a refused close names the object it would close
-        entity, key = failure.entity, dict(failure.key)
+        entity, key = failure.entity.canonical, dict(failure.key)
         outcome = ("error", "temporalConflict")
     elif isinstance(failure, WritePreconditionError):
         entity, key = failure.entity, dict(failure.key)
         outcome = ("shortfall", "failedPrecondition")
     else:
-        entity = failure.entity
+        entity = failure.entity.canonical
         target = failure.target
         names = tuple(attribute.name for attribute in target.key_attributes)
         values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
         key = dict(zip(names, values, strict=True))
         outcome = ("shortfall", _SHORTFALLS[type(failure)])
-    metadata = case_entity(model, entity.canonical)
+    metadata = case_entity(model, entity)
     return {
         "at": at,
-        "entity": entity.canonical,
+        "entity": entity,
         "key": ActualWireProjection(model).entity_values(metadata, key),
         outcome[0]: outcome[1],
     }

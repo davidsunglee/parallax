@@ -7,6 +7,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, Self, TypeGuard, cast, overload
 
+from parallax.core.base._errors import (
+    ConflictError,
+    InternalError,
+    NoResultFound,
+    ParallaxError,
+    TooManyResultsFound,
+    UsageError,
+)
 from parallax.core.base._inference import infer_neutral_type
 from parallax.core.base._neutral import (
     BOOLEAN,
@@ -66,6 +74,7 @@ __all__ = [
     "UUID",
     "Boolean",
     "Bytes",
+    "ConflictError",
     "Date",
     "Decimal",
     "DocumentRead",
@@ -77,10 +86,13 @@ __all__ = [
     "InstantError",
     "Int32",
     "Int64",
+    "InternalError",
     "Json",
     "ManagedValue",
     "NeutralType",
     "NeutralTypeMismatch",
+    "NoResultFound",
+    "ParallaxError",
     "ScalarConverter",
     "SqlNull",
     "String",
@@ -88,7 +100,9 @@ __all__ = [
     "TemporalBound",
     "Time",
     "Timestamp",
+    "TooManyResultsFound",
     "UnknownFamilyTag",
+    "UsageError",
     "Uuid",
     "adopt_frozen_map",
     "canonical_managed_member",

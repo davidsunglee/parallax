@@ -2311,7 +2311,9 @@ indices. A Database Call finishes with any `m-execution-lifecycle` outcome,
 `notExecuted` and `unconfirmed` included, and an unconfirmed call states the
 category of the interruption that left it so. It omits UUIDs, durations and the
 timing identities calls share, implementation type names, messages, stack
-traces, and native database codes. A Database Call names its statement by
+traces, and native database codes. A code a language binding authors for its
+own errors is no more portable than its type name, so the projection retains a
+binding error's code only when it is one the core spec authors. A Database Call names its statement by
 zero-based index into the case's flattened authored golden statement order.
 Three calls name none: every call on the `api-conformance` lane, where a case
 authors no golden SQL at all, a **resolving read** a write owes

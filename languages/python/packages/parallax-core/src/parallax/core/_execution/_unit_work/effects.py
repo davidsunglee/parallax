@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from types import MappingProxyType
 from typing import TypeGuard
 
+from parallax.core.base import ConflictError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.write_plan.steps import (
     AnyCount,
@@ -111,25 +111,42 @@ class CardinalityCorruptionError(WriteEffectError):
     _summary = "the write affected more rows than its target addresses"
 
 
-class WritePreconditionError(RuntimeError):
+class WritePreconditionError(ConflictError):
     """A target write's caller-stated starting condition does not hold: the
     state it addresses is gone, or a revision other than ``expected`` replaced
     it.
 
-    ``key`` names the object by its primary key and ``expected`` is the revision
-    the caller stated, unchanged. Re-running the transaction re-states the same
-    condition, so this is never retriable; nothing reads the row again to say
-    which of the two happened.
+    ``entity`` is the canonical Entity name, ``key`` names the object by its
+    primary key, and ``expected`` is the revision the caller stated, unchanged.
+    Re-running the transaction re-states the same condition, so this is never
+    transient; nothing reads the row again to say which of the two happened.
     """
 
     def __init__(self, entity: EntityIdentity, key: Mapping[str, object], expected: object) -> None:
-        self.entity = entity
-        self.key = MappingProxyType(dict(key))
-        self.expected = expected
         super().__init__(
+            "write-precondition-failed",
             f"{entity.name}: the state this write starts from no longer matches its "
-            f"precondition — key={dict(key)!r}, expected revision {expected!r}"
+            f"precondition — key={dict(key)!r}, expected revision {expected!r}",
+            entity=entity.canonical,
+            key=key,
         )
+        self._expected = expected
+
+    @property
+    def entity(self) -> str:
+        entity = super().entity
+        assert entity is not None  # the constructor always names the row
+        return entity
+
+    @property
+    def key(self) -> Mapping[str, object]:
+        key = super().key
+        assert key is not None  # the constructor always names the row
+        return key
+
+    @property
+    def expected(self) -> object:
+        return self._expected
 
 
 class WriteResultError(RuntimeError):

@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from typing import ClassVar, Final, Self, cast
 
+from parallax.core.base import ParallaxError
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -16,13 +17,15 @@ from parallax.core.temporal_read import Edge
 from parallax.core.write_plan import ObjectKey
 
 __all__ = [
-    "EXCEPTION_MACHINERY",
+    "INTERPRETER_OWNED_ATTRIBUTES",
     "MISSING_STORED_VALUE",
+    "RESULT_DATA_INVALID",
     "STORED_DATA_DECODING_FAILED",
     "InvalidData",
     "InvalidDataError",
     "StoredDataDecodingError",
     "StoredDataIssue",
+    "invalid_result_refusal",
     "stored_data_refusal",
 ]
 
@@ -191,7 +194,7 @@ class InvalidData[T]:
     ordinal: int
 
 
-EXCEPTION_MACHINERY: Final[frozenset[str]] = frozenset(
+INTERPRETER_OWNED_ATTRIBUTES: Final[frozenset[str]] = frozenset(
     {"__cause__", "__context__", "__notes__", "__suppress_context__", "__traceback__"}
 )
 """The attributes of an exception the INTERPRETER owns rather than its author.
@@ -202,23 +205,28 @@ hand-frozen refusal in this package, because which names those are is a fact
 about Python rather than about any one of them.
 """
 
+RESULT_DATA_INVALID: Final = "result-data-invalid"
+"""The code of a result accessor's refusal of roots holding invalid stored data."""
 
-class InvalidDataError(RuntimeError):
-    """A default accessor's refusal of a result carrying invalid stored data.
 
-    :attr:`invalid_data` is nonempty, in result order, and is the exception's
-    sole machine-readable report: there is no singular code, no flattened issue
-    collection, no cause, and no second name for the same tuple.
-    :attr:`edition` is the Model Edition the result that raised it was read
-    under, supplied by that result's owner: a refusal is delayed until an
-    accessor is reached, so the stamp travels with it rather than being looked
-    up again, and the validators that judged the stored data need no edition
-    at all. The constructor settles both together with the message derived
-    from the report, and every later attribute assignment or deletion is
-    refused — including the inherited ``args`` :func:`str` reads — so the
-    wording can never describe results the report no longer carries.
+class InvalidDataError(ParallaxError):
+    """A refusal of stored data Parallax cannot deliver as valid results.
 
-    The two records get that immutability from ``frozen=True``, which an
+    Under :data:`RESULT_DATA_INVALID`, a default accessor refused a result:
+    :attr:`invalid_data` is nonempty, in result order, and is the refusal's
+    sole machine-readable report, with no flattened issue collection and no
+    second name for the same tuple. :attr:`edition` is the Model Edition the
+    result was read under, supplied by that result's owner: a refusal is
+    delayed until an accessor is reached, so the stamp travels with it rather
+    than being looked up again, and the validators that judged the stored data
+    need no edition at all. Under any other code there is no result, so
+    :attr:`invalid_data` is empty and :attr:`edition` is ``None``; the
+    constructor refuses any other pairing.
+
+    The constructor settles every field, and every later attribute assignment
+    or deletion is refused — including the inherited ``args`` :func:`str`
+    reads — so the wording can never describe results the report no longer
+    carries. The records get that immutability from ``frozen=True``, which an
     exception cannot use: a frozen ``__setattr__`` also refuses
     :meth:`add_note`, and ``__slots__`` restricts nothing while
     :class:`BaseException` carries an instance dictionary. Freezing by hand
@@ -230,26 +238,37 @@ class InvalidDataError(RuntimeError):
     """
 
     _invalid_data: tuple[InvalidData[object], ...]
-    _edition: str
+    _edition: str | None
 
-    def __init__(self, invalid_data: Iterable[InvalidData[object]], *, edition: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        invalid_data: Iterable[InvalidData[object]] = (),
+        edition: str | None = None,
+    ) -> None:
         records = tuple(invalid_data)
-        if not records:
-            raise ValueError("an invalid-data refusal carries at least one record")
-        codes = sorted({issue.code for record in records for issue in record.issues})
-        super().__init__(
-            f"{len(records)} result root(s) hold invalid stored data ({', '.join(codes)})"
-        )
+        if code == RESULT_DATA_INVALID:
+            if not records or edition is None:
+                raise ValueError(
+                    f"a {RESULT_DATA_INVALID} refusal carries at least one record and an edition"
+                )
+        elif records or edition is not None:
+            raise ValueError(
+                f"only a {RESULT_DATA_INVALID} refusal carries invalid-data records or an edition"
+            )
+        super().__init__(code, message)
         object.__setattr__(self, "_invalid_data", records)
         object.__setattr__(self, "_edition", edition)
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name not in EXCEPTION_MACHINERY:
+        if name not in INTERPRETER_OWNED_ATTRIBUTES:
             raise AttributeError(f"InvalidDataError is frozen; cannot assign {name!r}")
         super().__setattr__(name, value)
 
     def __delattr__(self, name: str) -> None:
-        if name not in EXCEPTION_MACHINERY:
+        if name not in INTERPRETER_OWNED_ATTRIBUTES:
             raise AttributeError(f"InvalidDataError is frozen; cannot delete {name!r}")
         super().__delattr__(name)
 
@@ -258,8 +277,22 @@ class InvalidDataError(RuntimeError):
         return self._invalid_data
 
     @property
-    def edition(self) -> str:
+    def edition(self) -> str | None:
         return self._edition
+
+
+def invalid_result_refusal(
+    invalid_data: Iterable[InvalidData[object]], *, edition: str
+) -> InvalidDataError:
+    """A result accessor's refusal of ``invalid_data``, read under ``edition``."""
+    records = tuple(invalid_data)
+    codes = sorted({issue.code for record in records for issue in record.issues})
+    return InvalidDataError(
+        RESULT_DATA_INVALID,
+        f"{len(records)} result root(s) hold invalid stored data ({', '.join(codes)})",
+        invalid_data=records,
+        edition=edition,
+    )
 
 
 STORED_DATA_DECODING_FAILED: Final[str] = "stored-data-decoding-failed"

@@ -15,7 +15,11 @@ from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.object_query import QueryClauses
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.read_delivery._delivery import temporal_shape
-from parallax.core.read_delivery._page import EXCEPTION_MACHINERY, InvalidData, InvalidDataError
+from parallax.core.read_delivery._page import (
+    INTERPRETER_OWNED_ATTRIBUTES,
+    InvalidData,
+    invalid_result_refusal,
+)
 from parallax.core.read_delivery._page_reader import StreamPageResult
 from parallax.core.read_delivery._paging import At, PagingPlan
 from parallax.core.read_delivery._publication import Publication
@@ -192,12 +196,12 @@ class StreamContinuationError(RuntimeError):
         object.__setattr__(self, "_ordinal", ordinal)
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name not in EXCEPTION_MACHINERY:
+        if name not in INTERPRETER_OWNED_ATTRIBUTES:
             raise AttributeError(f"StreamContinuationError is frozen; cannot assign {name!r}")
         super().__setattr__(name, value)
 
     def __delattr__(self, name: str) -> None:
-        if name not in EXCEPTION_MACHINERY:
+        if name not in INTERPRETER_OWNED_ATTRIBUTES:
             raise AttributeError(f"StreamContinuationError is frozen; cannot delete {name!r}")
         super().__delattr__(name)
 
@@ -534,7 +538,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
             )
             for root in roots:
                 if not checked and isinstance(root, InvalidData):
-                    raise InvalidDataError(
+                    raise invalid_result_refusal(
                         (cast("InvalidData[object]", root),), edition=publication.edition
                     )
                 self._paused_includes = includes

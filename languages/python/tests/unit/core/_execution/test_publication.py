@@ -27,6 +27,7 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.core import ConflictError
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._publication import (
     read_projection,
@@ -346,6 +347,13 @@ def test_a_refusal_reports_the_comparison_it_was_raised_with() -> None:
         with pytest.raises(AttributeError):
             delattr(refusal.value, name)
     assert (refusal.value.expected, refusal.value.held) == (a, b)
+    assert isinstance(refusal.value, ConflictError)
+    assert (refusal.value.code, refusal.value.entity, refusal.value.key) == (
+        "publication-conflict",
+        None,
+        None,
+    )
+    assert not refusal.value.is_transient
 
 
 def test_a_refusal_leaves_interpreter_owned_state_writable() -> None:

@@ -45,6 +45,7 @@ from parallax.core import (
     Attr,
     Bitemporal,
     Edge,
+    NoResultFound,
     TemporalBound,
     TxTemporal,
     attr,
@@ -56,13 +57,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     WritePreconditionError,
 )
-from parallax.snapshot import (
-    NoResultFound,
-    ScopedDatabase,
-    TxnContext,
-    WireEntity,
-    edge_of,
-)
+from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 ```
 <!-- /example -->
 

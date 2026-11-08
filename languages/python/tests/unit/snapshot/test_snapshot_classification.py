@@ -45,10 +45,9 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery import (
     MISSING_STORED_VALUE,
     InvalidData,
-    InvalidDataError,
     StoredDataIssue,
 )
-from parallax.core.read_delivery._page import Page, PageRows, page_rows
+from parallax.core.read_delivery._page import Page, PageRows, invalid_result_refusal, page_rows
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
@@ -698,7 +697,7 @@ def test_classification_shares_the_one_frozen_evidence_rather_than_copying_it() 
     record = invalid_record(fixture.materialize(node)[0])
     (published,) = record.issues
     assert published.stored_value is converted.stored_value
-    refusal = InvalidDataError((record,), edition="edition")
+    refusal = invalid_result_refusal((record,), edition="edition")
     (reported,) = next(iter(refusal.invalid_data)).issues
     assert reported.stored_value is converted.stored_value
 
@@ -762,4 +761,4 @@ def test_evidence_is_reachable_only_by_asking_for_it() -> None:
     assert "MISSING_STORED_VALUE" not in repr(issue)
     assert "stored_value" not in repr(issue)
     assert "MISSING_STORED_VALUE" not in repr(record)
-    assert "MISSING_STORED_VALUE" not in str(InvalidDataError((record,), edition="edition"))
+    assert "MISSING_STORED_VALUE" not in str(invalid_result_refusal((record,), edition="edition"))

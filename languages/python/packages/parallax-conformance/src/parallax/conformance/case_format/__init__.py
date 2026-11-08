@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
+import json
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -36,6 +38,7 @@ __all__ = [
     "isolation_literal",
     "load_case",
     "load_cases",
+    "raised_error_codes",
     "read_only_keywords",
     "request_keywords",
     "safe_load_yaml",
@@ -659,6 +662,43 @@ def load_cases(directory: Path | None = None) -> list[Case]:
     """Load every case under ``directory`` (default: the discovered corpus)."""
     root = directory if directory is not None else default_cases_dir()
     return [load_case(path) for path in sorted(root.rglob("*.yaml"))]
+
+
+_ERROR_NAMING_PROPERTIES: Final = frozenset({"rejectedRule", "expectError"})
+
+
+@functools.cache
+def raised_error_codes() -> frozenset[str]:
+    """Every code a case names a raised error by: the values the case schema
+    admits for any ``rejectedRule`` or ``expectError`` property.
+
+    Read from the schema itself, so the core vocabularies stay its own.
+    """
+    path = find_repo_root() / "core" / "schemas" / "compatibility-case.schema.json"
+    schema = cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+    definitions = cast("dict[str, Any]", schema["$defs"])
+    codes: set[str] = set()
+    pending: list[object] = [schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(cast("list[object]", node))
+        if not isinstance(node, dict):
+            continue
+        for key, value in cast("dict[str, object]", node).items():
+            pending.append(value)
+            if key in _ERROR_NAMING_PROPERTIES and isinstance(value, dict):
+                codes.update(_admitted_values(cast("dict[str, Any]", value), definitions))
+    return frozenset(codes)
+
+
+def _admitted_values(node: dict[str, Any], definitions: dict[str, Any]) -> Iterable[str]:
+    reference = node.get("$ref")
+    if isinstance(reference, str):
+        node = cast("dict[str, Any]", definitions[reference.removeprefix("#/$defs/")])
+    if "const" in node:
+        return (node["const"],)
+    return cast("list[str]", node.get("enum", ()))
 
 
 @dataclass(frozen=True, slots=True)

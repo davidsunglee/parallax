@@ -49,21 +49,26 @@ chapter's are:
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, index, rel
+from parallax.core import (
+    ONE_TO_MANY,
+    Attr,
+    DomainModel,
+    Entity,
+    Int32,
+    NoResultFound,
+    Rel,
+    TooManyResultsFound,
+    attr,
+    index,
+    rel,
+)
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
-from parallax.snapshot import (
-    Database,
-    NoResultFound,
-    ScopedDatabase,
-    TooManyResultsFound,
-    TxnContext,
-    connect,
-)
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 ```
 <!-- /example -->
 

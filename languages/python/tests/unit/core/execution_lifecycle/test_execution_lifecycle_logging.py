@@ -654,7 +654,10 @@ def test_a_failed_rollback_is_an_error_carrying_both_live_failures(
     assert record.level == logging.ERROR
     assert record.fields["outcome"] == "rollbackFailed"
     assert record.fields["error_message"] == "the row vanished"
-    assert record.fields["rollback_error_message"] == "connectionDead [08006]: gone"
+    assert (
+        record.fields["rollback_error_message"]
+        == "database-statement-failed: connectionDead [08006]: gone"
+    )
     assert str(record.fields["rollback_error_type"]).endswith(".DatabaseError")
 
     caplog.clear()

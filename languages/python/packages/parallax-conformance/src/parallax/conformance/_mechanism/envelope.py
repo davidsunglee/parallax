@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.core import read_delivery
+from parallax.core.base import InternalError, UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -35,6 +36,8 @@ READ_ERRORS = (
     SqlGenError,
     TemporalReadError,
     QueryTargetError,
+    UsageError,
+    InternalError,
     KeyError,
     ValueError,
 )

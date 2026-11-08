@@ -33,7 +33,9 @@ from parallax.core import (
     Entity,
     EntityDefinitionError,
     MetamodelValidationError,
+    NoResultFound,
     QueryDefinitionError,
+    TooManyResultsFound,
 )
 from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import ConnectionAcquisitionError
@@ -62,13 +64,7 @@ from parallax.core.unit_work import (
     WritePreconditionError,
 )
 from parallax.evolution import SchemaDelta
-from parallax.snapshot import (
-    NoResultFound,
-    ScopedDatabase,
-    TooManyResultsFound,
-    TxnContext,
-    is_view_loaded,
-)
+from parallax.snapshot import ScopedDatabase, TxnContext, is_view_loaded
 ```
 <!-- /example -->
 

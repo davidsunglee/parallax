@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
+from parallax.core.base import ParallaxError
 from parallax.core.diagnostics import FailureDiagnostic
 
 if TYPE_CHECKING:
@@ -175,7 +176,7 @@ statement ran, so nothing was classified, and no retry rule reads them.
 """
 
 
-class ConnectionAcquisitionError(Exception):
+class ConnectionAcquisitionError(ParallaxError):
     """No connection was acquired, and ``reason`` says which way.
 
     A neutral outer message with the native cause chained where one exists, in
@@ -198,7 +199,7 @@ class ConnectionAcquisitionError(Exception):
         reason: AcquisitionReason,
         selection: RouteSelection | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__("connection-acquisition-failed", message)
         self.reason: AcquisitionReason = reason
         self.selection: RouteSelection | None = selection
 
@@ -217,7 +218,7 @@ back. All five share one budget, which is never restarted between them.
 """
 
 
-class DatabaseStartupError(Exception):
+class DatabaseStartupError(ParallaxError):
     """A runtime did not become ready, so no ``Database`` was published.
 
     ``route`` names whose readiness failed, so a reader that refused its login
@@ -239,7 +240,7 @@ class DatabaseStartupError(Exception):
         phase: StartupPhase,
         cleanup_result: CleanupResult | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__("database-startup-failed", message)
         self.route: Route = route
         self.phase: StartupPhase = phase
         self.cleanup_result: CleanupResult | None = cleanup_result

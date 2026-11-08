@@ -541,7 +541,9 @@ def test_a_retained_runtime_whose_source_refuses_fails_startup_naming_the_refusa
     assert "authenticated" in str(failed.value)
     refusal = failed.value.__cause__
     assert isinstance(refusal, CredentialResolutionError)
-    assert str(refusal) == "the credential source could not produce a password"
+    assert str(refusal) == (
+        "credential-resolution-failed: the credential source could not produce a password"
+    )
     assert refusal.__cause__ is source.error
     attempts = [record for record in caplog.records if record.name == "psycopg.pool"]
     assert attempts

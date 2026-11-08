@@ -32,6 +32,7 @@ from parallax.core.auto_retry import (
     retry_policy,
     run_with_retry,
 )
+from parallax.core.base import ParallaxError
 from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import (
     AccessMode,
@@ -113,7 +114,7 @@ class TransactionAccessModeError(RuntimeError):
     code: Final[str] = "transaction-access-mode-mismatch"
 
 
-class TransactionRollbackError(RuntimeError):
+class TransactionRollbackError(ParallaxError):
     """The transaction could not be undone after something ended it.
 
     Two failures are live at once and reporting either alone misreports what
@@ -132,8 +133,9 @@ class TransactionRollbackError(RuntimeError):
 
     def __init__(self, triggering_error: BaseException, rollback_error: Exception) -> None:
         super().__init__(
+            "transaction-rollback-failed",
             f"the transaction could not be rolled back after {triggering_error!r}; "
-            f"the rollback failed with {rollback_error!r}, so what it left behind is unknown"
+            f"the rollback failed with {rollback_error!r}, so what it left behind is unknown",
         )
         self.triggering_error = triggering_error
         self.rollback_error = rollback_error
