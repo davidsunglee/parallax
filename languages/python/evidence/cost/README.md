@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `51c7f63bc5d8d892e3d3079b418323381344376a` | 2026-11-04 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `5fcedc88cc601688469779e973a1b791d424ef18` | 2026-11-07 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -25,7 +25,10 @@ producing commit. Snapshot delivery is authoritative under its embedded Budget
 Contract; the other members have their own protocols and are non-authoritative.
 All 24 representative live-read cells are present, covering conventional graphs
 and finite historical transaction-time and bitemporal reads through Typed/Wire
-and eager/page32 delivery.
+and eager/page32 delivery. The page-sharing cells are present too: the
+`repeated-fanout` and `invalid-roots` publication cells at both sharing scopes,
+their page-scope `page128` bound at the fixture's scale and at ten times its
+roots, and the wide fan-out timing cell.
 
 The recorded commit is the fact of what was captured. Verifying an envelope
 reconstructs its embedded Budget Contract and checks internal consistency
@@ -39,83 +42,118 @@ resolvable producing commit after proving its captured sources and workload
 identity. Prefer capturing at a commit already on `main`, so source history
 remains available. This capture records its original reviewed branch commit.
 
-The collector ran once on 2026-11-04, 07:16:37–08:17:38 UTC, in 61m00s wall
-time, on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS 27.0.1 build 26A434,
-with CPython 3.14.10 and 3.15.2 and PostgreSQL 18.6 under OrbStack 2.2.5.
-Every tracked file and every package source-root file was recorded by digest,
-size, and modification time immediately before collection and was unchanged
-afterwards. Native-loader sources are unchanged from the outgoing capture.
+The collector ran once from 2026-11-07 23:05:30 to 2026-11-08 00:15:21 UTC, in
+69m51s wall time, on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS 27.0.1 build
+26A434, with CPython 3.14.10 and 3.15.2 and PostgreSQL 18.6 under OrbStack 2.2.5.
+Every tracked file and every package source-root file, ignored native extensions
+included, was recorded by digest, size, and modification time immediately before
+collection and was unchanged afterwards. Native-loader sources are unchanged
+from the outgoing capture. The other-minor children ran in throwaway
+environments built fresh for this capture in a dedicated temporary directory,
+because macOS had purged package metadata from older ones under the default.
 [Conditions](current/conditions.json) record interpreter identities, production
 origins, and instrument source hashes; [durations](current/durations.json)
 record collection telemetry. The dependency lock SHA-256 is
 `452b94ef99cced1ababe01d43a2a4df79e2e7c311c48d9a37b21d6ca9ec9472e`.
 The portfolio SHA-256 is
-`e21f47d6676ade3267abf9edb1fc74707d10f71e050f063caeb7cb72692179fb`,
+`c39c7f77bff5d415104ca866071b05b6c5134379bfd91189e2c27263e3f738e3`,
 conditions SHA-256 is
-`f1efb3fc587cbb9a42c430ee0c02abfcc21efc249543e5fadb1d45d9f0b58a60`,
+`c4f998d2ffe36ec961ea1f9128f125d62e88a7b12c3bf972460605bf6c1372fc`,
 and durations SHA-256 is
-`8ce74acb5cf87d455e8405cff6230ce0e1cef878a2ef6138da866f2e214ca148`.
+`aa9dcc983d76b2da1fd5c6cf6c55eb13ffcd0198e0e28f4b74cdfd127e072e89`.
 
 The machine-wide measurement lock excluded other coordinated heavy work. The
-collector began on AC power at one-minute load 2.935; recorded in-run loads
-were higher. A quiet start does not establish sustained quiet-host timing
-stability. The outgoing October 31 capture used the same host/software with
-CPython 3.13.18/3.14.8, but its quiet wait was disabled at load near 4–5.
-The structural bases used macOS 26.6.2 and CPython 3.13.15/3.14.7.
+collector began on AC power at one-minute load 1.76; sampled in-run loads were
+2.9–3.7. A quiet start does not establish sustained quiet-host timing
+stability. The previous November 4 capture used the same host and software. The
+structural bases used macOS 26.6.2 and CPython 3.13.15/3.14.7.
 
 ## Comparison with the outgoing capture
 
-The outgoing producer `c5b49ddd3560a706865d10d631b9de1d74324a50` has exactly the
-tree of `a4378362166f5801a33429bab87b6de5ad87a8b0` on `main` after rebase.
-Intervening production changes include routing/acquisition (PR #321), compiled
-relationship facts (#333), locking continuation (#337), concurrency and retained
-metadata (#338), and retry/lifecycle composition (#339). The earlier fused-read
-work is already in the outgoing tree. Dependencies also changed: Pydantic
-2.14.1→2.14.2, pydantic-core 2.50.1→2.50.2, botocore 1.43.118→1.43.123,
-filelock 4.2.1→4.2.5, SQLGlot 30.24.0→30.26.0, and pip-api 0.0.34→0.0.35.
-Both Snapshot sources pin the same PostgreSQL 18.6 Alpine image; an independent
-reference-harness Debian preflight does not describe these Snapshot captures.
-Historical comparisons do not isolate an interpreter, dependency, or code effect.
+The outgoing producer `51c7f63bc5d8d892e3d3079b418323381344376a` is an ancestor
+of the fork point `77ea1ada6e33099a4e511d9cac2f545b76057b35`. Intervening
+production changes are the family-variant and `_type` naming of Wire nodes, the
+retirement of public row delivery and managed lifecycle, and the page-sharing
+option itself, whose default mode keeps its per-root path. The dependency lock,
+interpreters, host, and PostgreSQL image are unchanged. Instrument sources
+changed with the page-sharing cells, so `--compare --require-compatible` refuses
+the pair, and the arithmetic below comes from a plain `--compare`. It does not
+isolate a code effect from host or day-to-day variation.
 
-The portfolio grows from 3,119 to 3,139 readings: 1,386 matching addresses,
-1,733 removed, and 1,753 added. This turnover includes dropping the old minor,
-adding the new minor, moving 434 newest-only scalar cells, and adding 20 live
-advisory addresses while reusing four existing conventional Wire cells.
-All 372 overlapping deterministic count readings are unchanged.
+The portfolio grows from 3,139 to 3,263 readings: every outgoing address is
+read again, and the 124 added readings are the page-sharing cells. Every
+overlapping count reading is unchanged.
 
-All 362 memory-gate addresses remain, and no new reading exceeds its outgoing
-ceiling. Under the unchanged derivation, 147 ceilings move: 69 down and 78 up.
-Only four rise more than 3%: bitemporal interior Columns Typed retained bytes
-(1,002→1,056; +5.39%) and transient bytes (17,164→17,724; +3.26%), its Wire
-transient bytes (17,749→18,309; +3.16%), and two-row Columns Typed insert
-transient bytes (5,105→5,265; +3.13%). These are shared ceilings derived across
-runtimes, not isolated runtime comparisons.
+All 362 outgoing memory-gate addresses remain, and no new reading exceeds its
+outgoing ceiling. Under the unchanged derivation, 88 of them move: 81 down and
+seven up. The largest rise is write-lowering's family model preparation,
+retained 30,895→32,504 B (+5.2%) and transient 35,867→37,406 B (+4.3%), then the
+whole model preparation by about 2%; the other three rise by under 0.2%. The 48
+added gates price the page-sharing memory readings.
 
-Verification retains eight timing advisory rows for five unique windows:
-duplicate-include page32 and firstResult.page1, document-heavy page32, and
-versioned-document page32 and firstResult.page32. Seven streamed-memory scaling
-advisories occur on the new authority runtime, versus three on the outgoing
-authority; the current older minor has two. A larger scaling slope need not mean
-a larger absolute peak: conventional page128 is 421.29/466.76 KiB at 200/2,000
-roots on 3.15, versus 495.20/499.21 KiB on 3.14. No allocator cause was isolated.
+Every provider-free, control, plan, positional, and held-metadata byte reading
+of Snapshot delivery is within noise or smaller; the five larger readings are
+ungated live-window heap. Snapshot timing movements run both ways: 59 live
+timing cells read faster and nine slower, and provider-free and control
+elapsed cells split 5 faster and 18 slower beside 107 within noise, none above
+30%. Verification now reports one timing advisory, duplicate-include
+`firstResult.page1`, against eight before, and the same seven streamed-memory
+scaling advisories on the authority runtime. The previous comparison account,
+including its bounded source diagnostic of two historical live movements,
+remains in [Git history](https://github.com/davidsunglee/parallax/blob/42bbf65896c6079fb2da0088d9b93b05af7b0c3e/languages/python/evidence/cost/README.md).
 
-All 25 matching 3.14 live elapsed cells read higher, by 7.94–128.86%
-(median 62.60%). Four matching provider-free elapsed cells improve 7.65–27.87%
-(median 10.48%); write and feature timing medians improve about 8%.
-A bounded comparison of outgoing and current source on the same CPython 3.14.10
-and 94 external dependency versions did not reproduce the two large historical
-gaps it investigated. Conventional Wire eager pooled medians were 6.375→6.699 ms
-(median paired-round +6.39%, range −0.47…+13.26%, five of six positive);
-document-heavy Wire page32 was 27.093→27.768 ms (+3.09%, below 5%). Even outgoing
-source under these controlled conditions was well above the historical 4.763 and
-16.238 ms. Current source changes alone do not explain most of those two large
-historical movements. The diagnostic does not isolate patch, dependency, or host
-causes, or generalize to other cells; its near-threshold conventional movement
-remains weak evidence of a smaller source effect.
+## Page-sharing delivery evidence
+
+These conclusions come from the capture and from one-off measurements of the
+same producing commit; raw output is archived as listed under *Retained
+archives*.
+
+The ticket's reductions hold on both runtimes. On `repeated-fanout`, page scope
+against root scope lowers Typed retained heap 87.8% on 3.15 and 86.0% on 3.14
+(target 50%) and its elapsed time 81.7% and 82.0% (target 20%); Wire retained
+heap falls 79.7% and 78.0% (target 30%) and elapsed time 78.1% and 77.9%
+(target 10%). Unique nodes read 11,000 and 1,100 Typed and 12,000 and 2,100
+Wire, so each cell measured its scope. On `invalid-roots`, page scope costs less
+than root scope in every eager retained and peak reading while every tenth root
+keeps its own diagnostic graph. Page-scope eager peak also falls, but a
+page-scope Wire stream peaks higher than a root-scope one, about 330 against
+200 KiB at page 128, because a shared page holds its rows and graph until the
+page ends.
+
+The page-mode bound is flat: every `x10` reading of the `page128` block sits
+within 1.10 of its base reading or within 512 B of it, on both workloads, for
+Typed, Wire, and Typed-to-Wire projection, and every early-close reading is
+zero. Holding every delivered Page in a module-level list, a regression these
+gates exist to catch, took all 30 `x10` readings past their derived gates on
+both runtimes, by roughly 10 MiB each.
+
+Stream retention at page 128 from 1,000 to 20,000 roots stays flat at both
+scopes: peak heap rises by at most 22 KiB over that range, the last root
+retains the same 3–4 KiB and reaches the same 11 or 12 nodes at both scopes,
+and an early close retains nothing. Across a whole stream, page scope publishes
+about a ninth of root scope's Typed nodes.
+
+Before/after controls measured the fork point and the producing commit with each
+one's own tool, one pair each on the same host. Every provider-free control
+memory reading is within noise, and all but three of 68 control timings are,
+none beyond 9%. Provider-free conventional fan-out timing is within noise. Live
+timings of the same pairs move in opposite directions on the two runtimes, so
+one pair cannot separate them from host variation.
+
+A live R3 comparison with SQLAlchemy 2.1.6 `selectinload` passed the
+harness's verification first: equal checksums and SQL-oracle counts, equal
+final state after every write scenario, and equal conflict outcomes. Over two
+timing passes, Parallax read R3 in 64–65 ms at root scope and 21–22 ms at page
+scope, against SQLAlchemy's 17–19 ms, a ratio of 3.6–3.8 falling to 1.16–1.18.
+Page scope holds 0.78 MiB against 3.04 MiB at root scope and SQLAlchemy's
+2.05 MiB, with a 1.85 MiB peak against 3.87 and 2.57 MiB. Page scope publishes
+SQLAlchemy's 1,100 objects; root scope publishes 11,000. The R1 and R2 controls
+stayed within 0.91–1.06 of SQLAlchemy. These describe this host and seed only.
 
 ## Paired runtime timing
 
-Same-source pairs compare CPython 3.14.10 with 3.15.2 at the current producing
+Same-source pairs compare CPython 3.14.10 with 3.15.2 at
+`51c7f63bc5d8d892e3d3079b418323381344376a`, the previous capture's producing
 commit, with matching dependencies, native drivers, fixtures, and semantic
 outcomes. Six rounds alternate runtime order. Reads and guarded writes retain
 54 samples per runtime/case; W4 retains 30. Timing excludes setup and correctness
@@ -147,9 +185,16 @@ accepted timing; no selected batches were substituted.
 
 ## Retained archives
 
-Raw evidence, generated comparisons, all accepted and rejected attempts, exact
-invocations, script revisions, and audit results live outside Git at
-`~/.local/share/parallax/evidence/cor-258/`. Its accepted-evidence index is
+This capture's raw collector output, input manifests, host records, grading
+output, the bound break, the before/after control pairs, the stream retention
+readings, the live R3 harness with its history and runs, and the scripts that
+produced them live outside Git at
+`~/.local/share/parallax/evidence/cor-260/phase7/`, whose `SHA256SUMS` digest is
+`e31d9900ceb7068b5860656f3791e29c6f41d8168ace9dcada709f7eb78ba322`.
+
+The previous capture's raw evidence, generated comparisons, all accepted and
+rejected attempts, exact invocations, script revisions, and audit results live
+outside Git at `~/.local/share/parallax/evidence/cor-258/`. Its accepted-evidence index is
 `runs/final-acceptance.json`, SHA-256
 `8317377a49c9158ca2e40a57d197d487b55cecd292c1c435a2b87dca4d3e266e`.
 The canonical `runs/canonical/SHA256SUMS` digest is
