@@ -21,7 +21,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core import storage_layout
+from parallax.core import ConflictError, InternalError, storage_layout
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -38,12 +38,12 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteRowsCompleted,
 )
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
-    MissingTargetError,
-    OptimisticLockConflictError,
-    StaleWriteError,
+    CARDINALITY_CORRUPTION,
+    OPTIMISTIC_LOCK_CONFLICT,
     WritePreconditionError,
 )
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
@@ -166,9 +166,10 @@ def test_ordinals_returned_in_any_order_satisfy_every_step() -> None:
 def test_an_empty_result_counts_zero_for_every_step() -> None:
     steps = _wallets(1, 2)
     raised = _run(_Port([]), _grouped(steps))
-    assert isinstance(raised, MissingTargetError)
-    assert raised.target is steps[0].target
-    assert raised.actual == 0
+    assert isinstance(raised, ConflictError)
+    assert raised.code == MISSING_TARGET_CODE
+    assert raised.key == {"id": 1}
+    assert "affected 0 row(s)" in str(raised)
 
 
 def test_a_missing_ordinal_names_its_own_step_under_its_own_policy() -> None:
@@ -176,16 +177,18 @@ def test_a_missing_ordinal_names_its_own_step_under_its_own_policy() -> None:
         update(ACCOUNT, "Account", key, {"balance": Decimal(key)}, observed=1) for key in (1, 2, 3)
     ]
     raised = _run(_Port([(1,), (3,)]), _grouped(steps, ACCOUNT), meta=ACCOUNT)
-    assert isinstance(raised, OptimisticLockConflictError)
-    assert raised.target is steps[1].target
-    assert (raised.expected, raised.actual) == (1, 0)
+    assert isinstance(raised, ConflictError)
+    assert raised.code == OPTIMISTIC_LOCK_CONFLICT
+    assert raised.key == {"id": 2}
+    assert "affected 0 row(s), expected 1" in str(raised)
 
 
 def test_the_earliest_short_step_in_canonical_order_is_reported() -> None:
     steps = _wallets(1, 2, 3)
     raised = _run(_Port([(1,)]), _grouped(steps))
-    assert isinstance(raised, MissingTargetError)
-    assert raised.target is steps[1].target
+    assert isinstance(raised, ConflictError)
+    assert raised.code == MISSING_TARGET_CODE
+    assert raised.key == {"id": 2}
 
 
 def test_a_stale_write_policy_raises_its_own_error() -> None:
@@ -201,16 +204,17 @@ def test_a_stale_write_policy_raises_its_own_error() -> None:
         for step in gated
     ]
     raised = _run(_Port([(1,)]), _grouped(steps, ACCOUNT), meta=ACCOUNT)
-    assert isinstance(raised, StaleWriteError)
-    assert raised.target is steps[1].target
+    assert isinstance(raised, ConflictError)
+    assert raised.code == STALE_WRITE_CODE
+    assert raised.key == {"id": 2}
 
 
 def test_a_repeated_ordinal_is_an_excess_for_its_step() -> None:
     steps = _wallets(1, 2)
     raised = _run(_Port([(2,), (1,), (2,)]), _grouped(steps))
-    assert isinstance(raised, CardinalityCorruptionError)
-    assert raised.target is steps[1].target
-    assert raised.actual == 2
+    assert isinstance(raised, InternalError)
+    assert raised.code == CARDINALITY_CORRUPTION
+    assert "affected 2 row(s), expected 1 (keys=[{'id': 2}])" in str(raised)
 
 
 @pytest.mark.parametrize(
@@ -317,7 +321,8 @@ def test_a_prefix_shortfall_outranks_and_releases_the_held_preparation_failure()
     held = weakref.ref(failure)
     port = _Port([(1,)])
     raised = _run(port, _grouped(steps), payloads=_Failing(steps[2], failure))
-    assert isinstance(raised, MissingTargetError)
+    assert isinstance(raised, ConflictError)
+    assert raised.code == MISSING_TARGET_CODE
     del failure
     raised = None
     gc.collect()
@@ -397,7 +402,8 @@ def test_a_group_completes_its_writes_only_once_its_grouped_effect_is_enforced(
     try:
         with open_flush() as flush:
             run_plan(port, WritePlan((group,)), flush, WALLET, completed=completed)
-    except MissingTargetError:
+    except ConflictError as refused:
+        assert refused.code == MISSING_TARGET_CODE
         assert not completes
     assert completed == ([1, 1] if completes else [])
     assert len(port.calls) == 1
@@ -417,7 +423,8 @@ def test_a_group_completes_its_closes_only_once_their_grouped_effect_is_enforced
     try:
         with open_flush() as flush:
             run_plan(port, WritePlan((group,)), flush, BALANCE, completed=completed)
-    except StaleWriteError:
+    except ConflictError as refused:
+        assert refused.code == STALE_WRITE_CODE
         assert not completes
     assert completed == ([1, 1] if completes else [])
     assert len(port.calls) == 1
@@ -439,20 +446,19 @@ def test_a_deletes_missing_ordinal_names_its_own_key() -> None:
     steps = [delete(ACCOUNT, "Account", key, observed=1) for key in (1, 2)]
     port = _Port([(1,)])
     raised = _run(port, _grouped(steps, ACCOUNT), meta=ACCOUNT)
-    assert isinstance(raised, OptimisticLockConflictError)
-    assert raised.target is steps[1].target
+    assert isinstance(raised, ConflictError)
+    assert raised.code == OPTIMISTIC_LOCK_CONFLICT
+    assert raised.key == {"id": 2}
     ((sql, _binds),) = port.calls
     assert sql.startswith("delete from account t using unnest(")
 
 
 @pytest.mark.parametrize(
-    ("observed", "error"),
-    [(None, StaleWriteError), (instant(1), OptimisticLockConflictError)],
+    ("observed", "code"),
+    [(None, STALE_WRITE_CODE), (instant(1), OPTIMISTIC_LOCK_CONFLICT)],
     ids=["ungated", "gated"],
 )
-def test_a_closes_missing_ordinal_names_its_own_milestone(
-    observed: Any, error: type[BaseException]
-) -> None:
+def test_a_closes_missing_ordinal_names_its_own_milestone(observed: Any, code: str) -> None:
     steps = [
         close(
             BALANCE,
@@ -463,9 +469,9 @@ def test_a_closes_missing_ordinal_names_its_own_milestone(
         for key in (1, 2, 3)
     ]
     raised = _run(_Port([(3,), (1,)]), _grouped(steps, BALANCE), meta=BALANCE)
-    assert isinstance(raised, error)
-    assert isinstance(raised, StaleWriteError | OptimisticLockConflictError)
-    assert raised.target is steps[1].target
+    assert isinstance(raised, ConflictError)
+    assert raised.code == code
+    assert raised.key == {"id": 2}
 
 
 def test_a_matched_milestone_counts_once_whatever_it_changed() -> None:
@@ -496,5 +502,6 @@ def test_a_shortfall_is_no_exclusion_and_is_not_recognized_as_one() -> None:
     steps = [close(POSITION, "Position", milestone(POSITION, "Position", key)) for key in (1, 2)]
     recognized: list[DatabaseError] = []
     raised = _run(_Port([(2,)]), _grouped(steps, POSITION), meta=POSITION, recognized=recognized)
-    assert isinstance(raised, StaleWriteError)
+    assert isinstance(raised, ConflictError)
+    assert raised.code == STALE_WRITE_CODE
     assert recognized == []

@@ -293,7 +293,7 @@ def test_an_insert_partly_over_current_coverage_exhausts_its_bound_as_the_origin
     error = _refused(failed)
     assert (error.category, error.native_code) == ("constraintViolation", "23P01")
     assert error.constraint_name == _exclusion(entity)
-    assert not error.is_retriable
+    assert not error.is_transient
     assert error.__notes__ == [
         f"bounded retry exhausted after {retries + 1} attempts (max_retries={retries})"
     ]

@@ -125,7 +125,7 @@ def test_an_external_write_of_an_empty_or_inverted_interval_is_refused_by_name(
     assert (error.category, error.native_code) == ("constraintViolation", "23514")
     assert error.constraint_name == (tx if axis == "tx" else valid)
     assert error.violated_index is None
-    assert not error.is_retriable
+    assert not error.is_transient
     assert isinstance(error.__cause__, psycopg.errors.CheckViolation)
     assert profile_run.port.execute("select t0.pos_id from position t0", []) == []
 

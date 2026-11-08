@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TypeGuard
+from typing import Final, Literal, TypeGuard
 
-from parallax.core.base import ConflictError
+from parallax.core.base import ConflictError, InternalError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.write_plan.steps import (
     AnyCount,
@@ -24,91 +24,112 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = [
-    "CardinalityCorruptionError",
-    "MissingTargetError",
-    "OptimisticLockConflictError",
-    "StaleWriteError",
-    "WriteEffectError",
+    "CARDINALITY_CORRUPTION",
+    "MISSING_TARGET",
+    "OPTIMISTIC_LOCK_CONFLICT",
+    "STALE_WRITE",
+    "WRITE_PRECONDITION_FAILED",
+    "WRITE_RESULT_INVALID",
+    "ShortfallCode",
+    "WriteEffectCode",
     "WritePreconditionError",
     "WriteResultError",
     "allocated_keys",
+    "cardinality_corruption",
     "enforce_affected_rows",
     "returns_allocated_keys",
+    "shortfall",
 ]
 
 type AddressedTarget = KeyTarget | MilestoneTarget
 """The Write Target kinds that carry an exact expectation, and therefore the
-only kinds a Write Effect Error can name."""
+only kinds an affected-row refusal can name."""
+
+type WriteEffectCode = Literal[
+    "missing-target",
+    "stale-write",
+    "optimistic-lock-conflict",
+    "write-precondition-failed",
+    "cardinality-corruption",
+    "write-result-invalid",
+]
+"""The codes a write's effect is refused by.
+
+The first four are the :class:`~parallax.core.base.ConflictError` shortfall
+classifications, of which only an Optimistic Lock Conflict is transient; the
+last two are :class:`~parallax.core.base.InternalError` invariant failures: more
+rows affected than the target addresses, and a row-producing write answering
+rows its statements cannot produce.
+"""
+
+MISSING_TARGET: Final = "missing-target"
+STALE_WRITE: Final = "stale-write"
+OPTIMISTIC_LOCK_CONFLICT: Final = "optimistic-lock-conflict"
+WRITE_PRECONDITION_FAILED: Final = "write-precondition-failed"
+CARDINALITY_CORRUPTION: Final = "cardinality-corruption"
+WRITE_RESULT_INVALID: Final = "write-result-invalid"
+
+type ShortfallCode = Literal["missing-target", "stale-write", "optimistic-lock-conflict"]
+
+_SUMMARIES: Final[dict[str, str]] = {
+    MISSING_TARGET: "the addressed rows do not exist",
+    STALE_WRITE: "an ungated observation-requiring write fell short",
+    OPTIMISTIC_LOCK_CONFLICT: "a concurrent write changed the gated rows first",
+    CARDINALITY_CORRUPTION: "the write affected more rows than its target addresses",
+}
 
 
-class WriteEffectError(RuntimeError):
-    """The closed family raised when a step's Affected Rows Policy is violated.
+def shortfall(
+    code: ShortfallCode,
+    entity: EntityIdentity,
+    target: AddressedTarget,
+    expected: int,
+    actual: int,
+) -> ConflictError:
+    """The conflict a write that reached fewer rows than ``target`` addresses
+    is refused by, naming the row by its key; the counts are in the message.
 
-    The payload is the whole diagnostic: no SQL, statement index, driver
-    exception, complete Planned Step, assignments, or observation is retained,
-    and ``target`` is the step's own target by reference rather than a copy.
+    Only a gated shortfall, ``optimistic-lock-conflict``, is transient: a
+    re-read resolves it, so the bounded retry loop replays it. The addressed
+    rows being absent, or an ungated write falling short, cannot change on a
+    re-run.
     """
-
-    _summary = "affected an unexpected number of rows"
-
-    def __init__(
-        self,
-        entity: EntityIdentity,
-        target: AddressedTarget,
-        expected: int,
-        actual: int,
-    ) -> None:
-        self.entity = entity
-        self.target = target
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"{entity.name}: {self._summary} — affected {actual} row(s), expected {expected} "
-            f"({_address(target)})"
-        )
+    return ConflictError(
+        code,
+        _effect_message(code, entity, target, expected, actual),
+        entity=entity.canonical,
+        key=_target_key(target),
+        transient=code == OPTIMISTIC_LOCK_CONFLICT,
+    )
 
 
-class MissingTargetError(WriteEffectError):
-    """An observation-free keyed write did not reach every row it addressed.
-
-    The addressed rows are simply not there. Re-executing cannot change that, so
-    this is never retriable.
-    """
-
-    _summary = "the addressed rows do not exist"
-
-
-class StaleWriteError(WriteEffectError):
-    """An ungated observation-requiring write reached fewer rows than it observed.
-
-    The shared read lock that licensed the ungated write should have made the
-    shortfall impossible, so it reports a consistency failure rather than a lost
-    update, and is never retriable.
-    """
-
-    _summary = "an ungated observation-requiring write fell short"
+def cardinality_corruption(
+    entity: EntityIdentity, target: AddressedTarget, expected: int, actual: int
+) -> InternalError:
+    """The invariant failure a write that affected more rows than ``target``
+    addresses is refused by: an accepted identity, storage, or lowering
+    invariant does not hold, so it is no concurrency outcome."""
+    return InternalError(
+        CARDINALITY_CORRUPTION,
+        _effect_message(CARDINALITY_CORRUPTION, entity, target, expected, actual),
+    )
 
 
-class OptimisticLockConflictError(WriteEffectError):
-    """A gated write's version condition no longer held.
-
-    A concurrent write moved the row first. This is the one member of the family
-    a re-read can resolve, and therefore the only one the bounded retry loop
-    replays.
-    """
-
-    _summary = "a concurrent write changed the gated rows first"
+def _effect_message(
+    code: str, entity: EntityIdentity, target: AddressedTarget, expected: int, actual: int
+) -> str:
+    return (
+        f"{entity.name}: {_SUMMARIES[code]} — affected {actual} row(s), expected {expected} "
+        f"({_address(target)})"
+    )
 
 
-class CardinalityCorruptionError(WriteEffectError):
-    """A write affected more rows than its target could address.
-
-    An excess over an exact count means an accepted identity, storage, or
-    lowering invariant does not hold. It is an invariant failure rather than a
-    concurrency outcome, and is never retriable.
-    """
-
-    _summary = "the write affected more rows than its target addresses"
+def _target_key(target: AddressedTarget) -> dict[str, object]:
+    """The primary key, by declared attribute name, of the row ``target``
+    addresses first."""
+    names = tuple(attribute.name for attribute in target.key_attributes)
+    values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
+    return dict(zip(names, values, strict=True))
 
 
 class WritePreconditionError(ConflictError):
@@ -124,7 +145,7 @@ class WritePreconditionError(ConflictError):
 
     def __init__(self, entity: EntityIdentity, key: Mapping[str, object], expected: object) -> None:
         super().__init__(
-            "write-precondition-failed",
+            WRITE_PRECONDITION_FAILED,
             f"{entity.name}: the state this write starts from no longer matches its "
             f"precondition — key={dict(key)!r}, expected revision {expected!r}",
             entity=entity.canonical,
@@ -219,9 +240,9 @@ def enforce_affected_rows(step: PlannedStep, actual_count: int) -> None:
 
     Inserts carry no policy, so they are accepted and return. An ``AnyCount``
     policy accepts every nonnegative result. Against an ``ExactCount`` a
-    shortfall raises the error named by the step's own shortfall tag, and an
-    excess always raises :class:`CardinalityCorruptionError` — the excess
-    failure is invariant and is never carried in the policy.
+    shortfall raises the conflict named by the step's own shortfall tag, and an
+    excess always raises the ``cardinality-corruption`` invariant failure — the
+    excess failure is invariant and is never carried in the policy.
     """
     if isinstance(step, PlannedInsert):
         return
@@ -234,17 +255,17 @@ def enforce_affected_rows(step: PlannedStep, actual_count: int) -> None:
     target = step.target
     assert isinstance(target, KeyTarget | MilestoneTarget)
     if actual_count > policy.expected:
-        raise CardinalityCorruptionError(step.entity, target, policy.expected, actual_count)
+        raise cardinality_corruption(step.entity, target, policy.expected, actual_count)
     match policy.on_shortfall:
         case MissingTarget():
-            error: type[WriteEffectError] = MissingTargetError
+            code: ShortfallCode = MISSING_TARGET
         case StaleWrite():
-            error = StaleWriteError
+            code = STALE_WRITE
         case OptimisticConflict():
-            error = OptimisticLockConflictError
+            code = OPTIMISTIC_LOCK_CONFLICT
         case FailedPrecondition():
             raise _failed_precondition(step.entity, step.concurrency, target)
-    raise error(step.entity, target, policy.expected, actual_count)
+    raise shortfall(code, step.entity, target, policy.expected, actual_count)
 
 
 def _failed_precondition(
@@ -259,9 +280,7 @@ def _failed_precondition(
     else:
         assert isinstance(concurrency, TemporalGate)  # only a gated step binds a precondition
         expected = concurrency.observed_start
-    names = tuple(attribute.name for attribute in target.key_attributes)
-    values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
-    return WritePreconditionError(entity, dict(zip(names, values, strict=True)), expected)
+    return WritePreconditionError(entity, _target_key(target), expected)
 
 
 def _address(target: AddressedTarget) -> str:

@@ -2,7 +2,7 @@
 
 The caller classifies a rolled-back attempt's failure once, with
 :func:`retry_eligible`, and hands an eligible one to the loop as a
-:class:`RetryCandidate` only after the attempt released its connection and
+:class:`_RetryCandidate` only after the attempt released its connection and
 finished reporting. Failures before begin, incomplete rollbacks, and anything a
 later cleanup step raised never become candidates, so they leave the loop on
 their first attempt whatever their underlying error is."""
@@ -16,14 +16,12 @@ from dataclasses import dataclass
 from math import frexp, isfinite, ldexp
 from typing import Final
 
-from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
-from parallax.core._execution._unit_work.uow import RollbackOnlyError
-from parallax.core.db_error import DatabaseError
-from parallax.core.temporal_write import TemporalConflictError
+from parallax.core._execution._transaction._lifetime import TRANSACTION_ROLLBACK_ONLY
+from parallax.core.base import ConflictError, UsageError
+from parallax.core.db_error import DatabaseError, is_retriable
 
 __all__ = [
     "AdaptiveBackoff",
-    "RetryCandidate",
     "RetryPolicy",
     "RetryTiming",
     "retry_eligible",
@@ -155,21 +153,23 @@ def retry_eligible(
 ) -> bool:
     """Whether a rolled-back attempt's ``failure`` is a recoverable conflict.
 
-    A transient database failure (the ``deadlock`` category), an internal
-    Optimistic Lock Conflict, a Temporal Conflict, and a failure among the
-    ``recognized`` conflicts its attempt's execution attributed to a statement
-    are recoverable, directly or as the cause of the rollback-only refusal a
-    caught one left behind. The verdict ignores the remaining budget.
+    A conflict its raise site stated transient (an Optimistic Lock Conflict or
+    a Temporal Conflict), a failure among the ``recognized`` conflicts its
+    attempt's execution attributed to a statement, and a database failure whose
+    category is retriable (``deadlock``) are recoverable, directly or as the
+    cause of the rollback-only refusal a caught one left behind. The verdict
+    ignores the remaining budget.
     """
-    cause = failure.__cause__ if isinstance(failure, RollbackOnlyError) else failure
-    if isinstance(cause, OptimisticLockConflictError | TemporalConflictError):
+    rollback_only = isinstance(failure, UsageError) and failure.code == TRANSACTION_ROLLBACK_ONLY
+    cause = failure.__cause__ if rollback_only else failure
+    if isinstance(cause, ConflictError) and cause.is_transient:
         return True
     if any(cause is conflict for conflict in recognized):
         return True
-    return isinstance(cause, DatabaseError) and cause.is_retriable
+    return isinstance(cause, DatabaseError) and is_retriable(cause.category)
 
 
-class RetryCandidate(Exception):
+class _RetryCandidate(Exception):
     """An eligible attempt failure in transit to :func:`run_with_retry`.
 
     Raised once the failed attempt has rolled back, released its connection,
@@ -200,7 +200,7 @@ def run_with_retry[T](
         started = timing.monotonic()
         try:
             return attempt()
-        except RetryCandidate as candidate:
+        except _RetryCandidate as candidate:
             failure = candidate.failure
         duration = timing.monotonic() - started
         if attempts > policy.max_retries:

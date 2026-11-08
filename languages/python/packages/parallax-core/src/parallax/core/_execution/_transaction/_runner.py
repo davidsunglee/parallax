@@ -26,8 +26,8 @@ from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, T
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
 from parallax.core.auto_retry import (
-    RetryCandidate,
     RetryPolicy,
+    _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - only the runner hands the loop a candidate
     retry_eligible,
     retry_policy,
     run_with_retry,
@@ -496,7 +496,7 @@ class TransactionRunner:
                         # invocation.
                         if not (replayable and replayable[0] is failure):
                             raise
-                        raise RetryCandidate(failure) from None
+                        raise _RetryCandidate(failure) from None
 
                 # The loop handles only what an attempt handed it as a retry
                 # candidate; every other failure, a refused begin included,

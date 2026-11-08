@@ -16,7 +16,7 @@ shop model from [Modeling](02-modeling.md) and these imports:
 ```python
 from decimal import Decimal
 
-from parallax.core import DomainModel
+from parallax.core import ConflictError, DomainModel, UsageError
 from parallax.core.execution import (
     AdaptiveBackoff,
     ExecutionFailure,
@@ -26,12 +26,7 @@ from parallax.core.execution import (
     TransactionOptionConflictError,
     TxnOptions,
 )
-from parallax.core.unit_work import (
-    OptimisticLockConflictError,
-    RollbackOnlyError,
-    WriteEvidenceError,
-    WritePreconditionError,
-)
+from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import (
     Database,
@@ -131,9 +126,10 @@ def open_an_account_even_if_the_order_fails(
 With a valid order this commits both rows and returns `True`. When `record_an_order`
 refuses an order with no total, its `ValueError` reaches the outer callback, which
 catches it and returns `False`. The transaction rolls back anyway: `transact` raises an
-`ExecutionFailure` whose `cause` is a `RollbackOnlyError`, chained to the `ValueError`,
-and the customer isn't saved. A read or write the callback tried after catching the
-failure would raise `RollbackOnlyError` too.
+`ExecutionFailure` whose `cause` is a `UsageError` with the `code`
+`"transaction-rollback-only"`, chained to the `ValueError`, and the customer isn't
+saved. A read or write the callback tried after catching the failure would raise that
+refusal too.
 
 This is deliberate. The joined callback may have buffered some of its writes before it
 failed, and its caller can't tell which. Committing the rest could save half of what the
@@ -359,9 +355,9 @@ Which failures are retried is fixed:
 | -- | -- | -- |
 | A deadlock or a serialization failure: a `DatabaseError` whose `category` is `"deadlock"` | Yes | It is transient: a re-run can succeed |
 | An optimistic lock conflict: a version or Transaction-Time start a read in this attempt observed has moved | Yes | The re-run reads the newer state and applies the change to it |
-| A temporal conflict: `TemporalConflictError`, a close at an instant no later than the stored milestone's start | Yes | The re-run reads again and takes a fresh instant ([Writing](04-writing.md#transaction-time-only-entities)) |
+| A temporal conflict: a `ConflictError` whose `code` is `"temporal-conflict"`, a close at an instant no later than the stored milestone's start | Yes | The re-run reads again and takes a fresh instant ([Writing](04-writing.md#transaction-time-only-entities)) |
 | A temporal overlap: a `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | Yes | Another transaction or a lagging clock put history there first; the re-run reads it and takes a fresh instant ([Writing](04-writing.md#transaction-time-only-entities)) |
-| Any of the above, caught by the callback, after which the transaction refused to continue with `RollbackOnlyError` | Yes, on the original failure's terms | The failure that doomed the attempt is what counts |
+| Any of the above, caught by the callback, after which the transaction refused to continue with `"transaction-rollback-only"` | Yes, on the original failure's terms | The failure that doomed the attempt is what counts |
 | A target write's failed precondition: the revision you stated no longer matches | No | A re-run would state the same revision again |
 | A failure to get a connection | No | No attempt began, so there is nothing to re-run |
 | Anything else | No | It reaches you after the attempt it ended |
@@ -434,7 +430,7 @@ failure reaches you as the `cause` of an `ExecutionFailure`, with a note naming 
 count, such as `bounded retry exhausted after 11 attempts (max_retries=10)`. For a deadlock
 or a serialization failure, that cause is a `DatabaseError` whose `category` is
 `"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it. A
-`TemporalConflictError` that outlasts every attempt means a clock stayed behind stored
+temporal conflict that outlasts every attempt means a clock stayed behind stored
 history for longer than the retries took. A temporal overlap that outlasts every attempt
 is usually permanent, such as an insert over coverage that is already current: every
 attempt is refused again, so the error arrives only after every retry and the waits
@@ -461,7 +457,8 @@ def add_to_an_order_once(db: ScopedDatabase, order_id: int, amount: Decimal) -> 
 <!-- /example -->
 
 If another transaction changes the order between the read and the write, this raises an
-`ExecutionFailure` whose `cause` is an `OptimisticLockConflictError`, and the job queue
+`ExecutionFailure` whose `cause` is a `ConflictError` with the `code`
+`"optimistic-lock-conflict"`, and the job queue
 runs the job again later. Which failures are retried isn't an option.
 
 ### How long between attempts

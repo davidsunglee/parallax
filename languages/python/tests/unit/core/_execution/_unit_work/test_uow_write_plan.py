@@ -25,7 +25,17 @@ import pytest
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, attr, temporal_read
+from parallax.core import (
+    MAX,
+    Attr,
+    Bitemporal,
+    DomainModel,
+    Entity,
+    InternalError,
+    UsageError,
+    attr,
+    temporal_read,
+)
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -38,6 +48,7 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
 )
+from parallax.core._execution._unit_work.effects import WRITE_RESULT_INVALID
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
@@ -58,17 +69,16 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
+    CARDINALITY_CORRUPTION,
+    TRANSACTION_ROLLBACK_ONLY,
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
     ReadAuthorizedWrite,
     RetainedObservation,
-    RollbackOnlyError,
     TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
-    UnitOfWorkError,
     WriteAssignment,
     WritePlanner,
     WritePlanningRequest,
@@ -94,6 +104,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite, PlannedStep
 from tests._support.clock_probes import instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     NO_ROW_READS,
@@ -362,7 +373,9 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
     )
     simulated = _simulated(_SPANS, answered)
     uow = _uow(_SPANS, simulated)
-    with pytest.raises(UnitOfWorkError, match=rf"opening 1 row\(s\).*{len(answered)} key\(s\)"):
+    with raises_code(
+        InternalError, WRITE_RESULT_INVALID, match=rf"opening 1 row\(s\).*{len(answered)} key\(s\)"
+    ):
         _run(uow, changing)
     assert uow.source_authority.is_unchanged_since(ObjectKey(Span.identity, (("id", 1),)), 0)
 
@@ -370,9 +383,9 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
 def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None:
     uow = _uow(_SPANS, _simulated(_SPANS, ()))
     uow.buffer_insert(_span_insert(), insertion_advice=None)
-    with pytest.raises(UnitOfWorkError, match="key"):
+    with raises_code(InternalError, WRITE_RESULT_INVALID, match="key"):
         uow.read(lambda: None)
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         uow.read(lambda: None)
 
 
@@ -766,7 +779,7 @@ def test_writes_a_span_completed_before_its_later_read_failed_stay_published_unt
     ownership = uow.source_authority.planning_ownership(concluding=False)
     for ends in ((Finite(instant=day(2)), PLANNED_INFINITY), (PLANNED_INFINITY, PLANNED_INFINITY)):
         assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), ends))
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         uow.read(lambda: None)
     uow.discard()
     assert not ownership.owns(
@@ -868,7 +881,7 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
     tail = (PLANNED_INFINITY, PLANNED_INFINITY)
     assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), tail))
     assert not ownership.owns(TemporalRowCoordinates(ShareCols.identity, (2,), tail))
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         uow.read(lambda: None)
 
 
@@ -881,11 +894,11 @@ def test_a_later_writes_binding_failure_executes_and_completes_nothing_of_its_gr
     ready = frag(ShareCols, 1, 1)
     for write in (*ready, target):
         uow.buffer(write)
-    with pytest.raises(CardinalityCorruptionError):
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         uow.flush(trigger="pre_commit")
     # Object 1 was bound beside object 2 and is ready, yet nothing executes
     # before every write of the group is bound.
     assert not simulated.statements
     assert _completed_changes(uow, ready) == [False]
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         uow.read(lambda: None)

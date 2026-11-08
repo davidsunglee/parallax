@@ -129,12 +129,14 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     LATEST,
     TX_TIME,
+    ConflictError,
     DomainModel,
     Edge,
     NoResultFound,
     Pin,
     TemporalBound,
     TooManyResultsFound,
+    UsageError,
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
@@ -163,9 +165,9 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
+    OPTIMISTIC_LOCK_CONFLICT,
+    TRANSACTION_ROLLBACK_ONLY,
     InstructionRejectedError,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
     WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
@@ -1341,7 +1343,8 @@ def _how_the_attempt_ended(outcome: TransactionAttemptOutcome) -> str:
     assert isinstance(outcome, AttemptRolledBack)
     failed = outcome.failure
     verdict = "retried" if failed.retry_eligible else "not retried"
-    return f"{failed.failure.diagnostic.qualified_type.rsplit('.', 1)[-1]}, {verdict}"
+    diagnostic = failed.failure.diagnostic
+    return f"{diagnostic.qualified_type.rsplit('.', 1)[-1]}({diagnostic.code}), {verdict}"
 
 
 def _observed(
@@ -1400,7 +1403,9 @@ def test_a_caught_joined_failure_still_rolls_the_transaction_back(profile_run: A
             db, Customer(id=4, name="Barbara", email=None), _order(14, 4, "0.00")
         )
 
-    assert isinstance(refused.value.cause, RollbackOnlyError)
+    assert isinstance(refused.value.cause, UsageError)
+
+    assert refused.value.cause.code == TRANSACTION_ROLLBACK_ONLY
     assert isinstance(refused.value.cause.__cause__, ValueError)
     assert db.find(Customer.where(Customer.id == 4)).result_or_none() is None
 
@@ -1423,7 +1428,7 @@ def test_serializable_keeps_two_concurrent_orders_within_the_limit(profile_run: 
 
     assert peer_placed == [True]
     assert placed is False
-    assert observer.attempts == ["DatabaseError, retried", "committed"]
+    assert observer.attempts == ["DatabaseError(database-statement-failed), retried", "committed"]
     assert sorted(order.id for order in orders_of(db, 1)) == [10, 11, 20]
 
 
@@ -1433,7 +1438,7 @@ def test_a_write_another_writer_overtook_is_replayed_from_a_fresh_read(profile_r
 
     add_to_an_order(db, 10, Decimal("20.00"))
 
-    assert observer.attempts == ["OptimisticLockConflictError, retried", "committed"]
+    assert observer.attempts == ["ConflictError(optimistic-lock-conflict), retried", "committed"]
     order = db.find(Order.where(Order.id == 10)).result()
     assert (order.total, order.version) == (Decimal("175.00"), 3)
 
@@ -1449,11 +1454,13 @@ def test_a_conflict_on_every_attempt_exhausts_ten_retries(profile_run: Any) -> N
             db.with_options(retry=RetryPolicy(backoff=TINY_BACKOFF)), 10, Decimal("20.00")
         )
 
-    assert isinstance(exhausted.value.cause, OptimisticLockConflictError)
+    assert isinstance(exhausted.value.cause, ConflictError)
+
+    assert exhausted.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert exhausted.value.cause.__notes__ == [
         "bounded retry exhausted after 11 attempts (max_retries=10)"
     ]
-    assert observer.attempts == ["OptimisticLockConflictError, retried"] * 11
+    assert observer.attempts == ["ConflictError(optimistic-lock-conflict), retried"] * 11
     assert db.find(Order.where(Order.id == 10)).result().total == Decimal("161.00")
 
 
@@ -1490,7 +1497,10 @@ def test_a_retried_target_write_fails_the_precondition_it_states_again(profile_r
         change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("160.00"))
 
     assert isinstance(refused.value.cause, WritePreconditionError)
-    assert observer.attempts == ["DatabaseError, retried", "WritePreconditionError, not retried"]
+    assert observer.attempts == [
+        "DatabaseError(database-statement-failed), retried",
+        "WritePreconditionError(write-precondition-failed), not retried",
+    ]
     assert db.find(Order.where(Order.id == 10)).result().total == Decimal("155.00")
     assert change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("300.00")) is False
 
@@ -1502,11 +1512,13 @@ def test_a_single_attempt_surfaces_the_conflict_unretried(profile_run: Any) -> N
     with pytest.raises(ExecutionFailure) as conflicted:
         add_to_an_order_once(db, 10, Decimal("20.00"))
 
-    assert isinstance(conflicted.value.cause, OptimisticLockConflictError)
+    assert isinstance(conflicted.value.cause, ConflictError)
+
+    assert conflicted.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert conflicted.value.cause.__notes__ == [
         "bounded retry exhausted after 1 attempts (max_retries=0)"
     ]
-    assert observer.attempts == ["OptimisticLockConflictError, retried"]
+    assert observer.attempts == ["ConflictError(optimistic-lock-conflict), retried"]
     assert db.find(Order.where(Order.id == 10)).result().total == Decimal("155.00")
 
 
@@ -2148,7 +2160,9 @@ def test_a_caught_joined_failure_runs_through_the_shipped_surface() -> None:
             db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "0.00")
         )
 
-    assert isinstance(refused.value.cause, RollbackOnlyError)
+    assert isinstance(refused.value.cause, UsageError)
+
+    assert refused.value.cause.code == TRANSACTION_ROLLBACK_ONLY
 
 
 def test_a_join_naming_another_level_runs_through_the_shipped_surface() -> None:

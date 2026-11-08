@@ -9,15 +9,10 @@ __all__ = [
     "KEYED_WRITE_VALUE_CODES",
     "WRITE_EVIDENCE_CODES",
     "KeyedWriteValueError",
-    "UnitOfWorkError",
     "UnobservedVersionError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
 ]
-
-
-class UnitOfWorkError(RuntimeError):
-    """A unit of work was driven into an illegal state."""
 
 
 class UnobservedVersionError(RuntimeError):

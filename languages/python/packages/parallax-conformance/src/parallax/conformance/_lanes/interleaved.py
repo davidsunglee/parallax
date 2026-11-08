@@ -38,8 +38,8 @@ from parallax.conformance._mechanism.model_facts import case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
 from parallax.conformance._wire_submission import WireSubmitter
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import normalize_instant
-from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.base import ConflictError, normalize_instant
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import TxnContext
 
 __all__ = ["run_interleaved_scenario_case"]
@@ -95,8 +95,8 @@ def _run_interleaved_group(
     correct, the row count is not).
 
     The group's own boundary flushes what its last step buffered, and that
-    flush may itself raise
-    :class:`~parallax.core.unit_work.OptimisticLockConflictError` (the SAME
+    flush may itself raise an ``optimistic-lock-conflict``
+    :class:`~parallax.core.base.ConflictError` (the SAME
     signal a caller-driven retry catches, the keyed unit-of-work lane's own
     conflict-write precedent) — caught HERE, recorded as the group's flush
     failure where the flush ran, and the transaction aborts. It is never
@@ -170,13 +170,15 @@ def _run_interleaved_group(
     try:
         transact(session.database, body, **context.requests)
         committed = True
-    except OptimisticLockConflictError as exc:
-        at = running[-1] if running else "commit"
-        reported = flush_failure(context.model, exc, at)
-        result.fate = {"outcome": "rolledBack", "flushFailure": reported}
     except BaseException as exc:  # re-raised on the main thread below
-        result.failure = exc
-        turnstile.release_all()  # never leave a partner thread hanging on this thread's own defect
+        if isinstance(exc, ConflictError) and exc.code == OPTIMISTIC_LOCK_CONFLICT:
+            at = running[-1] if running else "commit"
+            reported = flush_failure(context.model, exc, at)
+            result.fate = {"outcome": "rolledBack", "flushFailure": reported}
+        else:
+            result.failure = exc
+            # Never leave a partner thread hanging on this thread's own defect.
+            turnstile.release_all()
     result.lowered = lowered
     result.database_calls = observation.database_calls
     if committed:

@@ -20,12 +20,12 @@ from typing import Literal, cast
 
 import pytest
 
-from parallax.core import Attr, Entity, attr
+from parallax.core import Attr, Entity, UsageError, attr
 from parallax.core._execution._options import OMITTED
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
 from parallax.core.unit_work import (
-    RollbackOnlyError,
+    TRANSACTION_ROLLBACK_ONLY,
     WriteEvidenceError,
     WritePreconditionError,
     WriteRejectedError,
@@ -369,7 +369,7 @@ def test_a_caught_precondition_failure_still_rolls_the_attempt_back() -> None:
             tx.find(mm.Account.where(mm.Account.id == 2))
         return "withheld"
 
-    with raises_contextualized(RollbackOnlyError):
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
         account_db(port).transact(fn)
     assert RollbackCall() in port.calls
 

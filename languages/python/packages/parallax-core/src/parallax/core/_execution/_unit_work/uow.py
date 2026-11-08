@@ -9,7 +9,6 @@ from typing import Literal, Protocol, cast
 from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._unit_work._errors import (
     WRITE_EVIDENCE_CODES,
-    UnitOfWorkError,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
 )
@@ -23,8 +22,9 @@ from parallax.core._execution._unit_work.acquisition import (
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
-    CardinalityCorruptionError,
+    WRITE_RESULT_INVALID,
     WritePreconditionError,
+    cardinality_corruption,
 )
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
@@ -51,7 +51,7 @@ from parallax.core._execution._unit_work.write_runner import (
     ExecuteWriteSteps,
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
 )
-from parallax.core.base import normalize_instant
+from parallax.core.base import InternalError, normalize_instant
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -78,11 +78,9 @@ __all__ = [
     "BufferOutcome",
     "FlushTrigger",
     "OpenFlush",
-    "RollbackOnlyError",
     "StoredTarget",
     "TransactionSettings",
     "UnitOfWork",
-    "UnitOfWorkError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
 ]
@@ -149,20 +147,6 @@ class StoredTarget:
 
     version: int | None = None
     tx_start: object | None = None
-
-
-class EscapedTransactionError(UnitOfWorkError):
-    """A transaction reference was used after its attempt ended."""
-
-
-class RollbackOnlyError(UnitOfWorkError):
-    """A doomed (rollback-only) transaction refused work, a join, or commit.
-
-    Raised when further work, a joining invocation, or the outermost attempt's
-    commit reaches a transaction a failure doomed, carrying the original failure
-    as its cause (``__cause__``), so its retriability classification survives
-    for the outermost retry loop.
-    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,7 +480,7 @@ class UnitOfWork:
         view = self._family(target)
         if count > 1:
             ((_name, value),) = key.primary_key
-            raise CardinalityCorruptionError(
+            raise cardinality_corruption(
                 target.identity,
                 KeyTarget(key_attributes=(view.primary_key.identity,), key_values=((value,),)),
                 1,
@@ -705,9 +689,10 @@ class UnitOfWork:
                     allocates=bool(expected),
                 )
             if len(allocated) != expected:
-                raise UnitOfWorkError(
+                raise InternalError(
+                    WRITE_RESULT_INVALID,
                     f"a Write Group opening {expected} row(s) whose keys the database allocates "
-                    f"executed answering {len(allocated)} key(s)"
+                    f"executed answering {len(allocated)} key(s)",
                 )
             first = 0
             for write in writes:

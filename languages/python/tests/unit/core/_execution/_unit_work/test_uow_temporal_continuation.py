@@ -23,6 +23,7 @@ from typing import Any, Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import InternalError, UsageError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
@@ -33,6 +34,7 @@ from parallax.core._execution._unit_work.acquisition import (
     RowConsumer,
     RowRequest,
 )
+from parallax.core._execution._unit_work.effects import WRITE_RESULT_INVALID
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
@@ -46,19 +48,19 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import entity_by_name
 from parallax.core.unit_work import (
+    TRANSACTION_ROLLBACK_ONLY,
     KeyedWriteInstruction,
     RetainedObservation,
-    RollbackOnlyError,
     TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
-    UnitOfWorkError,
     WriteEvidenceError,
     admitted_write,
     object_key,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation
 from parallax.core.write_plan.plan import BoundRange
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     TEST_ACTOR_IDENTITY,
@@ -449,7 +451,7 @@ def test_a_group_whose_steps_fail_after_their_payloads_were_demanded_holds_nothi
         session.flush((_write(_FEB, _APR, acctNum="O"), source))
     assert session.ownership.continues(source, _MAR) is None
     assert session.held() == []
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         session.uow.read(lambda: None)
 
 
@@ -462,7 +464,7 @@ def test_a_group_answering_keys_it_did_not_allocate_holds_nothing() -> None:
 
     session = _Session(execute=answering)
     source = session.observed()
-    with pytest.raises(UnitOfWorkError):
+    with raises_code(InternalError, WRITE_RESULT_INVALID):
         session.flush((_write(_FEB, _APR, acctNum="O"), source))
     assert session.ownership.continues(source, _MAR) is None
     assert session.held() == []

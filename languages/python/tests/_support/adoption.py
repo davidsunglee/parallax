@@ -17,6 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from parallax.core import ParallaxError
 from parallax.core.execution import ExecutionFailure
 
 __all__ = ["Contextualized", "raises_contextualized"]
@@ -49,9 +50,10 @@ class Contextualized[E: Exception]:
 
 @contextmanager
 def raises_contextualized[E: Exception](
-    cause: type[E], *, match: str | None = None
+    cause: type[E], *, code: str | None = None, match: str | None = None
 ) -> Generator[Contextualized[E]]:
-    """Assert the block raises ``ExecutionFailure`` caused by a ``cause``.
+    """Assert the block raises ``ExecutionFailure`` caused by a ``cause``,
+    whose ``code`` is ``code`` where one is given.
 
     ``match`` is searched in the cause's own text, exactly as ``pytest.raises``
     searches the raised value's, so a site that graded a bare raise grades the
@@ -65,6 +67,9 @@ def raises_contextualized[E: Exception](
         f"expected an ExecutionFailure caused by {cause.__name__}, got {failure.cause!r}"
     )
     assert failure.__cause__ is failure.cause
+    if code is not None:
+        assert isinstance(failure.cause, ParallaxError), f"{failure.cause!r} carries no code"
+        assert failure.cause.code == code, f"expected {code!r}, got {failure.cause.code!r}"
     assert failure.edition
     if match is not None:
         assert re.search(match, str(failure.cause)), f"{match!r} does not match {failure.cause!r}"

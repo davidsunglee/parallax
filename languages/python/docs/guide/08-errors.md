@@ -28,6 +28,7 @@ from collections.abc import Mapping
 from pydantic import ValidationError
 
 from parallax.core import (
+    ConflictError,
     DomainModel,
     EditError,
     Entity,
@@ -36,6 +37,7 @@ from parallax.core import (
     NoResultFound,
     QueryDefinitionError,
     TooManyResultsFound,
+    UsageError,
 )
 from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import ConnectionAcquisitionError
@@ -56,9 +58,6 @@ from parallax.core.metamodel import MetamodelIssue
 from parallax.core.read_delivery import InvalidData, InvalidDataError, StreamStateError
 from parallax.core.unit_work import (
     InstructionRejectedError,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
-    TemporalConflictError,
     WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
@@ -88,8 +87,9 @@ Once the error leaves the callback, `transact` wraps it. So a handler around `tr
 Catching an error inside the callback doesn't always leave the transaction usable. A
 refusal a verb raises before anything is sent, such as `WriteEvidenceError`, does. A
 failure while the transaction sends its writes, or a failure that escapes a joined call,
-makes the transaction rollback-only: every later read or write raises
-`RollbackOnlyError`, and the transaction rolls back however the callback returns.
+makes the transaction rollback-only: every later read or write raises a `UsageError`
+whose `code` is `"transaction-rollback-only"`, and the transaction rolls back however
+the callback returns.
 [Transactions](05-transactions.md#a-failed-joined-call-dooms-the-transaction) shows both
 cases.
 
@@ -213,18 +213,19 @@ These errors arise when other transactions change the rows yours depends on.
 section covers the ones that reach you.
 
 - **An optimistic lock conflict** means a version or Transaction-Time start that a read
-  in this attempt observed has moved. Parallax retries it, so an
-  `OptimisticLockConflictError` reaches you as a `cause` only when retries are off or
-  used up.
+  in this attempt observed has moved. Parallax retries it, so a `ConflictError` whose
+  `code` is `"optimistic-lock-conflict"` reaches you as a `cause` only when retries are
+  off or used up.
 - **A deadlock or a serialization failure** is retried the same way. The database
   reports it, so it reaches you as a `DatabaseError` cause whose `category` is
   `"deadlock"` ([below](#failures-the-database-reports)).
 - **A temporal conflict** means the transaction's instant is no later than the stored
   `tx_start` of a milestone it would close: clocks that repeat or run behind, or an
   instant taken before another transaction committed the version this one changes.
-  Parallax retries it at a fresh instant, so a `TemporalConflictError` reaches you only
-  when retries are off or used up. Its `instant`, `key` and `stored_bound` name the
-  instant, the object and the start it failed to follow
+  Parallax retries it at a fresh instant, so a `ConflictError` whose `code` is
+  `"temporal-conflict"` reaches you only when retries are off or used up. Its `entity`
+  and `key` name the object, and its message names the instant and the start it failed
+  to follow
   ([Writing](04-writing.md#transaction-time-only-entities)).
 - **Retries run out** when every attempt fails with something retryable. You then get the
   last attempt's failure as the `cause`, with a note naming the count, such as
@@ -440,10 +441,10 @@ of an `ExecutionFailure`:
 | `InvalidDataError` | by the accessor, after the read | No | Repair the stored data; read with `checked()` to carry on past it |
 | `TransactionAccessModeError`, `TransactionOptionConflictError` or `TransactionAuthorityError` | when a nested call can't join the running transaction, before its callback runs | No | Call the matching kind of transaction, name the same options or none, or run as the same actor |
 | `InvalidPrincipalError` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
-| `RollbackOnlyError` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
+| A `UsageError` whose `code` is `"transaction-rollback-only"` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
 | `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
-| `OptimisticLockConflictError`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to the Retry Policy's `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
-| `TemporalConflictError` | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
+| A `ConflictError` whose `code` is `"optimistic-lock-conflict"`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to the Retry Policy's `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
+| A `ConflictError` whose `code` is `"temporal-conflict"` | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
 | A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out, the row overlaps current coverage, or closed history a clock stayed behind: read the coverage before writing over it, and synchronize the clocks of the servers that write the database |

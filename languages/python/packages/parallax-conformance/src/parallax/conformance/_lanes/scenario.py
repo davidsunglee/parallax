@@ -67,7 +67,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import InternalError, UsageError, normalize_instant
+from parallax.core.base import ConflictError, InternalError, UsageError, normalize_instant
 from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
@@ -79,6 +79,14 @@ from parallax.core.dialect import Dialect
 from parallax.core.execution import (
     ServingModel,
     TxnOptions,
+)
+from parallax.core.execution_lifecycle import (
+    CausedFailure,
+    DatabaseCallFinished,
+    DatabaseWriteCompleted,
+    FlushFailed,
+    FlushFinished,
+    TransactionAttemptStarted,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -93,25 +101,25 @@ from parallax.core.predicate import (
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
+    CARDINALITY_CORRUPTION,
     INSERT_MUTATIONS,
-    CardinalityCorruptionError,
+    MISSING_TARGET,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
+    TEMPORAL_CONFLICT,
+    WRITE_PRECONDITION_FAILED,
     InsertionIdentity,
     KeyedWriteInstruction,
-    MissingTargetError,
-    OptimisticLockConflictError,
     ParticipationToken,
     PredicateWriteInstruction,
     ReadEvidence,
     RetainedObservation,
-    StaleWriteError,
     SubjectActor,
-    TemporalConflictError,
     TransactionSettings,
     UnitOfWork,
     UnobservedVersionError,
-    WriteEffectError,
+    WriteEffectCode,
     WriteEvidenceError,
-    WritePreconditionError,
     admitted_write,
     object_key,
     settled_evidence,
@@ -125,7 +133,6 @@ from parallax.core.write_plan import (
     WritePlanningError,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
 
 __all__ = [
@@ -141,6 +148,7 @@ __all__ = [
     "execute_keyed_unit",
     "flush_failure",
     "group_tx_instant",
+    "is_flush_failure",
     "is_predicate_write_step",
     "lower_writes",
     "read_step_graph",
@@ -1728,47 +1736,36 @@ def _run_uow_group(
 # --------------------------------------------------------------------------- #
 
 
-_FLUSH_FAILURES = (
-    MissingTargetError,
-    StaleWriteError,
-    OptimisticLockConflictError,
-    WritePreconditionError,
-    TemporalConflictError,
-)
-_SHORTFALLS: Final[dict[type[WriteEffectError], str]] = {
-    MissingTargetError: "missingTarget",
-    StaleWriteError: "staleWrite",
-    OptimisticLockConflictError: "optimisticConflict",
+_FLUSH_FAILURE_TOKENS: Final[dict[str, tuple[Literal["shortfall", "error"], str]]] = {
+    MISSING_TARGET: ("shortfall", "missingTarget"),
+    STALE_WRITE: ("shortfall", "staleWrite"),
+    OPTIMISTIC_LOCK_CONFLICT: ("shortfall", "optimisticConflict"),
+    WRITE_PRECONDITION_FAILED: ("shortfall", "failedPrecondition"),
+    TEMPORAL_CONFLICT: ("error", "temporalConflict"),
 }
+"""The conflict codes a flush fails with, as the Shortfall or error a
+``flushFailure`` names them by."""
+
+
+def is_flush_failure(failure: BaseException) -> bool:
+    """Whether ``failure`` is a conflict a ``flushFailure`` reports."""
+    return isinstance(failure, ConflictError) and failure.code in _FLUSH_FAILURE_TOKENS
 
 
 def flush_failure(
-    model: AcceptedMetamodel,
-    failure: WriteEffectError | WritePreconditionError | TemporalConflictError,
-    at: int | Literal["commit"],
+    model: AcceptedMetamodel, failure: ConflictError, at: int | Literal["commit"]
 ) -> dict[str, object]:
     """The ``flushFailure`` a group reports: where its flush ran, and the object
     and Shortfall or error the failure names, in the case's own spelling."""
-    if isinstance(failure, TemporalConflictError):
-        assert failure.key is not None  # a refused close names the object it would close
-        entity, key = failure.entity.canonical, dict(failure.key)
-        outcome = ("error", "temporalConflict")
-    elif isinstance(failure, WritePreconditionError):
-        entity, key = failure.entity, dict(failure.key)
-        outcome = ("shortfall", "failedPrecondition")
-    else:
-        entity = failure.entity.canonical
-        target = failure.target
-        names = tuple(attribute.name for attribute in target.key_attributes)
-        values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
-        key = dict(zip(names, values, strict=True))
-        outcome = ("shortfall", _SHORTFALLS[type(failure)])
+    entity, key = failure.entity, failure.key
+    assert entity is not None and key is not None  # a flush conflict names the row it hit
+    kind, token = _FLUSH_FAILURE_TOKENS[failure.code]
     metadata = case_entity(model, entity)
     return {
         "at": at,
         "entity": entity,
-        "key": ActualWireProjection(model).entity_values(metadata, key),
-        outcome[0]: outcome[1],
+        "key": ActualWireProjection(model).entity_values(metadata, dict(key)),
+        kind: token,
     }
 
 
@@ -1833,7 +1830,9 @@ def _run_state_graded_group(
     try:
         with absorbing_rollback():
             transact(session.database, body, **context.requests)
-    except _FLUSH_FAILURES as failure:
+    except ConflictError as failure:
+        if not is_flush_failure(failure):
+            raise
         at: int | Literal["commit"] = running[-1] if running else "commit"
         reported = flush_failure(context.model, failure, at)
         outcome = {"outcome": "rolledBack", "flushFailure": reported}
@@ -2136,13 +2135,13 @@ def _landed_conflict_rows(
     return len(addressed)
 
 
-def _implied_shortfall_error(
+def _implied_shortfall_code(
     observation_requiring: bool,
     concurrency: ConcurrencyPreference,
     model: AcceptedMetamodel,
     target: str,
-) -> type[WriteEffectError]:
-    """The ONE shortfall class a conflict case's declared facts imply.
+) -> WriteEffectCode:
+    """The ONE shortfall code a conflict case's declared facts imply.
 
     Derived from the case, never from the plan the implementation settled, so a
     write whose policy was settled wrongly cannot also move the expectation it is
@@ -2154,11 +2153,11 @@ def _implied_shortfall_error(
     whose shortfall means the addressed rows are simply not there.
     """
     if not observation_requiring:
-        return MissingTargetError
+        return MISSING_TARGET
     strategy = concurrency_view(model).effective_strategy(
         case_entity(model, target).identity, concurrency
     )
-    return OptimisticLockConflictError if strategy == "optimistic" else StaleWriteError
+    return OPTIMISTIC_LOCK_CONFLICT if strategy == "optimistic" else STALE_WRITE
 
 
 def _refuse_a_bound_short_of_the_authored_attempts(case: case_format.Case, authored: int) -> None:
@@ -2183,32 +2182,57 @@ def _refuse_a_bound_short_of_the_authored_attempts(case: case_format.Case, autho
 def _conflict_attempt_affected(
     database: ScopedDatabase,
     requests: case_format.TransactionKeywords,
-    implied: type[WriteEffectError],
+    implied: WriteEffectCode,
+    observed: LifecycleObservation,
     body: Callable[[TxnContext], int],
 ) -> int:
     """The final conflict attempt's affected-row observation: what ``body``
-    reports when the write lands, or the ``actual`` count carried by the ONE
-    Write Effect Error the case's own declared facts admit, once production's
-    bound left that failure unreplayed.
+    reports when the write lands, or — once production's bound left the ONE
+    affected-row refusal the case's own declared facts admit unreplayed — the
+    count the write call its flush failure names reported.
 
-    Every member of the family renders the same ``actual`` count, so a lane that
-    caught the whole family would report an identical ``affectedRows`` observation
-    whichever class the write raised, and the case would then assert nothing about
-    the classification. Admitting only the implied class lets every other one
-    propagate and fail the case instead.
-
-    An EXCESS is invariant: whatever a shortfall would have classified as, more
-    rows than the target addresses is always Cardinality Corruption, so the
-    direction the raised error itself reports — not the declared mode — selects
-    that case.
+    Every shortfall code reports the same count, so a lane that admitted any of
+    them would report an identical ``affectedRows`` observation whichever the
+    write raised, and the case would then assert nothing about the
+    classification. Admitting only the implied code lets every other one
+    propagate and fail the case instead. An excess is invariant: whatever a
+    shortfall would have classified as, more rows than the target addresses is
+    always ``cardinality-corruption``, which is admitted beside it.
     """
     try:
         return transact(database, body, **requests)
-    except WriteEffectError as exc:
-        admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
-        if type(exc) is not admitted:
+    except (ConflictError, InternalError) as exc:
+        if exc.code not in (implied, CARDINALITY_CORRUPTION):
             raise
-        return exc.actual
+        return _final_flush_failure_count(observed)
+
+
+def _final_flush_failure_count(observed: LifecycleObservation) -> int:
+    """The affected-row count of the write call the final attempt's failed
+    Flush names as its cause, as that call's completion reported it."""
+    events = observed.roots[-1].events if observed.roots else ()
+    starts = [
+        index for index, event in enumerate(events) if isinstance(event, TransactionAttemptStarted)
+    ]
+    final = events[starts[-1] :] if starts else ()
+    failures = [
+        event.outcome.failure
+        for event in final
+        if isinstance(event, FlushFinished) and isinstance(event.outcome, FlushFailed)
+    ]
+    if failures and isinstance(failures[-1], CausedFailure):
+        cause = failures[-1].cause_activity_id
+        for event in final:
+            if (
+                isinstance(event, DatabaseCallFinished)
+                and event.activity_id == cause
+                and isinstance(event.outcome, DatabaseWriteCompleted)
+            ):
+                return event.outcome.affected_rows
+    raise EngineError(
+        "the conflict attempt's affected-row refusal names no completed write call of its "
+        "final attempt's Flush"
+    )
 
 
 def _run_conflict_attempts(
@@ -2241,11 +2265,12 @@ def _run_conflict_attempts(
     attempt therefore reaches the flush exactly as that many developer calls
     would, and the batching rule — not this function — decides how many
     statements they become. The PRODUCTION flush executor's OWN affected-row
-    enforcer raises on a violation, and this lane admits only the class the
-    case's own declared facts imply (:func:`_implied_shortfall_error`),
-    rendering it as the final ``affectedRows`` observation the case asserts. A
-    failure classified any other way — a gated shortfall surfacing as a stale
-    write, or the reverse — propagates and fails the case.
+    enforcer raises on a violation, and this lane admits only the code the
+    case's own declared facts imply (:func:`_implied_shortfall_code`),
+    rendering the count its write call reported as the final ``affectedRows``
+    observation the case asserts. A failure classified any other way — a gated
+    shortfall surfacing as a stale write, or the reverse — propagates and fails
+    the case.
 
     Production deciding on a different number of attempts than the case
     authors fails the case: a replay past the last authored attempt is refused
@@ -2305,8 +2330,8 @@ def _run_conflict_attempts(
                 submitter.submit_unit(submissions, before_writes=before_writes)
             return _landed_conflict_rows(model, target, submissions)
 
-        implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
-        affected = _conflict_attempt_affected(database, requests, implied, body)
+        implied = _implied_shortfall_code(observation_requiring, concurrency, model, target)
+        affected = _conflict_attempt_affected(database, requests, implied, observed, body)
     if len(starts) != len(parsed_attempts):
         raise EngineError(
             f"{target!r}: production ended the conflict case's invocation after {len(starts)} "

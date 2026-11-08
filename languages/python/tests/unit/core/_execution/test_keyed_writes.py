@@ -11,6 +11,7 @@ from typing import Final, Literal
 
 import pytest
 
+from parallax.core import UsageError
 from parallax.core._execution._keyed_writes import (
     OpenedKeyedWrite,
     ResolvedKeyedInsert,
@@ -20,10 +21,12 @@ from parallax.core._execution._keyed_writes import (
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work._errors import (
     KeyedWriteValueError,
-    UnitOfWorkError,
     WriteEvidenceError,
 )
-from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
+from parallax.core._execution._unit_work._write_ownership import (
+    INSERTION_AUTHORITY_INVALID,
+    KeyedWriteRefusalAdvice,
+)
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
     ParticipationToken,
@@ -41,6 +44,7 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.write_plan import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._execution_support import ACCOUNT, itself, scope
 
@@ -261,7 +265,7 @@ def test_an_insertion_its_writes_preparation_ended_is_refused_when_the_write_is_
             deletion = _prepared(model, "delete", entity, {"id": 7})
             return tx.uow.buffer(InsertionAuthorizedWrite(deletion, key, authority))
 
-        with pytest.raises(UnitOfWorkError, match="no longer stands"):
+        with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
             tx.keyed_write(_RevisingInsertedAccountSeven(authority, interfere), "amend")
         raise _Abandoned
 

@@ -27,6 +27,7 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import ConflictError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -75,9 +76,7 @@ from parallax.core.execution_lifecycle import (
     TransactionInvocationStarted,
 )
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.unit_work import (
-    OptimisticLockConflictError,
-)
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -252,7 +251,7 @@ def test_a_conflict_a_zero_bound_leaves_unreplayed_is_still_reported_eligible() 
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
         _db(port, recorder).transact(_increase_balance, retry=RetryPolicy(max_retries=0))
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
@@ -356,7 +355,7 @@ def test_a_failure_in_a_dependency_flush_is_still_the_callback_phase() -> None:
         _increase_balance(tx)
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
         _db(port, recorder).transact(body, retry=RetryPolicy(max_retries=0))
 
     root = _only(recorder)

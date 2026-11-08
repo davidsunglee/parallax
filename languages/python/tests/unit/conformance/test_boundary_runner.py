@@ -228,7 +228,7 @@ def test_translated_isolation_setup_failure_classifies_to_no_category() -> None:
     exc = boundary_runner.translated_fault("isolation-setup-failure")
     assert exc.category is None
     assert exc.native_code == "22023"
-    assert exc.is_retriable is False
+    assert exc.is_transient is False
 
 
 # --------------------------------------------------------------------------- #

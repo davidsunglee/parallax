@@ -45,13 +45,18 @@ from parallax.core import (
     Document,
     DomainModel,
     TxTemporal,
+    UsageError,
     ValueObject,
     attr,
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.unit_work import RollbackOnlyError, WriteEvidenceError, WriteInstructionError
+from parallax.core.unit_work import (
+    TRANSACTION_ROLLBACK_ONLY,
+    WriteEvidenceError,
+    WriteInstructionError,
+)
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
@@ -633,9 +638,11 @@ def test_a_caught_dependent_read_failure_still_rolls_the_attempt_back(profile_ru
         db.transact(edit)
     flush_failure, refused = outcomes
     assert isinstance(flush_failure, DatabaseError)
-    assert isinstance(refused, RollbackOnlyError)
+    assert isinstance(refused, UsageError)
+    assert refused.code == TRANSACTION_ROLLBACK_ONLY
     assert refused.__cause__ is flush_failure
-    assert isinstance(escaped.value.cause, RollbackOnlyError)
+    assert isinstance(escaped.value.cause, UsageError)
+    assert escaped.value.cause.code == TRANSACTION_ROLLBACK_ONLY
     assert _log_rows(profile_run, ColumnsLog) == [(_SEEDED, None, "seeded", _SPEC_DOCUMENT)]
     assert _log_rows(profile_run, DocumentLog) == []
 

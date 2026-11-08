@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import Bitemporal
+from parallax.core import Bitemporal, InternalError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import (
@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.write_items import AdmittedWrite
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
+    CARDINALITY_CORRUPTION,
     KeyedWriteInstruction,
     admitted_write,
 )
@@ -49,6 +49,7 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
 from tests._support.clock_probes import instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._reach_support import frames, reaches
@@ -360,10 +361,10 @@ def test_a_row_one_read_returns_twice_reaches_its_binding_twice(recorded: _Bound
     with _bindings(written, held) as bindings:
         # Both are ready after the one read, so the later range's binding
         # fails the group the earlier one bound into.
-        with pytest.raises(CardinalityCorruptionError) as corrupt:
+        with raises_code(InternalError, CARDINALITY_CORRUPTION) as corrupt:
             next(bindings)
         assert next(bindings, None) is None
-    assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert "affected 2 row(s), expected 1" in str(corrupt.value)
     assert [key for key, _reused, _acquired in recorded.calls] == [1, 2]
 
 
@@ -542,7 +543,7 @@ def test_a_failed_binding_leaves_neither_the_scope_nor_its_frames_holding_the_re
     start = rectangle(ShareCols, 2, 0, None, 0)
     traced = _Traced(HeldRows(MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True))
     bindings = _bindings(written, traced.acquire)
-    with pytest.raises(CardinalityCorruptionError) as raised, bindings:
+    with raises_code(InternalError, CARDINALITY_CORRUPTION) as raised, bindings:
         for _each in bindings:
             pass
     waiting = [rows for rows in traced.answers if rows.key(0) == 2]
@@ -566,7 +567,7 @@ def test_a_later_writes_failed_binding_leaves_no_frame_holding_the_earlier_bound
         start = rectangle(ShareCols, 2, 0, None, 0)
         held = HeldRows(MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True)
         bindings = _bindings(written, held)
-        with pytest.raises(CardinalityCorruptionError) as raised, bindings:
+        with raises_code(InternalError, CARDINALITY_CORRUPTION) as raised, bindings:
             next(bindings)
     (earlier,) = bound
     # The earlier write was bound and handed to the group being assembled;

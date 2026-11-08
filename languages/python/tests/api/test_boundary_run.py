@@ -30,7 +30,8 @@ from parallax.conformance.boundary_runner import (
     fault_injecting_adapter,
 )
 from parallax.conformance.class_models import MODELS
-from parallax.core import Entity
+from parallax.core import ConflictError, Entity
+from parallax.core._execution._unit_work.effects import shortfall
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import AcquisitionReason, ConnectionAcquisitionError
 from parallax.core.execution import (
@@ -43,7 +44,7 @@ from parallax.core.execution import (
 )
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
@@ -116,7 +117,7 @@ def _assert_outcome(
             "the withheld, force-flushed write must never persist"
         )
     elif outcome == "optimistic-lock-conflict":
-        with raises_contextualized(OptimisticLockConflictError):
+        with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
             run()
     elif outcome == "option-conflict":
         with raises_contextualized(TransactionOptionConflictError):
@@ -394,10 +395,10 @@ def _unacquired(reason: AcquisitionReason = "preparation_failed") -> ConnectionA
     return ConnectionAcquisitionError("no connection", reason=reason)
 
 
-def _conflict() -> OptimisticLockConflictError:
+def _conflict() -> ConflictError:
     account = EntityIdentity("parallax.compatibility", "Account")
     target = KeyTarget(key_attributes=(AttributeIdentity(account, "id"),), key_values=((2,),))
-    return OptimisticLockConflictError(account, target, 1, 0)
+    return shortfall(OPTIMISTIC_LOCK_CONFLICT, account, target, 1, 0)
 
 
 def _grade(

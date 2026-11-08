@@ -1,15 +1,15 @@
-"""Affected-row enforcement and the Write Effect Error family (m-unit-work).
+"""Affected-row enforcement and its refusal codes (m-unit-work).
 
 `enforce_affected_rows` is the single authoritative reading of an execution
 result, so what it answers must be decided by the step alone: the policy names
-an outcome class, the enforcer raises the error that class names, and no caller
+an outcome class, the enforcer raises the code that class names, and no caller
 re-derives either. These are pure value-type tests: no dialect, no SQL, no
 database.
 
 Two invariants are asserted independently of the shortfall matrix, because
 neither is expressible in the policy: an excess over any exact count is always
 Cardinality Corruption whatever the step's shortfall tag says, and the raised
-payload carries the four semantic facts and nothing else — in particular no SQL,
+conflict names its row and nothing else — in particular no SQL,
 statement index, driver exception, whole Planned Step, assignments, or
 observation, which is what keeps the diagnostic stable across dialects and lets
 a retry loop recognize the canonical conflict without an optional module.
@@ -22,20 +22,21 @@ from dataclasses import replace
 
 import pytest
 
+from parallax.core import ConflictError, InternalError, ParallaxError
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.predicate import TrueNode, validate_predicate
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
-    MissingTargetError,
-    OptimisticLockConflictError,
-    StaleWriteError,
-    WriteEffectError,
+    CARDINALITY_CORRUPTION,
+    OPTIMISTIC_LOCK_CONFLICT,
+    WRITE_PRECONDITION_FAILED,
     WritePreconditionError,
     WriteResultError,
     allocated_keys,
     enforce_affected_rows,
     returns_allocated_keys,
 )
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from parallax.core.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
@@ -69,6 +70,7 @@ from parallax.core.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
+from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -92,10 +94,10 @@ _CURRENT_SLOT = MilestoneTarget(
 )
 _RENAME = PlannedAssignments(attributes={_OWNER: "Ada"})
 
-_SHORTFALL_ERRORS: dict[Shortfall, type[WriteEffectError]] = {
-    MISSING_TARGET: MissingTargetError,
-    STALE_WRITE: StaleWriteError,
-    OPTIMISTIC_CONFLICT: OptimisticLockConflictError,
+_SHORTFALL_CODES: dict[Shortfall, str] = {
+    MISSING_TARGET: MISSING_TARGET_CODE,
+    STALE_WRITE: STALE_WRITE_CODE,
+    OPTIMISTIC_CONFLICT: OPTIMISTIC_LOCK_CONFLICT,
 }
 
 # A step's shortfall tag is settled BY its concurrency decision, so a case
@@ -191,17 +193,21 @@ def _guard() -> PlannedTemporalGuard:
 
 
 @pytest.mark.parametrize(
-    ("actual", "error"),
-    [(1, None), (0, OptimisticLockConflictError), (2, CardinalityCorruptionError)],
+    ("actual", "refusal"),
+    [
+        (1, None),
+        (0, (ConflictError, OPTIMISTIC_LOCK_CONFLICT)),
+        (2, (InternalError, CARDINALITY_CORRUPTION)),
+    ],
     ids=["matched", "unmatched", "excess"],
 )
 def test_a_guard_matches_its_one_milestone_or_conflicts(
-    actual: int, error: type[Exception] | None
+    actual: int, refusal: tuple[type[ParallaxError], str] | None
 ) -> None:
-    if error is None:
+    if refusal is None:
         enforce_affected_rows(_guard(), actual)
         return
-    with pytest.raises(error):
+    with raises_code(*refusal):
         enforce_affected_rows(_guard(), actual)
 
 
@@ -212,40 +218,41 @@ def _insert() -> PlannedInsert:
     )
 
 
-@pytest.mark.parametrize("shortfall", list(_SHORTFALL_ERRORS), ids=lambda tag: type(tag).__name__)
+@pytest.mark.parametrize("shortfall", list(_SHORTFALL_CODES), ids=lambda tag: type(tag).__name__)
 @pytest.mark.parametrize("build", [_update, _delete], ids=["update", "delete"])
-def test_a_keyed_shortfall_raises_the_error_its_own_tag_names(
+def test_a_keyed_shortfall_raises_the_code_its_own_tag_names(
     build: Callable[..., PlannedStep], shortfall: Shortfall
 ) -> None:
-    with pytest.raises(_SHORTFALL_ERRORS[shortfall]):
+    with raises_code(ConflictError, _SHORTFALL_CODES[shortfall]) as caught:
         enforce_affected_rows(build(shortfall), 0)
+    assert caught.value.is_transient is (shortfall is OPTIMISTIC_CONFLICT)
 
 
 @_MILESTONE_STEPS
 @pytest.mark.parametrize("shortfall", list(_CLOSE_CONCURRENCY), ids=lambda tag: type(tag).__name__)
-def test_a_milestone_shortfall_raises_the_error_its_own_tag_names(
+def test_a_milestone_shortfall_raises_the_code_its_own_tag_names(
     build: Callable[[Shortfall], PlannedStep], shortfall: Shortfall
 ) -> None:
-    with pytest.raises(_SHORTFALL_ERRORS[shortfall]):
+    with raises_code(ConflictError, _SHORTFALL_CODES[shortfall]) as caught:
         enforce_affected_rows(build(shortfall), 0)
+    assert caught.value.is_transient is (shortfall is OPTIMISTIC_CONFLICT)
 
 
 def test_a_multi_key_target_is_enforced_against_its_aggregate_count() -> None:
     step = _delete(target=_THREE_KEYS)
     enforce_affected_rows(step, 3)
-    with pytest.raises(MissingTargetError) as caught:
+    with raises_code(ConflictError, MISSING_TARGET_CODE, match=r"affected 2 row\(s\), expected 3"):
         enforce_affected_rows(step, 2)
-    assert (caught.value.expected, caught.value.actual) == (3, 2)
 
 
-@pytest.mark.parametrize("shortfall", list(_SHORTFALL_ERRORS), ids=lambda tag: type(tag).__name__)
+@pytest.mark.parametrize("shortfall", list(_SHORTFALL_CODES), ids=lambda tag: type(tag).__name__)
 def test_an_excess_over_any_exact_count_is_cardinality_corruption(shortfall: Shortfall) -> None:
-    with pytest.raises(CardinalityCorruptionError):
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         enforce_affected_rows(_update(shortfall), 2)
 
 
 def test_an_excess_over_a_multi_key_count_is_cardinality_corruption() -> None:
-    with pytest.raises(CardinalityCorruptionError):
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         enforce_affected_rows(_delete(target=_THREE_KEYS), 4)
 
 
@@ -254,7 +261,7 @@ def test_an_excess_over_a_multi_key_count_is_cardinality_corruption() -> None:
 def test_an_excess_over_a_milestone_count_is_cardinality_corruption(
     build: Callable[[Shortfall], PlannedStep], shortfall: Shortfall
 ) -> None:
-    with pytest.raises(CardinalityCorruptionError):
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         enforce_affected_rows(build(shortfall), 2)
 
 
@@ -345,21 +352,31 @@ def test_a_satisfied_expectation_returns(step: PlannedStep) -> None:
     enforce_affected_rows(step, 1)
 
 
-def test_the_payload_carries_the_four_semantic_facts_and_the_target_by_reference() -> None:
-    step = _update()
-    with pytest.raises(MissingTargetError) as caught:
-        enforce_affected_rows(step, 0)
+def test_a_shortfall_names_its_row_and_states_the_counts_in_its_message() -> None:
+    with raises_code(ConflictError, MISSING_TARGET_CODE) as caught:
+        enforce_affected_rows(_update(), 0)
     error = caught.value
-    assert error.entity == _ACCOUNT
-    assert error.target is step.target
-    assert (error.expected, error.actual) == (1, 0)
+    assert (error.entity, error.key) == (_ACCOUNT.canonical, {"id": 1})
+    assert "affected 0 row(s), expected 1 (keys=[{'id': 1}])" in str(error)
 
 
-def test_a_milestone_failure_retains_the_close_s_own_target_by_reference() -> None:
-    step = _close()
-    with pytest.raises(StaleWriteError) as caught:
-        enforce_affected_rows(step, 0)
-    assert caught.value.target is step.target
+def test_a_multi_key_shortfall_names_the_first_row_its_target_addresses() -> None:
+    with raises_code(ConflictError, MISSING_TARGET_CODE) as caught:
+        enforce_affected_rows(_delete(target=_THREE_KEYS), 1)
+    assert caught.value.key == {"id": 1}
+
+
+def test_a_milestone_shortfall_names_the_row_by_its_milestone_key() -> None:
+    with raises_code(ConflictError, STALE_WRITE_CODE) as caught:
+        enforce_affected_rows(_close(), 0)
+    assert (caught.value.entity, caught.value.key) == (_ACCOUNT.canonical, {"id": 1})
+
+
+def test_an_excess_states_the_counts_and_names_no_row() -> None:
+    with raises_code(InternalError, CARDINALITY_CORRUPTION) as caught:
+        enforce_affected_rows(_close(), 2)
+    assert "affected 2 row(s), expected 1" in str(caught.value)
+    assert not hasattr(caught.value, "key")
 
 
 @pytest.mark.parametrize(
@@ -368,10 +385,10 @@ def test_a_milestone_failure_retains_the_close_s_own_target_by_reference() -> No
     ids=["update", "delete", "close"],
 )
 def test_no_payload_carries_sql_a_statement_a_plan_or_an_observation(step: PlannedStep) -> None:
-    with pytest.raises(WriteEffectError) as caught:
+    with pytest.raises(ConflictError) as caught:
         enforce_affected_rows(step, 0)
     error = caught.value
-    assert set(vars(error)) == {"entity", "target", "expected", "actual"}
+    assert set(vars(error)) == {"_entity", "_key", "_transient"}
     assert not any(
         hasattr(error, absent)
         for absent in ("sql", "binds", "statement", "index", "step", "assignments", "observation")
@@ -400,8 +417,9 @@ def test_a_gate_binding_a_callers_revision_fails_as_that_precondition(
         {"id": 1},
         4,
     )
-    assert not isinstance(failed.value, WriteEffectError)
-    with pytest.raises(CardinalityCorruptionError):
+    assert failed.value.code == WRITE_PRECONDITION_FAILED
+    assert not failed.value.is_transient
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         enforce_affected_rows(step, 2)
 
 

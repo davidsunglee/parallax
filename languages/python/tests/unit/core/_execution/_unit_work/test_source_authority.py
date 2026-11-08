@@ -16,8 +16,13 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import UsageError
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._transaction._lifetime import (
+    TRANSACTION_ESCAPED,
+    TRANSACTION_ROLLBACK_ONLY,
+    TxnAttemptLifetime,
+)
 from parallax.core._execution._unit_work._write_ownership import NO_INSERTION_AUTHORITY
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
@@ -26,7 +31,6 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
-from parallax.core._execution._unit_work.uow import EscapedTransactionError, RollbackOnlyError
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
@@ -55,6 +59,7 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
+from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
@@ -130,11 +135,11 @@ def _doomed(lifetime: TxnAttemptLifetime) -> None:
 
 @pytest.mark.parametrize(
     ("end", "refusal"),
-    [(TxnAttemptLifetime.close, EscapedTransactionError), (_doomed, RollbackOnlyError)],
+    [(TxnAttemptLifetime.close, TRANSACTION_ESCAPED), (_doomed, TRANSACTION_ROLLBACK_ONLY)],
     ids=["closed", "doomed"],
 )
 def test_an_ended_attempt_refuses_what_a_read_or_verb_asks_and_still_publishes_completion(
-    end: Callable[[TxnAttemptLifetime], None], refusal: type[Exception]
+    end: Callable[[TxnAttemptLifetime], None], refusal: str
 ) -> None:
     lifetime = TxnAttemptLifetime()
     authority = _authority(_PERSON, lifetime=lifetime)
@@ -152,7 +157,7 @@ def test_an_ended_attempt_refuses_what_a_read_or_verb_asks_and_still_publishes_c
         ),
         lambda: authority.insertion_authority(InsertionIdentity(_person(1))),
     ):
-        with pytest.raises(refusal):
+        with raises_code(UsageError, refusal):
             asked()
     # Publication, the target and binding queries, and completion do not refuse.
     authority.register_read_evidence(evidence, read_at=0)

@@ -30,13 +30,14 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
+from parallax.core import ConflictError
 from parallax.core.base import DocumentValue, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import MissingTargetError, WriteEvidenceError, WriteInstructionError
+from parallax.core.unit_work import MISSING_TARGET, WriteEvidenceError, WriteInstructionError
 from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm
@@ -564,7 +565,7 @@ def test_an_insertion_source_whose_anchor_was_removed_fails_its_flush() -> None:
         _read_at(tx, _MAR)
         tx.amend(opened.edit(value=Decimal("150.00")))
 
-    with raises_contextualized(MissingTargetError):
+    with raises_contextualized(ConflictError, code=MISSING_TARGET):
         _transact(port, fn)
     assert len(_writes(port)) == 2
     assert RollbackCall() in port.calls

@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Final, Literal, final
 
 from parallax.core import concurrency, temporal_read
-from parallax.core._execution._unit_work._errors import KeyedWriteValueError, UnitOfWorkError
+from parallax.core._execution._unit_work._errors import KeyedWriteValueError
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
 from parallax.core._execution._unit_work.write_items import (
@@ -18,7 +18,7 @@ from parallax.core._execution._unit_work.write_items import (
     KeyedInsert,
     ReadAuthorizedWrite,
 )
-from parallax.core.base import INFINITY, TemporalBound, retain_document_value
+from parallax.core.base import INFINITY, TemporalBound, UsageError, retain_document_value
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import CoverageTransform
@@ -38,6 +38,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
 
 __all__ = [
+    "INSERTION_AUTHORITY_INVALID",
     "NO_INSERTION_AUTHORITY",
     "InsertionComposition",
     "KeyedWriteRefusalAdvice",
@@ -56,6 +57,10 @@ class NoInsertionAuthority:
 
 
 NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
+
+INSERTION_AUTHORITY_INVALID: Final = "insertion-authority-invalid"
+"""A write authored through an insertion that a later insert or delete of the
+same object in this unit of work superseded."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -631,15 +636,17 @@ class WriteOwnership:
         A write of a temporal object, or of one whose insertion is still
         pending, takes none.
 
-        Raises :class:`UnitOfWorkError` once that authority no longer stands.
+        Raises ``insertion-authority-invalid`` once that authority no longer
+        stands.
         """
         record = self._standing(write.identity)
         instruction = write.instruction
         target = instruction.target
         if record is None:
-            raise UnitOfWorkError(
+            raise UsageError(
+                INSERTION_AUTHORITY_INVALID,
                 f"{target.identity.canonical}: the insertion this write was authored "
-                "through no longer stands in this unit of work"
+                "through no longer stands in this unit of work",
             )
         if record.pending_state == "opening" or self._is_temporal(target):
             return write

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import decimal
 from pathlib import Path
 from typing import Any
@@ -12,13 +11,15 @@ import pytest
 from parallax.conformance import case_format, models
 from parallax.conformance._lanes import scenario
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core.metamodel import AttributeIdentity, entity_by_name
+from parallax.core import ConflictError, UsageError
 from parallax.core.unit_work import (
-    OptimisticLockConflictError,
-    TemporalConflictError,
+    MISSING_TARGET,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
+    TEMPORAL_CONFLICT,
+    WRITE_PRECONDITION_FAILED,
     WriteEvidenceError,
 )
-from parallax.core.write_plan.steps import INFINITY, MilestoneTarget
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.repo import REPO_ROOT
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -324,38 +325,33 @@ def test_what_a_state_graded_run_cannot_state_is_refused(steps: list[Any], refus
         scenario.run_scenario_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW]))
 
 
-def test_a_milestone_targets_failure_names_its_key() -> None:
+@pytest.mark.parametrize(
+    ("code", "outcome"),
+    [
+        (MISSING_TARGET, ("shortfall", "missingTarget")),
+        (STALE_WRITE, ("shortfall", "staleWrite")),
+        (OPTIMISTIC_LOCK_CONFLICT, ("shortfall", "optimisticConflict")),
+        (WRITE_PRECONDITION_FAILED, ("shortfall", "failedPrecondition")),
+        (TEMPORAL_CONFLICT, ("error", "temporalConflict")),
+    ],
+)
+def test_a_flush_conflict_is_reported_by_its_code_naming_its_row(
+    code: str, outcome: tuple[str, str]
+) -> None:
     model = models.load_model(_CORPUS / "models" / "buffered-sequence-layout-twin-columns.yaml")
-    entity = entity_by_name(model, "parallax.compatibility.SequenceSpan")
-    assert entity is not None
-    span = entity.identity
-    target = MilestoneTarget(
-        key_attributes=(AttributeIdentity(span, "id"),),
-        key_values=(4,),
-        end_attributes=(AttributeIdentity(span, "validEnd"), AttributeIdentity(span, "txEnd")),
-        end_values=(INFINITY, INFINITY),
-    )
-    failure = OptimisticLockConflictError(span, target, 1, 0)
+    failure = ConflictError(code, "m", entity="parallax.compatibility.SequenceSpan", key={"id": 4})
+    assert scenario.is_flush_failure(failure)
     assert scenario.flush_failure(model, failure, 3) == {
         "at": 3,
         "entity": "parallax.compatibility.SequenceSpan",
         "key": {"id": 4},
-        "shortfall": "optimisticConflict",
+        outcome[0]: outcome[1],
     }
 
 
-def test_a_temporal_conflict_is_reported_as_an_error_naming_its_key() -> None:
-    model = models.load_model(_CORPUS / "models" / "buffered-sequence-layout-twin-columns.yaml")
-    entity = entity_by_name(model, "parallax.compatibility.SequenceSpan")
-    assert entity is not None
-    instant = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
-    failure = TemporalConflictError(entity.identity, instant, key={"id": 1}, stored_bound=instant)
-    assert scenario.flush_failure(model, failure, "commit") == {
-        "at": "commit",
-        "entity": "parallax.compatibility.SequenceSpan",
-        "key": {"id": 1},
-        "error": "temporalConflict",
-    }
+def test_a_conflict_no_flush_failure_names_is_not_one() -> None:
+    assert not scenario.is_flush_failure(ConflictError("publication-conflict", "m"))
+    assert not scenario.is_flush_failure(UsageError(MISSING_TARGET, "m"))
 
 
 def test_a_submission_its_model_cannot_lower_is_refused_naming_the_case() -> None:

@@ -10,10 +10,19 @@ from typing import Any, Literal
 import pytest
 
 from parallax.conformance.scripted_clock import ScriptedClock
-from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, ValueObject, attr
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    ConflictError,
+    Document,
+    DomainModel,
+    TxTemporal,
+    ValueObject,
+    attr,
+)
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, RetryPolicy
-from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
@@ -416,7 +425,8 @@ def test_a_peer_revision_to_equal_values_after_the_read_still_conflicts(
     if not retried:
         with pytest.raises(ExecutionFailure) as failed:
             ours.transact(fn, retry=RetryPolicy(max_retries=0))
-        assert isinstance(failed.value.cause, OptimisticLockConflictError)
+        assert isinstance(failed.value.cause, ConflictError)
+        assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     else:
         ours.transact(fn)
         assert attempts == 2
@@ -473,7 +483,8 @@ def test_a_guard_holds_its_lock_until_commit_and_leaves_a_peers_token_standing(
     else:
         (failure,) = peer_failures
         assert isinstance(failure, ExecutionFailure)
-        assert isinstance(failure.cause, OptimisticLockConflictError)
+        assert isinstance(failure.cause, ConflictError)
+        assert failure.cause.code == OPTIMISTIC_LOCK_CONFLICT
         assert _log_rows(profile_run, entity) == [(_S1, _TA, 100, _SPEC), (_TA, None, 120, _SPEC)]
 
 
@@ -521,7 +532,8 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
     with pytest.raises(ExecutionFailure) as failed:
         ours.transact(fn, retry=RetryPolicy(max_retries=0))
     assert interleaving.failures == []
-    assert isinstance(failed.value.cause, OptimisticLockConflictError)
+    assert isinstance(failed.value.cause, ConflictError)
+    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     # Only the peer's revision stands: nothing this attempt wrote survives.
     rows = _span_rows(profile_run, entity)
     assert all(row[0] != _TA and row[1] != _TA for row in rows)

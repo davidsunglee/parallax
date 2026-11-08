@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from parallax.core._execution._transaction._lifetime import (
+    TRANSACTION_ESCAPED,
+    TRANSACTION_ROLLBACK_ONLY,
+)
 from parallax.core._execution._unit_work._errors import UnobservedVersionError
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
@@ -16,11 +20,12 @@ from parallax.core._execution._unit_work.clock import (
     TransactionInstant,
 )
 from parallax.core._execution._unit_work.effects import (
-    CardinalityCorruptionError,
-    MissingTargetError,
-    OptimisticLockConflictError,
-    StaleWriteError,
-    WriteEffectError,
+    CARDINALITY_CORRUPTION,
+    MISSING_TARGET,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
+    WRITE_PRECONDITION_FAILED,
+    WriteEffectCode,
     WritePreconditionError,
     WriteResultError,
     allocated_keys,
@@ -62,10 +67,8 @@ from parallax.core._execution._unit_work.uow import (
     WRITE_EVIDENCE_CODES,
     BufferOutcome,
     FlushTrigger,
-    RollbackOnlyError,
     TransactionSettings,
     UnitOfWork,
-    UnitOfWorkError,
     WriteEvidenceError,
     WriteEvidenceErrorCode,
 )
@@ -78,20 +81,27 @@ from parallax.core._execution._unit_work.write_planner import (
     WritePlanner,
     WritePlanningRequest,
 )
-from parallax.core.temporal_write import TemporalConflictError
+from parallax.core.temporal_write.expansion import TEMPORAL_CONFLICT
 
 __all__ = [
     "AMEND_MUTATIONS",
     "ASSIGNMENT_MUTATIONS",
     "BOUNDED_MUTATIONS",
+    "CARDINALITY_CORRUPTION",
     "DESTRUCTIVE_MUTATIONS",
     "INSERT_MUTATIONS",
+    "MISSING_TARGET",
     "NO_AUDIT",
+    "OPTIMISTIC_LOCK_CONFLICT",
     "REPLACE_MUTATIONS",
+    "STALE_WRITE",
+    "TEMPORAL_CONFLICT",
+    "TRANSACTION_ESCAPED",
+    "TRANSACTION_ROLLBACK_ONLY",
     "WRITE_EVIDENCE_CODES",
+    "WRITE_PRECONDITION_FAILED",
     "AdmittedWrite",
     "BufferOutcome",
-    "CardinalityCorruptionError",
     "ClaimScope",
     "ClaimVerdict",
     "Clock",
@@ -101,8 +111,6 @@ __all__ = [
     "InstructionRejectedError",
     "KeyedMutation",
     "KeyedWriteInstruction",
-    "MissingTargetError",
-    "OptimisticLockConflictError",
     "ParticipationToken",
     "PredicateMutation",
     "PredicateSelection",
@@ -110,21 +118,17 @@ __all__ = [
     "ReadAuthorizedWrite",
     "ReadEvidence",
     "RetainedObservation",
-    "RollbackOnlyError",
     "SettledEvidence",
-    "StaleWriteError",
     "SubjectActor",
     "SystemClock",
     "TargetMutation",
     "TargetWriteInstruction",
-    "TemporalConflictError",
     "TransactionInstant",
     "TransactionSettings",
     "UnitOfWork",
-    "UnitOfWorkError",
     "UnobservedVersionError",
     "WriteAssignment",
-    "WriteEffectError",
+    "WriteEffectCode",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
     "WriteInstructionError",

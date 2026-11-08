@@ -19,9 +19,10 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_coverage_by_key,
 )
 from parallax.core._execution._unit_work.effects import (
-    CardinalityCorruptionError,
-    MissingTargetError,
+    MISSING_TARGET,
     WritePreconditionError,
+    cardinality_corruption,
+    shortfall,
 )
 from parallax.core._execution._unit_work.evidence import ReadEvidence, RetainedObservation
 from parallax.core._execution._unit_work.strategy import AuditDecoration
@@ -475,7 +476,9 @@ class _TemporalRangeBinder:
             return
         if any(anchor is _EXISTENCE or _holds(row, anchor) for row in predecessors):
             return
-        raise MissingTargetError(self.meaning.facts.entity.identity, self._key_target(), 1, 0)
+        raise shortfall(
+            MISSING_TARGET, self.meaning.facts.entity.identity, self._key_target(), 1, 0
+        )
 
     def _key_target(self) -> KeyTarget:
         return KeyTarget(
@@ -551,7 +554,7 @@ class _TemporalRangeBinder:
             window = condition.intent.valid_time_window
             starting = sum(1 for row in current if _holds_start(window, row))
             if starting > 1:
-                raise CardinalityCorruptionError(
+                raise cardinality_corruption(
                     self.meaning.facts.entity.identity, self._key_target(), 1, starting
                 )
 

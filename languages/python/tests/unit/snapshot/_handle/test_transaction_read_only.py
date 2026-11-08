@@ -17,9 +17,9 @@ from typing import cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core._execution._unit_work.uow import EscapedTransactionError
+from parallax.core import UsageError
 from parallax.core.execution import ReadOnlyTxnOptions, RetryPolicy, TxnOptions
-from parallax.core.unit_work import RollbackOnlyError
+from parallax.core.unit_work import TRANSACTION_ESCAPED, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import (
     ReadOnlyTxnContext,
     ScopedDatabase,
@@ -32,6 +32,7 @@ from parallax.snapshot import (
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import BeginCall, CommitCall, Read, ReadCall, ScriptedAdapter, Transact
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import (
@@ -116,7 +117,7 @@ def test_a_stream_that_escapes_its_read_only_attempt_reads_no_page() -> None:
     port = ScriptedAdapter(Transact())
     escaped = account_db(port).read_only(lambda rtx: rtx.stream(_QUERY, batch_size=10))
     assert isinstance(escaped, SnapshotStream)
-    with pytest.raises(EscapedTransactionError), escaped as stream:
+    with raises_code(UsageError, TRANSACTION_ESCAPED), escaped as stream:
         next(iter(stream))
     assert [type(call) for call in port.calls] == [BeginCall, CommitCall]
 
@@ -148,7 +149,7 @@ def test_a_failed_read_only_join_refuses_the_commit() -> None:
             db.read_only(lambda _joined: cast("str", _raise()))
         return "withheld"
 
-    with raises_contextualized(RollbackOnlyError):
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
         db.read_only(outer)
 
 

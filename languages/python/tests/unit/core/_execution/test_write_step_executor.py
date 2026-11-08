@@ -20,7 +20,17 @@ from typing import Final
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, attr, storage_layout
+from parallax.core import (
+    MAX,
+    Attr,
+    Bitemporal,
+    ConflictError,
+    DomainModel,
+    InternalError,
+    ParallaxError,
+    attr,
+    storage_layout,
+)
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -38,13 +48,12 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
+    CARDINALITY_CORRUPTION,
     KeyedWriteInstruction,
-    MissingTargetError,
-    WriteEffectError,
     WritePlanningRequest,
     admitted_write,
 )
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import (
@@ -57,6 +66,7 @@ from parallax.core.write_plan.steps import (
 )
 from tests._support.clock_probes import instant_at
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter, Write, WriteCall
+from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._execution_support import ACCOUNT
@@ -125,7 +135,7 @@ def _delete(key: int) -> PlannedDelete:
 
 def test_a_shortfall_is_enforced_before_the_next_step_is_presented() -> None:
     port = ScriptedAdapter(Write(affected=0))
-    with pytest.raises(MissingTargetError), open_flush() as flush:
+    with raises_code(ConflictError, MISSING_TARGET_CODE), open_flush() as flush:
         step_executor(port, _ACCOUNT_META).execute(
             (_delete(1), _delete(2)), allocates=False, flush=flush
         )
@@ -136,12 +146,12 @@ _KEYS: Final = KeyTarget((_ID,), ((1,), (2,), (3,)))
 
 
 @pytest.mark.parametrize(
-    ("affected", "raised"),
-    [(2, MissingTargetError), (4, CardinalityCorruptionError)],
+    ("affected", "refusal"),
+    [(2, (ConflictError, MISSING_TARGET_CODE)), (4, (InternalError, CARDINALITY_CORRUPTION))],
     ids=["shortfall", "excess"],
 )
 def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_count(
-    affected: int, raised: type[WriteEffectError]
+    affected: int, refusal: tuple[type[ParallaxError], str]
 ) -> None:
     step = PlannedDelete(
         entity=_ACCOUNT.identity,
@@ -150,7 +160,7 @@ def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_c
         affected_rows=ExactCount(3, MISSING_TARGET),
     )
     port = ScriptedAdapter(Write(affected=affected))
-    with pytest.raises(raised) as caught, open_flush() as flush:
+    with raises_code(*refusal) as caught, open_flush() as flush:
         step_executor(port, _ACCOUNT_META).execute((step,), allocates=False, flush=flush)
     assert port.calls == [
         WriteCall(
@@ -158,8 +168,10 @@ def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_c
             (ArrayBind(INT64, [1, 2, 3]),),
         )
     ]
-    assert caught.value.target is _KEYS
-    assert (caught.value.expected, caught.value.actual) == (3, affected)
+    assert (
+        f"affected {affected} row(s), expected 3 (keys=[{{'id': 1}}, {{'id': 2}}, {{'id': 3}}])"
+        in str(caught.value)
+    )
 
 
 class Span(Bitemporal, table="span", namespace="parallax.execution.allocated"):

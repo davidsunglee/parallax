@@ -29,6 +29,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     Attr,
     Bitemporal,
+    ConflictError,
     Document,
     DomainModel,
     Entity,
@@ -39,7 +40,7 @@ from parallax.core import (
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.unit_work import (
-    OptimisticLockConflictError,
+    OPTIMISTIC_LOCK_CONFLICT,
     WriteEvidenceError,
     WritePreconditionError,
 )
@@ -800,7 +801,8 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
 
     with pytest.raises(ExecutionFailure) as failed:
         ours.transact(fn, retry=RetryPolicy(max_retries=0))
-    assert isinstance(failed.value.cause, OptimisticLockConflictError)
+    assert isinstance(failed.value.cause, ConflictError)
+    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert [row[:2] for row in _rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
 

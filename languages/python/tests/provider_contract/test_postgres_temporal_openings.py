@@ -29,10 +29,12 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     Attr,
     Bitemporal,
+    ConflictError,
     Document,
     DomainModel,
     Entity,
     TxTemporal,
+    UsageError,
     ValueObject,
     attr,
 )
@@ -49,8 +51,7 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     TransactionAttemptFinished,
 )
-from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
-from parallax.core.write_plan.steps import MilestoneTarget
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
@@ -348,9 +349,11 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
     flush_failure, refused = outcomes
     assert isinstance(flush_failure, DatabaseError)
     assert flush_failure.category == "constraintViolation"
-    assert isinstance(refused, RollbackOnlyError)
+    assert isinstance(refused, UsageError)
+    assert refused.code == TRANSACTION_ROLLBACK_ONLY
     assert refused.__cause__ is flush_failure
-    assert isinstance(failed.cause, RollbackOnlyError)
+    assert isinstance(failed.cause, UsageError)
+    assert failed.cause.code == TRANSACTION_ROLLBACK_ONLY
     (finished,) = failed.attempts
     assert isinstance(finished.outcome, AttemptRolledBack)
 
@@ -466,9 +469,9 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
     cause = escaped.value.cause
     writes = _writes(_events(provider))
     if grouped:
-        assert isinstance(cause, OptimisticLockConflictError)
-        assert isinstance(cause.target, MilestoneTarget)
-        assert cause.target.key_values == (2,)
+        assert isinstance(cause, ConflictError)
+        assert cause.code == OPTIMISTIC_LOCK_CONFLICT
+        assert cause.key == {"id": 2}
         assert all(write.startswith("update opn_ledger") for write in writes)
     else:
         assert isinstance(cause, DatabaseError)

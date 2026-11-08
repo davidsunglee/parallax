@@ -137,7 +137,7 @@ def test_an_external_overlapping_insert_is_refused_by_name(profile_run: Any) -> 
     assert (error.category, error.native_code) == ("constraintViolation", "23P01")
     assert error.constraint_name == exclusion
     assert error.violated_index is None
-    assert not error.is_retriable
+    assert not error.is_transient
     assert isinstance(error.__cause__, psycopg.errors.ExclusionViolation)
 
 

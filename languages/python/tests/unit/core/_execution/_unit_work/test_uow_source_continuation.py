@@ -25,6 +25,7 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import UsageError
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -45,11 +46,11 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
+    TRANSACTION_ROLLBACK_ONLY,
     AdmittedWrite,
     KeyedWriteInstruction,
     ReadEvidence,
     RetainedObservation,
-    RollbackOnlyError,
     TransactionSettings,
     UnitOfWork,
     WriteEvidenceError,
@@ -62,6 +63,7 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import VersionedObjectStateKey
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     TEST_ACTOR_IDENTITY,
@@ -433,7 +435,7 @@ def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_ho
     # Nothing was published for the failed group: no change of what the
     # source observed completed.
     assert uow.source_authority.is_unchanged_since(VersionedObjectStateKey(_account(1), 1), 0)
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _flush(uow)
     del source
     gc.collect()

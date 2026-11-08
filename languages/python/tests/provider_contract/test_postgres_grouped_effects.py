@@ -32,6 +32,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     Attr,
     Bitemporal,
+    ConflictError,
     Document,
     DomainModel,
     Entity,
@@ -52,8 +53,7 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptFinished,
 )
 from parallax.core.storage_layout import view as storage_layout_view
-from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.core.write_plan.steps import MilestoneTarget
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
@@ -290,14 +290,15 @@ def test_another_sessions_change_refuses_exactly_its_objects_gate_then_replays(
             tx.amend(order.edit(total=order.total + 1))
         try:
             tx.find(Order.where(Order.id == 1)).result()
-        except OptimisticLockConflictError as conflict:
+        except ConflictError as conflict:
             conflicts.append(conflict)
             raise
 
     db.transact(amend, retry=fast_retry(1))
     (conflict,) = conflicts
-    assert isinstance(conflict, OptimisticLockConflictError)
-    assert conflict.target.key_values == ((3,),)
+    assert isinstance(conflict, ConflictError)
+    assert conflict.code == OPTIMISTIC_LOCK_CONFLICT
+    assert conflict.key == {"id": 3}
     assert attempts == [[1] * 5, [1, 1, 2, 1, 1]]
     rows = _rows(profile_run, "grp_order")
     assert [(row[0], row[1], row[2]) for row in rows] == [
@@ -639,7 +640,7 @@ def test_another_sessions_change_refuses_exactly_its_milestone_and_rolls_back_th
     provider = RecordingLifecycleProvider()
     db = _database(profile_run, provider)
     db.transact(_seed_books)
-    conflicts: list[OptimisticLockConflictError] = []
+    conflicts: list[ConflictError] = []
     attempts: list[list[int]] = []
     stored: list[list[_Row]] = []
 
@@ -652,16 +653,15 @@ def test_another_sessions_change_refuses_exactly_its_milestone_and_rolls_back_th
             tx.amend(book.edit(amount=book.amount + 1))
         try:
             tx.find(Book.where(Book.id == 1)).result()
-        except OptimisticLockConflictError as conflict:
+        except ConflictError as conflict:
             conflicts.append(conflict)
             stored.append(_history(profile_run, "grp_book"))
             raise
 
     db.transact(amend, retry=fast_retry(1))
     (conflict,) = conflicts
-    target = conflict.target
-    assert isinstance(target, MilestoneTarget)
-    assert target.key_values == (3,)
+    assert conflict.code == OPTIMISTIC_LOCK_CONFLICT
+    assert conflict.key == {"id": 3}
     assert attempts == [[100] * 5, [100, 100, -1, 100, 100]]
     # Read from another session while the losing attempt was open, the history
     # held only the seed and the other session's close and successor: the

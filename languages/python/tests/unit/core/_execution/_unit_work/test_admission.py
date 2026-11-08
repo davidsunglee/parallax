@@ -15,8 +15,9 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
-from parallax.core import inheritance, temporal_read
+from parallax.core import UsageError, inheritance, temporal_read
 from parallax.core._execution._unit_work._write_ownership import (
+    INSERTION_AUTHORITY_INVALID,
     NO_INSERTION_AUTHORITY,
     KeyedWriteRefusalAdvice,
 )
@@ -61,7 +62,6 @@ from parallax.core.unit_work import (
     ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
-    UnitOfWorkError,
     WriteEvidenceError,
     admitted_write,
 )
@@ -84,6 +84,7 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
+from tests._support.errors import raises_code
 from tests._support.planner_probes import admit, object_source, source_authority
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
@@ -582,7 +583,7 @@ def test_an_unadvised_repeat_of_a_pending_insert_takes_the_writes_after_it(
     (opener, repeat) = _inserted_accounts(admission, 9, 9)
     _admit(admission, _amended_through(repeat, 9))
     assert _pending_owners(admission) == [*((id_, "N") for id_ in beside), (9, "N"), (9, "Cy")]
-    with pytest.raises(UnitOfWorkError, match="no longer stands"):
+    with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
         admission.admit(_amended_through(opener, 9), confirm_target=_confirmed)
     admission.drain_planned()
     assert authority.insertion_authority(repeat) is None

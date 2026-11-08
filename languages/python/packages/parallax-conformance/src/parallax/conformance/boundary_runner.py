@@ -454,7 +454,7 @@ def translated_fault(kind: str) -> DatabaseError:
     """The SAME translated :class:`DatabaseError` the real adapter's own
     classification would produce for a `given.fault` kind (`m-db-error`
     vocabulary) — the decorator SIMULATES the failure; the real retry loop
-    still classifies it via `DatabaseError.category` / `.is_retriable`, never a
+    still classifies it by `DatabaseError.category`, never a
     value this module invents.
 
     :class:`ValueError` for a kind that raises no error at all, which the write
@@ -500,7 +500,7 @@ class FaultInjectingPort:
     never raises from here — it returns ``0`` from the gated update's
     ``execute_write`` (the concurrent-writer simulation), letting the real
     Affected Rows Policy shortfall -> ``enforce_affected_rows`` ->
-    ``OptimisticLockConflictError`` fire through the genuine write-seam
+    ``optimistic-lock-conflict`` fire through the genuine write-seam
     code path.
 
     Where the inner port has ordered write transport, so does this one, and

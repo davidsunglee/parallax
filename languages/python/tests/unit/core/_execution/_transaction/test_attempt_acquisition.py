@@ -15,7 +15,17 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
-from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr, inheritance
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    ConflictError,
+    Document,
+    DomainModel,
+    InternalError,
+    ValueObject,
+    attr,
+    inheritance,
+)
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._transaction import _attempt as attempt_module
 from parallax.core._execution._transaction._attempt import TxnAttempt
@@ -59,15 +69,14 @@ from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
-    OptimisticLockConflictError,
+    CARDINALITY_CORRUPTION,
+    OPTIMISTIC_LOCK_CONFLICT,
     PredicateSelection,
     PredicateWriteInstruction,
     TargetWriteInstruction,
     WriteAssignment,
 )
 from parallax.core.write_plan import ObjectKey
-from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.descriptor import domain_model_from_document
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -156,9 +165,9 @@ def test_several_target_rows_are_corruption_with_their_count_once_the_read_has_c
     # The second row's payload is invalid stored data, which judging it would
     # refuse; neither root is judged, so the count alone decides.
     recorder = RecordingLifecycleProvider()
-    with raises_contextualized(CardinalityCorruptionError) as corrupt:
+    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION) as corrupt:
         _ledger_write([_ledger(), _ledger(balance=1.0)], recorder)
-    assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert "affected 2 row(s), expected 1" in str(corrupt.value)
     (outcome,) = _read_outcomes(recorder.roots[-1].events)
     assert isinstance(outcome, ReadCompleted)
 
@@ -1064,7 +1073,7 @@ def test_a_ready_writes_failure_precedes_the_read_its_successor_waits_for() -> N
             Read(raises=deadlock),
         )
     )
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64)),
             itself,
@@ -1143,16 +1152,14 @@ def test_a_ready_groups_closes_share_one_grouped_effect_ahead_of_one_insert_of_e
 def test_a_later_writes_shortfall_in_a_ready_group_precedes_an_earlier_writes_insert() -> None:
     # Object 2's second close returns no ordinal.
     port = ScriptedAdapter(Transact(Read(rows=_both_ready()), _ordinals(3)))
-    with raises_contextualized(OptimisticLockConflictError) as raised:
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as raised:
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
             itself,
             concurrency="optimistic",
             retry=RetryPolicy(max_retries=0),
         )
-    target = raised.value.target
-    assert isinstance(target, MilestoneTarget)
-    assert target.key_values == (2,)
+    assert raised.value.key == {"id": 2}
     # Run alone, object 1's insert would have run before object 2's closes.
     assert _flush_calls(port) == [ReadCall, ReadCall]
     assert _grouped_keys(port.calls[2]) == [1, 1, 2, 2]

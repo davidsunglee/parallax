@@ -33,25 +33,26 @@ from decimal import Decimal
 
 import pytest
 
+from parallax.core import ConflictError
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.effects import shortfall
 from parallax.core.auto_retry import (
-    RetryCandidate,
     RetryPolicy,
     RetryTiming,
+    _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - handed to the loop as the runner does
     retry_eligible,
     run_with_retry,
 )
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.unit_work import (
+    OPTIMISTIC_LOCK_CONFLICT,
     KeyedWriteInstruction,
-    MissingTargetError,
-    OptimisticLockConflictError,
-    StaleWriteError,
-    WriteEffectError,
     WritePlanningRequest,
     enforce_affected_rows,
     object_key,
 )
+from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from parallax.core.write_plan import VersionObservation
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
@@ -64,6 +65,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
 )
 from tests._support.clock_probes import inert_instant
+from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_model_support import model as corpus_model
 
@@ -113,7 +115,7 @@ def test_a_versioned_locking_write_reaching_no_row_is_the_non_retriable_stale_wr
     # write correct — so a shortfall cannot be a gate that came up short.
     step, policy = _locking_policy(write, _ACCOUNT, observed=1)
     assert policy == ExactCount(1, STALE_WRITE)
-    with pytest.raises(StaleWriteError):
+    with raises_code(ConflictError, STALE_WRITE_CODE):
         enforce_affected_rows(step, 0)
 
 
@@ -133,11 +135,11 @@ def test_an_unversioned_write_reaching_no_row_is_the_non_retriable_missing_targe
     # only that the addressed row is not there.
     step, policy = _locking_policy(write, _WALLET, observed=None)
     assert policy == ExactCount(1, MISSING_TARGET)
-    with pytest.raises(MissingTargetError):
+    with raises_code(ConflictError, MISSING_TARGET_CODE):
         enforce_affected_rows(step, 0)
 
 
-def _raising(error: WriteEffectError) -> tuple[Callable[[], int], list[int]]:
+def _raising(error: ConflictError) -> tuple[Callable[[], int], list[int]]:
     """An attempt that rolls back with ``error`` every time, handed to the loop
     the way the transaction runner hands it: as a retry candidate exactly when
     the policy calls it eligible."""
@@ -146,7 +148,7 @@ def _raising(error: WriteEffectError) -> tuple[Callable[[], int], list[int]]:
     def attempt() -> int:
         attempts.append(len(attempts))
         if retry_eligible(error):
-            raise RetryCandidate(error)
+            raise _RetryCandidate(error)
         raise error
 
     return attempt, attempts
@@ -155,17 +157,17 @@ def _raising(error: WriteEffectError) -> tuple[Callable[[], int], list[int]]:
 @pytest.mark.parametrize(
     "error",
     [
-        StaleWriteError(_ROW_2, _KEY_2, 1, 0),
-        MissingTargetError(_ROW_2, _KEY_2, 1, 0),
+        shortfall(STALE_WRITE_CODE, _ROW_2, _KEY_2, 1, 0),
+        shortfall(MISSING_TARGET_CODE, _ROW_2, _KEY_2, 1, 0),
     ],
     ids=["stale-write", "missing-target"],
 )
 def test_a_non_retriable_shortfall_surfaces_after_one_attempt_with_budget_left(
-    error: WriteEffectError,
+    error: ConflictError,
 ) -> None:
     assert not retry_eligible(error)
     attempt, attempts = _raising(error)
-    with pytest.raises(type(error)):
+    with raises_code(ConflictError, error.code):
         run_with_retry(attempt, policy=RetryPolicy(), timing=_WITHOUT_WAITING)
     assert len(attempts) == 1
 
@@ -173,10 +175,10 @@ def test_a_non_retriable_shortfall_surfaces_after_one_attempt_with_budget_left(
 def test_the_retriable_conflict_is_the_one_shortfall_the_loop_can_re_execute() -> None:
     # The contrast that gives the verdict above its meaning: the same loop, the
     # same budget, and a gate that came up short IS re-run until the bound ends.
-    conflict = OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0)
+    conflict = shortfall(OPTIMISTIC_LOCK_CONFLICT, _ROW_2, _KEY_2, 1, 0)
     assert retry_eligible(conflict)
     attempt, attempts = _raising(conflict)
-    with pytest.raises(OptimisticLockConflictError) as surfaced:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT) as surfaced:
         run_with_retry(attempt, policy=RetryPolicy(max_retries=2), timing=_WITHOUT_WAITING)
     assert surfaced.value is conflict
     assert len(attempts) == 3  # the first attempt plus its two re-executions

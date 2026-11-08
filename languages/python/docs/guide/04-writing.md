@@ -219,12 +219,12 @@ fresh one.
 
 A close must end a milestone after it began. If the instant is not strictly later than
 the stored `tx_start` of a milestone the attempt would close, the write fails with
-`TemporalConflictError` from `parallax.core.unit_work` instead of storing an empty or
+a `ConflictError` whose `code` is `"temporal-conflict"` instead of storing an empty or
 backwards interval. That happens when clocks repeat an instant or run behind another
 server's, or when an attempt took its instant before another transaction committed the
 version it then reads and changes. Nothing is closed or opened, and the error is retried
 like an optimistic conflict: the retry is a new attempt, so it reads again and takes a
-fresh instant. Its `instant`, `key` and `stored_bound` fields name the instant, the object,
+fresh instant. Its `entity` and `key` name the object, and its message names the instant
 and the start it failed to follow. Keep the clocks of every server writing one database
 synchronized, so that the retries rarely run out.
 
