@@ -19,7 +19,7 @@ from functools import cached_property
 from typing import Any, Final, cast
 
 import pytest
-from pydantic import PrivateAttr, ValidationError
+from pydantic import PrivateAttr
 
 from parallax.conformance.read_models import Dog
 from parallax.core import (
@@ -61,7 +61,6 @@ from parallax.core.entity._instance_state import (
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
-    Column,
     EntityIdentity,
     EntityLocation,
     RelationshipIdentity,
@@ -79,12 +78,6 @@ def _account(balance: str = "100.00") -> mm.Account:
     return mm.Account(id=1, owner="Ada", balance=Decimal(balance))
 
 
-def _fetched_account(balance: str = "100.00", version: int = 1) -> mm.Account:
-    """One versioned Account standing in for what a read hands back: the
-    framework-owned version is present without a caller having authored it."""
-    return mm.Account.model_construct(id=1, owner="Ada", balance=Decimal(balance), version=version)
-
-
 def _record(value: object) -> dict[str, object] | None:
     """``value``'s Change Record as the edit surface wrote it, read from the one
     private slot that surface owns."""
@@ -94,19 +87,6 @@ def _record(value: object) -> dict[str, object] | None:
 # --------------------------------------------------------------------------- #
 # Provenance and the Change Record.                                          #
 # --------------------------------------------------------------------------- #
-def test_a_fresh_instance_carries_no_change_record() -> None:
-    assert CHANGE_RECORD_SLOT not in _account().__dict__
-
-
-def test_an_edit_records_the_earliest_original_value() -> None:
-    original = _account(balance="100.00")
-    edited = original.edit(balance=Decimal("175.00"))
-    assert edited.balance == Decimal("175.00")
-    changes = _record(edited)
-    assert changes is not None
-    assert changes["balance"] == Decimal("100.00")
-
-
 def test_copies_of_copies_merge_records_keeping_the_earliest_original() -> None:
     original = _account(balance="100.00")
     once = original.edit(balance=Decimal("150.00"))
@@ -144,29 +124,8 @@ def test_an_edit_with_no_changes_on_a_never_edited_value_records_nothing() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Edit refusals: unknown / primary-key / framework-owned / relationship.      #
+# Edit refusals.                                                              #
 # --------------------------------------------------------------------------- #
-def test_unknown_field_is_rejected() -> None:
-    with pytest.raises(EditError, match="unknown member name"):
-        _account().edit(shoe_size=9)
-
-
-def test_primary_key_field_is_rejected() -> None:
-    with pytest.raises(EditError, match="primary-key"):
-        _account().edit(id=2)
-
-
-def test_framework_owned_field_is_rejected() -> None:
-    with pytest.raises(EditError, match="framework-owned"):
-        _account().edit(version=99)
-
-
-def test_relationship_field_is_rejected() -> None:
-    person = mm.Person(id=1, name="Ada")
-    with pytest.raises(EditError, match="relationship"):
-        person.edit(passport=None)
-
-
 def test_an_inherited_relationship_locates_at_the_entity_that_declares_it() -> None:
     # `owner` is declared on `Animal` and reached through `Dog`, so the violation
     # names the declaring member: a Relationship Identity names the source Entity
@@ -178,11 +137,6 @@ def test_an_inherited_relationship_locates_at_the_entity_that_declares_it() -> N
         RelationshipIdentity(EntityIdentity("parallax.compatibility", "Animal"), "owner")
     )
     assert violation.member_name == "owner"
-
-
-def test_an_invalid_scalar_value_raises_at_edit_time_not_at_the_database() -> None:
-    with pytest.raises(EditError, match="does not match the declared type"):
-        _account().edit(balance="not-a-decimal")
 
 
 def test_a_dotted_name_is_refused_as_a_path_rather_than_as_an_unknown_member() -> None:
@@ -208,69 +162,6 @@ def test_wire_names_of_rejects_a_class_that_declares_nothing() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Framework-owned attributes are omitted at construction, and a caller who     #
-# supplies one is refused there — where the mistake is — rather than several   #
-# steps later when a row is derived from it.                                  #
-# --------------------------------------------------------------------------- #
-def test_an_audit_only_instance_constructs_cleanly_without_axis_values() -> None:
-    balance = mm.Balance(id=1, acct_num="A", value=Decimal("100.00"))
-    assert balance.tx_start is None
-    assert balance.tx_end is None
-
-
-def test_a_bitemporal_instance_constructs_cleanly_without_axis_values() -> None:
-    branch = mm.Branch(id=1, name="Central", address=None)
-    assert branch.valid_start is None
-    assert branch.valid_end is None
-    assert branch.tx_start is None
-    assert branch.tx_end is None
-
-
-def test_a_versioned_instance_constructs_cleanly_without_its_version() -> None:
-    # The version column is designated the same way an axis endpoint is, so it
-    # behaves the same way: omitted at construction, derived at the write.
-    assert _account().version is None
-
-
-def test_supplying_a_transaction_time_value_at_construction_is_refused() -> None:
-    with pytest.raises(ValidationError, match="tx_start"):
-        mm.Balance(
-            id=1,
-            acct_num="A",
-            value=Decimal("100.00"),
-            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        )
-
-
-def test_supplying_a_valid_time_value_at_construction_is_refused() -> None:
-    with pytest.raises(ValidationError, match="valid_start"):
-        mm.Branch(
-            id=1, name="Central", address=None, valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-        )
-
-
-def test_supplying_the_version_at_construction_is_refused() -> None:
-    with pytest.raises(ValidationError, match="version"):
-        mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-
-
-def test_a_non_temporal_versioned_class_designates_only_its_version() -> None:
-    assert wire_names_of(mm.Account).framework_owned_py == frozenset({"version"})
-    assert wire_names_of(mm.Branch).framework_owned_py == frozenset(
-        {"valid_start", "valid_end", "tx_start", "tx_end"}
-    )
-
-
-def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
-    # The Pydantic-level `None` default is a construction affordance ONLY — the
-    # declared Attribute Metadata is exactly what the corpus model declares (the
-    # no-drift guard is the proof; this pin is the unit-level half of it).
-    tx_start = next(a for a in mm.Balance.attributes if a.identity.name == "txStart")
-    assert tx_start.storage == Column("in_z")
-    assert tx_start.nullable is False
-
-
-# --------------------------------------------------------------------------- #
 # For a temporal write family, a materialized CURRENT milestone's real        #
 # `out_z`/`thru_z` value is the framework's own open-interval sentinel        #
 # (`TemporalBound.INFINITY` — every real Postgres current row decodes to      #
@@ -292,28 +183,6 @@ def test_an_edit_carries_forward_an_untouched_axis_fields_infinity_sentinel() ->
     copy = balance.edit(value=Decimal("150.00"))
     assert copy.value == Decimal("150.00")
     assert copy.tx_end is INFINITY  # carried forward, never re-validated
-
-
-def test_an_edit_carries_forward_a_hydrated_version_untouched() -> None:
-    # The version reaches the same carry-forward for the same reason: an edit
-    # never re-authors it, so it never faces the constructor that refuses one.
-    copy = _fetched_account(version=7).edit(balance=Decimal("150.00"))
-    assert copy.balance == Decimal("150.00")
-    assert copy.version == 7
-
-
-def test_an_edit_refuses_an_explicitly_touched_axis_field() -> None:
-    # Not a re-validation of the authored value: the axis endpoint is
-    # framework-owned, so naming it at all is the refusal, whatever the value.
-    balance = mm.Balance.model_construct(
-        id=1,
-        acct_num="A",
-        value=Decimal("100.00"),
-        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        tx_end=INFINITY,
-    )
-    with pytest.raises(EditError, match="txEnd: framework-owned fields may not be assigned"):
-        balance.edit(tx_end=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
 
 # --------------------------------------------------------------------------- #

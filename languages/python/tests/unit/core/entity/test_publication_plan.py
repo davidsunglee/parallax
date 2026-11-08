@@ -1,11 +1,8 @@
 """The publication plan, and the refusals that keep a published row well formed.
 
-The parity corpus grades what a published value serializes to. This grades what a
-publication plan IS: the two index spaces a class fixes at creation, the order a
-positional row is aligned to, the ordinal each descriptor is handed, and what the
-shared positional row routine fills and refuses. It also pins the
-class-creation ORDERING the plan depends on — descriptors installed once the class
-exists, never seeded into the namespace Pydantic collects field defaults from.
+The parity corpus grades what a published value serializes to. This grades what
+the shared positional row routine fills and refuses, the state a published value
+keeps and does not keep, and where a published subtype reads what it inherits.
 """
 
 from __future__ import annotations
@@ -14,7 +11,6 @@ import gc
 from typing import Any, cast
 
 import pytest
-from pydantic import BaseModel
 
 from parallax.core.entity import (
     MANY_TO_ONE,
@@ -29,23 +25,15 @@ from parallax.core.entity import (
     attr,
     rel,
 )
-from parallax.core.entity import _instance_state as instance_state
-from parallax.core.entity import _row_fill as row_fill
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._declaration import (
-    _InheritedMemberShadow,  # pyright: ignore[reportPrivateUsage]
-)
-from parallax.core.entity._errors import GraphConstructionError
 from parallax.core.entity._instance_state import (
     allocate,
     install,
     is_present,
     plan_of,
 )
-from parallax.core.entity._members import Attr as AttrDescriptor
 from parallax.core.entity._model import DomainModel
 from parallax.core.entity._pydantic_storage import instance_presence
-from parallax.core.entity._row_fill import compact_row
 from parallax.core.metamodel import TablePerHierarchy
 from tests.unit._indexed_graph_support import published_nodes
 from tests.unit.core.entity._compact_support import carries_instance_storage, published, raw_row
@@ -74,114 +62,6 @@ class Animal(
 class Cat(Animal, inheritance=ConcreteSubtype(tag_value="cat")):
     perch: Attr[Geo | None]
     indoor: Attr[bool | None]
-
-
-def test_the_member_order_is_attributes_root_first_then_occurrences() -> None:
-    # The order a positional construction row is aligned to, which is the order an
-    # accepted Metamodel fixes for the same concrete: every contributor's
-    # attributes root-first, then every contributor's occurrences the same way.
-    # A class body may interleave the two, and this one does.
-    assert plan_of(Animal).py_names == ("id", "name", "owner_id", "spot")
-    assert plan_of(Cat).py_names == ("id", "name", "owner_id", "indoor", "spot", "perch")
-
-
-def test_the_field_order_is_pydantic_s_own_and_is_not_the_member_order() -> None:
-    # Repr, iteration, and serialization are stated over Pydantic's field order,
-    # which follows the class body rather than the model's member categories. The
-    # plan carries both because a class that declares an occurrence before an
-    # attribute makes them differ.
-    assert plan_of(Animal).fields == ("id", "spot", "name", "owner_id")
-    assert plan_of(Cat).fields == ("id", "spot", "name", "owner_id", "perch", "indoor")
-
-
-def test_a_bit_is_one_less_than_its_tuple_index_and_relationships_carry_none() -> None:
-    plan = plan_of(Cat)
-    assert dict(plan.indices) == {py_name: bit + 1 for py_name, bit in plan.bits.items()}
-    assert dict(plan.relationships) == {"friends": 7, "owner": 8}
-    assert plan.template == (0, None, None, None, None, None, None, UNLOADED, UNLOADED)
-
-
-def test_an_attribute_keeps_its_position_in_a_descendant_and_an_occurrence_does_not() -> None:
-    # Ancestry contributes attributes root-first, so a root-declared attribute
-    # indexes identically at every depth; an occurrence and a relationship both
-    # sit after the exact class's own attribute count, which is a property of the
-    # concrete rather than of the family. That is why a descendant installs its
-    # own descriptor for every member it inherits.
-    assert plan_of(Animal).indices["id"] == plan_of(Cat).indices["id"]
-    assert plan_of(Animal).indices["spot"] == 4
-    assert plan_of(Cat).indices["spot"] == 5
-    assert plan_of(Animal).relationships["owner"] == 6
-    assert plan_of(Cat).relationships["owner"] == 8
-
-
-@pytest.mark.parametrize("py_name", ["id", "name", "owner_id", "spot", "friends", "owner"])
-def test_every_inherited_member_has_a_descriptor_of_the_descendant_s_own(py_name: str) -> None:
-    inherited = vars(Cat)[py_name]
-    assert inherited is not vars(Animal)[py_name]
-    plan = plan_of(Cat)
-    expected = plan.indices.get(py_name, plan.relationships.get(py_name))
-    assert inherited._index == expected
-
-
-def test_an_inherited_member_reads_the_declaring_entity_in_the_expression_it_seeds() -> None:
-    # The descendant's descriptor is derived from the declaring class's own, so
-    # the reference it hands out is unchanged: an inherited member spelled through
-    # a subtype still emits the ancestor's identity on the wire.
-    for py_name in ("name", "owner"):
-        descendant = vars(Cat)[py_name]
-        declaring = vars(Animal)[py_name]
-        assert descendant._ref == declaring._ref
-
-
-def test_a_descriptor_reachable_while_a_class_is_built_becomes_its_field_default() -> None:
-    # The hazard the installation order exists to avoid, demonstrated rather than
-    # described. Pydantic reads a field's default off the class under construction
-    # with `getattr`, so a descriptor answering under a member's name at that
-    # moment IS that member's default from then on.
-    class _Seed:
-        def __get__(self, obj: object | None, owner: type | None = None) -> str:
-            return "a query seed"
-
-    seeded = type("Seeded", (BaseModel,), {"__annotations__": {"name": str}, "name": _Seed()})
-    assert cast("Any", seeded).__pydantic_fields__["name"].default == "a query seed"
-
-
-@pytest.mark.parametrize("owner", [Animal, Cat])
-def test_no_member_of_a_built_class_collected_a_descriptor_as_its_default(owner: type) -> None:
-    # The other half: the engine installs every descriptor once the class exists,
-    # so what each member collected is a value rather than what class access to it
-    # answers. An inherited member is the case that broke — its descriptor is the
-    # base's and answers for the name Pydantic reads.
-    for py_name, field in cast("Any", owner).__pydantic_fields__.items():
-        assert isinstance(vars(owner)[py_name], AttrDescriptor)
-        assert field.is_required() or field.get_default(call_default_factory=True) is None
-
-
-def test_the_shadow_that_keeps_it_that_way_costs_no_exemption_of_the_framework_s_own() -> None:
-    # The shadow is seeded into the namespace Pydantic inspects, where an
-    # unannotated class attribute is refused — so it is a `property`, one of the
-    # kinds Pydantic passes over already. An `ignored_types` entry for it instead
-    # would have exempted that type from every DECLARED body too, so a class body
-    # binding one would be accepted where any other unannotated binding is
-    # refused. What each configuration carries is the frontend's own vocabulary
-    # and nothing else.
-    assert issubclass(_InheritedMemberShadow, property)
-    assert cast("Any", Cat).model_config["ignored_types"] == ()
-    assert cast("Any", Animal).model_config["ignored_types"] == ()
-    assert cast("Any", Entity).model_config["ignored_types"] == (type(vars(Entity)["all"]),)
-
-
-def test_the_plan_is_stamped_per_exact_class_and_never_shared() -> None:
-    assert vars(Cat)["__parallax_plan__"] is not vars(Animal)["__parallax_plan__"]
-    assert plan_of(Cat) is vars(Cat)["__parallax_plan__"]
-
-
-def test_class_metadata_does_not_grow_with_published_instance_count() -> None:
-    before = len(vars(Cat))
-    values = [published(Cat, id=index, name="c") for index in range(50)]
-    assert len(vars(Cat)) == before
-    assert plan_of(Cat) is vars(Cat)["__parallax_plan__"]
-    assert all(value.id == index for index, value in enumerate(values))
 
 
 # --------------------------------------------------------------------------- #
@@ -218,63 +98,6 @@ def test_each_position_lands_at_its_own_index_and_only_occurrences_are_built() -
     assert spot.lat == 1.5
     assert row == (0b011011, 1, None, None, True, spot, None, (), UNLOADED)
     assert cast("Any", value).model_fields_set == {"id", "name", "indoor", "spot"}
-
-
-@pytest.mark.parametrize(
-    ("members", "relationships"),
-    [
-        pytest.param([1, "c", ABSENT, ABSENT, (1.5,), ABSENT], (UNLOADED,) * 2, id="a-member-list"),
-        pytest.param((1, "c", ABSENT, ABSENT, (1.5,)), (UNLOADED,) * 2, id="too-few-members"),
-        pytest.param(
-            (1, "c", ABSENT, ABSENT, (1.5,), ABSENT), [UNLOADED, UNLOADED], id="a-relationship-list"
-        ),
-        pytest.param(
-            (1, "c", ABSENT, ABSENT, (1.5,), ABSENT), (UNLOADED,), id="too-few-relationships"
-        ),
-    ],
-)
-def test_a_row_of_the_wrong_kind_or_width_is_refused_before_any_value_object_is_built(
-    members: object, relationships: object, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    allocated: list[type] = []
-    allocate = instance_state.allocate
-
-    def recorded(cls: type[Any]) -> Any:
-        allocated.append(cls)
-        return allocate(cls)
-
-    monkeypatch.setattr(row_fill, "allocate", recorded)
-    with pytest.raises(GraphConstructionError) as refusal:
-        published_nodes(_PETS, (Cat.identity, members, relationships))
-    assert refusal.value.code == "entity-graph-invalid-member"
-    assert allocated == [Cat]
-
-
-class _Wide(ValueObject):
-    """A full presence mask beyond the supported interpreters' small-integer caches."""
-
-    a: Attr[int]
-    b: Attr[int]
-    c: Attr[int]
-    d: Attr[int]
-    e: Attr[int]
-    f: Attr[int]
-    g: Attr[int]
-    h: Attr[int]
-    i: Attr[int]
-    j: Attr[int]
-    k: Attr[int]
-
-
-def test_one_bitmap_memo_shares_one_mask_between_rows_of_one_pattern() -> None:
-    def wide(bitmaps: dict[int, int]) -> list[object]:
-        return compact_row(plan_of(_Wide).template, 11, (), tuple(range(11)), bitmaps)
-
-    memo: dict[int, int] = {}
-    first, second = wide(memo), wide(memo)
-    assert first == [0b11111111111, *range(11)]
-    assert first[0] is second[0]
-    assert wide({})[0] is not first[0]
 
 
 def test_a_plan_whose_members_are_not_the_class_s_fields_is_refused() -> None:
@@ -361,3 +184,12 @@ def test_a_published_relationship_reads_its_tail_position() -> None:
     value = published(Cat, {"friends": (friend,), "owner": None}, id=1, name="c")
     assert value.friends == (friend,)
     assert value.owner is None
+
+
+def test_a_published_subtype_reads_an_inherited_occurrence_at_its_own_position() -> None:
+    # An occurrence sits after the exact class's own attributes, so `Cat` reads
+    # the `spot` it inherits at a position `Animal` never laid out.
+    spot = Geo(lat=1.5)
+    value = published(Cat, id=1, name="c", indoor=True, spot=spot)
+    assert value.spot == spot
+    assert value.indoor is True

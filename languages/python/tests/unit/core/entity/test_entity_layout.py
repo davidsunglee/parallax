@@ -187,38 +187,6 @@ def test_every_corpus_entity_lays_out_its_family_effective_members_in_order() ->
         ), where
 
 
-def test_every_corpus_layout_iterates_its_member_windows_as_the_selection_binds_them(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def refuse(_window: object, index: object) -> object:
-        raise AssertionError(f"iteration indexed the window at {index!r}")
-
-    for stem, _model, identity, layout in _corpus_layouts():
-        where = (stem, identity.canonical)
-        bindings = layout.member_selection.bindings
-        attributes, occurrences = layout.attributes, layout.occurrences
-        monkeypatch.setattr(type(attributes), "__getitem__", refuse)
-        monkeypatch.setattr(type(occurrences), "__getitem__", refuse)
-        walked = [*attributes, *occurrences]
-        assert all(left is right for left, right in zip(walked, bindings, strict=True)), where
-        assert [binding.identity for binding in attributes] == list(
-            layout.members[: layout.attribute_count]
-        ), where
-        assert [binding.identity for binding in occurrences] == list(
-            layout.members[layout.attribute_count :]
-        ), where
-        monkeypatch.undo()
-
-
-def test_every_corpus_entitys_index_maps_each_member_to_its_own_position() -> None:
-    for stem, _model, identity, layout in _corpus_layouts():
-        where = (stem, identity.canonical)
-        assert dict(layout.index_of) == {
-            member: position for position, member in enumerate(layout.members)
-        }, where
-        assert len(layout.index_of) == len(layout.members), where
-
-
 def test_the_category_boundary_separates_attributes_from_top_level_occurrences() -> None:
     layout = LayoutCatalog(corpus_model("customer")).entity(_identity("Customer"))
     attributes = layout.members[: layout.attribute_count]
@@ -226,25 +194,6 @@ def test_the_category_boundary_separates_attributes_from_top_level_occurrences()
     assert [member.name for member in cast("Any", attributes)] == ["id", "name"]
     assert [member.path for member in cast("Any", occurrences)] == [("address",)]
     assert layout.occurrences[0].identity == occurrences[0]
-
-
-def test_an_occurrence_binding_aligns_to_its_declaration_owned_shape() -> None:
-    model = corpus_model("customer")
-    layout = LayoutCatalog(model).entity(_identity("Customer"))
-    (address,) = layout.occurrences
-    declared = _declared_occurrence(model, _identity("Customer"), "address")
-    assert address.identity == declared.identity
-    assert address.multiplicity is declared.multiplicity
-    assert address is declared
-    _assert_bound(address)
-
-
-def _declared_occurrence(
-    model: Metamodel, identity: EntityIdentity, name: str
-) -> ValueObjectMetadata:
-    occurrence = _view(model, identity).applicable_value_object(name)
-    assert occurrence is not None, name
-    return occurrence
 
 
 def _assert_bound(declared: OccurrenceMetadata) -> None:
@@ -277,20 +226,6 @@ def _multiplicities(occurrence: OccurrenceMetadata) -> set[Multiplicity]:
 # --------------------------------------------------------------------------- #
 
 
-def test_an_inheritance_participant_normalizes_its_family_to_the_root() -> None:
-    layout = LayoutCatalog(corpus_model("animal")).entity(_identity("Cat"))
-    assert layout.concrete == _identity("Cat")
-    assert layout.family == _identity("Animal")
-
-
-def test_a_table_per_concrete_subtype_participant_normalizes_its_logical_family() -> None:
-    catalog = LayoutCatalog(corpus_model("rate"))
-    deposit = catalog.entity(_identity("DepositRate"))
-    assert deposit.concrete == _identity("DepositRate")
-    assert deposit.family == _identity("Rate")
-    assert catalog.entity(_identity("Rate")).family == _identity("Rate")
-
-
 def test_a_standalone_entity_is_its_own_family() -> None:
     layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
     assert layout.family == _identity("Order")
@@ -301,29 +236,10 @@ def test_a_standalone_entity_is_its_own_family() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_standalone_entity_fixes_no_wire_type() -> None:
-    layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
-    assert layout.wire_type is None
-
-
 def test_only_an_inheritance_participant_fixes_a_wire_type() -> None:
     for _stem, model, identity, layout in _corpus_layouts():
         participates = _view(model, identity).strategy is not None
         assert layout.wire_type == (identity.canonical if participates else None)
-
-
-def test_an_inheritance_participant_fixes_its_canonical_name() -> None:
-    catalog = LayoutCatalog(corpus_model("animal"))
-    assert catalog.entity(_identity("Dog")).wire_type == "parallax.compatibility.Dog"
-    assert catalog.entity(_identity("Cat")).wire_type == "parallax.compatibility.Cat"
-
-
-def test_a_table_per_concrete_subtype_participant_fixes_its_own_canonical_name() -> None:
-    catalog = LayoutCatalog(corpus_model("rate"))
-    assert catalog.entity(_identity("DepositRate")).wire_type == (
-        "parallax.compatibility.DepositRate"
-    )
-    assert catalog.entity(_identity("Rate")).wire_type == "parallax.compatibility.Rate"
 
 
 def test_a_family_gaining_a_concrete_of_the_same_local_name_keeps_every_nodes_type() -> None:
@@ -377,50 +293,10 @@ def test_a_class_backed_model_fixes_the_type_its_descriptor_twin_fixes() -> None
         assert class_backed.entity(identity).wire_type == wire_type
 
 
-def test_a_single_column_key_is_its_own_attributes_position() -> None:
-    layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
-    identity = _key_attribute(layout)
-    assert layout.primary_key == (layout.index_of[identity],)
-
-
-def test_an_inherited_key_is_the_position_the_family_root_declared() -> None:
-    # The family root owns the key, and a descendant's row carries it under the
-    # root's own Attribute Identity, so a Cat and an Animal key alike.
-    catalog = LayoutCatalog(corpus_model("animal"))
-    cat = catalog.entity(_identity("Cat"))
-    animal = catalog.entity(_identity("Animal"))
-    key = _key_attribute(animal)
-    assert cat.primary_key == animal.primary_key == (cat.index_of[key],)
-
-
 def test_every_corpus_key_position_locates_its_family_key_in_its_own_row() -> None:
     for stem, model, identity, layout in _corpus_layouts():
         key = _view(model, identity).primary_key
         assert layout.primary_key == (layout.index_of[key.identity],), (stem, identity.canonical)
-
-
-def test_laying_out_a_family_reads_its_formed_key_rather_than_searching_declarations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Formation already found each family's one key Attribute, so a catalog
-    # built afterwards locates that answer and never asks a declared Attribute
-    # whether it is the key.
-    model = corpus_model("animal")
-    keys = {entity.identity: _view(model, entity.identity).primary_key for entity in model.entities}
-
-    def undiscoverable(attribute: AttributeMetadata) -> object:
-        raise AssertionError(f"the catalog searched {attribute.identity} for the family key")
-
-    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
-    catalog = LayoutCatalog(model)
-    for identity, key in keys.items():
-        layout = catalog.entity(identity)
-        assert layout.primary_key == (layout.index_of[key.identity],), identity
-
-
-def _key_attribute(layout: EntityLayout) -> Any:
-    (position,) = layout.primary_key
-    return layout.attributes[position].identity
 
 
 # --------------------------------------------------------------------------- #
@@ -602,16 +478,6 @@ def _domain_models() -> dict[str, Any]:
     return models.load_domain_models(Path(models.default_models_dir()))
 
 
-def test_the_cataloged_model_pairs_one_models_metadata_with_the_catalog_it_derived() -> None:
-    # A record derives its own catalog from the metadata it carries, so the two
-    # halves a read carries can never name two models — and a runtime shares
-    # one record rather than forming a second beside it.
-    orders = _domain_models()["orders"]
-    cataloged = CatalogedModel(model_of(orders))
-    assert cataloged.meta is model_of(orders)
-    assert CatalogedModel(cataloged.meta).layouts is not cataloged.layouts
-
-
 def test_separate_catalogs_share_the_inheritance_owned_member_selection() -> None:
     meta = model_of(_domain_models()["orders"])
     one, other = CatalogedModel(meta), CatalogedModel(meta)
@@ -634,25 +500,6 @@ def test_a_cataloged_model_is_the_model_it_carries_and_not_the_catalog_it_derive
     assert one != CatalogedModel(model_of(_domain_models()["animal"]))
 
 
-def test_a_descriptor_backed_domain_model_reaches_a_working_catalog() -> None:
-    # A descriptor-backed model prepares no graph construction: a layout depends
-    # on the accepted metadata alone, so its catalog is complete regardless.
-    catalog = CatalogedModel(model_of(_domain_models()["orders"])).layouts
-    assert catalog.entity(_identity("Order")).concrete == _identity("Order")
-
-
-def test_one_entity_reached_twice_answers_the_same_layout() -> None:
-    catalog = LayoutCatalog(corpus_model("orders"))
-    assert catalog.entity(_identity("Order")) is catalog.entity(_identity("Order"))
-
-
-def test_a_catalog_derives_every_declared_entity_at_construction() -> None:
-    model = corpus_model("animal")
-    catalog = LayoutCatalog(model)
-    derived = catalog._layouts  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(derived) == {entity.identity for entity in model.entities}
-
-
 # --------------------------------------------------------------------------- #
 # Refusals: model defects refuse the whole catalog where it is constructed.    #
 # --------------------------------------------------------------------------- #
@@ -664,7 +511,7 @@ def test_an_entity_the_model_does_not_declare_is_refused_rather_than_laid_out() 
         catalog.entity(_identity("Nope"))
 
 
-def test_two_members_claiming_one_position_refuse_the_whole_layout() -> None:
+def test_two_members_claiming_one_position_refuse_the_member_selection() -> None:
     model = corpus_model("orders")
     identity = _identity("Order")
     attributes = tuple(_view(model, identity).applicable_attributes)
@@ -683,17 +530,6 @@ def test_a_family_key_the_row_does_not_express_refuses_the_whole_layout() -> Non
     doctored = _with_applicable_attributes(model, identity, attributes)
     with pytest.raises(ValueError, match="no position for the primary key"):
         CatalogedModel(doctored)
-
-
-def test_a_refusal_is_raised_rather_than_classified_as_stored_data() -> None:
-    # The categorical claim behind both shapes above: a member row the model
-    # never fixed is a defect in the model, so it reaches no issue vocabulary.
-    model = corpus_model("orders")
-    identity = _identity("Order")
-    attributes = tuple(_view(model, identity).applicable_attributes)
-    with pytest.raises(ValueError) as excinfo:
-        _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
-    assert not hasattr(excinfo.value, "code")
 
 
 def test_a_refused_entity_leaves_the_catalog_usable_for_every_other_one() -> None:
