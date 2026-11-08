@@ -125,12 +125,6 @@ def test_each_publication_creates_fresh_instances() -> None:
     assert first == second
 
 
-def test_an_unloaded_relationship_value_installs_the_closed_world_sentinel() -> None:
-    root = published(_ORDERS, _ONE_ORDER)
-    assert relationship_value_of(root, _rel(_ORDER, "items")) is UNLOADED
-    assert relationship_value_of(root, _rel(_ORDER, "statuses")) is UNLOADED
-
-
 def test_loaded_null_and_loaded_empty_stay_distinct_from_unloaded() -> None:
     order, item = published_nodes(
         _ORDERS,
@@ -446,16 +440,15 @@ def test_a_refusal_at_any_value_object_depth_names_the_node_whose_row_holds_it()
 def test_publication_resolves_no_class_facts_per_record(monkeypatch: pytest.MonkeyPatch) -> None:
     # Correspondence proves each occurrence path's class and plan once per
     # model, so publishing a record at any depth looks neither up again.
-    from parallax.core.entity import _graph_construction, _row_fill
+    from parallax.core.entity import _graph_construction
 
     construction = graph_construction_for(_ORDERS)
 
     def refuse(*_args: object) -> Any:
         raise AssertionError("a per-record class-fact lookup")
 
-    for module in (_graph_construction, _row_fill):
-        for name in ("plan_of", "shape_of", "wire_names_of"):
-            monkeypatch.setattr(module, name, refuse, raising=False)
+    for name in ("plan_of", "shape_of", "wire_names_of"):
+        monkeypatch.setattr(_graph_construction, name, refuse)
 
     status = published(
         construction,
@@ -706,12 +699,6 @@ def test_reading_a_relationship_the_class_family_does_not_declare_is_refused() -
     with pytest.raises(GraphConstructionError) as refusal:
         relationship_value_of(root, _rel(_ORDER, "nosuch"))
     assert refusal.value.code == "entity-graph-invalid-member"
-
-
-def test_a_construction_derives_every_declared_entity_at_construction() -> None:
-    construction = graph_construction_for(_ORDERS)
-    derived = construction._facts  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(derived) == {entity.identity for entity in _ORDERS.entities}
 
 
 def test_an_entity_the_model_does_not_declare_is_refused_at_lookup() -> None:

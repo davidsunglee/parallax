@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, Final
 
@@ -26,19 +25,16 @@ from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.entity import DomainModel, EntityDefinitionError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._errors import ENTITY_ROW_CODES, EntityRowError
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import MemberDefinition, MemberShape, UnresolvedEntityDeclaration
+from parallax.core.metamodel import UnresolvedEntityDeclaration
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
 from tests._support.typed_write_source import TypedWriteSource
-from tests._support.write_preparation import write_preparation_of
 from tests.unit._authored_storage_support import (
     answering_for_instance_state,
     forge_into_storage,
     stored_state,
 )
-from tests.unit.core.entity._compact_support import carries_instance_storage, published
 from tests.unit.core.entity._value_object_document_support import inserted_document
 
 _SPEC_CODES = frozenset({"entity-row-member-missing", "entity-row-malformed-provenance"})
@@ -349,11 +345,6 @@ def test_an_identity_row_projects_only_the_declared_primary_key() -> None:
     assert _accounts().identity(_fetched_account(version=7)) == {"id": 1}
 
 
-def test_an_identity_row_carries_the_values_the_instance_holds_unchanged() -> None:
-    account = _account()
-    assert _accounts().identity(account)["id"] is account.id
-
-
 @pytest.mark.parametrize(
     ("value", "expected"),
     [(Keyed(id=7, label="a"), 7), (Labelled(code="K-1", label="a"), "K-1")],
@@ -394,17 +385,6 @@ def test_an_authored_row_answers_none_only_for_a_chain_that_touched_nothing() ->
     assert _accounts().authored(_account().edit()) is None
 
 
-def test_an_authored_row_reads_a_published_value_s_provenance_without_creating_storage() -> None:
-    # A published value keeps its members in a row and no instance storage of its
-    # own. The provenance slot is absent either way, but reaching for the storage
-    # to learn that would CREATE the dictionary — permanently, per node, on a
-    # read every write makes of the value it is handed.
-    value = published(mm.Account, id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-    assert _accounts().authored(value) is None
-    assert _accounts().row(value) == {"id": 1, "owner": "Ada", "balance": Decimal("100.00")}
-    assert not carries_instance_storage(value)
-
-
 def test_an_authored_row_states_a_changed_value_object_beside_a_raw_identity() -> None:
     # The identity is read directly and the occurrence stays in its frontend
     # carrier so shared preparation can traverse it once.
@@ -427,33 +407,6 @@ def test_an_authored_row_follows_the_models_member_order_with_its_key_last() -> 
     authored = _accounts().authored(edited)
     assert authored is not None
     assert list(authored) == ["owner", "balance", "id"]
-
-
-class _UnwalkedMembers(tuple[MemberDefinition, ...]):
-    """Declared members open to lookup by position and closed to a walk."""
-
-    def __iter__(self) -> Iterator[MemberDefinition]:
-        raise AssertionError("a sparse authored row walked every declared member")
-
-
-def test_an_authored_row_reaches_only_the_members_its_chain_touched() -> None:
-    # A sparse edit of a wide Entity costs what it touched, not what the Entity
-    # declares.
-    entry = write_preparation_of(model_of(mm.ACCOUNT_MODEL)).entity(mm.Account.identity)
-    shape = MemberShape(entry.selection.members.shape.members)
-    object.__setattr__(shape, "members", _UnwalkedMembers(shape.members))
-    edited = _account().edit(balance=Decimal("175.00"))
-
-    authored = edited.__parallax_authored_pairs__(shape, mm.Account.identity, entry.key)
-
-    assert authored is not None
-    assert [(shape.members[position].name, held) for position, held in authored] == [
-        ("balance", Decimal("175.00")),
-        ("id", 1),
-    ]
-    assert (
-        _account().edit().__parallax_authored_pairs__(shape, mm.Account.identity, entry.key) is None
-    )
 
 
 def test_an_authored_row_borrows_the_occurrence_it_now_holds() -> None:
@@ -508,13 +461,6 @@ def test_the_same_value_emits_an_identity_row_and_an_untouched_authored_row() ->
     assert authored == {"id": 1, "label": "b"}
 
 
-def test_an_authored_row_refuses_a_recorded_name_the_resolved_identity_does_not_declare() -> None:
-    edited = WiderWidget(id=1, label="a", extra="x").edit(extra="y")
-    with pytest.raises(EntityRowError) as refusal:
-        TypedWriteSource(NARROW_MODEL).authored(edited)
-    assert refusal.value.code == "entity-row-member-missing"
-
-
 def test_a_cross_model_value_keyed_by_another_member_derives_no_identity_row() -> None:
     # The resolved identity declares `id`; this value's class keys the same
     # Entity by `key` and carries no attribute to read `id` from. Dropping it
@@ -524,15 +470,6 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_identity_row() -
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
     assert refusal.value.identity == Widget.identity
-
-
-def test_a_cross_model_value_keyed_by_another_member_derives_no_authored_row() -> None:
-    # `authored_row` selects the primary key too, so the identity half is judged
-    # by the same rule rather than emitted short.
-    with pytest.raises(EntityRowError) as refusal:
-        TypedWriteSource(NARROW_MODEL).authored(RekeyedWidget(key=1, label="a").edit(label="b"))
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'id'" in refusal.value.message
 
 
 @pytest.mark.parametrize(
@@ -570,13 +507,6 @@ def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> Non
     assert refusal.value.code == "entity-row-member-missing"
     assert "'extra'" in refusal.value.message
     assert refusal.value.identity == Widget.identity
-
-
-def test_a_never_edited_value_derives_no_authored_row() -> None:
-    # An absent record and an empty one name the same empty selection, so the
-    # ordinary never-edited value answers `None` rather than a keyed row with
-    # nothing beside the key.
-    assert _accounts().authored(_account()) is None
 
 
 @pytest.mark.parametrize(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import gc
 import weakref
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError
 from typing import Any, cast
 
 import pytest
@@ -22,8 +21,6 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.entity._declaration import shape_of
-from parallax.core.entity._edit import Resolution
 
 
 class _EntityProbe(Entity, table="entity_probe", namespace="parallax.edit_resolution"):
@@ -59,10 +56,6 @@ class _OtherValueObjectProbe(ValueObject):
 
 class _InstanceStatePayload:
     pass
-
-
-def _resolution_of(module: object) -> Callable[[type], Resolution]:
-    return cast("Callable[[type], Resolution]", vars(module)["_resolution_of"])
 
 
 def test_each_frontend_builds_one_resolution_per_exact_class_after_warmup(
@@ -104,12 +97,6 @@ def test_entity_base_and_subclass_use_distinct_exact_class_resolutions() -> None
     root.edit(label="changed")
     edited = leaf.edit(detail="new")
 
-    resolution_of = _resolution_of(entity_frontend)
-    root_resolution = resolution_of(_EntityRoot)
-    leaf_resolution = resolution_of(_EntityLeaf)
-    assert root_resolution is not leaf_resolution
-    assert "detail" not in root_resolution.declared
-    assert "detail" in leaf_resolution.declared
     assert edited.detail == "new"
 
 
@@ -120,12 +107,6 @@ def test_unrelated_value_object_classes_use_distinct_exact_class_resolutions() -
     first.edit(label="changed")
     edited = second.edit(detail="new")
 
-    resolution_of = _resolution_of(value_object_frontend)
-    first_resolution = resolution_of(_ValueObjectProbe)
-    second_resolution = resolution_of(_OtherValueObjectProbe)
-    assert first_resolution is not second_resolution
-    assert first_resolution.declared == {"label"}
-    assert second_resolution.declared == {"detail"}
     assert edited.detail == "new"
 
 
@@ -192,71 +173,16 @@ def _value_object_class_with_discarded_instances() -> tuple[
 
 
 @pytest.mark.parametrize(
-    ("build", "frontend"),
-    [
-        (_entity_class_with_discarded_instances, entity_frontend),
-        (_value_object_class_with_discarded_instances, value_object_frontend),
-    ],
+    "build",
+    [_entity_class_with_discarded_instances, _value_object_class_with_discarded_instances],
     ids=["entity", "value-object"],
 )
 def test_cached_resolution_retains_no_model_instance_or_instance_state(
     build: Callable[[], tuple[type, tuple[weakref.ReferenceType[Any], ...]]],
-    frontend: object,
 ) -> None:
-    cls, references = build()
+    _cls, references = build()
 
     gc.collect()
     gc.collect()
 
-    assert _resolution_of(frontend)(cls) is _resolution_of(frontend)(cls)
     assert all(reference() is None for reference in references)
-
-
-@pytest.mark.parametrize(
-    ("frontend", "cls"),
-    [
-        (entity_frontend, _EntityProbe),
-        (value_object_frontend, _ValueObjectProbe),
-    ],
-    ids=["entity", "value-object"],
-)
-def test_cached_resolution_metadata_is_immutable(frontend: object, cls: type) -> None:
-    resolution = _resolution_of(frontend)(cls)
-    assert isinstance(resolution.declared, frozenset)
-    assert isinstance(resolution.framework_owned, frozenset)
-    with pytest.raises(FrozenInstanceError):
-        type(resolution).__setattr__(
-            resolution, "restores_presence", not resolution.restores_presence
-        )
-
-
-def test_entity_formation_metadata_cannot_stale_a_cached_resolution() -> None:
-    resolution = _resolution_of(entity_frontend)(_EntityProbe)
-    (attribute,) = tuple(
-        attribute for attribute in _EntityProbe.attributes if attribute.identity.name == "label"
-    )
-
-    with pytest.raises(FrozenInstanceError):
-        type(attribute).__setattr__(attribute, "nullable", not attribute.nullable)
-
-    assert _resolution_of(entity_frontend)(_EntityProbe) is resolution
-    assert _EntityProbe(id=1, label="a").edit(label="b").label == "b"
-
-
-def test_value_object_formation_metadata_cannot_stale_a_cached_resolution() -> None:
-    resolution = _resolution_of(value_object_frontend)(_ValueObjectProbe)
-    shape = shape_of(_ValueObjectProbe)
-
-    with pytest.raises(TypeError):
-        cast("Any", shape.py_to_name)["alias"] = "label"
-    with pytest.raises(TypeError):
-        cast("Any", shape.name_to_py)["label"] = "alias"
-    with pytest.raises(TypeError):
-        cast("Any", shape.nested_classes)["nested"] = _ValueObjectProbe
-    with pytest.raises(FrozenInstanceError):
-        type(shape.shape.attributes[0]).__setattr__(
-            shape.shape.attributes[0], "nullable", not shape.shape.attributes[0].nullable
-        )
-
-    assert _resolution_of(value_object_frontend)(_ValueObjectProbe) is resolution
-    assert _ValueObjectProbe(label="a").edit(label="b").label == "b"

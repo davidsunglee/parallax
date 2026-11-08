@@ -40,10 +40,7 @@ from parallax.core import (
 )
 from parallax.core.entity._declaration import (
     DeclarationKind,
-    EntityHeader,
-    build_class,
     declaration_of,
-    inherited_axes,
     is_declared_class,
     members_of,
     shape_of,
@@ -74,7 +71,6 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 from tests._support import frontend_probes, frontend_probes_stringized
-from tests.unit.core.entity._compact_support import published
 
 
 class Warehouse(
@@ -198,15 +194,6 @@ def test_a_many_relationship_is_spelled_as_a_tuple_annotation() -> None:
     assert declaration.cardinality is ONE_TO_MANY
 
 
-def test_framework_axes_travel_on_the_mro_marker() -> None:
-    assert inherited_axes((Entity,)) == ()
-    assert inherited_axes((TxTemporal,)) == (TemporalDimension.TRANSACTION_TIME,)
-    assert inherited_axes((Bitemporal,)) == (
-        TemporalDimension.VALID_TIME,
-        TemporalDimension.TRANSACTION_TIME,
-    )
-
-
 def test_a_temporal_shape_owner_receives_the_framework_members_in_canonical_order() -> None:
     class Reading(Bitemporal, table="reading"):
         id: Attr[int] = attr(primary_key=True)
@@ -293,41 +280,18 @@ def test_one_shape_key_is_minted_per_value_object_class_and_reused_by_occurrence
     assert shape_of(Tag).shape.key is Left.value_objects[0].shape.key
 
 
-def test_indices_that_are_not_a_tuple_of_index_values_are_refused() -> None:
+@pytest.mark.parametrize(
+    "declared", [index("warehouse_code", "code"), (object(),)], ids=["unwrapped", "entry"]
+)
+def test_indices_that_are_not_a_tuple_of_index_values_are_refused(declared: object) -> None:
     # Both halves of the same rejection: the header option is a tuple, and every
     # entry in it is one `index(...)` built.
-    for declared in ("warehouse_code", (object(),)):
-        with pytest.raises(EntityDefinitionError) as caught:
-            build_class(
-                type(Entity),
-                "Bad",
-                (Entity,),
-                {"__annotations__": {"id": Attr[int]}, "id": attr(primary_key=True)},
-                kind=DeclarationKind.ENTITY,
-                mint=None,
-                axes=(),
-                header=EntityHeader(table="bad", indices=declared),
-            )
-        assert caught.value.code == "entity-header-invalid-value"
+    with pytest.raises(EntityDefinitionError) as caught:
 
+        class Bad(Entity, table="bad", indices=declared):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
+            id: Attr[int] = attr(primary_key=True)
 
-def test_the_attribute_descriptor_reads_the_position_it_was_installed_with() -> None:
-    # Pydantic's instance ``__dict__`` shadows the descriptor on an ordinarily
-    # constructed value, so its instance branch answers only for a published one
-    # — and what it reads there is the tuple index the publication plan handed it.
-    warehouse = published(Warehouse, id=7, code="WH")
-    descriptor = vars(Warehouse)["id"]
-    assert descriptor.__get__(warehouse, Warehouse) == 7
-    assert warehouse.id == 7
-    assert Warehouse(id=7, code="WH").id == 7
-
-
-def test_the_element_descriptor_reads_the_position_it_was_installed_with() -> None:
-    tag = published(Tag, label="priority")
-    descriptor = vars(Tag)["label"]
-    assert descriptor.__get__(tag, Tag) == "priority"
-    assert tag.label == "priority"
-    assert Tag(label="priority").label == "priority"
+    assert caught.value.code == "entity-header-invalid-value"
 
 
 def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:
@@ -341,16 +305,10 @@ def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:
 
 def test_the_mint_token_is_the_only_way_to_declare_a_framework_root() -> None:
     with pytest.raises(EntityDefinitionError) as caught:
-        build_class(
-            type,
-            "Counterfeit",
-            (Entity,),
-            {},
-            kind=DeclarationKind.ENTITY,
-            mint=object(),
-            axes=(),
-            header=None,
-        )
+
+        class Counterfeit(Entity, _mint=object()):  # pyright: ignore[reportUnusedClass] - the counterfeit token is the rejection under test
+            pass
+
     assert caught.value.code == "entity-header-unknown-option"
 
 

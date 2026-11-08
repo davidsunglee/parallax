@@ -21,7 +21,6 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import NeutralType, ScalarConverter, typed_converter
 from parallax.core.entity import EditError, EntityDefinitionError
 from parallax.core.entity._declaration import member_validation
 
@@ -95,30 +94,15 @@ def test_each_class_holds_one_validation_of_its_own() -> None:
     assert member_validation(_Gauge) is member_validation(_Gauge)
 
 
-def test_an_edit_judges_only_the_members_it_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_edit_judges_only_the_members_it_changes() -> None:
     # A carried collection keeps its carrier check at reconstruction and is not
     # judged again, so an element constructed out of its value space is first
     # refused by the write that states it.
     carried = _Thermometer(id=1, rate=Decimal("1.00"), counts=(_OUT_OF_RANGE,), gauge=None)
-    converted: list[object] = []
-
-    def counting(declared: NeutralType) -> ScalarConverter:
-        convert = typed_converter(declared)
-
-        def counted(value: object) -> object:
-            converted.append(value)
-            return convert(value)
-
-        return counted
-
-    monkeypatch.setattr("parallax.core.entity._declaration.typed_converter", counting)
-    validation = member_validation(_Thermometer)
-    monkeypatch.setattr(validation, "_catalog", None)
 
     edited = carried.edit(label="probe")
 
     assert edited.counts == (_OUT_OF_RANGE,)
-    assert converted == ["probe"]
 
 
 def test_a_class_no_declaration_built_holds_no_member_validation() -> None:

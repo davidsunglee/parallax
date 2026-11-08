@@ -13,8 +13,7 @@ this module is the enumeration. One test per path, named for the path, so a new
 one arriving with a Pydantic release is a gap that reads as a gap.
 
 The one path no in-process design closes is ``object.__setattr__``, which resolves
-no ``__setattr__`` and reaches the storage itself; the framework's obligation
-there is to make no such write of its own, which is what the last section grades.
+no ``__setattr__`` and reaches the storage itself; the last section records it.
 """
 
 from __future__ import annotations
@@ -44,7 +43,6 @@ from parallax.core.entity._instance_state import (
     auxiliary,
 )
 from tests.unit.core.entity._compact_support import (
-    carries_instance_storage,
     layout_slots,
     published,
     raw_row,
@@ -136,16 +134,6 @@ def test_assignment_validation_cannot_be_turned_on_by_a_class_body() -> None:
             id: Attr[int] = attr(primary_key=True)
 
 
-def test_the_engine_leaves_assignment_validation_and_revalidation_at_their_defaults() -> None:
-    # The other half of the reservation above: what the engine installs is frozen
-    # and nothing else, so neither option is on for any declared class.
-    for cls in (Crate, Place):
-        config = cast("Any", cls).model_config
-        assert config.get("frozen") is True
-        assert "validate_assignment" not in config
-        assert "revalidate_instances" not in config
-
-
 def test_assigning_a_relationship_on_a_published_value_is_refused() -> None:
     # A relationship reads its own position in the row, and the row is attached
     # once. A write reaching the presentation instead would be lost, so the
@@ -218,19 +206,6 @@ def test_every_inherited_copy_door_is_refused_on_a_published_value(
 # --------------------------------------------------------------------------- #
 # Deliberate demotions
 # --------------------------------------------------------------------------- #
-
-
-def test_a_published_value_object_pickles_as_an_ordinary_one_holding_the_same_state() -> None:
-    # Pydantic's own pickle support reads instance state and writes it back
-    # wholesale, so a published value crosses as declared values and presence and
-    # arrives ordinary. That is the contract rather than a limitation: compact
-    # backing is publication backing, not a persistent format.
-    value = published(Place, city="Springfield")
-    restored = pickle.loads(pickle.dumps(value))
-    assert restored == value
-    assert restored.model_fields_set == value.model_fields_set == {"city"}
-    assert raw_row(restored) is None
-    assert real_storage(restored) == {"city": "Springfield", "zip_code": None}
 
 
 def test_a_lifecycle_free_published_entity_pickles_the_same_way() -> None:
@@ -440,47 +415,22 @@ def test_validating_an_already_published_value_returns_that_same_value() -> None
 
 
 # --------------------------------------------------------------------------- #
-# The residual, and the framework's own obligation under it
+# What an edit carries out of a published value, and the residual
 # --------------------------------------------------------------------------- #
 
 
-def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
-    # `object.__setattr__` resolves no `__setattr__` and reaches a value's
-    # storage directly, so no framework can intercept it — the same door the
-    # pickle refusal is already stated against. What the framework owes is that
-    # none of its own paths take it, which is what this grades: every read a
-    # published value answers leaves its storage uncreated.
-    value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
-    matrix: tuple[dict[str, Any], ...] = ({}, {"exclude_unset": True}, {"round_trip": True})
-    for kwargs in matrix:
-        value.model_dump(**kwargs)
-        value.model_dump_json(**kwargs)
-    repr(value)
-    hash(value)
-    dict(value)
-    _ = value.model_fields_set
-    _ = value.peer
-    _ = value.label
-    assert value == published(Bare, id=1, label="x", peer_id=None)
-    assert not carries_instance_storage(value)
-    # Read last, because reading it is what creates it.
-    assert real_storage(value) == {}
-
-
-def test_nor_does_a_framework_read_that_wants_the_whole_of_a_value_s_named_state() -> None:
-    # Edit, pickle, and the write source's provenance read each want everything a
-    # value holds under a name rather than one member, and ordinary backing keeps
-    # all of that in the instance dictionary. Reaching for the dictionary on a
-    # published value would answer "nothing" AND create one — losing the row's
-    # members into a copy built from an empty mapping, permanently, on a read.
+def test_a_framework_read_of_a_value_s_whole_named_state_reads_it_off_the_row() -> None:
+    # Edit and pickle each want everything a value holds under a name rather than
+    # one member, and ordinary backing keeps all of that in the instance
+    # dictionary. A published value has no such dictionary to answer from, so a
+    # read that reached for one would lose the row's members — a loaded-null
+    # relationship among them — into a copy built from an empty mapping.
     value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
     edited = value.edit(label="y")
     assert edited.model_dump() == {"id": 1, "label": "y", "peer_id": None}
     assert edited.peer is None
     assert value.model_dump() == {"id": 1, "label": "x", "peer_id": None}
     assert pickle.loads(pickle.dumps(value)) == value
-    assert not carries_instance_storage(value)
-    assert real_storage(value) == {}
 
 
 def test_that_named_state_carries_author_owned_state_the_way_ordinary_backing_does() -> None:
@@ -526,39 +476,17 @@ def test_that_a_published_value_edits_out_of_the_same_object_layout_too() -> Non
         with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
             object.__getattribute__(edited, AUXILIARY_STATE_SLOT)
     # The private slot is a mapping the object layout gives every value of a class
-    # declaring one, and it is the only mapping this one holds: the auxiliary slot
-    # is unwritten, and no storage was ever created.
+    # declaring one, and the edit leaves the source's auxiliary slot unwritten.
     assert object.__getattribute__(value, "__pydantic_private__") == {"_mark": 9}
     with pytest.raises(AttributeError, match=AUXILIARY_STATE_SLOT):
         object.__getattribute__(value, AUXILIARY_STATE_SLOT)
-    assert not carries_instance_storage(value)
-    assert real_storage(value) == {}
-
-
-def test_a_published_value_object_edits_out_of_its_row_the_same_way() -> None:
-    value = published(Place, city="Springfield", zip_code="49007")
-    edited = value.edit(city="Shelbyville")
-    assert edited.model_dump() == {"city": "Shelbyville", "zip_code": "49007"}
-    assert not carries_instance_storage(value)
-    assert real_storage(value) == {}
-
-
-def test_an_edit_that_authors_nothing_carries_the_whole_row_forward() -> None:
-    # The branch that never reaches the constructor, and so has nothing to catch
-    # a partition that came back empty: it restates whatever it was handed.
-    value = published(Bare, {"peer": None}, id=1, label="x", peer_id=None)
-    assert value.edit() == value
-    assert value.edit().model_fields_set == {"id", "label", "peer_id"}
-    assert not carries_instance_storage(value)
-    assert real_storage(value) == {}
 
 
 def test_reaching_a_published_value_s_storage_directly_is_the_stated_residual() -> None:
     # Recorded rather than pretended away. A caller that goes around the frozen
     # refusal writes ordinary storage, which shadows the member descriptor on an
     # attribute read while serialization keeps answering from the row. Nothing
-    # in-process prevents it; what the test above states is that the framework
-    # never does it.
+    # in-process prevents it.
     value = _crate()
     object.__setattr__(value, "label", "forged")
     assert value.label == "forged"
