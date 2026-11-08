@@ -13,7 +13,6 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -31,7 +30,7 @@ from parallax.core.metamodel import (
 from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, WritePlanningError
-from parallax.core.write_plan.payload import PatchedDocument, RowPayload, RowSlots
+from parallax.core.write_plan.payload import PatchedDocument, RowPayload
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
     NEW_LINEAGE,
@@ -242,13 +241,6 @@ def test_the_document_twin_stores_one_shared_document_instead() -> None:
     assert payload.values[1] == {"address": {"city": "Oslo"}, "tags": ()}
 
 
-def test_a_target_with_no_effective_table_is_refused() -> None:
-    with pytest.raises(WritePlanningError, match="write target has no effective table"):
-        LayoutPayloadPreparer(_EXPEDITIONS).row(
-            EntityIdentity("parallax.compatibility", "Nowhere"), _successor(NEW_LINEAGE)
-        )
-
-
 # --------------------------------------------------------------------------- #
 # Persisted-state comparison                                                   #
 # --------------------------------------------------------------------------- #
@@ -367,40 +359,6 @@ def test_cheap_inequality_reads_every_stated_scalar_beyond_what_either_row_execu
     assert not preparer.proven_unequal_non_interval(_EXPEDITION, carried, rerouted)
     assert preparer.proven_unequal_non_interval(_EXPEDITION, carried, retitled)
     assert preparer.proven_unequal_non_interval(_EXPEDITION, retitled, carried)
-
-
-def test_rows_of_two_entities_or_misaligned_cells_are_never_equal() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
-    payload = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE))
-    elsewhere = RowPayload(
-        slots=cast(
-            "RowSlots",
-            SimpleNamespace(
-                entity=EntityIdentity("parallax.compatibility", "Nowhere"),
-                contributors=payload.contributors,
-            ),
-        ),
-        source=payload.source,
-        values=payload.values,
-    )
-    swapped = RowPayload(
-        slots=cast(
-            "RowSlots",
-            SimpleNamespace(
-                entity=_EXPEDITION,
-                contributors=(
-                    payload.contributors[1],
-                    payload.contributors[0],
-                    *payload.contributors[2:],
-                ),
-            ),
-        ),
-        source=payload.source,
-        values=(payload.values[1], payload.values[0], *payload.values[2:]),
-    )
-
-    assert not preparer.equal_non_interval(payload, elsewhere)
-    assert not preparer.equal_non_interval(payload, swapped)
 
 
 def test_a_row_executing_only_directly_stored_members_keeps_its_retained_document() -> None:

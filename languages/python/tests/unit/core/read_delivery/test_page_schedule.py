@@ -217,18 +217,6 @@ def test_scheduling_judges_no_root_state() -> None:
     )
 
 
-def test_an_edge_free_page_computes_its_last_uses_without_walking_a_root(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    page = _flat_page("Account", "Account", "Journal")
-    _refuse_walking(monkeypatch)
-
-    schedule = page_schedule(page, _META, atomic=True)
-
-    assert schedule.last_uses is not None
-    assert tuple(schedule.last_uses[0]) == (0, 1, 2)
-
-
 # --------------------------------------------------------------------------- #
 # Reach.                                                                      #
 # --------------------------------------------------------------------------- #

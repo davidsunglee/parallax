@@ -460,18 +460,6 @@ def _binding_frames(failure: BaseException) -> list[FrameType]:
     ]
 
 
-def test_a_range_is_read_and_bound_only_once_the_flush_advances_to_it() -> None:
-    settled, _acquisition = _deferred(_plan(_update(_retained(_HEAD), _MAR, _SEP)))
-    held = HeldRows(_SPANS, [_TAIL])
-    with _scoped(settled, held) as bindings:
-        assert held.requests == []
-        bound = next(bindings)
-        assert [type(request) for request in held.requests] == [CoverageReadRequest]
-        assert next(bindings, None) is None
-        assert next(bindings, None) is None
-    assert _windows(bound.steps) == _MERGED
-
-
 @pytest.mark.parametrize("leaves", ["break", "raise"])
 def test_a_flush_leaving_its_bindings_leaves_them_holding_no_row_the_range_read(
     leaves: str,

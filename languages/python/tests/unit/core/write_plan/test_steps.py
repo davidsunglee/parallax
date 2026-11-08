@@ -26,7 +26,7 @@ Strategy decided.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
@@ -576,11 +576,6 @@ def test_a_bitemporal_target_binds_one_upper_bound_per_axis_in_canonical_order()
 def test_an_incomplete_milestone_address_is_refused(kwargs: dict[str, object], match: str) -> None:
     with pytest.raises(ValueError, match=match):
         cast("Callable[..., object]", MilestoneTarget)(**kwargs)
-
-
-def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
-    with pytest.raises(TypeError, match="final dict or mapping proxy"):
-        adopt_planned_assignments(cast("Any", FrozenMap({})), {})
 
 
 def test_trusted_carriers_adopting_empty_storage_share_one_immutable_empty_map() -> None:

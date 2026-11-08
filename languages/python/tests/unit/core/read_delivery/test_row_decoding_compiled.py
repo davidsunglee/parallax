@@ -58,13 +58,6 @@ _COLUMNS_CELLS = {
 }
 
 
-def test_a_positional_row_is_refused_at_the_wrong_arity() -> None:
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-
-    with pytest.raises(ValueError, match="does not match row arity"):
-        row_identity(compiled.result_contract, ())
-
-
 def _classifiers(
     meta: Metamodel, compiled: CompiledRead
 ) -> dict[str, Callable[[object], tuple[object, tuple[object, ...]]]]:

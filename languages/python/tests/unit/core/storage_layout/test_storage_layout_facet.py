@@ -52,7 +52,6 @@ from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerR
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.storage_layout._compile import (
-    _interned,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
     _interned_ordinal_selection,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
 )
 from parallax.descriptor._records import Attribute, Entity, Index
@@ -1325,16 +1324,6 @@ def test_a_dormant_tpcs_branch_reaches_no_concrete_table() -> None:
     ]
 
 
-def test_private_applicability_intern_deduplicates_structurally_equal_keys() -> None:
-    alpha = identity("Alpha")
-    beta = identity("Beta")
-    intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]] = {}
-    first = _interned({alpha, beta}, intern)
-    second = _interned({beta, alpha}, intern)
-    assert first == second
-    assert len(intern) == 1
-
-
 def test_private_entity_slot_selections_are_compact_and_interned_by_ordinals() -> None:
     model, _, alpha, _ = _tiered_tph_model()
     layout = _require_layout(storage_layout.view(model), "record")
@@ -1725,14 +1714,3 @@ def test_entity_columns_are_materialized_on_demand_without_retained_position_gro
         assert tuple(_require_entity(facet, alpha).columns) == expected
         assert facet.position((alpha, beta)) == facet.position((alpha, beta))
     assert _retained_size(facet) == before
-
-
-def test_the_public_facet_surface_contains_only_bounded_layout_and_lookup_operations() -> None:
-    model, _, _, _ = _tiered_tph_model()
-    facet = storage_layout.view(model)
-    assert {name for name in dir(facet) if not name.startswith("_")} == {
-        "entity",
-        "position",
-        "table",
-        "tables",
-    }

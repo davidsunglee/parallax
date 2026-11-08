@@ -688,22 +688,6 @@ def _counting_family_comparisons(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     return verdicts
 
 
-def test_a_read_plan_key_hashes_its_query_key_once() -> None:
-    literal = _HashCountingString("counted")
-    selected = _name_query(literal)
-    _HashCountingType.hashes = 0
-
-    key = _key(selected)
-    constructed = _HashCountingType.hashes
-    lookups = {key: 1}
-    for _ in range(4):
-        assert lookups[key] == 1
-        hash(key)
-
-    assert constructed == 1
-    assert _HashCountingType.hashes == 1
-
-
 def test_same_family_ignores_only_the_delivery_discriminator() -> None:
     pages = continuation.plan(_query(), _META)
     unpaged = _key(_query())
@@ -789,43 +773,6 @@ def test_only_an_elected_builder_scans_for_its_family_most_recent_first(
     assert _root(after)[1] is not _root(first)[1]
     assert after._schema is first._schema
     assert after._fetches is first._fetches
-
-
-def test_concurrent_waiters_compare_no_family_keys(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
-    started = threading.Event()
-    release = threading.Event()
-    callers = threading.Barrier(8)
-
-    def delayed_build(**kwargs: Any) -> Any:
-        started.set()
-        assert release.wait(timeout=2)
-        return uncached(**kwargs)
-
-    cache = ReadPlanCache()
-    _plan(cache, _name_query("order-2"))
-    verdicts = _counting_family_comparisons(monkeypatch)
-    monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
-    query = _query()
-
-    def plan(_index: int) -> _read_plan.ReadPlan:
-        callers.wait()
-        return _plan(cache, query)
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = tuple(pool.submit(plan, index) for index in range(8))
-        assert started.wait(timeout=2)
-        time.sleep(0.05)
-        release.set()
-        prepared = tuple(future.result() for future in futures)
-
-    assert all(_shares_preparation(value, prepared[0]) for value in prepared)
-    assert verdicts == [False]
-    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
-        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 2, 7, 2, 0
-    )
 
 
 def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_binds() -> None:

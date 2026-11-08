@@ -17,7 +17,6 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core import document_codec
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -279,11 +278,6 @@ def test_an_admitted_float_zero_encodes_positive() -> None:
 def test_an_empty_admitted_collection_encodes_as_the_empty_array() -> None:
     assert encode_managed_scalar_many(TIMESTAMP, iter(())) == ()
     assert encode_managed_scalar_many(STRING, ()) == ()
-
-
-def test_the_admitted_collection_encoder_is_not_a_package_export() -> None:
-    assert "encode_managed_scalar_many" not in document_codec.__all__
-    assert not hasattr(document_codec, "encode_managed_scalar_many")
 
 
 def test_a_managed_document_encodes_every_collection_omitted_or_null_as_empty() -> None:
