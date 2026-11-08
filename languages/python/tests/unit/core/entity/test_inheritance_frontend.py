@@ -3,11 +3,12 @@ compose into the declared family position, and where each family rule fires.
 
 The corpus no-drift proof lives in ``test_descriptor_no_drift.py``, which
 compares the accepted Metamodel a class family forms against the one its corpus
-model forms. What is pinned here is the frontend's own half: that the parent and
-the role variant derive from the class hierarchy, that a temporal base selects
-the family's axes on the root alone, and that a family-semantic violation which
-stays *spellable* reaches ``DomainModel`` construction as the shared
-formation-time ``inheritance-*`` issue rather than through a Python-only rule.
+model forms: the parent and the role variant the class hierarchy derives, and the
+axes a temporal base selects on the root alone. What is pinned here is the
+frontend's own half: what the grammar refuses at class creation, that a
+family-semantic violation which stays *spellable* reaches ``DomainModel``
+construction as the shared formation-time ``inheritance-*`` issue rather than
+through a Python-only rule, and what a descendant inherits as a Pydantic field.
 """
 
 from __future__ import annotations
@@ -51,17 +52,7 @@ from parallax.core.inheritance._rules import (
     TPCS_ABSTRACT_TABLE_FORBIDDEN,
     TPH_DESCENDANT_TABLE_FORBIDDEN,
 )
-from parallax.core.metamodel import (
-    AbstractSubtype,
-    Column,
-    EntityIdentity,
-    EntityLocation,
-    ExactEntityReference,
-    PersistenceMode,
-    Table,
-    TemporalDimension,
-)
-from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
+from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
 from parallax.core.model_formation import MetamodelValidationError
 from tests._support import inheritance_models as im
 
@@ -74,54 +65,6 @@ def _identity(name: str) -> EntityIdentity:
 
 def _issue_codes(error: MetamodelValidationError) -> list[str]:
     return [issue.code for issue in error.issues]
-
-
-# --------------------------------------------------------------------------- #
-# The declared family position: the variant is the role, and Python            #
-# subclassing supplies the parent.                                             #
-# --------------------------------------------------------------------------- #
-def test_tph_root_owns_the_shared_table_and_the_tag_column() -> None:
-    assert im.Payment.container == Table("payment")
-    assert im.Payment.inheritance == AbstractRoot(TablePerHierarchy(tag_column="kind"))
-
-
-def test_a_tph_concrete_subtype_is_tableless_and_carries_its_tag_value() -> None:
-    assert im.CardPayment.container is None
-    assert im.CardPayment.inheritance == AcceptedConcreteSubtype(
-        ExactEntityReference(_identity("Payment")), "card"
-    )
-
-
-def test_a_tpcs_abstract_subtype_is_tableless_and_concretes_own_their_table() -> None:
-    assert im.FinancialDocument.container is None
-    assert im.FinancialDocument.inheritance == AbstractSubtype(
-        ExactEntityReference(_identity("Document"))
-    )
-    assert im.Invoice.container == Table("invoice")
-    assert im.Invoice.inheritance == AcceptedConcreteSubtype(
-        ExactEntityReference(_identity("FinancialDocument")), None
-    )
-
-
-def test_a_temporal_base_on_a_family_root_supplies_the_axes_on_the_root_alone() -> None:
-    # The root ALONE selects the temporal shape (the binding root-ownership
-    # decision): its declaration carries both axes in canonical order plus the
-    # reserved interval attributes, while a concrete subtype declares none of
-    # its own — its family-effective temporality resolves through the root.
-    assert [axis.dimension for axis in im.Rate.as_of_axes] == [
-        TemporalDimension.VALID_TIME,
-        TemporalDimension.TRANSACTION_TIME,
-    ]
-    assert [attribute.identity.name for attribute in im.Rate.attributes] == [
-        "id",
-        "amount",
-        "validStart",
-        "validEnd",
-        "txStart",
-        "txEnd",
-    ]
-    assert im.Rate.attributes[-1].storage == Column("out_z")
-    assert im.DepositRate.as_of_axes == ()
 
 
 # --------------------------------------------------------------------------- #

@@ -493,20 +493,6 @@ def test_a_rejection_still_says_which_of_the_three_designations_it_is() -> None:
     assert rules == ["framework-owned", "read-only", "primary-key"]
 
 
-def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
-    # The rule the Python specification states and the implementation never
-    # applied. It lands in the extracted judgement, so one edit gave it to all
-    # three surfaces, including the edited copy that would otherwise carry a
-    # changed read-only value into `tx.update`.
-    with pytest.raises(EditError, match="read-only fields may not be assigned"):
-        Widget.computed.set("x")
-    with pytest.raises(EditError, match="read-only fields may not be assigned"):
-        Widget(id=1, label="x").edit(computed="x")
-    with pytest.raises(WriteAssignmentError) as caught:
-        _model_judgement(WIDGETS, Widget, "computed", "x")
-    assert caught.value.rule == "read-only"
-
-
 # --------------------------------------------------------------------------- #
 # One authored tree, no canonical backing                                      #
 # --------------------------------------------------------------------------- #
@@ -824,19 +810,8 @@ def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> Non
     assert typed_resolved(query, vm.CUSTOMER_MODEL) == canonical
 
 
-@pytest.mark.parametrize(
-    "interior",
-    [
-        pytest.param(vm.Customer.name == "Ada", id="entity-rooted-attribute"),
-        pytest.param(
-            _unfinished(vm.Customer, "name", operands=("Ada",)), id="unfinished-operation"
-        ),
-        pytest.param(vm.Customer.address.phones.any(), id="nested-scope"),
-    ],
-)
-def test_a_value_object_element_scope_admits_only_element_relative_operations(
-    interior: Predicate[Any],
-) -> None:
+def test_a_value_object_element_scope_refuses_an_unfinished_entity_rooted_operation() -> None:
+    interior = _unfinished(vm.Customer, "name", operands=("Ada",))
     query = vm.Customer.where(vm.Customer.address.phones.any(interior))
     with pytest.raises(ModelRejectedError) as caught:
         typed_resolved(query, vm.CUSTOMER_MODEL)

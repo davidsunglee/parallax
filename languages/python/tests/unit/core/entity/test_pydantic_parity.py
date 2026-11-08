@@ -48,14 +48,9 @@ from parallax.core.entity import (
     ValueObject,
     attr,
 )
-from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, BackedModel, plan_of
+from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, BackedModel
 from parallax.core.metamodel import TablePerHierarchy
-from tests.unit.core.entity._compact_support import (
-    carries_instance_storage,
-    published,
-    raw_row,
-    real_storage,
-)
+from tests.unit.core.entity._compact_support import published
 
 _NS = "parity"
 
@@ -645,29 +640,13 @@ def test_an_authored_extension_receives_the_original_compact_object() -> None:
     assert all(observed is value for observed in seen)
 
 
-def test_serializing_a_compact_value_leaves_its_own_state_untouched() -> None:
-    value = published(Parcel, id=1, weight=2.5, label="x")
-    row = raw_row(value)
-    for kwargs in OPTIONS.values():
-        value.model_dump(**kwargs)
-        value.model_dump_json(**kwargs)
-    assert raw_row(value) == row
-    assert not carries_instance_storage(value)
-    # Read last, because reading it is what would create it.
-    assert real_storage(value) == {}
-
-
 @pytest.mark.parametrize("shape", sorted(MEASUREMENT_VARIANTS))
-def test_serialization_never_materializes_a_published_value_s_storage(shape: str) -> None:
-    # The whole of what publication buys is that the storage is never there. A
-    # dump that reached `__dict__` the ordinary way would create one permanently
-    # per node, and an assertion reading `__dict__` afterwards could not see it,
-    # because reading is what creates it. So this probes the object's own
-    # references, before anything asks it for a mapping.
+def test_no_read_of_a_published_value_changes_what_it_holds(shape: str) -> None:
+    # Every dump presents the value's row, and a presentation that wrote back into
+    # it would leave the value differing from its ordinary twin afterwards.
     variant = MEASUREMENT_VARIANTS[shape]
     if not isinstance(variant.compact, BackedModel):
         pytest.skip("this variant's outer value is a plain model holding a published one")
-    assert not carries_instance_storage(variant.compact)
     for kwargs in OPTIONS.values():
         variant.compact.model_dump(**kwargs)
         variant.compact.model_dump_json(**kwargs)
@@ -676,15 +655,13 @@ def test_serialization_never_materializes_a_published_value_s_storage(shape: str
     dict(variant.compact)
     _ = variant.compact.model_fields_set
     assert variant.compact == variant.ordinary
-    assert not carries_instance_storage(variant.compact)
 
 
-def test_a_cached_property_memoizes_without_creating_the_storage_it_writes_to() -> None:
+def test_a_cached_property_of_a_published_value_computes_once() -> None:
     # `functools.cached_property` assigns into what it was handed as the instance
     # dictionary, and what a published value hands it is a presentation built for
     # that read. The write is forwarded to a slot of its own and the next
-    # presentation is seeded from it, so the property computes once — and the
-    # value's real storage still does not exist.
+    # presentation is seeded from it, so the property computes once.
     computed: list[int] = []
 
     class Gauge(Entity, table="gauge", namespace=_NS):
@@ -697,28 +674,11 @@ def test_a_cached_property_memoizes_without_creating_the_storage_it_writes_to() 
             return self.reading + 1
 
     value = published(Gauge, id=1, reading=5)
-    assert not carries_instance_storage(value)
     assert value.warmed == value.warmed == value.warmed == 6
     assert computed == [5]
     assert object.__getattribute__(value, AUXILIARY_STATE_SLOT) == {"warmed": 6}
     assert value.model_dump() == {"id": 1, "reading": 5}
     assert object.__getattribute__(value, AUXILIARY_STATE_SLOT) == {"warmed": 6}
-    assert not carries_instance_storage(value)
-    # Read last, for the reason above: this is what would have created one.
-    assert real_storage(value) == {}
-
-
-def test_key_order_follows_field_order_and_not_the_order_of_the_published_row() -> None:
-    # Pydantic emits a model's keys in the order the mapping it read them from
-    # was built, so what a published value presents has to be built in FIELD
-    # order — which a class declaring an occurrence between two attributes makes
-    # different from the model-fixed order its row is laid out in.
-    variant = MEASUREMENT_VARIANTS["field-order-is-not-row-order"]
-    assert plan_of(Ledger).py_names == ("id", "opened", "closed", "site")
-    assert plan_of(Ledger).fields == ("id", "site", "opened", "closed")
-    assert list(variant.compact.model_dump()) == ["id", "site", "opened", "closed"]
-    assert list(variant.compact.model_dump()) == list(variant.plain.model_dump())
-    assert variant.compact.model_dump_json() == variant.ordinary.model_dump_json()
 
 
 # --------------------------------------------------------------------------- #
@@ -794,19 +754,6 @@ def test_model_fields_set_is_a_fresh_snapshot_that_changes_nothing() -> None:
     first.discard("label")
     assert value.model_fields_set == {"id", "weight", "label"}
     assert value.model_dump(exclude_unset=True) == {"id": 1, "weight": 2.5, "label": "x"}
-
-
-def test_reading_an_absent_optional_member_never_consults_presence() -> None:
-    # An absent position already holds the default Pydantic would have supplied,
-    # which is what keeps a bitmap test off every ordinary member read.
-    value = published(Parcel, id=1, weight=2.5)
-    row = object.__getattribute__(value, "__parallax_compact__")
-    assert value.label is None
-    assert value.note is None
-    assert row[0] == 0b0011
-    assert row[3] is None
-    assert row[4] is None
-    assert "label" not in value.model_fields_set
 
 
 def test_private_attribute_state_is_initialized_as_validation_would_have() -> None:

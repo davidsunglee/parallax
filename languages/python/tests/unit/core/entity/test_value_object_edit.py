@@ -261,12 +261,17 @@ def test_the_unreachable_codes_are_refused_where_the_designation_would_be_declar
     # cannot declare a key, a read-only mark, or a relationship in the first
     # place, and framework ownership is derived from an Entity's version Attribute
     # and As-Of Axes, which a Value Object has neither of.
-    with pytest.raises(EntityDefinitionError) as designated:
+    with pytest.raises(EntityDefinitionError) as keyed:
 
         class _Keyed(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
-            id: Attr[int] = attr(primary_key=True, read_only=True)
+            id: Attr[int] = attr(primary_key=True)
 
-    assert designated.value.code == "entity-option-context-invalid"
+    with pytest.raises(EntityDefinitionError) as read_only:
+
+        class _ReadOnly(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
+            id: Attr[int] = attr(read_only=True)
+
+    assert keyed.value.code == read_only.value.code == "entity-option-context-invalid"
     with pytest.raises(EntityDefinitionError) as related:
 
         class _Related(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds

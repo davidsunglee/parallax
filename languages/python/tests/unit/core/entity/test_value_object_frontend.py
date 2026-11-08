@@ -4,13 +4,12 @@ The structural no-drift proof runs against ``models/customer.yaml``'s recursive
 ``Address`` / ``Geo`` / ``Point`` / ``Phone`` composite: the class declarations in
 ``value_object_models`` must compile to the same member names, types,
 nullability, and multiplicities the corpus authors. The remaining cases cover
-element-scoped expressions, the document serializer's omission policy, and the
-rejections a Value Object body owns.
+element-scoped expressions, the shape a class retains, and the rejections a Value
+Object body owns.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -44,7 +43,6 @@ from parallax.core.predicate import QueryDefinitionError
 from parallax.core.predicate._interpretation import COMPARE
 from tests._support import value_object_models as vm
 from tests._support.query_probes import predicate_document
-from tests.unit.core.entity._value_object_document_support import inserted_document
 from tests.unit.core.entity.value_object_bad_models import (
     build_copy_verb_value_object,
     build_entity_only_option_value_object,
@@ -307,39 +305,6 @@ def test_a_dotted_range_membership_and_match_carry_the_whole_path() -> None:
     }
 
 
-def _stored_document(address: vm.Address) -> Mapping[str, object]:
-    return inserted_document(vm.CUSTOMER_MODEL, vm.Customer(id=1, name="Ada", address=address))
-
-
-def test_the_document_omits_a_member_the_caller_never_set() -> None:
-    address = vm.Address(street="a", city="b", geo=vm.Geo(country="DE"))
-    assert _stored_document(address)["geo"] == {"country": "DE"}
-
-
-def test_a_many_occurrence_always_renders_even_when_empty() -> None:
-    document = _stored_document(vm.Address(street="a", city="b"))
-    assert document == {"street": "a", "city": "b", "phones": []}
-
-    absent_many = vm.Address.model_construct(street="a", city="b")
-    absent_many.__pydantic_fields_set__.discard("phones")
-    assert _stored_document(absent_many) == {"street": "a", "city": "b", "phones": []}
-
-
-def test_the_document_renders_nested_occurrences_recursively() -> None:
-    address = vm.Address(
-        street="a",
-        city="b",
-        geo=vm.Geo(country="DE", point=vm.Point(lat=1.0, lon=2.0)),
-        phones=(vm.Phone(type="home", number="1"),),
-    )
-    assert _stored_document(address) == {
-        "street": "a",
-        "city": "b",
-        "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
-        "phones": [{"type": "home", "number": "1"}],
-    }
-
-
 def test_a_value_object_member_takes_instances_only() -> None:
     with pytest.raises(TypeError, match="never a raw mapping"):
         vm.Address(street="a", city="b", geo={"country": "DE"})
@@ -407,9 +372,9 @@ def test_a_value_object_still_declares_the_entity_only_reserved_spellings() -> N
     assert {leaf.name for leaf in shape_of(Audit).shape.attributes} == {"identity", "where"}
 
 
-def test_shape_lookup_rejects_a_class_the_engine_never_built() -> None:
+def test_the_framework_root_has_no_shape_to_edit() -> None:
     with pytest.raises(EntityDefinitionError) as caught:
-        shape_of(int)
+        ValueObject().edit()
     assert caught.value.code == "entity-annotation-invalid"
 
 

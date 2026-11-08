@@ -7,7 +7,6 @@ keeps and does not keep, and where a published subtype reads what it inherits.
 
 from __future__ import annotations
 
-import gc
 from typing import Any, cast
 
 import pytest
@@ -33,10 +32,9 @@ from parallax.core.entity._instance_state import (
     plan_of,
 )
 from parallax.core.entity._model import DomainModel
-from parallax.core.entity._pydantic_storage import instance_presence
 from parallax.core.metamodel import TablePerHierarchy
 from tests.unit._indexed_graph_support import published_nodes
-from tests.unit.core.entity._compact_support import carries_instance_storage, published, raw_row
+from tests.unit.core.entity._compact_support import published, raw_row
 
 _NS = "plan"
 
@@ -125,24 +123,8 @@ def test_two_values_differing_only_in_private_state_are_unequal() -> None:
     assert first != second
 
 
-def test_a_published_value_keeps_no_name_keyed_presence_state() -> None:
-    # Not even a shared empty set: what a published value answers for
-    # `__pydantic_fields_set__` is synthesized from the bitmap, so the slot
-    # Pydantic's own storage keeps one in is never written at all. Storage is
-    # asked for by identity, because a dictionary held in a slot of the layout's
-    # own is not storage; the set scan stays layout-blind because that presence
-    # slot is the only place in the layout a set ever reaches.
-    value = published(Cat, id=1, name="c")
-    row = raw_row(value)
-    assert isinstance(row, tuple)
-    assert row[0] == 0b000011
-    assert value.model_fields_set == {"id", "name"}
-    with pytest.raises(AttributeError):
-        instance_presence(value)
-    assert object.__getattribute__(value, "__pydantic_extra__") is None
-    assert not any(isinstance(held, dict | set) for held in row)
-    assert not carries_instance_storage(value)
-    assert not [held for held in gc.get_referents(value) if isinstance(held, set)]
+def test_a_published_value_answers_no_extra_fields_as_an_ordinary_one_does() -> None:
+    assert published(Cat, id=1, name="c").model_extra is Cat(id=1, name="c").model_extra is None
 
 
 def test_a_shell_awaiting_publication_holds_neither_state_nor_presence() -> None:

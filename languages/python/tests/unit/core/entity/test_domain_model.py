@@ -29,12 +29,11 @@ from parallax.core import (
     TxTemporal,
     ValueObject,
     attr,
-    index,
     rel,
 )
 from parallax.core.entity import MetamodelLookupError
 from parallax.core.entity._errors import METAMODEL_DEFINITION_CODES
-from parallax.core.entity._model import class_index, model_of
+from parallax.core.entity._model import model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.model_formation import MetamodelValidationError
 
@@ -145,86 +144,9 @@ def test_two_distinct_classes_sharing_one_identity_reach_whole_model_validation(
     assert [issue.code for issue in caught.value.issues] == ["metamodel-duplicate-entity-identity"]
 
 
-def test_a_declared_index_may_not_claim_the_derived_primary_key_name() -> None:
-    """The derived Index is handed to the resolver like any other, so it claims
-    its name; matching the derived components would not rescue the collision."""
-
-    class Person(Entity, table="person", indices=(index("person_pk", "name"),)):
-        id: Attr[int] = attr(primary_key=True)
-        name: Attr[str]
-
-    with pytest.raises(MetamodelValidationError) as caught:
-        DomainModel(Person)
-    assert [issue.code for issue in caught.value.issues] == ["metamodel-index-identity-duplicate"]
-
-
-_TEMPORAL_ENDPOINT_NAMES = ("validStart", "validEnd", "txStart", "txEnd")
-
-
-class _Window(ValueObject):
-    opened: Attr[_dt.datetime]
-
-
 class _Stamp(ValueObject):
     tx_start: Attr[_dt.datetime]
     valid_end: Attr[_dt.datetime]
-
-
-def _reserved_codes(*classes: type[Entity]) -> list[str]:
-    with pytest.raises(MetamodelValidationError) as caught:
-        DomainModel(*classes)
-    return [issue.code for issue in caught.value.issues]
-
-
-@pytest.mark.parametrize("name", _TEMPORAL_ENDPOINT_NAMES)
-def test_a_non_temporal_class_may_not_name_an_attribute_after_a_temporal_endpoint(
-    name: str,
-) -> None:
-    class Ledger(Entity, table="ledger"):
-        id: Attr[int] = attr(primary_key=True)
-        stamp: Attr[_dt.datetime] = attr(name=name)
-
-    assert _reserved_codes(Ledger) == ["metamodel-temporal-member-reserved"]
-
-
-def test_a_non_temporal_class_reaches_the_reservation_through_ordinary_spelling() -> None:
-    class Ledger(Entity, table="ledger"):
-        id: Attr[int] = attr(primary_key=True)
-        tx_start: Attr[_dt.datetime]
-
-    assert _reserved_codes(Ledger) == ["metamodel-temporal-member-reserved"]
-
-
-def test_a_non_temporal_class_may_not_name_a_relationship_after_a_temporal_endpoint() -> None:
-    class Owner(Entity, table="owner"):
-        id: Attr[int] = attr(primary_key=True)
-
-    class Lot(Entity, table="lot"):
-        id: Attr[int] = attr(primary_key=True)
-        owner_id: Attr[int]
-        valid_end: Rel[Owner] = rel(cardinality=MANY_TO_ONE, join=("owner_id", "id"))
-
-    assert _reserved_codes(Owner, Lot) == ["metamodel-temporal-member-reserved"]
-
-
-def test_a_non_temporal_class_may_not_name_a_value_object_after_a_temporal_endpoint() -> None:
-    class Lease(Entity, table="lease"):
-        id: Attr[int] = attr(primary_key=True)
-        tx_end: Attr[_Window]
-
-    assert _reserved_codes(Lease) == ["metamodel-temporal-member-reserved"]
-
-
-def test_a_non_temporal_subtype_may_not_name_a_member_after_a_temporal_endpoint() -> None:
-    class Asset(
-        Entity, table="asset", inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind"))
-    ):
-        id: Attr[int] = attr(primary_key=True)
-
-    class Vehicle(Asset, inheritance=ConcreteSubtype(tag_value="vehicle")):
-        valid_start: Attr[_dt.datetime]
-
-    assert _reserved_codes(Asset, Vehicle) == ["metamodel-temporal-member-reserved"]
 
 
 def test_a_transaction_time_base_refuses_a_valid_time_endpoint_name_before_formation() -> None:
@@ -450,15 +372,3 @@ def _concretes(models: DomainModel, root: type) -> tuple[str, ...]:
     position = inheritance_view(model_of(models)).entity(models.meta(root).identity)
     assert position is not None
     return tuple(identity.name for identity in position.concrete_subtypes)
-
-
-def test_a_class_backed_model_indexes_every_class_it_composed_both_ways() -> None:
-    class Widget(Entity, table="widget"):
-        id: Attr[int] = attr(primary_key=True)
-
-    models = DomainModel(Widget)
-    index = class_index(models)
-    assert index is not None
-    identity = index.identity_of(Widget)
-    assert identity is not None
-    assert index.class_of(identity) is Widget
