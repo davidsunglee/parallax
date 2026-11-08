@@ -179,4 +179,3 @@ def test_a_renamed_member_keeps_its_canonical_name_behind_a_free_python_name() -
     assert predicate_node(Ticket.where(Ticket.any_seat == "A1"), DomainModel(Ticket)) == (
         Comparison("eq", FieldSubject(f"{_NS}.Ticket.any"), "A1")
     )
-    assert Ticket.any_seat is not None

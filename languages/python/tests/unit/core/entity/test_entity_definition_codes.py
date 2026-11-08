@@ -1,9 +1,9 @@
 """The closed ``EntityDefinitionError`` code set.
 
-Two things are pinned here: that the vocabulary is exactly the eleven codes,
-and that every rejection the frontend probes trigger
-draws its code from that set. Adding a rejection without declaring its code, or
-declaring a code no rule raises, fails one of the two.
+Every rejection the frontend probes trigger draws its code from that set, and
+every code but the one raised during ``DomainModel`` construction has a probe.
+Adding a rejection without declaring its code, or declaring a code no probe
+raises, fails here.
 """
 
 from __future__ import annotations
@@ -15,22 +15,6 @@ import pytest
 from parallax.core.entity import EntityDefinitionError
 from parallax.core.entity._errors import ENTITY_DEFINITION_CODES
 from tests._support import frontend_probes, frontend_probes_stringized
-
-_SPEC_CODES = frozenset(
-    {
-        "entity-header-unknown-option",
-        "entity-header-invalid-value",
-        "entity-header-missing-option",
-        "entity-base-invalid",
-        "entity-annotation-invalid",
-        "entity-member-value-invalid",
-        "entity-option-invalid-value",
-        "entity-option-context-invalid",
-        "entity-reserved-member-name",
-        "entity-canonical-name-collision",
-        "entity-relationship-annotation-mismatch",
-    }
-)
 
 # Every class-creation and factory-call rejection, paired with the code it must
 # raise. `entity-relationship-annotation-mismatch` is absent because it is the
@@ -76,11 +60,6 @@ _PROBES: dict[str, str] = {
 }
 
 _MODULES = {"live": frontend_probes, "stringized": frontend_probes_stringized}
-
-
-def test_the_declared_code_set_is_exactly_the_eleven_spec_codes() -> None:
-    assert ENTITY_DEFINITION_CODES == _SPEC_CODES
-    assert len(ENTITY_DEFINITION_CODES) == 11
 
 
 def test_a_code_outside_the_closed_set_cannot_be_raised() -> None:

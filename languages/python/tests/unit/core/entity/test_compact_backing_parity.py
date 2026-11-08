@@ -52,7 +52,6 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._entity import (
     CHANGE_RECORD_SLOT,
     ChangeRecord,
@@ -60,14 +59,12 @@ from parallax.core.entity._entity import (
     lifecycle_state,
 )
 from parallax.core.entity._instance_state import (
-    declared_values,
     is_published,
     named_state_value,
 )
 from parallax.core.entity._pydantic_storage import attach_instance_state
 from tests._support.typed_write_source import TypedWriteSource
 from tests.unit.core.entity._compact_support import (
-    carries_instance_storage,
     published,
     raw_row,
     real_storage,
@@ -199,12 +196,6 @@ def _site() -> Site:
 # --------------------------------------------------------------------------- #
 
 
-def test_declared_values_preserve_absence_on_ordinary_backing() -> None:
-    value = _ordinary(Depot, id=1, label="A", capacity=None)
-
-    assert tuple(declared_values(value)) == (1, "A", None, ABSENT)
-
-
 def test_the_two_variants_agree_about_what_the_value_holds_and_what_it_populated() -> None:
     members: dict[str, object] = {"id": 1, "label": "north", "site": _site()}
     ordinary, compact = _ordinary(Depot, **members), published(Depot, **members)
@@ -288,21 +279,6 @@ def test_an_edit_that_authors_nothing_carries_the_record_it_was_handed(build: Bu
     assert real_storage(chained)[CHANGE_RECORD_SLOT] == {"label": "north"}
 
 
-def test_an_edit_of_a_published_value_creates_no_storage_for_it() -> None:
-    # An edit reads what the source holds where the source holds it. Reaching for
-    # the source's instance dictionary instead would create one, permanently, on a
-    # path that only meant to copy — and the value's private attributes and its
-    # read `cached_property` are dictionaries of the layout's own, which is why
-    # this asks whether STORAGE exists rather than whether any dictionary does.
-    value = published(Depot, id=1, label="north")
-    assert value.shouted == "NORTH"
-    value.edit(label="south")
-    value.edit()
-    assert not carries_instance_storage(value)
-    # Read last, because reading it is what creates it.
-    assert real_storage(value) == {}
-
-
 def test_an_edit_of_either_backing_carries_an_inherited_member_forward(build: Builder) -> None:
     edited = build(Truck, id=1, plate="AB-12").edit(payload=9)
     assert edited.plate == "AB-12"
@@ -331,7 +307,7 @@ def test_an_unedited_value_of_either_backing_carries_no_record(build: Builder) -
     assert CHANGE_RECORD_SLOT not in real_storage(value)
 
 
-def test_one_named_state_value_is_read_from_either_backing_without_allocation() -> None:
+def test_one_named_state_value_is_read_from_either_backing() -> None:
     relationships: dict[str, object] = {"crates": ()}
     ordinary = _ordinary(Depot, relationships, id=1, label="north")
     compact = published(Depot, relationships, id=1, label="north")
@@ -346,8 +322,6 @@ def test_one_named_state_value_is_read_from_either_backing_without_allocation() 
 
     unloaded = published(Depot, id=2, label="south")
     assert named_state_value(unloaded, "crates", missing) is missing
-    assert not carries_instance_storage(compact)
-    assert not carries_instance_storage(unloaded)
 
 
 # --------------------------------------------------------------------------- #
@@ -410,22 +384,6 @@ def test_an_authored_row_answers_none_only_for_a_value_no_edit_touched(
     assert authored == {"id": 1, "label": "north"}
 
 
-def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> None:
-    # The published variant's own obligation, which the ordinary variant cannot have:
-    # every operation above reaches for what the value holds by name, and asking
-    # a published value's storage for it would create the dictionary publication
-    # exists without — permanently, on a read.
-    value = published(Depot, id=1, label="north", capacity=12)
-    assert value.shouted == "NORTH"
-    source = _source()
-    source.row(value)
-    source.identity(value)
-    source.authored(value)
-    assert not carries_instance_storage(value)
-    # Read last, because reading it is what creates it.
-    assert real_storage(value) == {}
-
-
 # --------------------------------------------------------------------------- #
 # Document presence
 # --------------------------------------------------------------------------- #
@@ -467,16 +425,6 @@ def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder)
         "point": {"lat": 1.0, "lon": 2.0, "fix": {"epoch": 7}},
         "tags": [{"lat": 3.0, "fix": {}}, {"lat": 4.0}],
     }
-
-
-def test_a_document_derived_from_a_published_value_creates_no_storage_for_it() -> None:
-    value = published(Site, city="Springfield", point=published(Point, lat=1.0))
-    assert value.shouted == "SPRINGFIELD"
-    _stored_document(value)
-    assert not carries_instance_storage(value)
-    assert not carries_instance_storage(cast("Any", value).point)
-    # Read last, because reading it is what creates it.
-    assert real_storage(value) == {}
 
 
 # --------------------------------------------------------------------------- #

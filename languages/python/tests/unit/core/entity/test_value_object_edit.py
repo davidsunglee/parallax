@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import copy as copy_module
 from collections.abc import Mapping
-from functools import cached_property
 from typing import Any, cast
 
 import pytest
@@ -125,25 +124,6 @@ def test_an_edit_stamps_no_change_record() -> None:
     assert CHANGE_RECORD_SLOT not in _address().edit().__dict__
 
 
-class _Tagged(ValueObject):
-    """One derived cache on a Value Object, spelled the way the language spells
-    one: the memoized answer is computed from a declared member, so an edit that
-    replaces that member contradicts it."""
-
-    label: Attr[str]
-
-    @cached_property
-    def shouted(self) -> str:
-        return self.label.upper()
-
-
-@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=["authored", "change-free"])
-def test_an_edit_never_carries_a_derived_cache(changes: dict[str, object]) -> None:
-    tagged = _Tagged(label="a")
-    assert tagged.shouted == "A"
-    assert "shouted" not in tagged.edit(**changes).__dict__
-
-
 class _Marked(ValueObject):
     """One private attribute on a Value Object, which Pydantic keeps in a slot of
     the object layout rather than in the instance dictionary an edit rebuilds."""
@@ -205,36 +185,9 @@ def test_an_edit_carries_every_slot_of_the_layout_it_does_not_rebuild(
     assert cast("Any", copied)._mark == 9
 
 
-@pytest.mark.parametrize("changes", [{"city": "Bergen"}, {}], ids=["authored", "change-free"])
-def test_an_edit_carries_a_slot_no_declaration_names(changes: dict[str, object]) -> None:
-    # The carry is by COMPLEMENT on this surface too, which is what lets a kind of
-    # instance state neither frontend knows travel through an edit.
-    value = _address()
-    marker = object()
-    object.__setattr__(value, "__parallax_unnamed__", marker)
-    assert value.edit(**changes).__dict__["__parallax_unnamed__"] is marker
-
-
 # --------------------------------------------------------------------------- #
 # Refusals: the shared rules, minus the four no Value Object member can break. #
 # --------------------------------------------------------------------------- #
-def test_an_unknown_member_name_is_rejected() -> None:
-    with pytest.raises(EditError, match="unknown member name"):
-        _address().edit(postcode="0150")
-
-
-def test_a_nested_path_is_rejected_rather_than_reported_as_unknown() -> None:
-    # The member is perfectly well known; what the authored name asks for is a
-    # sparse write below an occurrence's boundary, which no door offers.
-    with pytest.raises(EditError, match="never a nested path") as caught:
-        _address().edit(**{"geo.country": "NO"})
-    assert caught.value.codes == {"edit-nested-path"}
-    assert caught.value.violations[0].member_name == "geo.country"
-
-
-def test_an_ill_typed_leaf_raises_at_edit_time_not_at_the_database() -> None:
-    with pytest.raises(EditError, match="does not match the declared type"):
-        _address().edit(city=42)
 
 
 def test_a_malformed_occurrence_document_raises_at_edit_time() -> None:

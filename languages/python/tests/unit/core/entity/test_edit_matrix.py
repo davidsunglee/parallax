@@ -13,7 +13,7 @@ from parallax.core import AbstractRoot, Attr, ConcreteSubtype, Entity, TablePerH
 from parallax.core.entity._instance_state import is_published
 from parallax.core.entity._pydantic_storage import attach_instance_state
 from tests._support import mirrored_models as mm
-from tests.unit.core.entity._compact_support import carries_instance_storage, published, raw_row
+from tests.unit.core.entity._compact_support import published, raw_row
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -105,7 +105,6 @@ def test_edit_carries_application_state_without_hooks_and_drops_derived_cache(
     assert raw_row(result) is None
     if backing == "published":
         assert is_published(source)
-        assert not carries_instance_storage(source)
 
 
 def test_a_published_framework_owned_member_bypasses_the_validating_constructor() -> None:

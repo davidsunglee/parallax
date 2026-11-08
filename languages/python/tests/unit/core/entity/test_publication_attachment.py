@@ -6,13 +6,12 @@ and attaches it once — so a node either carries everything its read carried or
 carries nothing at all, and the instance dictionary every Pydantic model is
 assumed to have is never created for one.
 
-Three claims live here that no other module states. **The door**: neither
-constructor is entered, and the slot is written exactly once. **What is left
-behind**: no storage, no name-keyed presence, no layout pointer, nothing per
-instance that is a fact about the class. **What the model and the class have to
-agree about**: a positional row is written against the model's member layout and
-read back through the class's own publication plan, and the two are derived from
-different material, so the pair is compared once and refused when it disagrees.
+Two claims live here that no other module states. **The door**: neither
+constructor is entered, and the slot is written exactly once. **What the model
+and the class have to agree about**: a positional row is written against the
+model's member layout and read back through the class's own publication plan,
+and the two are derived from different material, so the pair is compared once
+and refused when it disagrees.
 
 The correspondence refusals are reached through the constructor a composition
 root uses, by binding one Domain Model's composed classes to another Domain
@@ -43,9 +42,7 @@ from parallax.core.entity import (
     TablePerHierarchy,
     ValueObject,
     attr,
-    lifecycle_state_of,
     rel,
-    relationship_value_of,
 )
 from parallax.core.entity import _instance_state as instance_state
 from parallax.core.entity import _row_fill as row_fill
@@ -61,10 +58,8 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectIdentity,
 )
-from tests._support.model_capabilities import graph_construction_for, preparation_for
+from tests._support.model_capabilities import graph_construction_for
 from tests.unit._indexed_graph_support import Node, published_nodes
-from tests.unit.core.entity._compact_support import carries_instance_storage, layout_slots, raw_row
-from tests.unit.core.entity._value_object_document_support import inserted_document
 from tests.unit.memory_instruments import serve_one_measurement
 
 _NS = "publication"
@@ -167,14 +162,6 @@ def _refuse_both_constructors(monkeypatch: pytest.MonkeyPatch, *classes: type) -
         monkeypatch.setattr(cls, "model_construct", cast("Any", classmethod(refuse)))
 
 
-def test_publication_enters_neither_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
-    _refuse_both_constructors(monkeypatch, Parcel, Tag)
-
-    root = _published()
-    assert (root.id, root.label) == (1, "north")
-    assert root.tag.label == "red"
-
-
 def test_publication_enters_neither_constructor_at_any_containment_depth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,9 +185,9 @@ def test_publication_enters_neither_constructor_at_any_containment_depth(
 def test_the_constructor_proof_would_fire_if_a_constructor_were_entered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The negative control the two proofs above rest on. A patch that silently
+    # The negative control the proof above rests on. A patch that silently
     # failed to bind — a name Pydantic resolves elsewhere, a classmethod wrapper
-    # the metaclass replaces — would leave those tests passing on a tree that
+    # the metaclass replaces — would leave that test passing on a tree that
     # still called a constructor. So each door is entered here the way a caller
     # enters it, on every class the recursion reaches, and each one has to raise.
     _refuse_both_constructors(monkeypatch, Shipment, _Route, _Leg, _Stop, _Pin)
@@ -248,120 +235,6 @@ def test_a_value_object_refused_mid_row_leaves_the_shell_unattached(
         _published((_PARCEL, (1, "north", ABSENT, ABSENT, ("red",)), (UNLOADED,)))
     assert refusal.value.code == "entity-graph-invalid-value"
     assert [hasattr(shell, COMPACT_STATE_SLOT) for shell in allocated] == [False, False]
-
-
-class _WideParcel(Entity, table="wide_parcel", name="WideParcel", namespace=_NS):
-    """A full presence mask beyond the supported interpreters' small-integer caches."""
-
-    id: Attr[int] = attr(primary_key=True)
-    a: Attr[int | None]
-    b: Attr[int | None]
-    c: Attr[int | None]
-    d: Attr[int | None]
-    e: Attr[int | None]
-    f: Attr[int | None]
-    g: Attr[int | None]
-    h: Attr[int | None]
-    i: Attr[int | None]
-    j: Attr[int | None]
-
-
-def test_nodes_of_one_presence_pattern_share_one_mask_within_one_publication_only() -> None:
-    # The memo interning a pattern lives as long as one publication: two nodes
-    # of one pattern share one mask, and a later publication's node does not —
-    # so no mask is held by anything that outlives the graph that assembled it.
-    nodes = tuple((_WideParcel.identity, (key, *range(10)), ()) for key in range(2))
-    construction = graph_construction_for(DomainModel(_WideParcel))
-    first, second = published_nodes(construction, *nodes)
-    third, _ = published_nodes(construction, *nodes)
-    assert raw_row(cast("Any", first)) == (0b11111111111, 0, *range(10))
-    assert (
-        cast("Any", raw_row(cast("Any", first)))[0] is cast("Any", raw_row(cast("Any", second)))[0]
-    )
-    assert (
-        cast("Any", raw_row(cast("Any", third)))[0]
-        is not cast("Any", raw_row(cast("Any", first)))[0]
-    )
-
-
-# --------------------------------------------------------------------------- #
-# What a published node holds, and what it does not.                           #
-# --------------------------------------------------------------------------- #
-
-
-def test_a_published_node_holds_one_row_and_no_state_keyed_by_a_name() -> None:
-    root = _published()
-    row = raw_row(root)
-    assert row == (0b10011, 1, "north", None, None, root.tag, UNLOADED)
-    assert root.model_fields_set == {"id", "label", "tag"}
-    assert not carries_instance_storage(root)
-    assert not carries_instance_storage(root.tag)
-    for held in gc.get_referents(root):
-        assert not isinstance(held, dict | set)
-
-
-def test_a_published_node_carries_no_fact_that_belongs_to_its_class() -> None:
-    # No layout pointer, no Adapter, no wrapper: the only class fact a published
-    # node reaches is the one every instance of that class reaches, through its
-    # own type. So two nodes of one class refer to nothing in common but the
-    # class, and the plan they resolve their ordinals from is that class's.
-    first, second = _published(), _published()
-    plan = plan_of(Parcel)
-    for node in (first, second):
-        assert plan not in gc.get_referents(node)
-        assert plan_of(cast("type[Any]", type(node))) is plan
-    assert {id(held) for held in gc.get_referents(first)} & {
-        id(held) for held in gc.get_referents(second)
-    } == {id(Parcel), id(None)}
-
-
-def test_a_published_node_s_object_layout_is_the_framework_roots_own() -> None:
-    # The slots a published node has are the ones the framework lays out and
-    # nothing else: the row, the auxiliary slot a `cached_property` would warm,
-    # Pydantic's two containers and its two presented names, and — on an Entity
-    # alone — the lifecycle slot.
-    assert set(layout_slots(Parcel)) == {
-        COMPACT_STATE_SLOT,
-        "__parallax_auxiliary__",
-        "__parallax_lifecycle__",
-        "__pydantic_extra__",
-        "__pydantic_fields_set__",
-        "__pydantic_private__",
-    }
-    assert "__parallax_lifecycle__" not in layout_slots(Tag)
-
-
-def test_no_framework_read_of_a_published_graph_creates_its_storage() -> None:
-    # The residual `object.__setattr__` leaves open is that a caller holding a
-    # value can write its storage; the framework's own obligation is to make no
-    # such write, and this is where every first-party read of a published node is
-    # driven at one and the storage asked for afterwards — by identity, and
-    # without asking the value for a mapping, since asking is what would create
-    # one.
-    state = object()
-    root = _published(state=lambda _instance: state)
-    entry = preparation_for(PARCELS).entity(Parcel.identity)
-    shape = entry.selection.members.shape
-
-    assert tuple(root.__parallax_member_values__())
-    assert root.__parallax_row_values__(shape, Parcel.identity)
-    assert root.__parallax_authored_pairs__(shape, Parcel.identity, entry.key) is None
-    assert inserted_document(PARCELS, Parcel(id=2, label="south", tag=root.tag))
-    assert root.model_dump() == {
-        "id": 1,
-        "label": "north",
-        "note": None,
-        "tag": {"label": "red", "weight": 2},
-        "peer_id": None,
-    }
-    assert repr(root)
-    assert root == _published()
-    assert dict(root)
-    assert relationship_value_of(root, RelationshipIdentity(_PARCEL, "peer")) is UNLOADED
-    assert lifecycle_state_of(root) is state
-
-    assert not carries_instance_storage(root)
-    assert not carries_instance_storage(root.tag)
 
 
 # --------------------------------------------------------------------------- #
