@@ -41,14 +41,13 @@ from parallax.core import (
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, InstantError
+from parallax.core.base import INFINITY, JSON, InstantError, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel import Table, WriteAssignmentError
-from parallax.core.predicate import ModelRejectedError
+from parallax.core.metamodel import Table
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import WriteRejectedError
 from parallax.core.write_plan.managed_row import named_members
+from tests._support.errors import raises_code
 from tests._support.repo import REPO_ROOT
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
@@ -359,7 +358,7 @@ def test_keyed_rows_are_frozen_views() -> None:
 def test_transaction_time_alias_is_rejected() -> None:
     # `at` is the corpus's Clock-context alias; it is NOT a canonical instruction
     # field, so no caller-facing shape can smuggle a Transaction-Time instant in (ADR 0010).
-    with pytest.raises(wi.WriteInstructionError, match="unexpected key"):
+    with raises_code(UsageError, "write-instruction-invalid", match="unexpected key"):
         wi.deserialize(
             {
                 "mutation": "insert",
@@ -378,7 +377,9 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
     # milestone's own edge coordinate — an accepted `observedValidStart` would let the
     # canonical parser's language contradict the neutral schema and silently retain a
     # control field the instruction cannot mean.
-    with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="forbidden observation control key"
+    ):
         wi.deserialize(
             {
                 "mutation": "amend",
@@ -389,7 +390,7 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
 
 
 def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
-    with pytest.raises(wi.WriteInstructionError, match="ambiguous"):
+    with raises_code(UsageError, "write-instruction-invalid", match="ambiguous"):
         wi.deserialize(
             {
                 "mutation": "delete",
@@ -398,9 +399,9 @@ def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
                 "target": {"entity": "Account", "predicate": {"true": {}}},
             }
         )
-    with pytest.raises(wi.WriteInstructionError, match=r"`rows`.*`target`.*or `row`"):
+    with raises_code(UsageError, "write-instruction-invalid", match=r"`rows`.*`target`.*or `row`"):
         wi.deserialize({"mutation": "delete", "entity": "Account"})
-    with pytest.raises(wi.WriteInstructionError, match="must be a mapping"):
+    with raises_code(UsageError, "write-instruction-invalid", match="must be a mapping"):
         wi.deserialize([1, 2, 3])
 
 
@@ -439,7 +440,7 @@ def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
     ],
 )
 def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
-    with pytest.raises(wi.WriteInstructionError, match=match):
+    with raises_code(UsageError, "write-instruction-invalid", match=match):
         wi.deserialize(doc)
 
 
@@ -555,7 +556,7 @@ def test_keyed_structural_rejections(doc: dict[str, Any], match: str) -> None:
     ],
 )
 def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> None:
-    with pytest.raises(wi.WriteInstructionError, match=match):
+    with raises_code(UsageError, "write-instruction-invalid", match=match):
         wi.deserialize(doc)
 
 
@@ -616,7 +617,7 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
     ],
 )
 def test_target_structural_rejections(doc: dict[str, Any], match: str) -> None:
-    with pytest.raises(wi.WriteInstructionError, match=match):
+    with raises_code(UsageError, "write-instruction-invalid", match=match):
         wi.deserialize(doc)
 
 
@@ -721,7 +722,7 @@ def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_anoth
 def test_a_replacement_refuses_an_omitted_required_value_object(
     prepare: Any, celsius: object
 ) -> None:
-    with pytest.raises(WriteRejectedError, match=r"probe.*absent") as refused:
+    with raises_code(UsageError, "write-required-value-object-missing", match=r"probe.*absent"):
         prepare(
             _target(
                 "replace",
@@ -731,22 +732,21 @@ def test_a_replacement_refuses_an_omitted_required_value_object(
             ),
             _MODELS["storage-layout"],
         )
-    assert refused.value.rule == "write-required-value-object-missing"
 
 
 @pytest.mark.parametrize(
-    ("prepare", "celsius"),
+    ("prepare", "celsius", "code"),
     [
-        pytest.param(_prepare_typed, "1.00", id="typed"),
-        pytest.param(_prepare_wire_target, "1.001", id="wire"),
+        pytest.param(_prepare_typed, "1.00", "write-instruction-invalid", id="typed"),
+        pytest.param(_prepare_wire_target, "1.001", "neutral-literal-out-of-space", id="wire"),
     ],
 )
 def test_a_replacement_judges_its_members_in_declaration_order(
-    prepare: Any, celsius: object
+    prepare: Any, celsius: object, code: str
 ) -> None:
     # The inadmissible Attribute precedes the omitted required Value Object in
     # member order, so it is refused first, on both lanes.
-    with pytest.raises(wi.WriteInstructionError, match=r"\.celsius"):
+    with raises_code(UsageError, code, match=r"\.celsius"):
         prepare(
             _target(
                 "replace",
@@ -868,7 +868,7 @@ def test_target_preparation_refuses_the_first_fault_in_its_fixed_order(
     prepare: Any, instruction: wi.TargetWriteInstruction, match: str
 ) -> None:
     model = {"Account": _ACCOUNT, "Balance": _BALANCE, "Wallet": _WALLET}[instruction.entity]
-    with pytest.raises(wi.WriteInstructionError, match=match):
+    with raises_code(UsageError, "write-instruction-invalid", match=match):
         prepare(instruction, model)
 
 
@@ -972,7 +972,9 @@ def test_assigned_member_validation_rejects_a_plural_keyed_write() -> None:
         ),
     )
 
-    with pytest.raises(wi.WriteInstructionError, match="applies only to one addressed write row"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="applies only to one addressed write row"
+    ):
         wi.prepare_wire_write(
             instruction, write_preparation_of(_ACCOUNT), authored_members={"balance"}
         )
@@ -1006,16 +1008,14 @@ def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() ->
     # the canonical spellings that would resolve, while a name the model does
     # not declare at all stays the plain well-formedness refusal.
     keyed = wi.deserialize({"mutation": "delete", "entity": "SharedVariant", "rows": [{"id": 1}]})
-    with pytest.raises(wi.InstructionRejectedError) as excinfo:
+    with raises_code(UsageError, "reference-ambiguous-entity-name") as excinfo:
         wi.prepare_typed_write(keyed, write_preparation_of(_SHARED_LOCAL_NAME))
-    assert excinfo.value.rule == "reference-ambiguous-entity-name"
     assert "archive.SharedVariant" in str(excinfo.value)
     assert "catalog.SharedVariant" in str(excinfo.value)
 
     unknown = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
-    with pytest.raises(wi.WriteInstructionError, match="declares no entity 'Ghost'") as plain:
+    with raises_code(UsageError, "write-instruction-invalid", match="declares no entity 'Ghost'"):
         wi.prepare_typed_write(unknown, write_preparation_of(_SHARED_LOCAL_NAME))
-    assert not isinstance(plain.value, wi.InstructionRejectedError)
 
 
 # --------------------------------------------------------------------------- #
@@ -1028,9 +1028,9 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target() -> None:
     # spelled for the surface the call arrived on, so the refusal is asserted
     # in full.
     write = wi.deserialize({"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]})
-    with pytest.raises(wi.WriteInstructionError) as raised:
+    with raises_code(UsageError, "write-instruction-invalid") as raised:
         wi.prepare_wire_write(write, write_preparation_of(_ACCOUNT))
-    assert str(raised.value) == (
+    assert raised.value.args[1] == (
         "Non-temporal objects like 'Account' do not support 'terminate', which closes "
         "a row's history instead of removing it. Use 'delete' instead."
     )
@@ -1051,10 +1051,9 @@ def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
             "validFrom": _B1,
         }
     )
-    with pytest.raises(wi.InstructionRejectedError, match="carries 2 rows") as exc:
+    with pytest.raises(UsageError, match="carries 2 rows") as exc:
         wi.prepare_typed_write(plural, write_preparation_of(_POSITION))
-    assert exc.value.rule == wi.TEMPORAL_KEYED_WRITE_MULTI_ROW
-    assert isinstance(exc.value, wi.WriteInstructionError)
+    assert exc.value.code == wi.TEMPORAL_KEYED_WRITE_MULTI_ROW
 
 
 def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -> None:
@@ -1067,9 +1066,9 @@ def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -
             "assignments": [{"attr": "Account.version", "value": 5}],
         }
     )
-    with pytest.raises(wi.InstructionRejectedError) as refused:
+    with pytest.raises(UsageError) as refused:
         wi.prepare_typed_write(predicate, write_preparation_of(_ACCOUNT))
-    assert refused.value.rule == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
+    assert refused.value.code == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
 
 
 def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
@@ -1087,9 +1086,8 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
             "assignments": [{"attr": "Wallet.id", "value": 2}],
         }
     )
-    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
+    with raises_code(UsageError, "between-bounds-inverted"):
         wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
-    assert caught.value.rule == "between-bounds-inverted"
 
 
 # --------------------------------------------------------------------------- #
@@ -1126,8 +1124,8 @@ _BARE_INNER: dict[str, Any] = {"lessThan": {"path": "Account.balance", "value": 
     ids=["orderBy", "limit", "asOf", "history", "deepFetch"],
 )
 def test_a_query_clause_is_not_a_predicate_at_all(clause: str, predicate: dict[str, Any]) -> None:
-    with pytest.raises(
-        predicate_algebra.CanonicalDocumentError, match=f"unknown predicate node '{clause}'"
+    with raises_code(
+        UsageError, "predicate-document-invalid", match=f"unknown predicate node '{clause}'"
     ):
         wi.deserialize(
             {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
@@ -1155,8 +1153,8 @@ def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
     # Recursion belongs to the selection grammar alone, so a clause is
     # unspellable at every depth rather than refused at each one.
     assert position in predicate
-    with pytest.raises(
-        predicate_algebra.CanonicalDocumentError, match="unknown predicate node 'limit'"
+    with raises_code(
+        UsageError, "predicate-document-invalid", match="unknown predicate node 'limit'"
     ):
         wi.deserialize(
             {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
@@ -1188,9 +1186,8 @@ def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> Non
             },
         }
     )
-    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
+    with raises_code(UsageError, "between-bounds-inverted"):
         wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "between-bounds-inverted"
 
 
 def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> None:
@@ -1208,9 +1205,8 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
             "assignments": [{"attr": "Payment.amount", "value": 1.00}],
         }
     )
-    with pytest.raises(inheritance.InheritanceError) as caught:
+    with raises_code(UsageError, "subtype-write-set-based-unsupported"):
         wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
-    assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
 def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
@@ -1224,7 +1220,7 @@ def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
             "rows": [{"id": 1, "owner": "Newton", "balance": 5.00, "shoe_size": 9}],
         }
     )
-    with pytest.raises(wi.WriteInstructionError, match="shoe_size"):
+    with raises_code(UsageError, "write-instruction-invalid", match="shoe_size"):
         wi.prepare_typed_write(keyed, write_preparation_of(_ACCOUNT))
 
 
@@ -1234,9 +1230,8 @@ def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
     keyed = wi.deserialize(
         {"mutation": "insert", "entity": "Shipment", "rows": [{"id": 5, "name": "Express"}]}
     )
-    with pytest.raises(WriteRejectedError) as caught:
+    with raises_code(UsageError, "write-required-value-object-missing"):
         wi.prepare_typed_write(keyed, write_preparation_of(_MODELS["shipment"]))
-    assert caught.value.rule == "write-required-value-object-missing"
 
 
 # --------------------------------------------------------------------------- #
@@ -1256,7 +1251,7 @@ def test_a_document_bound_must_be_a_finite_canonical_timestamp(bound: str, rule:
     # An open upper end is spelled by omitting `until`, never by an `infinity`
     # bound, so the decode refuses one exactly as it refuses any other spelling
     # its timestamp codec does not admit.
-    with pytest.raises(wi.InstructionRejectedError) as raised:
+    with pytest.raises(UsageError) as raised:
         wi.deserialize(
             {
                 "mutation": "amendUntil",
@@ -1266,7 +1261,7 @@ def test_a_document_bound_must_be_a_finite_canonical_timestamp(bound: str, rule:
                 "until": bound,
             }
         )
-    assert raised.value.rule == rule
+    assert raised.value.code == rule
 
 
 def test_the_schema_admits_no_infinite_authored_bound() -> None:
@@ -1282,7 +1277,9 @@ def test_the_schema_admits_no_infinite_authored_bound() -> None:
 
 
 def test_a_reserved_observation_key_refuses_before_any_window_is_judged() -> None:
-    with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="forbidden observation control key"
+    ):
         wi.KeyedWriteInstruction(
             "amendUntil", "Account", ({"id": 1, "observedVersion": 2},), valid_from=_I2, until=_I1
         )
@@ -1384,9 +1381,8 @@ _ALL = predicate_algebra.TrueNode()
 def test_the_target_is_judged_before_the_payload(
     prepare: Any, instruction: wi.WriteInstruction, model: Any, message: str
 ) -> None:
-    with pytest.raises(wi.WriteInstructionError, match=message) as raised:
+    with raises_code(UsageError, "write-instruction-invalid", match=message):
         prepare(instruction, model)
-    assert not isinstance(raised.value, wi.InstructionRejectedError)
 
 
 _INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.id"), 10, 1)
@@ -1448,10 +1444,10 @@ _INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.
 def test_a_predicate_write_needing_an_observation_is_refused_before_anything_else(
     prepare: Any, instruction: wi.PredicateWriteInstruction, model: Any, advice: str
 ) -> None:
-    with pytest.raises(wi.InstructionRejectedError) as raised:
+    with pytest.raises(UsageError) as raised:
         prepare(instruction, model)
-    assert raised.value.rule == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
-    assert str(raised.value) == advice
+    assert raised.value.code == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
+    assert raised.value.args[1] == advice
 
 
 @_PRODUCERS
@@ -1505,13 +1501,12 @@ def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
 @_PRODUCERS
 def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: Any) -> None:
     plural = wi.KeyedWriteInstruction("amend", "Balance", ({"id": 1, "nonsense": 1}, {"id": 2}))
-    with pytest.raises(wi.InstructionRejectedError) as raised:
+    with raises_code(UsageError, "temporal-keyed-write-multi-row"):
         prepare(plural, _BALANCE)
-    assert raised.value.rule == "temporal-keyed-write-multi-row"
 
 
 def test_a_constructed_deletion_assigns_nothing() -> None:
-    with pytest.raises(wi.WriteInstructionError, match="`delete` assigns no members"):
+    with raises_code(UsageError, "write-instruction-invalid", match="`delete` assigns no members"):
         wi.PredicateWriteInstruction(
             "delete",
             wi.PredicateSelection("Wallet", _ALL),
@@ -1530,7 +1525,7 @@ def test_a_constructed_deletion_assigns_nothing() -> None:
 def test_a_constructed_predicate_write_carries_a_row_exactly_when_it_replaces(
     mutation: wi.PredicateMutation, row: Mapping[str, object] | None, message: str
 ) -> None:
-    with pytest.raises(wi.WriteInstructionError, match=message):
+    with raises_code(UsageError, "write-instruction-invalid", match=message):
         wi.PredicateWriteInstruction(mutation, wi.PredicateSelection("Wallet", _ALL), row=row)
 
 
@@ -1566,8 +1561,9 @@ def test_a_predicate_replacement_of_a_key_only_entity_assigns_nothing(prepare: A
 
 @_PRODUCERS
 def test_a_predicate_replacement_names_declared_members_only(prepare: Any) -> None:
-    with pytest.raises(
-        wi.WriteInstructionError,
+    with raises_code(
+        UsageError,
+        "write-instruction-invalid",
         match=r"Wallet: predicate write row names undeclared member\(s\) \['nickname'\]",
     ):
         prepare(_wallet_replacement({"owner": "Ada", "nickname": "A"}), _WALLET)
@@ -1585,12 +1581,12 @@ def test_a_predicate_deletion_prepares_no_row(prepare: Any) -> None:
 
 @_PRODUCERS
 def test_a_predicate_amendment_never_assigns_the_key(prepare: Any) -> None:
-    with pytest.raises(
-        wi.WriteInstructionError, match="primary-key fields may not be assigned"
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="primary-key fields may not be assigned"
     ) as raised:
         prepare(_wallet_update(("Wallet.id", 5)), _WALLET)
-    assert isinstance(raised.value.__cause__, WriteAssignmentError)
-    assert raised.value.__cause__.rule == "primary-key"
+    assert isinstance(raised.value.__cause__, UsageError)
+    assert raised.value.__cause__.code == "write-assignment-primary-key"
 
 
 # --------------------------------------------------------------------------- #
@@ -1624,15 +1620,16 @@ def _wallet_update(*assignments: tuple[str, object]) -> wi.PredicateWriteInstruc
 def test_an_assignments_reference_fault_precedes_any_value_fault_it_or_a_later_one_carries(
     prepare: Any, assignments: tuple[tuple[str, object], ...], message: str
 ) -> None:
-    with pytest.raises(wi.WriteInstructionError, match=message) as raised:
+    with raises_code(UsageError, "write-instruction-invalid", match=message):
         prepare(_wallet_update(*assignments), _WALLET)
-    assert not isinstance(raised.value, wi.InstructionRejectedError)
 
 
 @_PRODUCERS
 def test_every_assignments_reference_is_judged_before_any_value(prepare: Any) -> None:
     instruction = _wallet_update(("Wallet.balance", "not-a-decimal"), ("Wallet.nonsense", 1))
-    with pytest.raises(wi.WriteInstructionError, match="does not name a declared member"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="does not name a declared member"
+    ):
         prepare(instruction, _WALLET)
 
 
@@ -1645,7 +1642,9 @@ def test_an_assignment_owned_by_another_entity_is_refused_though_the_target_shar
         wi.PredicateSelection("WriteTwinItem", _ALL),
         (wi.WriteAssignment("WriteTwinLog.label", "L"),),
     )
-    with pytest.raises(wi.WriteInstructionError, match="does not name a declared member"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="does not name a declared member"
+    ):
         prepare(instruction, _MODELS["write-transparency-layout-twin-columns"])
 
 
@@ -1662,8 +1661,10 @@ def _rate_insert(row: Mapping[str, object]) -> wi.KeyedWriteInstruction:
 
 def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclared_one() -> None:
     row = {**_RATE_ROW, "txStart": _B1, "nonsense": 1}
-    with pytest.raises(
-        wi.WriteInstructionError, match=r"DepositRate\.txStart: framework-owned fields"
+    with raises_code(
+        UsageError,
+        "framework-owned-member-assigned",
+        match=r"DepositRate\.txStart: framework-owned fields",
     ):
         wi.prepare_wire_write(
             _rate_insert(row), write_preparation_of(_RATE), authored_members=row.keys()
@@ -1672,11 +1673,10 @@ def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclare
 
 def test_an_authored_inserts_subtype_shape_is_judged_before_its_framework_owned_member() -> None:
     row = {**_RATE_ROW, "txStart": _B1, "tagValue": "deposit"}
-    with pytest.raises(WriteRejectedError) as raised:
+    with raises_code(UsageError, "subtype-write-metadata-field"):
         wi.prepare_wire_write(
             _rate_insert(row), write_preparation_of(_RATE), authored_members=row.keys()
         )
-    assert raised.value.rule == "subtype-write-metadata-field"
 
 
 def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_document() -> None:
@@ -1688,7 +1688,9 @@ def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_
     instruction = wi.PredicateWriteInstruction(
         "delete", wi.PredicateSelection("Person", interpretation)
     )
-    with pytest.raises(wi.WriteInstructionError, match="no canonical write-instruction document"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="no canonical write-instruction document"
+    ):
         wi.serialize(instruction)
 
 
@@ -1758,13 +1760,11 @@ _READ_ONLY_WRITE_TARGET = "read-only-write-target"
 
 
 def _refusal(prepare: Any, instruction: wi.WriteInstruction, model: AcceptedMetamodel) -> str:
-    """The rule a classified refusal names, or the class of an unclassified one."""
+    """The code a refusal names."""
     try:
         prepare(instruction, model)
-    except (wi.InstructionRejectedError, WriteRejectedError, ModelRejectedError) as refused:
-        return refused.rule
-    except (wi.WriteInstructionError, inheritance.InheritanceError) as refused:
-        return type(refused).__name__
+    except UsageError as refused:
+        return refused.code
     raise AssertionError(f"{instruction!r} was admitted")
 
 
@@ -1797,14 +1797,14 @@ _OUTRANKED: list[tuple[str, _Build, AcceptedMetamodel, str, str]] = [
         lambda entity: _keyed("delete", entity, {"id": 1}),
         _POSITION,
         "Position",
-        "WriteInstructionError",
+        "write-instruction-invalid",
     ),
     (
         "missing-window",
         lambda entity: _keyed("amend", entity, {"id": 1, "value": "1.00"}),
         _POSITION,
         "Position",
-        "WriteInstructionError",
+        "write-instruction-invalid",
     ),
     (
         "temporal-multi-row",
@@ -1833,14 +1833,14 @@ _OUTRANKED: list[tuple[str, _Build, AcceptedMetamodel, str, str]] = [
         lambda entity: wi.TargetWriteInstruction("amend", entity, {"id": 1, "owner": "Zed"}),
         _ACCOUNT,
         "Account",
-        "WriteInstructionError",
+        "write-instruction-invalid",
     ),
     (
         "misstated-revision",
         lambda entity: wi.TargetWriteInstruction("delete", entity, {"id": 1}, if_tx_start=_I1),
         _ACCOUNT,
         "Account",
-        "WriteInstructionError",
+        "write-instruction-invalid",
     ),
     (
         "readless-target",
@@ -1875,7 +1875,7 @@ _OUTRANKED: list[tuple[str, _Build, AcceptedMetamodel, str, str]] = [
         lambda entity: _keyed("amend", entity, {"id": 1, "nothing": 1}),
         _WALLET,
         "Wallet",
-        "WriteInstructionError",
+        "write-instruction-invalid",
     ),
 ]
 
@@ -1927,9 +1927,8 @@ def test_every_position_of_a_read_only_family_refuses_the_write(
 def test_a_well_formed_write_to_a_read_only_entity_is_refused_by_its_mode(
     prepare: Any, instruction: wi.WriteInstruction
 ) -> None:
-    with pytest.raises(wi.InstructionRejectedError) as refused:
+    with raises_code(UsageError, _READ_ONLY_WRITE_TARGET) as refused:
         prepare(instruction, _READ_ONLY)
-    assert refused.value.rule == _READ_ONLY_WRITE_TARGET
     assert "ReadOnly" in str(refused.value)
 
 
@@ -1938,4 +1937,4 @@ def test_an_unresolved_target_keeps_its_own_refusal_beside_read_only_entities(
     prepare: Any,
 ) -> None:
     refused = _refusal(prepare, _keyed("insert", "Nothing", {"id": 1}), _READ_ONLY)
-    assert refused == "WriteInstructionError"
+    assert refused == "write-instruction-invalid"

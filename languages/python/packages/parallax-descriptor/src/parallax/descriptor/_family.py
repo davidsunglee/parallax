@@ -1,8 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Final
 
-from parallax.core.inheritance import InheritanceError
+from parallax.core.base import UsageError
+from parallax.core.inheritance._rules import (
+    CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    CYCLE,
+    DUPLICATE_TAG_VALUE,
+    LAYOUT_NOT_ROOT_OWNED,
+    MISSING_CONCRETE_SUBTYPE,
+    MISSING_ROOT,
+    MISSING_TAG_VALUE,
+    OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+    STRATEGY_REDECLARED,
+    TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+    TEMPORALITY_NOT_ROOT_OWNED,
+    TPCS_ABSTRACT_TABLE_FORBIDDEN,
+    TPCS_CONCRETE_TABLE_REQUIRED,
+    TPH_DESCENDANT_TABLE_FORBIDDEN,
+    TPH_ROOT_TABLE_REQUIRED,
+)
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
     Entity,
@@ -12,8 +30,14 @@ from parallax.descriptor._records import (
 )
 
 __all__ = [
+    "INHERITANCE_UNKNOWN_PARENT",
     "validate_inheritance_families",
 ]
+
+INHERITANCE_UNKNOWN_PARENT: Final = "inheritance-unknown-parent"
+"""An inheritance participant names a parent the descriptor does not declare.
+Only a raw descriptor can state one: the accepted algebra resolves every parent
+it carries."""
 
 
 def validate_inheritance_families(document: Mapping[str, object]) -> None:
@@ -23,10 +47,10 @@ def validate_inheritance_families(document: Mapping[str, object]) -> None:
     checks the family invariants the walk classifies on the raw record graph:
     parent resolution, acyclicity, the root-only declaration of strategy,
     temporality, optimistic locking, and layout, each family's root and
-    concrete membership, and the strategy's table and tag rules. It raises
-    :class:`~parallax.core.inheritance.InheritanceError` naming the violated
-    rule, or :class:`~parallax.descriptor.DescriptorError` for a document whose
-    shape is not a descriptor at all, and returns ``None`` for a document that
+    concrete membership, and the strategy's table and tag rules. It raises a
+    :class:`~parallax.core.base.UsageError` whose code is the violated rule, or
+    :class:`~parallax.descriptor.DescriptorError` for a document whose shape is
+    not a descriptor at all, and returns ``None`` for a document that
     passes — including one declaring no inheritance at all. It says nothing
     about any other model rule: a family defect that survives adaptation into
     the accepted algebra, such as a concrete subtype with children or a
@@ -66,8 +90,8 @@ def _participants(metamodel: Metamodel) -> tuple[Entity, ...]:
 
 
 def validate_families(metamodel: Metamodel) -> None:
-    """Validate the raw-walk inheritance family invariants, raising
-    :class:`InheritanceError`.
+    """Validate the raw-walk inheritance family invariants, raising a
+    :class:`~parallax.core.base.UsageError` coded with the violated rule.
 
     The check order pins each corpus ``rejectedRule``: parent resolution,
     acyclicity, strategy and family-owned-fact locality, ancestry-reaches-a-root,
@@ -143,10 +167,9 @@ def _reject_unknown_parent(
     for entity in participants:
         parent = _parent_of(entity)
         if parent is not None and parent not in by_canonical:
-            raise InheritanceError(
-                "inheritance-unknown-parent",
+            raise UsageError(
+                INHERITANCE_UNKNOWN_PARENT,
                 f"{entity.name} names parent {parent!r}, which the descriptor does not declare",
-                entity=entity.name,
             )
 
 
@@ -157,10 +180,9 @@ def _reject_cycles(participants: tuple[Entity, ...]) -> None:
         current: str | None = start.canonical_name
         while current is not None and current in by_canonical:
             if current in seen:
-                raise InheritanceError(
-                    "inheritance-cycle",
+                raise UsageError(
+                    CYCLE,
                     f"parent links form a cycle through {current!r}",
-                    entity=by_canonical[current].name,
                 )
             seen.add(current)
             current = _parent_of(by_canonical[current])
@@ -170,10 +192,9 @@ def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
     for entity in participants:
         inh = _inh(entity)
         if inh.role != "root" and inh.strategy is not None:
-            raise InheritanceError(
-                "inheritance-strategy-redeclared",
+            raise UsageError(
+                STRATEGY_REDECLARED,
                 f"non-root {entity.name} redeclares the family strategy",
-                entity=entity.name,
             )
 
 
@@ -193,11 +214,10 @@ def _reject_descendant_temporality(participants: tuple[Entity, ...]) -> None:
     """
     for entity in participants:
         if _inh(entity).role != "root" and entity.temporality is not None:
-            raise InheritanceError(
-                "inheritance-temporality-not-root-owned",
+            raise UsageError(
+                TEMPORALITY_NOT_ROOT_OWNED,
                 f"non-root {entity.name} declares its own temporality; the Temporality "
                 "Profile is family-wide and MUST be declared only on the root",
-                entity=entity.name,
             )
 
 
@@ -217,12 +237,11 @@ def _reject_descendant_optimistic_locking(participants: tuple[Entity, ...]) -> N
         if _inh(entity).role == "root":
             continue
         if any(attribute.optimistic_locking for attribute in entity.attributes):
-            raise InheritanceError(
-                "inheritance-optimistic-locking-not-root-owned",
+            raise UsageError(
+                OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
                 f"non-root {entity.name} declares its own optimisticLocking attribute; "
                 "the version attribute is family-wide and MUST be declared only on the "
                 "root",
-                entity=entity.name,
             )
 
 
@@ -240,11 +259,10 @@ def _reject_descendant_layout(participants: tuple[Entity, ...]) -> None:
     """
     for entity in participants:
         if _inh(entity).role != "root" and entity.layout is not None:
-            raise InheritanceError(
-                "inheritance-layout-not-root-owned",
+            raise UsageError(
+                LAYOUT_NOT_ROOT_OWNED,
                 f"non-root {entity.name} declares its own layout; the Storage Layout is "
                 "family-wide and MUST be declared only on the root",
-                entity=entity.name,
             )
 
 
@@ -265,10 +283,9 @@ def _reject_concrete_without_root(
                 break
             current = _parent_of(node)
         if not reached_root:
-            raise InheritanceError(
-                "inheritance-concrete-without-abstract-root",
+            raise UsageError(
+                CONCRETE_WITHOUT_ABSTRACT_ROOT,
                 f"concrete subtype {entity.name} has no abstract root ancestor",
-                entity=entity.name,
             )
 
 
@@ -276,8 +293,8 @@ def _reject_missing_root(root: Entity | None, members: tuple[Entity, ...]) -> En
     """``root`` itself once it is one, so a family that reaches no root is
     rejected here rather than surfacing as a missing strategy downstream."""
     if root is None:
-        raise InheritanceError(
-            "inheritance-missing-root",
+        raise UsageError(
+            MISSING_ROOT,
             f"inheritance participants {sorted(member.name for member in members)} declare no root",
         )
     return root
@@ -288,10 +305,9 @@ def _reject_missing_concrete_subtype(root: Entity, participants: tuple[Entity, .
     own rows, so every position in such a family resolves over no rows at all."""
     if any(_inh(entity).role == "concrete-subtype" for entity in participants):
         return
-    raise InheritanceError(
-        "inheritance-missing-concrete-subtype",
+    raise UsageError(
+        MISSING_CONCRETE_SUBTYPE,
         f"the family rooted at {root.name} declares no concrete subtype",
-        entity=root.name,
     )
 
 
@@ -305,17 +321,15 @@ def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> 
 
 def _reject_hierarchy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
     if root.table is None:
-        raise InheritanceError(
-            "inheritance-tph-root-table-required",
+        raise UsageError(
+            TPH_ROOT_TABLE_REQUIRED,
             f"table-per-hierarchy root {root.name} declares no shared table",
-            entity=root.name,
         )
     for entity in participants:
         if entity is not root and entity.table is not None:
-            raise InheritanceError(
-                "inheritance-tph-descendant-table-forbidden",
+            raise UsageError(
+                TPH_DESCENDANT_TABLE_FORBIDDEN,
                 f"table-per-hierarchy descendant {entity.name} repeats the root-owned shared table",
-                entity=entity.name,
             )
 
 
@@ -323,29 +337,25 @@ def _reject_concrete_subtype_storage(root: Entity, participants: tuple[Entity, .
     for entity in participants:
         role = _inh(entity).role
         if role in ("root", "abstract-subtype") and entity.table is not None:
-            raise InheritanceError(
-                "inheritance-tpcs-abstract-table-forbidden",
+            raise UsageError(
+                TPCS_ABSTRACT_TABLE_FORBIDDEN,
                 f"table-per-concrete-subtype abstract position {entity.name} declares a table",
-                entity=entity.name,
             )
         if role == "concrete-subtype" and entity.table is None:
-            raise InheritanceError(
-                "inheritance-tpcs-concrete-table-required",
+            raise UsageError(
+                TPCS_CONCRETE_TABLE_REQUIRED,
                 f"table-per-concrete-subtype concrete {entity.name} declares no table",
-                entity=entity.name,
             )
     if _inh(root).tag_column is not None:
-        raise InheritanceError(
-            "inheritance-tag-on-concrete-subtype-strategy",
+        raise UsageError(
+            TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
             f"table-per-concrete-subtype root {root.name} declares a tag column",
-            entity=root.name,
         )
     for entity in participants:
         if _inh(entity).tag_value is not None:
-            raise InheritanceError(
-                "inheritance-tag-on-concrete-subtype-strategy",
+            raise UsageError(
+                TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
                 f"table-per-concrete-subtype subtype {entity.name} declares a tagValue",
-                entity=entity.name,
             )
 
 
@@ -357,15 +367,13 @@ def _reject_tph_tag_values(root: Entity, participants: tuple[Entity, ...]) -> No
     for entity in concretes:
         tag_value = _inh(entity).tag_value
         if tag_value is None:
-            raise InheritanceError(
-                "inheritance-missing-tag-value",
+            raise UsageError(
+                MISSING_TAG_VALUE,
                 f"table-per-hierarchy concrete subtype {entity.name} declares no tagValue",
-                entity=entity.name,
             )
         if tag_value in seen_values:
-            raise InheritanceError(
-                "inheritance-duplicate-tag-value",
+            raise UsageError(
+                DUPLICATE_TAG_VALUE,
                 f"tagValue {tag_value!r} is shared by {seen_values[tag_value]} and {entity.name}",
-                entity=entity.name,
             )
         seen_values[tag_value] = entity.name

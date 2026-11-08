@@ -4,7 +4,14 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY, INFINITY_LITERAL, JSON, ManagedValue, NeutralType
+from parallax.core.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    JSON,
+    ManagedValue,
+    NeutralType,
+    UsageError,
+)
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -21,7 +28,6 @@ from parallax.core.metamodel import (
 from parallax.core.storage_layout import RelationalDocument, TableLayout
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import (
-    WireDecodingError,
     WireValue,
     decode_canonical_wire,
     encode_wire,
@@ -297,7 +303,7 @@ class ActualWireProjection:
             return None
         try:
             managed = decode_canonical_wire(neutral_type, cast("WireValue", value))
-        except WireDecodingError:
+        except UsageError:
             return cast("WireValue", value)
         return encode_wire(neutral_type, managed)
 

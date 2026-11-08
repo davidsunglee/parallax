@@ -19,7 +19,6 @@ from parallax.core import (
     DomainModel,
     Entity,
     Int32,
-    ModelRejectedError,
     QueryDefinitionError,
     Rel,
     ValueObject,
@@ -27,6 +26,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.base import UsageError
 from parallax.core.entity import model_of
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuantifier
@@ -41,6 +41,7 @@ from parallax.core.predicate._resolved import (
     ResolvedQuantifier,
     ResolvedStringMatch,
 )
+from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node, typed_resolved
 from tests._support.snapshot_models import ANIMAL_MODEL, Animal, AnimalOwner, Dog, Pet
 
@@ -218,9 +219,8 @@ def test_a_deferred_match_resolves_at_the_reached_target() -> None:
 
 
 def test_a_deferred_value_object_presence_takes_no_operand() -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "path-target-kind-mismatch"):
         _resolved(Basket.where(Basket.owner.address.exists(Address.city == "Oslo")))
-    assert caught.value.rule == "path-target-kind-mismatch"
     with pytest.raises(TypeError):
         Owner.address.exists(Address.city == "Oslo")  # pyright: ignore[reportCallIssue]
 
@@ -280,15 +280,13 @@ def test_deferred_presence_and_subtype_tests_resolve_at_the_reached_target() -> 
 
 def test_a_deferred_element_bound_to_a_relationship_is_outside_any_scalar_scope() -> None:
     query = Basket.where(Basket.owner.baskets.any(Basket.owner.baskets.element == 1))
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "predicate-subject-outside-scope"):
         _resolved(query)
-    assert caught.value.rule == "predicate-subject-outside-scope"
 
 
 def test_a_value_object_field_is_read_only_from_its_element() -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "predicate-subject-outside-scope"):
         _resolved(Basket.where(cast("Any", Part.sku == "a")))
-    assert caught.value.rule == "predicate-subject-outside-scope"
 
 
 def test_a_class_the_serving_model_does_not_compose_is_refused() -> None:
@@ -303,11 +301,11 @@ def test_the_export_never_respells_another_class_as_the_bound_entity() -> None:
     own = predicate_node(Holder.where(Holder.baskets.any(Basket.id == 1)), MODEL)
     assert serialize(own)["any"]["where"] == {"eq": {"path": "id", "value": 1}}  # type: ignore[index] - the exported document's shape
     outer = Holder.where(Holder.baskets.any(cast("Any", Holder.id == 1)))
-    with pytest.raises(ModelRejectedError) as exported:
+    with pytest.raises(UsageError) as exported:
         predicate_node(outer, MODEL)
-    with pytest.raises(ModelRejectedError) as resolved:
+    with pytest.raises(UsageError) as resolved:
         _resolved(outer)
-    assert exported.value.rule == resolved.value.rule
+    assert exported.value.code == resolved.value.code
 
 
 def test_a_target_local_narrow_exports_its_reached_entitys_paths_relative() -> None:
@@ -349,11 +347,11 @@ def test_an_ancestor_receiver_inside_a_narrowing_exports_relative() -> None:
 def test_a_receiver_resolution_refuses_is_refused_by_the_export() -> None:
     # A Pet subtype test at the broader Animal position: statically refused too.
     query = AnimalOwner.where(AnimalOwner.animals.any(cast("Any", Pet.is_a(Dog))))
-    with pytest.raises(ModelRejectedError) as exported:
+    with pytest.raises(UsageError) as exported:
         object_query_node(query, ANIMAL_MODEL)
-    with pytest.raises(ModelRejectedError) as resolved:
+    with pytest.raises(UsageError) as resolved:
         typed_resolved(query, ANIMAL_MODEL)
-    assert exported.value.rule == resolved.value.rule == "subtype-attribute-outside-narrow-scope"
+    assert exported.value.code == resolved.value.code == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_query_over_an_entity_the_serving_model_lacks_has_no_export() -> None:

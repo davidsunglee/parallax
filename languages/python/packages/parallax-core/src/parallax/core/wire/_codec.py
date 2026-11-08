@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, Literal, NoReturn, assert_never, cast
+from typing import Any, Final, Literal, NoReturn, TypeIs, assert_never, cast
 
 from parallax.core.base import (
     BOOLEAN,
@@ -38,6 +38,7 @@ from parallax.core.base import (
     String,
     Time,
     Timestamp,
+    UsageError,
     Uuid,
     adopt_frozen_map,
     matches_neutral_type,
@@ -61,15 +62,34 @@ from parallax.core.wire._json import (
 )
 from parallax.core.wire._types import WireValue
 
-type WireDecodingReason = Literal["type-mismatch", "noncanonical", "out-of-space"]
+type NeutralLiteralCode = Literal[
+    "neutral-literal-type-mismatch", "neutral-literal-noncanonical", "neutral-literal-out-of-space"
+]
+"""Why a serialized literal does not decode under its declared Neutral Type: it
+is not of the type at all, it is not the type's canonical spelling, or it names
+no member of the declared value space. A decoding refusal is a
+:class:`~parallax.core.base.UsageError` with one of these codes, which are the
+core ``rejectedRule`` spellings."""
+
+NEUTRAL_LITERAL_TYPE_MISMATCH: Final = "neutral-literal-type-mismatch"
+NEUTRAL_LITERAL_NONCANONICAL: Final = "neutral-literal-noncanonical"
+NEUTRAL_LITERAL_OUT_OF_SPACE: Final = "neutral-literal-out-of-space"
+NEUTRAL_LITERAL_CODES: Final[frozenset[str]] = frozenset(
+    {NEUTRAL_LITERAL_TYPE_MISMATCH, NEUTRAL_LITERAL_NONCANONICAL, NEUTRAL_LITERAL_OUT_OF_SPACE}
+)
 
 
-class WireDecodingError(ValueError):
-    """A serialized literal cannot be decoded under its declared Neutral Type."""
+def is_decoding_refusal(failure: object) -> TypeIs[UsageError]:
+    """Whether ``failure`` is this codec's refusal to decode a literal."""
+    return isinstance(failure, UsageError) and failure.code in NEUTRAL_LITERAL_CODES
 
-    def __init__(self, reason: WireDecodingReason, message: str) -> None:
-        super().__init__(message)
-        self.reason = reason
+
+def located_refusal(refusal: UsageError, where: str) -> UsageError:
+    """``refusal`` restated at ``where``, the position in a larger input whose
+    literal it refused, keeping its code and caused by it."""
+    located = UsageError(refusal.code, f"{where}: {refusal.args[1]}")
+    located.__cause__ = refusal
+    return located
 
 
 class WireEncodingError(Exception):
@@ -114,22 +134,22 @@ def decode_canonical_wire(neutral_type: NeutralType, value: WireValue) -> Manage
         managed = str.__str__(value)
         if is_string_member(managed, neutral_type):
             return managed
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     if isinstance(neutral_type, (Int32, Int64)) and type(value) is int:
         managed_int = int.__int__(value)
         if is_integer_member(managed_int, neutral_type):
             return managed_int
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     decoded = _decode_admitted(neutral_type, value)
     if not _is_canonical_output(neutral_type, value, decoded):
-        _fail("noncanonical", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_NONCANONICAL, value, neutral_type)
     return decoded.managed
 
 
 def wire_converter(neutral_type: NeutralType) -> ScalarConverter:
     """The Wire lane's conversion for ``neutral_type``: :func:`decode_wire`
     resolved once to its type's own decoder, with the owned form of a Json
-    value, raising :class:`WireDecodingError`."""
+    value, raising a decoding refusal."""
     shared = _NULLARY_WIRE_CONVERTERS.get(type(neutral_type))
     return _wire_converter(neutral_type) if shared is None else shared
 
@@ -141,7 +161,7 @@ def _wire_converter(neutral_type: NeutralType) -> ScalarConverter:
 
     def convert(value: object) -> object:
         if _is_unrecognized_exclusion(value):
-            _fail("type-mismatch", value, neutral_type)
+            _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
         return decode(value, neutral_type).managed
 
     return convert
@@ -149,7 +169,7 @@ def _wire_converter(neutral_type: NeutralType) -> ScalarConverter:
 
 def _decode_owned_json(value: object) -> object:
     if _is_unrecognized_exclusion(value):
-        _fail("type-mismatch", value, JSON)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, JSON)
     try:
         return normalize_json_carrier(
             value,
@@ -276,7 +296,7 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
 # dispatch would add a call to that per-value path.
 def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLiteral:  # noqa: C901
     if _is_unrecognized_exclusion(value):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     match neutral_type:
         case Boolean():
             return _decode_boolean(value, neutral_type)
@@ -312,16 +332,16 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
 
 def _decode_boolean(value: object, neutral_type: Boolean) -> _DecodedWireLiteral:
     if not isinstance(value, bool):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     return _DecodedWireLiteral(value)
 
 
 def _decode_string(value: object, neutral_type: String) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     managed = str.__str__(value)
     if not is_string_member(managed, neutral_type):
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     return _DecodedWireLiteral(managed)
 
 
@@ -345,13 +365,13 @@ def _decode_integer(
 ) -> _DecodedWireLiteral:
     number = _source_decimal(value)
     if number is None or not number.is_finite():
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     integral = number.to_integral_value()
     if number != integral:
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     managed = int(integral)
     if not is_integer_member(managed, neutral_type):
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     return _DecodedWireLiteral(managed, number.is_zero() and number.is_signed())
 
 
@@ -359,19 +379,25 @@ def _decode_float32(value: object, neutral_type: Float32) -> _DecodedWireLiteral
     """Round the number ``value`` is written as once to binary32: the digits a
     parser kept, an integer's own value, or the number a bare host float names."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     token = authored_token(value)
     if token is not None:
         managed = nearest_binary32_of_spelling(token)
         if managed is None:
-            _fail("out-of-space", value, neutral_type)
+            _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
         return _DecodedWireLiteral(managed, managed == 0.0 and _spells_negative_zero(token))
     if isinstance(value, int):
         return _decode_integer_to_float(value, neutral_type)
     base_value = float.__float__(value)
     managed = host_float_binary32(base_value)
     if managed is None:
-        _fail("out-of-space" if math.isfinite(base_value) else "type-mismatch", value, neutral_type)
+        _fail(
+            NEUTRAL_LITERAL_OUT_OF_SPACE
+            if math.isfinite(base_value)
+            else NEUTRAL_LITERAL_TYPE_MISMATCH,
+            value,
+            neutral_type,
+        )
     return _DecodedWireLiteral(
         managed,
         base_value == 0.0 and math.copysign(1.0, base_value) < 0.0,
@@ -383,12 +409,12 @@ def _decode_float64(value: object, neutral_type: Float64) -> _DecodedWireLiteral
     parser kept, an integer's own value, or a bare host float, which is already
     the binary64 that both its exact value and its shortest spelling round to."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     token = authored_token(value)
     if token is not None:
         managed = float(token)
         if math.isinf(managed):
-            _fail("out-of-space", value, neutral_type)
+            _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
         if managed == 0.0:
             return _DecodedWireLiteral(0.0, _spells_negative_zero(token))
         return _DecodedWireLiteral(managed)
@@ -396,7 +422,7 @@ def _decode_float64(value: object, neutral_type: Float64) -> _DecodedWireLiteral
         return _decode_integer_to_float(value, neutral_type)
     managed = float.__float__(value)
     if not math.isfinite(managed):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     if managed == 0.0:
         return _DecodedWireLiteral(0.0, math.copysign(1.0, managed) < 0.0)
     return _DecodedWireLiteral(managed)
@@ -412,38 +438,38 @@ def _spells_negative_zero(token: str) -> bool:
 def _decode_integer_to_float(value: int, neutral_type: Float32 | Float64) -> _DecodedWireLiteral:
     managed = nearest_float_at_width(int.__int__(value), neutral_type)
     if managed is None:
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     return _DecodedWireLiteral(managed)
 
 
 def _decode_decimal(value: object, neutral_type: Decimal) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     text = str.__str__(value)
     if _DECIMAL_NUMBER.fullmatch(text) is None:
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     managed = decimal.Decimal(text)
     if not is_decimal_member(managed, neutral_type):
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     if _exact_decimal(managed, neutral_type.scale) != text:
-        _fail("noncanonical", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_NONCANONICAL, value, neutral_type)
     return _DecodedWireLiteral(managed)
 
 
 def _decode_bytes(value: object, neutral_type: Bytes) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     text = str.__str__(value)
     if len(text) % 2 or _HEX.fullmatch(text) is None:
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     if _LOWER_HEX.fullmatch(text) is None:
-        _fail("noncanonical", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_NONCANONICAL, value, neutral_type)
     return _DecodedWireLiteral(bytes.fromhex(text))
 
 
 def _decode_date(value: object, neutral_type: Date) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     text = str.__str__(value)
     match = _DATE.fullmatch(text)
     if match is None:
@@ -452,37 +478,37 @@ def _decode_date(value: object, neutral_type: Date) -> _DecodedWireLiteral:
             try:
                 dt.date(*(int(part) for part in loose.groups()))
             except ValueError:
-                _fail("out-of-space", value, neutral_type)
-            _fail("noncanonical", value, neutral_type)
-        _fail("type-mismatch", value, neutral_type)
+                _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
+            _fail(NEUTRAL_LITERAL_NONCANONICAL, value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     try:
         managed = dt.date(*(int(part) for part in match.groups()))
     except ValueError:
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     return _DecodedWireLiteral(managed)
 
 
 def _decode_time(value: object, neutral_type: Time) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     match = _TIME.fullmatch(str.__str__(value))
     if match is None:
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     hour, minute, second, fraction = match.groups()
     microsecond = int((fraction or "").ljust(6, "0") or "0")
     try:
         managed = dt.time(int(hour), int(minute), int(second), microsecond)
     except ValueError:
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     return _DecodedWireLiteral(managed)
 
 
 def _decode_timestamp(value: object, neutral_type: Timestamp) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     match = _TIMESTAMP.fullmatch(str.__str__(value))
     if match is None:
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     year, month, day, hour, minute, second, fraction, zone = match.groups()
     microsecond = int((fraction or "").ljust(6, "0") or "0")
     timezone = dt.UTC
@@ -492,7 +518,7 @@ def _decode_timestamp(value: object, neutral_type: Timestamp) -> _DecodedWireLit
         try:
             timezone = dt.timezone(sign * dt.timedelta(hours=zone_hour, minutes=zone_minute))
         except ValueError:
-            _fail("out-of-space", value, neutral_type)
+            _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     try:
         managed = dt.datetime(
             int(year),
@@ -505,25 +531,25 @@ def _decode_timestamp(value: object, neutral_type: Timestamp) -> _DecodedWireLit
             tzinfo=timezone,
         )
     except ValueError:
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     try:
         instant = managed.astimezone(dt.UTC)
     except OverflowError, ValueError:
-        _fail("out-of-space", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_OUT_OF_SPACE, value, neutral_type)
     if zone != "Z":
-        _fail("noncanonical", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_NONCANONICAL, value, neutral_type)
     return _DecodedWireLiteral(instant)
 
 
 def _decode_uuid(value: object, neutral_type: Uuid) -> _DecodedWireLiteral:
     if not isinstance(value, str):
-        _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     text = str.__str__(value)
     if _UUID_CANONICAL.fullmatch(text) is not None:
         return _DecodedWireLiteral(uuid.UUID(text))
     if _UUID_ALTERNATE.fullmatch(text) is not None:
-        _fail("noncanonical", value, neutral_type)
-    _fail("type-mismatch", value, neutral_type)
+        _fail(NEUTRAL_LITERAL_NONCANONICAL, value, neutral_type)
+    _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
 
 
 def _is_canonical_output(
@@ -611,9 +637,9 @@ def _shortest_float(value: float) -> float:
 
 
 class _JsonFailure(Exception):
-    def __init__(self, reason: WireDecodingReason, message: str) -> None:
+    def __init__(self, reason: NeutralLiteralCode, message: str) -> None:
         super().__init__(message)
-        self.reason: WireDecodingReason = reason
+        self.reason: NeutralLiteralCode = reason
 
 
 def _normalize_json(
@@ -635,8 +661,12 @@ def _normalize_json(
         raise _JsonFailure(_json_failure_reason(exc), str(exc)) from exc
 
 
-def _json_failure_reason(failure: JsonCarrierFailure) -> WireDecodingReason:
-    return "out-of-space" if failure.kind == "member-name-unicode" else "type-mismatch"
+def _json_failure_reason(failure: JsonCarrierFailure) -> NeutralLiteralCode:
+    return (
+        NEUTRAL_LITERAL_OUT_OF_SPACE
+        if failure.kind == "member-name-unicode"
+        else NEUTRAL_LITERAL_TYPE_MISMATCH
+    )
 
 
 # One case per JSON scalar kind. It runs per scalar inside every Json value on Wire encode
@@ -644,7 +674,7 @@ def _json_failure_reason(failure: JsonCarrierFailure) -> WireDecodingReason:
 def _normalize_json_scalar(value: object) -> WireValue:  # noqa: C901
     if _is_unrecognized_exclusion(value):
         raise _JsonFailure(
-            "type-mismatch",
+            NEUTRAL_LITERAL_TYPE_MISMATCH,
             "value is excluded from managed membership",
         )
     if value is None:
@@ -656,14 +686,14 @@ def _normalize_json_scalar(value: object) -> WireValue:  # noqa: C901
         if token is not None:
             if exceeds_json_int_space(token):
                 raise _JsonFailure(
-                    "out-of-space",
+                    NEUTRAL_LITERAL_OUT_OF_SPACE,
                     "a Json integer is outside the ordinary host serialization space",
                 )
             return int(decimal.Decimal(token))
         base_value = int.__int__(value)
         if exceeds_json_int_value_space(base_value):
             raise _JsonFailure(
-                "out-of-space",
+                NEUTRAL_LITERAL_OUT_OF_SPACE,
                 "a Json integer is outside the ordinary host serialization space",
             )
         return base_value
@@ -671,14 +701,18 @@ def _normalize_json_scalar(value: object) -> WireValue:  # noqa: C901
         token = authored_token(value)
         number = float(decimal.Decimal(token)) if token is not None else float.__float__(value)
         if not math.isfinite(number):
-            raise _JsonFailure("out-of-space", "a Json number is outside the finite host space")
+            raise _JsonFailure(
+                NEUTRAL_LITERAL_OUT_OF_SPACE, "a Json number is outside the finite host space"
+            )
         return number
     if isinstance(value, str):
         text = str.__str__(value)
         if not is_string_member(text, STRING):
-            raise _JsonFailure("out-of-space", "a Json string has no UTF-8 encoding")
+            raise _JsonFailure(NEUTRAL_LITERAL_OUT_OF_SPACE, "a Json string has no UTF-8 encoding")
         return text
-    raise _JsonFailure("type-mismatch", f"{_diagnostic(value)} is not JSON data-model content")
+    raise _JsonFailure(
+        NEUTRAL_LITERAL_TYPE_MISMATCH, f"{_diagnostic(value)} is not JSON data-model content"
+    )
 
 
 def _diagnostic(value: object) -> str:
@@ -711,14 +745,12 @@ def _bounded_repr(content: str | bytes, unit: str) -> str:
 
 
 def _fail(
-    reason: WireDecodingReason,
+    code: NeutralLiteralCode,
     value: object,
     neutral_type: NeutralType,
 ) -> NoReturn:
-    raise WireDecodingError(
-        reason,
-        f"{_diagnostic(value)} is {reason} for the declared value space "
-        f"{_diagnostic(neutral_type)}",
+    raise UsageError(
+        code, f"{_diagnostic(value)} for the declared value space {_diagnostic(neutral_type)}"
     )
 
 

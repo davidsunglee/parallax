@@ -21,6 +21,7 @@ from parallax.core import (
     ObjectQuery,
     attr,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity import model_of
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
@@ -29,8 +30,8 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandlerError,
     RootExecution,
 )
-from parallax.core.unit_work import InstructionRejectedError, WriteInstructionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.errors import raises_code
 
 _NS = "readonly.persistence"
 _RULE = "read-only-write-target"
@@ -188,9 +189,8 @@ def test_a_caught_refusal_changes_no_row_and_the_transaction_commits_its_other_w
             refuse = refusal.reaching(tx)
             tx.insert(Journal(id=1, note="before"))
             sent = len(statements.sql)
-            with pytest.raises(InstructionRejectedError) as rejected:
+            with raises_code(UsageError, _RULE):
                 refuse()
-            assert rejected.value.rule == _RULE
             assert len(statements.sql) == sent
             tx.insert(Journal(id=2, note="after"))
 
@@ -323,7 +323,11 @@ def test_an_explicit_wire_assignment_of_a_read_only_attribute_is_refused(
 
         def write(tx: TxnContext) -> None:
             refuse = assignment.reaching(tx)
-            with pytest.raises(WriteInstructionError, match="read-only fields may not be assigned"):
+            with raises_code(
+                UsageError,
+                "write-instruction-invalid",
+                match="read-only fields may not be assigned",
+            ):
                 refuse()
 
         db.transact(write)

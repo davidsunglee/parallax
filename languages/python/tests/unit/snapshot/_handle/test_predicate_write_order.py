@@ -34,10 +34,8 @@ from typing import Final
 
 import pytest
 
-from parallax.core import QueryDefinitionError, inheritance
-from parallax.core._execution._unit_work.instructions import InstructionRejectedError
-from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
-from parallax.core.unit_work import WriteInstructionError, WriteRejectedError
+from parallax.core import QueryDefinitionError
+from parallax.core.base import UsageError
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -139,7 +137,7 @@ def _shape_refusals(entity: str) -> Mapping[Representation, _Expected]:
     result-shaping clause, and a Wire predicate node no algebra spells."""
     return {
         "typed": _not_mutation_compatible(entity),
-        "wire": _refused(CanonicalDocumentError, _UNKNOWN_NODE),
+        "wire": _refused(UsageError, _UNKNOWN_NODE, code="predicate-document-invalid"),
     }
 
 
@@ -148,7 +146,7 @@ def _observation_needed(entity: str, kind: str, verb: str, sibling: str) -> _Exp
     write such a target through a read or a revision its caller holds."""
     revision = "version" if kind == "versioned" else "tx_start"
     return _refused(
-        InstructionRejectedError,
+        UsageError,
         f"{entity} is {kind}, so {verb}_where cannot change it without reading it. Read it "
         f"(find / stream) and {sibling} each object, or use {sibling}_if with the {revision} "
         "you hold.",
@@ -201,19 +199,22 @@ def test_an_admitted_predicate_write_executes_one_readless_statement(row: _Row) 
 # target at all.                                                               #
 # --------------------------------------------------------------------------- #
 _NOT_A_DOCUMENT: Final = _refused(
-    WriteInstructionError,
+    UsageError,
     "a predicate-selected write's canonical target must be a document of names to values, "
     "got ObjectQueryNode",
+    code="write-instruction-invalid",
 )
 _NOT_A_SELECTION: Final = _refused(
-    WriteInstructionError,
+    UsageError,
     "a predicate-selected write target carries exactly `entity` and `predicate` (an Object "
     "Query's own clauses shape a result, and a set-based write has none); got ['predicate', "
     "'target']",
+    code="write-instruction-invalid",
 )
 _UNDECLARED_ACCOUNT: Final = _refused(
-    WriteInstructionError,
+    UsageError,
     "the connected model declares no entity 'parallax.compatibility.Account' for this write",
+    code="write-instruction-invalid",
 )
 
 _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
@@ -388,9 +389,10 @@ def test_the_targets_kind_is_judged_before_anything_the_model_decides(row: _Row)
 # and judges its changes as Wire does.                                         #
 # --------------------------------------------------------------------------- #
 _INVERTED: Final = _refused(
-    ModelRejectedError,
+    UsageError,
     "'parallax.compatibility.Person.id': decoded lower bound 10 is greater than decoded upper "
     "bound 1, so the range is empty",
+    code="between-bounds-inverted",
 )
 _UNBOUND_PATH: Final = _refused(
     QueryDefinitionError,
@@ -399,9 +401,10 @@ _UNBOUND_PATH: Final = _refused(
     code="query-path-invalid",
 )
 _UNDECLARED_WIRE_CHANGE: Final = _refused(
-    WriteInstructionError,
+    UsageError,
     "Person: assignment 'parallax.compatibility.Person.undeclared' does not name a declared "
     "member of parallax.compatibility.Person",
+    code="write-instruction-invalid",
 )
 
 _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
@@ -433,25 +436,26 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend"),
-        _both(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend", assignments="undeclared"),
-        _both(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
     ),
     _Row(
         PredicateWriteScenario(
             CARD_PAYMENT_SELECTION, "amend", assignments="undeclared", wire_target="query"
         ),
-        _wire(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+        _wire(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
     ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="undeclared"),
         {
             "typed": _refused(
-                WriteInstructionError,
+                UsageError,
                 "Person: assignment 'parallax.compatibility.Account.owner' does not name a "
                 "declared member of parallax.compatibility.Person",
+                code="write-instruction-invalid",
             ),
             "wire": _UNDECLARED_WIRE_CHANGE,
         },
@@ -464,11 +468,11 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "replace"),
-        _both(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "replace", assignments="undeclared"),
-        _wire(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+        _wire(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
     ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "replace", selection="inverted"),
@@ -478,8 +482,9 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
         PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="undeclared"),
         _wire(
             _refused(
-                WriteInstructionError,
+                UsageError,
                 "Person: predicate write row names undeclared member(s) ['undeclared']",
+                code="write-instruction-invalid",
             )
         ),
     ),
@@ -487,8 +492,9 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
         PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="none"),
         _wire(
             _refused(
-                WriteRejectedError,
+                UsageError,
                 "Person.name: a replacement states every required member, and this one is absent",
+                code="write-required-attribute-missing",
             )
         ),
     ),
@@ -523,7 +529,7 @@ _EMPTY_AMENDMENT: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend", assignments="none"),
-        _both(_refused(inheritance.InheritanceError, _FAMILY_REFUSAL)),
+        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
     ),
     _Row(
         PredicateWriteScenario(POSITION_SELECTION, "amend", assignments="none"),

@@ -34,7 +34,7 @@ from parallax.conformance.vo_models import (
     Shipment,
 )
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import INFINITY, TemporalBound
+from parallax.core.base import INFINITY, TemporalBound, UsageError
 from parallax.core.db_port import (
     Bind,
     Committed,
@@ -48,9 +48,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import (
-    InstructionRejectedError,
     KeyedWriteInstruction,
-    WriteRejectedError,
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
@@ -685,9 +683,9 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
         if "target" in authored
         else KeyedWriteInstruction("insert", target.identity.canonical, (authored,))
     )
-    with pytest.raises(WriteRejectedError) as exc_info:
+    with pytest.raises(UsageError) as exc_info:
         instructions.prepare_wire_write(instruction, write_preparation_of(model))
-    assert exc_info.value.rule == expected_rule
+    assert exc_info.value.code == expected_rule
 
 
 def test_a_complete_document_still_constructs() -> None:
@@ -711,9 +709,9 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     db = own_root(
         Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
     ).using_database_login()
-    with raises_contextualized(WriteRejectedError) as exc_info:
+    with raises_contextualized(UsageError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
-    assert exc_info.value.rule == expected_rule
+    assert exc_info.value.code == expected_rule
     assert not port.wrote
 
 
@@ -751,9 +749,9 @@ def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = own_root(Database.connect(port, MODELS[model])).using_database_login()
-    with raises_contextualized(InstructionRejectedError) as exc_info:
+    with raises_contextualized(UsageError) as exc_info:
         db.transact(write)
-    assert exc_info.value.rule == expected_rule
+    assert exc_info.value.code == expected_rule
     assert port.statements() == []
 
 
@@ -811,7 +809,7 @@ def test_idiomatic_read_only_write_rejects_the_corpus_rule(case_id: str) -> None
     model, write = REJECTED_READ_ONLY_WRITES[case_id]
     port = _KeyedSeedPort(rows=[_SCALAR_THING_ROW])
     db = own_root(Database.connect(port, MODELS[model])).using_database_login()
-    with raises_contextualized(InstructionRejectedError) as exc_info:
+    with raises_contextualized(UsageError) as exc_info:
         db.transact(write)
-    assert exc_info.value.rule == expected_rule
+    assert exc_info.value.code == expected_rule
     assert not port.wrote

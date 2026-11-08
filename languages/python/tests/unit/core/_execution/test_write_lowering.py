@@ -52,9 +52,7 @@ from parallax.core import (
 )
 from parallax.core import predicate as oa
 from parallax.core._execution._unit_work.instructions import (
-    InstructionRejectedError,
     WriteInstruction,
-    WriteInstructionError,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -65,7 +63,7 @@ from parallax.core._execution._write_lowering import (
 )
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, DocumentValue, FrozenMap
+from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, DocumentValue, FrozenMap, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
@@ -144,6 +142,7 @@ from parallax.core.write_plan.steps import (
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.descriptor import _records
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall
+from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
 from tests._support.row_slots import observed_slots
@@ -381,15 +380,13 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     update = KeyedWriteInstruction(
         "amend", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
     )
-    with pytest.raises(InstructionRejectedError, match="framework-owned") as refused:
+    with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
         _lower(
             update,
             ACCOUNT,
             observation=VersionObservation(observed_version=1),
             concurrency="optimistic",
         )
-
-    assert refused.value.rule == "framework-owned-member-assigned"
 
 
 def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> None:
@@ -481,10 +478,10 @@ def _refused_at_preparation(
     exists to buffer, settle, or lower."""
     preparation = write_preparation_of(model)
     for prepare in (prepare_typed_write, prepare_wire_write):
-        with pytest.raises(WriteInstructionError, match=match) as refused:
+        with raises_code(UsageError, "write-instruction-invalid", match=match) as refused:
             prepare(instruction, preparation)
         assert not isinstance(refused.value, WritePlanningError)
-    with pytest.raises(WriteInstructionError, match=match):
+    with raises_code(UsageError, "write-instruction-invalid", match=match):
         _lower(instruction, model)
 
 
@@ -495,7 +492,7 @@ def test_increment_marker_reaching_an_insert_is_refused() -> None:
     _refused_at_preparation(
         insert,
         PK_SEQUENCE,
-        r"^unsupported DB-computed marker on 'PkSequence'\.nextVal: a 'increment' marker is "
+        r"unsupported DB-computed marker on 'PkSequence'\.nextVal: a 'increment' marker is "
         r"not recognized for insert planning$",
     )
 
@@ -507,7 +504,7 @@ def test_computed_marker_reaching_an_update_is_refused() -> None:
     _refused_at_preparation(
         update,
         PK_MAX,
-        r"^unsupported DB-computed marker on 'Attendee'\.name: a 'computed' marker is not "
+        r"unsupported DB-computed marker on 'Attendee'\.name: a 'computed' marker is not "
         r"recognized for update planning$",
     )
 
@@ -519,7 +516,7 @@ def test_unrecognized_computed_strategy_is_refused() -> None:
     _refused_at_preparation(
         insert,
         PK_MAX,
-        r"^unsupported DB-computed marker on 'Attendee'\.id: 'somethingElse' is not a "
+        r"unsupported DB-computed marker on 'Attendee'\.id: 'somethingElse' is not a "
         r"recognized `computed` strategy \(m-pk-gen\)$",
     )
 
@@ -528,7 +525,7 @@ def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:
     update = KeyedWriteInstruction(
         "amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne", "extra": True}},)
     )
-    with pytest.raises(ValueError, match="does not match the declared type"):
+    with pytest.raises(UsageError, match="does not match the declared type"):
         _lower(update, PK_MAX)
 
 
@@ -568,9 +565,8 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # reject the `narrow` case before it can introduce an alias that unaliased
     # DML never declares (`m-sql` rule 1).
     write = PredicateWriteInstruction("delete", PredicateSelection("CardPayment", predicate))
-    with pytest.raises(inheritance.InheritanceError) as excinfo:
+    with raises_code(UsageError, "subtype-write-set-based-unsupported"):
         _lower(write, PAYMENT)
-    assert excinfo.value.rule == "subtype-write-set-based-unsupported"
 
 
 def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
@@ -591,7 +587,7 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
             {"id": 11, "owner": "Omar"},
         ),
     )
-    with pytest.raises(ValueError, match="required attribute is absent"):
+    with pytest.raises(UsageError, match="required attribute is absent"):
         _lower(mixed, WALLET)
 
 
@@ -952,7 +948,7 @@ def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> Non
 def test_a_mapping_outside_the_marker_shape_is_rejected_as_a_string(
     value: dict[str, object],
 ) -> None:
-    with pytest.raises(ValueError, match="does not match the declared type"):
+    with pytest.raises(UsageError, match="does not match the declared type"):
         _lower(KeyedWriteInstruction("insert", "Attendee", ({"id": 1, "name": value},)), PK_MAX)
 
 
@@ -960,7 +956,7 @@ def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> Non
     # Every member spelling must resolve to a semantic identity before a step
     # exists, so an unknown one is refused where the resolution happens — never
     # silently dropped from the emitted column list.
-    with pytest.raises(ValueError, match="undeclared member"):
+    with pytest.raises(UsageError, match="undeclared member"):
         _finalize(KeyedWriteInstruction("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
 
 
@@ -968,7 +964,7 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() 
     # A milestone verb opens, splits, or closes a milestone, and an Entity
     # declaring no as-of axis has none — refused where the target's family is
     # resolved, never rendered as an ordinary keyed write.
-    with pytest.raises(ValueError, match="do not support 'terminate'"):
+    with pytest.raises(UsageError, match="do not support 'terminate'"):
         _finalize(KeyedWriteInstruction("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 

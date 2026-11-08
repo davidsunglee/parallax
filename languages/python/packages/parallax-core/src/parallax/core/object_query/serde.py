@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
+from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._canonical import object_query
 from parallax.core.object_query._nodes import (
@@ -17,20 +18,16 @@ from parallax.core.object_query._nodes import (
     TemporalDimension,
     TemporalSelection,
 )
-from parallax.core.predicate import CanonicalDocumentError, canonical_subtype_selection
+from parallax.core.predicate import canonical_subtype_selection
 from parallax.core.predicate import deserialize as deserialize_predicate
 from parallax.core.predicate import serialize as serialize_predicate
 
-__all__ = ["deserialize", "serialize"]
+__all__ = ["OBJECT_QUERY_DOCUMENT_INVALID", "deserialize", "serialize"]
 
 
-class ObjectQueryError(CanonicalDocumentError):
-    """An Object Query document is not a well-formed canonical query.
-
-    A subclass of the Predicate serde's own malformed-document error, because a
-    query carries a predicate and a caller catching "this document is malformed"
-    means both.
-    """
+OBJECT_QUERY_DOCUMENT_INVALID: Final = "object-query-document-invalid"
+"""A serialized Object Query document is not a well-formed canonical query. A
+malformed predicate inside one is the predicate serde's own refusal."""
 
 
 # Reference-string patterns, mirroring identity.schema.json's `$defs` exactly.
@@ -47,25 +44,29 @@ _DIMENSIONS: tuple[TemporalDimension, ...] = ("transaction-time", "valid-time")
 
 def _mapping(value: object, where: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
-        raise ObjectQueryError(f"{where} must be a mapping, got {type(value).__name__}")
+        raise UsageError(
+            OBJECT_QUERY_DOCUMENT_INVALID, f"{where} must be a mapping, got {type(value).__name__}"
+        )
     return cast("Mapping[str, object]", value)
 
 
 def _closed(node: Mapping[str, object], allowed: frozenset[str], where: str) -> None:
     extra = sorted(set(node) - allowed)
     if extra:
-        raise ObjectQueryError(f"{where}: unexpected key(s) {extra}")
+        raise UsageError(OBJECT_QUERY_DOCUMENT_INVALID, f"{where}: unexpected key(s) {extra}")
 
 
 def _entity_name(value: object, where: str) -> str:
     if not isinstance(value, str) or _ENTITY_NAME.match(value) is None:
-        raise ObjectQueryError(f"{where}: {value!r} is not a valid entity name")
+        raise UsageError(
+            OBJECT_QUERY_DOCUMENT_INVALID, f"{where}: {value!r} is not a valid entity name"
+        )
     return value
 
 
 def _selection(value: object, where: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
-        raise ObjectQueryError(f"{where} must be a non-empty list")
+        raise UsageError(OBJECT_QUERY_DOCUMENT_INVALID, f"{where} must be a non-empty list")
     return canonical_subtype_selection(
         tuple(_entity_name(item, where) for item in cast("list[object]", value))
     )
@@ -79,18 +80,23 @@ def _instant(value: object, where: str, *, finite: bool) -> str:
     current-clock instant before construction.
     """
     if not isinstance(value, str) or not value:
-        raise ObjectQueryError(f"{where} must be a non-empty temporal value")
+        raise UsageError(
+            OBJECT_QUERY_DOCUMENT_INVALID, f"{where} must be a non-empty temporal value"
+        )
     if value == "now" or (finite and value == "latest"):
         qualifier = "finite " if finite else ""
-        raise ObjectQueryError(f"{where} must be a {qualifier}canonical coordinate")
+        raise UsageError(
+            OBJECT_QUERY_DOCUMENT_INVALID, f"{where} must be a {qualifier}canonical coordinate"
+        )
     return value
 
 
 def _temporal_selection(doc: object, dimension: str) -> TemporalSelection:
     node = _mapping(doc, f"temporal.{dimension}")
     if len(node) != 1:
-        raise ObjectQueryError(
-            f"temporal.{dimension}: a Temporal Selection has exactly one key, got {sorted(node)}"
+        raise UsageError(
+            OBJECT_QUERY_DOCUMENT_INVALID,
+            f"temporal.{dimension}: a Temporal Selection has exactly one key, got {sorted(node)}",
         )
     (tag,) = node
     body = node[tag]
@@ -106,14 +112,18 @@ def _temporal_selection(doc: object, dimension: str) -> TemporalSelection:
     if tag == "history":
         _closed(_mapping(body, f"temporal.{dimension}.history"), frozenset(), "history")
         return History()
-    raise ObjectQueryError(f"temporal.{dimension}: unknown Temporal Selection {tag!r}")
+    raise UsageError(
+        OBJECT_QUERY_DOCUMENT_INVALID, f"temporal.{dimension}: unknown Temporal Selection {tag!r}"
+    )
 
 
 def _temporal(doc: object) -> dict[TemporalDimension, TemporalSelection]:
     node = _mapping(doc, "temporal")
     _closed(node, frozenset(_DIMENSIONS), "temporal")
     if not node:
-        raise ObjectQueryError("temporal: a present map names at least one dimension")
+        raise UsageError(
+            OBJECT_QUERY_DOCUMENT_INVALID, "temporal: a present map names at least one dimension"
+        )
     return {
         dimension: _temporal_selection(node[dimension], dimension)
         for dimension in _DIMENSIONS
@@ -123,14 +133,17 @@ def _temporal(doc: object) -> dict[TemporalDimension, TemporalSelection]:
 
 def _order_by(doc: object) -> tuple[OrderKey, ...]:
     if not isinstance(doc, list) or not doc:
-        raise ObjectQueryError("orderBy must be a non-empty list")
+        raise UsageError(OBJECT_QUERY_DOCUMENT_INVALID, "orderBy must be a non-empty list")
     keys: list[OrderKey] = []
     for item in cast("list[object]", doc):
         key = _mapping(item, "orderBy key")
         _closed(key, frozenset({"attr", "direction", "nulls"}), "orderBy key")
         attr = key.get("attr")
         if not isinstance(attr, str) or _MEMBER_REF.match(attr) is None:
-            raise ObjectQueryError(f"orderBy: `attr` {attr!r} is not a valid attribute reference")
+            raise UsageError(
+                OBJECT_QUERY_DOCUMENT_INVALID,
+                f"orderBy: `attr` {attr!r} is not a valid attribute reference",
+            )
         # `direction` and `nulls` are optional (schema defaults `asc` and `last`); a
         # key that omits one deserializes to `None` so serialization can omit it
         # back (round-trip).
@@ -138,13 +151,17 @@ def _order_by(doc: object) -> tuple[OrderKey, ...]:
         if "direction" in key:
             raw = key["direction"]
             if raw not in ("asc", "desc"):
-                raise ObjectQueryError("orderBy: `direction` must be 'asc' or 'desc'")
+                raise UsageError(
+                    OBJECT_QUERY_DOCUMENT_INVALID, "orderBy: `direction` must be 'asc' or 'desc'"
+                )
             direction = raw
         nulls: Literal["first", "last"] | None = None
         if "nulls" in key:
             raw_nulls = key["nulls"]
             if raw_nulls not in ("first", "last"):
-                raise ObjectQueryError("orderBy: `nulls` must be 'first' or 'last'")
+                raise UsageError(
+                    OBJECT_QUERY_DOCUMENT_INVALID, "orderBy: `nulls` must be 'first' or 'last'"
+                )
             nulls = raw_nulls
         keys.append(OrderKey(attr=attr, direction=direction, nulls=nulls))
     return tuple(keys)
@@ -152,7 +169,7 @@ def _order_by(doc: object) -> tuple[OrderKey, ...]:
 
 def _includes(doc: object) -> tuple[IncludePathNode, ...]:
     if not isinstance(doc, list) or not doc:
-        raise ObjectQueryError("includes must be a non-empty list")
+        raise UsageError(OBJECT_QUERY_DOCUMENT_INVALID, "includes must be a non-empty list")
     paths: list[IncludePathNode] = []
     for entry in cast("list[object]", doc):
         path = _mapping(entry, "include path")
@@ -162,15 +179,18 @@ def _includes(doc: object) -> tuple[IncludePathNode, ...]:
         )
         raw_segments = path.get("segments")
         if not isinstance(raw_segments, list) or not raw_segments:
-            raise ObjectQueryError("include path `segments` must be a non-empty list")
+            raise UsageError(
+                OBJECT_QUERY_DOCUMENT_INVALID, "include path `segments` must be a non-empty list"
+            )
         segments: list[IncludeSegment] = []
         for item in cast("list[object]", raw_segments):
             segment = _mapping(item, "include segment")
             _closed(segment, frozenset({"rel", "narrowTo"}), "include segment")
             rel = segment.get("rel")
             if not isinstance(rel, str) or _MEMBER_REF.match(rel) is None:
-                raise ObjectQueryError(
-                    f"include segment: `rel` {rel!r} is not a valid relationship reference"
+                raise UsageError(
+                    OBJECT_QUERY_DOCUMENT_INVALID,
+                    f"include segment: `rel` {rel!r} is not a valid relationship reference",
                 )
             narrow_to = (
                 _selection(segment["narrowTo"], "include segment narrowTo")
@@ -200,10 +220,12 @@ def deserialize(doc: object) -> ObjectQueryNode:
     _closed(node, _CLAUSES, "objectQuery")
     for required in ("target", "predicate"):
         if required not in node:
-            raise ObjectQueryError(f"objectQuery: missing required clause `{required}`")
+            raise UsageError(
+                OBJECT_QUERY_DOCUMENT_INVALID, f"objectQuery: missing required clause `{required}`"
+            )
     limit = node.get("limit")
     if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
-        raise ObjectQueryError("limit must be a positive integer")
+        raise UsageError(OBJECT_QUERY_DOCUMENT_INVALID, "limit must be a positive integer")
     return object_query(
         _target(node["target"]),
         deserialize_predicate(node["predicate"]),

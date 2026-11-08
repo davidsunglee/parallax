@@ -26,7 +26,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.interleaved import run_interleaved_scenario_case
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
@@ -577,7 +577,7 @@ def test_run_interleaved_scenario_case_refuses_an_execution_granting_no_terminat
     peer_port = ScriptedPort(read_rows=[[healthy_row]])
     executions = _ScriptedExecutions(ours_port, peer_port, trusted=trusted)
 
-    with pytest.raises(EngineError, match="refuses to start") as raised:
+    with pytest.raises(UnclassifiedEngineError, match="refuses to start") as raised:
         run_interleaved_scenario_case(case, ScriptedPort(), executions)
 
     message = str(raised.value)
@@ -613,7 +613,7 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
     steps = cast("list[dict[str, Any]]", when["scenario"])
     steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
 
-    with pytest.raises(EngineError, match="fills no `stepGraphs` channel"):
+    with pytest.raises(UnclassifiedEngineError, match="fills no `stepGraphs` channel"):
         run_interleaved_scenario_case(
             case, ScriptedPort(), _ScriptedExecutions(ScriptedPort(), ScriptedPort())
         )
@@ -658,7 +658,7 @@ def test_an_interleaved_case_grading_a_conflict_abort_under_a_positive_bound_is_
     case = _with_option_placement(placement)
     executions = _ScriptedExecutions(ScriptedPort(), ScriptedPort())
 
-    with pytest.raises(EngineError, match=f"under `maxRetries: {bound}`"):
+    with pytest.raises(UnclassifiedEngineError, match=f"under `maxRetries: {bound}`"):
         run_interleaved_scenario_case(case, ScriptedPort(), executions)
     assert executions.opened == []
 
@@ -722,7 +722,9 @@ def test_a_group_production_replays_fails_rather_than_re_running_its_steps() -> 
     ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
     peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
-    with pytest.raises(EngineError, match="production replayed an interleaved `uow` group"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="production replayed an interleaved `uow` group"
+    ):
         run_interleaved_scenario_case(case, caller_port, _ScriptedExecutions(ours_port, peer_port))
     assert len(ours_port.levels) == 2
 

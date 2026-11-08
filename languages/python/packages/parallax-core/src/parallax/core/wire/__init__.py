@@ -1,23 +1,33 @@
 from __future__ import annotations
 
 from parallax.core.wire._codec import (
-    WireDecodingError,
-    WireDecodingReason,
+    NEUTRAL_LITERAL_CODES,
+    NEUTRAL_LITERAL_NONCANONICAL,
+    NEUTRAL_LITERAL_OUT_OF_SPACE,
+    NEUTRAL_LITERAL_TYPE_MISMATCH,
+    NeutralLiteralCode,
     WireEncodingError,
     decode_canonical_wire,
     decode_wire,
     encode_wire,
+    is_decoding_refusal,
+    located_refusal,
 )
 from parallax.core.wire._json import loads
 from parallax.core.wire._types import WireValue
 
 __all__ = [
-    "WireDecodingError",
-    "WireDecodingReason",
+    "NEUTRAL_LITERAL_CODES",
+    "NEUTRAL_LITERAL_NONCANONICAL",
+    "NEUTRAL_LITERAL_OUT_OF_SPACE",
+    "NEUTRAL_LITERAL_TYPE_MISMATCH",
+    "NeutralLiteralCode",
     "WireEncodingError",
     "WireValue",
     "decode_canonical_wire",
     "decode_wire",
     "encode_wire",
+    "is_decoding_refusal",
     "loads",
+    "located_refusal",
 ]

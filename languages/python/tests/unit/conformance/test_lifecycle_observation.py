@@ -28,7 +28,7 @@ from parallax.conformance._lifecycle_observation import (
     lifecycle_run,
 )
 from parallax.conformance._lifecycle_recording import RecordedRoot
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -874,9 +874,9 @@ def test_a_write_delivered_before_any_step_buffered_one_is_an_adapter_defect() -
     _Handler(observation).deliver(_call("write", "insert 1"))
     state = GroupReport()
     state.buffered.append((0, len(observation.writes)))
-    with pytest.raises(EngineError, match="before any write step had buffered one"):
+    with pytest.raises(UnclassifiedEngineError, match="before any write step had buffered one"):
         group_writes(state, observation.writes, "a group")
-    with pytest.raises(EngineError, match="delivered 1 write"):
+    with pytest.raises(UnclassifiedEngineError, match="delivered 1 write"):
         group_writes(GroupReport(), observation.writes, "a group")
 
 

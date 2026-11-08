@@ -23,7 +23,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, INT64, TIMESTAMP
+from parallax.core.base import INFINITY, INT64, TIMESTAMP, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -477,7 +477,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
 # Refusals — identical to the read lane's, since it is the same dispatcher.   #
 # --------------------------------------------------------------------------- #
 def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(ValueError, match="names no declared member"):
+    with pytest.raises(UsageError, match="names no declared member"):
         compile_write_predicate(
             oa.Comparison(op="eq", subject=oa.FieldSubject("Account.mystery"), value=1),
             ACCOUNT,

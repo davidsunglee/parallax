@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Final
 
 from parallax.core._execution._features import DeferredFeatureError, deferred_features
+from parallax.core.base import UsageError
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.object_query import (
@@ -11,7 +12,7 @@ from parallax.core.object_query import (
     validate_object_query,
 )
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate import REFERENCE_AMBIGUOUS_ENTITY_NAME
 
 __all__ = ["QueryTargetError", "resolve_read_query"]
 
@@ -44,8 +45,8 @@ def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObject
     target" implies "planning resolves it". Raises
     the :class:`QueryTargetError` when ``model``
     declares no Entity for it,
-    :class:`~parallax.core.predicate.ModelRejectedError` when a clause is not
-    applicable from that resolved root, and
+    a :class:`~parallax.core.base.UsageError` with the rule's code when a clause
+    is not applicable from that resolved root, and
     :class:`~parallax.core._execution._features.DeferredFeatureError` when the
     query is applicable but requires a Feature this implementation has not built
     yet. Performs no SQL generation, Database Port or connection work,
@@ -56,8 +57,8 @@ def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObject
     if root is None:
         shared = ambiguous_entity_spellings(model, clauses.target.canonical)
         if shared:
-            raise ModelRejectedError(
-                "reference-ambiguous-entity-name",
+            raise UsageError(
+                REFERENCE_AMBIGUOUS_ENTITY_NAME,
                 f"{clauses.target.canonical!r}: the bare Entity spelling is shared by "
                 f"{list(shared)}, so it names no single Entity in this model and the read "
                 "resolves nowhere (m-predicate reference resolution)",

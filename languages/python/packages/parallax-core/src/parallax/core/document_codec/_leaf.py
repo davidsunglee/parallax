@@ -12,11 +12,11 @@ from parallax.core.base import (
     String,
     Time,
     Timestamp,
+    UsageError,
     Uuid,
     retain_document_value,
 )
 from parallax.core.wire import (
-    WireDecodingError,
     WireEncodingError,
     WireValue,
     decode_canonical_wire,
@@ -140,5 +140,5 @@ def decode_leaf(neutral_type: NeutralType, value: object) -> object:
     """
     try:
         return decode_canonical_wire(neutral_type, cast("WireValue", value))
-    except WireDecodingError as exc:
+    except UsageError as exc:
         raise LeafEncodingError(str(exc)) from exc

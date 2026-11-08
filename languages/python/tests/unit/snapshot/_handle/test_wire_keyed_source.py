@@ -20,12 +20,9 @@ import datetime as dt
 from decimal import Decimal
 from typing import Final, cast
 
-import pytest
-
 from parallax.core import DomainModel
-from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
-from parallax.core.base import INFINITY, SQL_NULL
+from parallax.core.base import INFINITY, SQL_NULL, UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import TimeInterval
@@ -37,6 +34,7 @@ from parallax.snapshot._handle._wire_writes import (
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import cataloged_for, preparation_for
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -98,7 +96,7 @@ def test_capture_judges_the_document_before_resolve_is_asked_for_a_source() -> N
     # source's provenance nor the Entity that source names.
     source = WireKeyedWriteSource(cast("object", {}), cast("dict[str, object]", []))
 
-    with pytest.raises(instructions.WriteInstructionError, match="document of names"):
+    with raises_code(UsageError, "write-instruction-invalid", match="document of names"):
         source.capture("amend")
 
 
@@ -113,7 +111,7 @@ def test_construction_refuses_nothing_either_phase_would() -> None:
 def test_an_insert_payload_that_is_no_document_is_judged_at_capture() -> None:
     source = WireKeyedInsertSource(_ACCOUNT, cast("dict[str, object]", []))
 
-    with pytest.raises(instructions.WriteInstructionError, match="payload must be a document"):
+    with raises_code(UsageError, "write-instruction-invalid", match="payload must be a document"):
         source.capture("insert")
 
 
@@ -211,7 +209,7 @@ def test_a_stated_key_naming_another_object_is_refused_while_preparing() -> None
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    with pytest.raises(instructions.WriteInstructionError, match="another object"):
+    with raises_code(UsageError, "write-instruction-invalid", match="another object"):
         source.prepare(
             preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
         )
@@ -277,8 +275,8 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     )
 
     assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
-    with pytest.raises(
-        instructions.WriteInstructionError, match="a bitemporal 'insert' requires valid_from"
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="a bitemporal 'insert' requires valid_from"
     ):
         source.prepare(
             preparation_for(_meta(WHERE_POSITION_META)),
@@ -296,7 +294,7 @@ def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -
     source.capture("insert")
     resolved = source.resolve(_meta(ACCOUNT), "insert")
 
-    with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
+    with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
         source.prepare(
             preparation_for(_meta(ACCOUNT)), "insert", resolved, valid_from=None, until=None
         )

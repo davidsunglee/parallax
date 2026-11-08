@@ -32,7 +32,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32
+from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32, UsageError
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.entity._declaration import declaration_of, shape_of
 from parallax.core.entity._errors import EditError
@@ -40,7 +40,6 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import Multiplicity, ScalarDefinition
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.predicate import serialize
-from parallax.core.unit_work import WriteRejectedError
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.query_probes import predicate_node
@@ -218,9 +217,9 @@ def test_an_out_of_space_element_constructs_and_the_write_refuses_it(
 
     assert getattr(order, member) == authored
     refused = _write_refusal(lambda tx: tx.insert(order))
-    assert isinstance(refused, WriteRejectedError)
-    assert refused.rule == "write-value-type-mismatch"
-    assert str(refused).startswith(refusal)
+    assert isinstance(refused, UsageError)
+    assert refused.code == "write-value-type-mismatch"
+    assert refused.args[1].startswith(refusal)
 
 
 @pytest.mark.parametrize(

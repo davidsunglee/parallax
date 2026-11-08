@@ -22,7 +22,7 @@ import pytest
 
 from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.metamodel import AttributeMetadata
 from parallax.core.object_query import (
     AsOf,
@@ -45,7 +45,6 @@ from parallax.core.predicate import (
     FieldSubject,
     Group,
     Membership,
-    ModelRejectedError,
     Narrow,
     Not,
     NullCheck,
@@ -240,14 +239,14 @@ def _validate_query(target: str, meta: Metamodel, **clauses: Any) -> None:
     validate_object_query(root, object_query(root.identity, predicate, **clauses), model)
 
 
-def _query_rejects(target: str, meta: Metamodel, **clauses: Any) -> ModelRejectedError:
-    with pytest.raises(ModelRejectedError) as excinfo:
+def _query_rejects(target: str, meta: Metamodel, **clauses: Any) -> UsageError:
+    with pytest.raises(UsageError) as excinfo:
         _validate_query(target, meta, **clauses)
     return excinfo.value
 
 
-def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> ModelRejectedError:
-    with pytest.raises(ModelRejectedError) as excinfo:
+def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> UsageError:
+    with pytest.raises(UsageError) as excinfo:
         _validate(target, op, meta)
     return excinfo.value
 
@@ -261,10 +260,10 @@ def _eq(path: str, value: ScalarLiteral) -> Comparison:
 # --------------------------------------------------------------------------- #
 def test_temporal_read_requires_one_selection_per_declared_dimension() -> None:
     missing = _query_rejects("Balance", _BALANCE)
-    assert missing.rule == "temporal-read-dimension-selection-cardinality"
+    assert missing.code == "temporal-read-dimension-selection-cardinality"
     only_valid: dict[TemporalDimension, TemporalSelection] = {"valid-time": AsOf("latest")}
     partial = _query_rejects("Position", _POSITION, temporal=only_valid)
-    assert partial.rule == "temporal-read-dimension-selection-cardinality"
+    assert partial.code == "temporal-read-dimension-selection-cardinality"
 
 
 def test_temporal_read_accepts_complete_explicit_selections() -> None:
@@ -342,7 +341,7 @@ def test_temporal_read_rejects_an_undeclared_dimension() -> None:
         "valid-time": AsOf("latest"),
     }
     exc = _query_rejects("Balance", _BALANCE, temporal=undeclared)
-    assert exc.rule == "temporal-read-dimension-selection-cardinality"
+    assert exc.code == "temporal-read-dimension-selection-cardinality"
 
 
 # --------------------------------------------------------------------------- #
@@ -396,9 +395,9 @@ def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) 
         deserialize_query(cast("Mapping[str, object]", when["objectQuery"])), model
     )
     root = _root(model, query.target.canonical)
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with pytest.raises(UsageError) as excinfo:
         validate_object_query(root, query, model)
-    assert excinfo.value.rule == then["rejectedRule"]
+    assert excinfo.value.code == then["rejectedRule"]
 
 
 # --------------------------------------------------------------------------- #
@@ -416,7 +415,7 @@ def test_between_with_inverted_same_kind_bounds_rejects(
     lower: ScalarLiteral, upper: ScalarLiteral
 ) -> None:
     exc = _rejects(_between(lower, upper), _ORDERS, "Order")
-    assert exc.rule == "between-bounds-inverted"
+    assert exc.code == "between-bounds-inverted"
 
 
 @pytest.mark.parametrize(
@@ -437,13 +436,13 @@ def test_between_bounds_the_rule_stands_aside_for_accept(
 @pytest.mark.parametrize("lower", [20.0, 5, "5", True, "2024-02-01"])
 def test_between_rejects_a_bound_outside_the_resolved_value_space(lower: ScalarLiteral) -> None:
     exc = _rejects(_between(lower, "50.75"), _ORDERS, "Order")
-    assert exc.rule in {"neutral-literal-type-mismatch", "neutral-literal-noncanonical"}
+    assert exc.code in {"neutral-literal-type-mismatch", "neutral-literal-noncanonical"}
 
 
 def test_between_bound_ordering_is_checked_wherever_the_node_sits() -> None:
     op = And(operands=(TrueNode(), Not(operand=_between("50.75", "20.00"))))
     exc = _rejects(op, _ORDERS, "Order")
-    assert exc.rule == "between-bounds-inverted"
+    assert exc.code == "between-bounds-inverted"
 
 
 def test_between_subject_is_resolved_before_its_bounds_are_ordered() -> None:
@@ -451,7 +450,7 @@ def test_between_subject_is_resolved_before_its_bounds_are_ordered() -> None:
     # blaming its (also inverted) bounds.
     op = Range(subject=FieldSubject("address.city"), lower="b", upper="a")
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "predicate-subject-outside-scope"
+    assert exc.code == "predicate-subject-outside-scope"
 
 
 def _range_scopes(
@@ -474,14 +473,14 @@ def test_a_value_object_range_rejects_inverted_bounds_in_both_scopes() -> None:
     numeric, _ = _range_scopes(12, 5, path="Customer.address.geo.elevation", element="number")
     _, textual = _range_scopes("work", "home", path="Customer.address.city", element="type")
     for op in (numeric, textual):
-        assert _rejects(op, _CUSTOMER, "Customer").rule == "between-bounds-inverted"
+        assert _rejects(op, _CUSTOMER, "Customer").code == "between-bounds-inverted"
 
 
 def test_range_bounds_are_typed_before_they_are_ordered_in_both_scopes() -> None:
     # Both bounds mistype a `string` leaf AND are inverted as raw numbers. Ordering
     # first would blame the ordering for what is really the bounds' types.
     for op in _range_scopes(42, 7, path="Customer.address.city", element="type"):
-        assert _rejects(op, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
+        assert _rejects(op, _CUSTOMER, "Customer").code == "neutral-literal-type-mismatch"
 
 
 def test_ordered_typed_value_object_bounds_accept_in_both_scopes() -> None:
@@ -503,7 +502,7 @@ def test_ordered_typed_value_object_bounds_accept_in_both_scopes() -> None:
 
 def test_a_range_over_an_unknown_path_rejects_before_any_bound_check() -> None:
     op = Range(subject=FieldSubject("Customer.address.bogus"), lower=12, upper=5)
-    assert _rejects(op, _CUSTOMER, "Customer").rule == "path-unknown-member"
+    assert _rejects(op, _CUSTOMER, "Customer").code == "path-unknown-member"
 
 
 def test_negated_membership_type_checks_its_values_in_both_scopes() -> None:
@@ -516,7 +515,7 @@ def test_negated_membership_type_checks_its_values_in_both_scopes() -> None:
         Membership(op="notIn", subject=FieldSubject("type"), values=(42,)),
     )
     for op in (flat, scoped):
-        assert _rejects(op, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
+        assert _rejects(op, _CUSTOMER, "Customer").code == "neutral-literal-type-mismatch"
     _validate(
         "Customer",
         Membership(op="notIn", subject=FieldSubject("Customer.address.city"), values=("Oslo",)),
@@ -530,7 +529,7 @@ def test_negated_membership_type_checks_its_values_in_both_scopes() -> None:
 def test_narrow_broadening_past_position_rejects() -> None:
     op = Narrow(to=("Person",), operand=TrueNode())
     exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "narrow-outside-position"
+    assert exc.code == "narrow-outside-position"
 
 
 def test_nested_narrow_cannot_broaden_back_out_of_the_enclosing_narrow() -> None:
@@ -539,7 +538,7 @@ def test_nested_narrow_cannot_broaden_back_out_of_the_enclosing_narrow() -> None
         operand=Narrow(to=("Cat",), operand=TrueNode()),
     )
     exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "narrow-outside-position"
+    assert exc.code == "narrow-outside-position"
 
 
 def test_narrow_within_position_accepts() -> None:
@@ -556,17 +555,17 @@ def test_equivalent_narrow_spelling_is_not_outside_position() -> None:
 
 def test_subtype_selection_rejects_an_exact_duplicate() -> None:
     exc = _rejects(Narrow(to=("Dog", "Dog"), operand=TrueNode()), _ANIMAL, "Animal")
-    assert exc.rule == "subtype-selection-duplicate-alternative"
+    assert exc.code == "subtype-selection-duplicate-alternative"
 
 
 def test_subtype_selection_rejects_overlapping_alternatives() -> None:
     exc = _rejects(Narrow(to=("Dog", "Pet"), operand=TrueNode()), _ANIMAL, "Animal")
-    assert exc.rule == "subtype-selection-overlapping-alternatives"
+    assert exc.code == "subtype-selection-overlapping-alternatives"
 
 
 def test_subtype_selection_checks_exact_duplicates_before_overlap() -> None:
     exc = _rejects(Narrow(to=("Pet", "Dog", "Dog"), operand=TrueNode()), _ANIMAL, "Animal")
-    assert exc.rule == "subtype-selection-duplicate-alternative"
+    assert exc.code == "subtype-selection-duplicate-alternative"
 
 
 def test_redundant_self_narrow_is_valid() -> None:
@@ -582,7 +581,7 @@ def test_narrow_empty_effective_set_rejects() -> None:
     # only through this shape.
     op = Narrow(to=("Ghost",), operand=TrueNode())
     exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
-    assert exc.rule == "narrow-empty-effective-set"
+    assert exc.code == "narrow-empty-effective-set"
 
 
 def test_a_narrow_to_a_name_the_model_does_not_declare_resolves_to_nothing() -> None:
@@ -591,7 +590,7 @@ def test_a_narrow_to_a_name_the_model_does_not_declare_resolves_to_nothing() -> 
     # Entity is named as a resolution failure of its own.
     op = Narrow(to=("Bogus",), operand=TrueNode())
     exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "narrow-empty-effective-set"
+    assert exc.code == "narrow-empty-effective-set"
 
 
 def test_a_positions_family_set_is_its_roots_concrete_set_without_a_metadata_fetch(
@@ -620,7 +619,7 @@ def test_a_positions_family_set_is_its_roots_concrete_set_without_a_metadata_fet
 def test_subtype_attribute_outside_narrow_scope_rejects() -> None:
     op = Comparison(op="greaterThan", subject=FieldSubject("Dog.barkVolume"), value=5)
     exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "subtype-attribute-outside-narrow-scope"
+    assert exc.code == "subtype-attribute-outside-narrow-scope"
 
 
 def test_subtype_attribute_within_narrow_scope_accepts() -> None:
@@ -645,7 +644,7 @@ def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> N
 
 def test_a_descendant_scoped_null_check_resolves_an_inherited_non_nullable_attribute() -> None:
     exc = _rejects(NullCheck(op="isNull", subject=FieldSubject("Dog.name")), _ANIMAL, "Dog")
-    assert exc.rule == "null-check-non-nullable-member"
+    assert exc.code == "null-check-non-nullable-member"
 
 
 def test_descendant_scoped_null_checks_resolve_inherited_value_objects() -> None:
@@ -655,7 +654,7 @@ def test_descendant_scoped_null_checks_resolve_inherited_value_objects() -> None
     )
     for operation in operations:
         exc = _rejects(operation, _INHERITED_VALUE_OBJECTS, "Leaf")
-        assert exc.rule == "null-check-non-nullable-member"
+        assert exc.code == "null-check-non-nullable-member"
 
 
 @pytest.mark.parametrize(
@@ -678,7 +677,7 @@ def test_the_position_is_measured_against_the_entity_a_reference_names(op: Predi
     # where the reference addresses no row the position contains. Pinned by
     # m-predicate-049.
     exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "subtype-attribute-outside-narrow-scope"
+    assert exc.code == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_subtype_spelling_is_in_scope_once_the_position_is_narrowed_to_it() -> None:
@@ -703,7 +702,7 @@ def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None
     # name one that does not exist.
     op = Comparison(op="eq", subject=FieldSubject("OrderItem.id"), value=1)
     exc = _rejects(op, _ORDERS, "Order")
-    assert exc.rule == "attribute-outside-active-position"
+    assert exc.code == "attribute-outside-active-position"
 
 
 def test_a_sibling_familys_attribute_is_outside_the_active_position() -> None:
@@ -712,7 +711,7 @@ def test_a_sibling_familys_attribute_is_outside_the_active_position() -> None:
     # either side happens to participate in inheritance at all.
     op = Comparison(op="eq", subject=FieldSubject("Person.name"), value="Ada")
     exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "attribute-outside-active-position"
+    assert exc.code == "attribute-outside-active-position"
 
 
 def test_a_quantifier_binds_the_related_entity_its_relative_paths_read() -> None:
@@ -722,7 +721,7 @@ def test_a_quantifier_binds_the_related_entity_its_relative_paths_read() -> None
     _validate("Person", Quantifier("any", "Person.pets", inner), _ANIMAL)
     qualified = Comparison(op="eq", subject=FieldSubject("Animal.name"), value="Rex")
     exc = _rejects(Quantifier("any", "Person.pets", qualified), _ANIMAL, "Person")
-    assert exc.rule == "predicate-subject-outside-scope"
+    assert exc.code == "predicate-subject-outside-scope"
 
 
 # --------------------------------------------------------------------------- #
@@ -731,13 +730,13 @@ def test_a_quantifier_binds_the_related_entity_its_relative_paths_read() -> None
 def test_narrow_to_outside_relationship_target_rejects() -> None:
     op = Quantifier("any", "Person.pets", Narrow(to=("WildBoar",), operand=TrueNode()))
     exc = _rejects(op, _ANIMAL, "Person")
-    assert exc.rule == "narrow-outside-relationship-target"
+    assert exc.code == "narrow-outside-relationship-target"
 
 
 def test_empty_narrow_inside_relationship_target_keeps_the_shared_empty_rule() -> None:
     op = Quantifier("any", "Person.pets", Narrow(to=("Bogus",), operand=TrueNode()))
     exc = _rejects(op, _ANIMAL, "Person")
-    assert exc.rule == "narrow-empty-effective-set"
+    assert exc.code == "narrow-empty-effective-set"
 
 
 def test_narrow_within_relationship_target_accepts() -> None:
@@ -756,13 +755,13 @@ def test_every_quantifier_kind_scopes_its_relationship_target() -> None:
     for kind in ("any", "all", "none"):
         op = Quantifier(kind, "Person.pets", Narrow(to=("WildBoar",), operand=TrueNode()))
         exc = _rejects(op, _ANIMAL, "Person")
-        assert exc.rule == "narrow-outside-relationship-target"
+        assert exc.code == "narrow-outside-relationship-target"
 
 
 def test_a_target_local_narrow_measures_its_selection_against_the_reached_target() -> None:
     _validate("Animal", Narrow(path="Animal.owner", to=("Person",), operand=TrueNode()), _ANIMAL)
     exc = _rejects(Narrow(path="Animal.owner", to=("Dog",), operand=TrueNode()), _ANIMAL, "Animal")
-    assert exc.rule == "narrow-outside-relationship-target"
+    assert exc.code == "narrow-outside-relationship-target"
 
 
 def _hop(narrow_to: tuple[str, ...] = ()) -> tuple[IncludePathNode, ...]:
@@ -771,7 +770,7 @@ def _hop(narrow_to: tuple[str, ...] = ()) -> tuple[IncludePathNode, ...]:
 
 def test_include_segment_narrow_outside_relationship_target_rejects() -> None:
     exc = _query_rejects("Person", _ANIMAL, includes=_hop(("WildBoar",)))
-    assert exc.rule == "narrow-outside-relationship-target"
+    assert exc.code == "narrow-outside-relationship-target"
 
 
 def test_include_segment_narrow_within_relationship_target_accepts() -> None:
@@ -780,7 +779,7 @@ def test_include_segment_narrow_within_relationship_target_accepts() -> None:
 
 def test_empty_include_segment_narrow_keeps_the_shared_empty_rule() -> None:
     exc = _query_rejects("Person", _ANIMAL, includes=_hop(("Bogus",)))
-    assert exc.rule == "narrow-empty-effective-set"
+    assert exc.code == "narrow-empty-effective-set"
 
 
 def _guarded(applies_to: tuple[str, ...] | None) -> tuple[IncludePathNode, ...]:
@@ -804,7 +803,7 @@ def test_include_source_guard_broadening_past_the_position_rejects() -> None:
     # Read of the abstract subtype Pet, guard reaching the sibling branch: the
     # queried position supplies the active position, so WildBoar is outside it.
     exc = _query_rejects("Pet", _ANIMAL, includes=_guarded(("WildBoar",)))
-    assert exc.rule == "narrow-outside-position"
+    assert exc.code == "narrow-outside-position"
 
 
 def test_include_source_guard_reads_the_queried_position_not_the_narrowed_result() -> None:
@@ -817,7 +816,7 @@ def test_include_source_guard_empty_effective_set_rejects() -> None:
     # A guard naming an abstract subtype with no concrete descendants resolves to
     # nothing, which is the guard's own rejection, not a broadening.
     exc = _query_rejects("Animal", _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, includes=_guarded(("Ghost",)))
-    assert exc.rule == "narrow-empty-effective-set"
+    assert exc.code == "narrow-empty-effective-set"
 
 
 # --------------------------------------------------------------------------- #
@@ -840,7 +839,7 @@ def test_include_source_guard_empty_effective_set_rejects() -> None:
 )
 def test_a_field_path_resolves_through_single_members_to_a_scalar(path: str, rule: str) -> None:
     exc = _rejects(_eq(path, "x"), _CUSTOMER, "Customer")
-    assert exc.rule == rule
+    assert exc.code == rule
 
 
 def test_a_path_descends_through_single_value_objects() -> None:
@@ -854,23 +853,23 @@ def test_a_path_descends_through_single_value_objects() -> None:
 
 def test_a_path_never_continues_past_a_top_level_many_value_object() -> None:
     exc = _rejects(_eq("Basket.parcels.sku", "a"), _COLLECTIONS, "Basket")
-    assert exc.rule == "path-crosses-many"
+    assert exc.code == "path-crosses-many"
 
 
 def test_a_relative_path_names_a_member_of_the_bound_entity() -> None:
     exc = _rejects(Quantifier("any", "Order.items", _eq("bogus", 1)), _ORDERS, "Order")
-    assert exc.rule == "path-unknown-member"
+    assert exc.code == "path-unknown-member"
 
 
 def test_a_path_follows_a_to_one_relationship_and_refuses_a_to_many_one() -> None:
     _validate("OrderItem", _eq("OrderItem.order.name", "A"), _ORDERS)
     exc = _rejects(_eq("Order.items.sku", "A"), _ORDERS, "Order")
-    assert exc.rule == "path-crosses-many"
+    assert exc.code == "path-crosses-many"
 
 
 def test_a_path_cannot_continue_through_a_reverse_to_many() -> None:
     exc = _rejects(_eq("Owner.baskets.label", "a"), _COLLECTIONS, "Owner")
-    assert exc.rule == "path-crosses-many"
+    assert exc.code == "path-crosses-many"
 
 
 @pytest.mark.parametrize(
@@ -907,7 +906,7 @@ def test_a_path_cannot_continue_through_a_reverse_to_many() -> None:
 def test_each_operation_admits_only_its_own_terminal_kind(
     op: PredicateNode, target: str, meta: Metamodel
 ) -> None:
-    assert _rejects(op, meta, target).rule == "path-target-kind-mismatch"
+    assert _rejects(op, meta, target).code == "path-target-kind-mismatch"
 
 
 def test_presence_tests_single_objects_and_quantifiers_collections() -> None:
@@ -969,7 +968,7 @@ def test_presence_tests_single_objects_and_quantifiers_collections() -> None:
 def test_a_subject_is_spelled_for_the_scope_it_is_read_in(
     op: PredicateNode, target: str, meta: Metamodel
 ) -> None:
-    assert _rejects(op, meta, target).rule == "predicate-subject-outside-scope"
+    assert _rejects(op, meta, target).code == "predicate-subject-outside-scope"
 
 
 def test_a_scalar_collection_element_takes_scalar_operations_but_no_null_check() -> None:
@@ -988,13 +987,13 @@ def test_a_scalar_collection_element_takes_scalar_operations_but_no_null_check()
         "CollectionTwinItem.counts",
         Comparison(op="eq", subject=CURRENT_SCALAR_ELEMENT, value="a"),
     )
-    assert _rejects(mistyped, _TWIN, "CollectionTwinItem").rule == "neutral-literal-type-mismatch"
+    assert _rejects(mistyped, _TWIN, "CollectionTwinItem").code == "neutral-literal-type-mismatch"
     matched = Quantifier(
         "any",
         "CollectionTwinItem.counts",
         StringMatch(op="like", subject=CURRENT_SCALAR_ELEMENT, value="1%"),
     )
-    assert _rejects(matched, _TWIN, "CollectionTwinItem").rule == (
+    assert _rejects(matched, _TWIN, "CollectionTwinItem").code == (
         "string-predicate-non-string-member"
     )
 
@@ -1014,7 +1013,7 @@ def test_a_string_pattern_is_decoded_as_a_string_literal(
         exc = _rejects(unpaired, _ORDERS, "Order")
     else:
         exc = _rejects(Quantifier("any", path, unpaired), _TWIN, "CollectionTwinItem")
-    assert exc.rule == "neutral-literal-out-of-space"
+    assert exc.code == "neutral-literal-out-of-space"
 
 
 @pytest.mark.parametrize(
@@ -1058,7 +1057,7 @@ def test_a_reused_sibling_member_resolves_to_the_declaration_applicable_there(
         "Holder.payments",
         Comparison(op="greaterThan", subject=FieldSubject("detail"), value="10.00"),
     )
-    assert _rejects(broad, _SIBLING_REUSE, "Holder").rule == (
+    assert _rejects(broad, _SIBLING_REUSE, "Holder").code == (
         "subtype-attribute-outside-narrow-scope"
     )
 
@@ -1066,7 +1065,7 @@ def test_a_reused_sibling_member_resolves_to_the_declaration_applicable_there(
 def test_literal_comparison_over_a_value_object_field() -> None:
     _validate("Customer", _eq("Customer.address.city", "Oslo"), _CUSTOMER)
     exc = _rejects(_eq("Customer.address.city", 42), _CUSTOMER, "Customer")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
 
 
 @pytest.mark.parametrize(
@@ -1375,7 +1374,7 @@ def test_a_relationship_match_resolves_its_operand_at_the_related_entity() -> No
 )
 def test_a_relationship_match_binds_only_its_related_entity(operand: PredicateNode) -> None:
     exc = _rejects(Presence("exists", "OrderItem.order", operand), _ORDERS, "OrderItem")
-    assert exc.rule == "predicate-subject-outside-scope"
+    assert exc.code == "predicate-subject-outside-scope"
 
 
 def test_a_relationship_match_narrows_within_the_targets_family() -> None:
@@ -1391,7 +1390,7 @@ def test_a_relationship_match_narrows_within_the_targets_family() -> None:
         _TRAVERSAL,
         "Collar",
     )
-    assert exc.rule == "narrow-outside-relationship-target"
+    assert exc.code == "narrow-outside-relationship-target"
 
 
 def test_a_target_local_narrow_resolves_at_the_reached_target() -> None:
@@ -1419,7 +1418,7 @@ def test_constants_resolve_without_an_operation() -> None:
 
 def test_a_null_check_on_an_undeclared_attribute_is_refused_at_validation() -> None:
     exc = _rejects(NullCheck(op="isNull", subject=FieldSubject("Order.bogus")), _ORDERS, "Order")
-    assert exc.rule == "path-unknown-member"
+    assert exc.code == "path-unknown-member"
 
 
 def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> None:
@@ -1475,7 +1474,7 @@ def test_string_predicate_rejects_a_non_string_member() -> None:
     exc = _rejects(
         StringMatch(op="like", subject=FieldSubject("Order.qty"), value="1%"), _ORDERS, "Order"
     )
-    assert exc.rule == "string-predicate-non-string-member"
+    assert exc.code == "string-predicate-non-string-member"
 
 
 @pytest.mark.parametrize("tag", _STRING_TAGS)
@@ -1484,7 +1483,7 @@ def test_a_string_predicate_on_a_numeric_leaf_names_the_member(tag: StringOp) ->
     # apply and their ORDER is what this pins: the member's own type is judged first.
     op = StringMatch(op=tag, subject=FieldSubject("Customer.address.geo.elevation"), value="1")
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "string-predicate-non-string-member"
+    assert exc.code == "string-predicate-non-string-member"
 
 
 def test_a_string_predicate_on_a_date_member_is_rejected_in_both_scopes() -> None:
@@ -1493,14 +1492,14 @@ def test_a_string_predicate_on_a_date_member_is_rejected_in_both_scopes() -> Non
     dotted = StringMatch(
         op="startsWith", subject=FieldSubject("Contact.address.phones.expires"), value="2024"
     )
-    assert _rejects(dotted, _CONTACT, "Contact").rule == "path-crosses-many"
+    assert _rejects(dotted, _CONTACT, "Contact").code == "path-crosses-many"
     element_scoped = Quantifier(
         "any",
         "Contact.address.phones",
         StringMatch(op="endsWith", subject=FieldSubject("expires"), value="-01"),
     )
     exc = _rejects(element_scoped, _CONTACT, "Contact")
-    assert exc.rule == "string-predicate-non-string-member"
+    assert exc.code == "string-predicate-non-string-member"
 
 
 _MULTI_TYPE_MODEL = Metamodel(
@@ -1531,40 +1530,40 @@ _MULTI_TYPE_MODEL = Metamodel(
 def test_literal_matches_type_boolean() -> None:
     _validate("Widget", _eq("Widget.spec.flag", True), _MULTI_TYPE_MODEL)
     exc = _rejects(_eq("Widget.spec.flag", 1), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
 
 
 def test_literal_matches_type_int() -> None:
     _validate("Widget", _eq("Widget.spec.count", 3), _MULTI_TYPE_MODEL)
     exc = _rejects(_eq("Widget.spec.count", "3"), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
     # A bool is never a numeric literal (m-core: `True` never equals `1`).
     exc = _rejects(_eq("Widget.spec.count", True), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
 
 
 def test_literal_matches_type_float_and_decimal() -> None:
     _validate("Widget", _eq("Widget.spec.ratio", 1.5), _MULTI_TYPE_MODEL)
     _validate("Widget", _eq("Widget.spec.amount", "2.00"), _MULTI_TYPE_MODEL)
     exc = _rejects(_eq("Widget.spec.ratio", "x"), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
 
 
 def test_literal_matches_type_string_and_portable_fallback() -> None:
     _validate("Widget", _eq("Widget.spec.label", "x"), _MULTI_TYPE_MODEL)
     exc = _rejects(_eq("Widget.spec.label", 1), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
     # date / time / timestamp / uuid / bytes / json ride the portable literal as a
     # string (m-predicate's typed-literal vocabulary has no dedicated carrier).
     _validate("Widget", _eq("Widget.spec.whenMade", "2024-01-02"), _MULTI_TYPE_MODEL)
     exc = _rejects(_eq("Widget.spec.whenMade", 1), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "neutral-literal-type-mismatch"
+    assert exc.code == "neutral-literal-type-mismatch"
 
 
 def test_a_null_check_rejects_a_non_nullable_leaf() -> None:
     op = NullCheck(op="isNotNull", subject=FieldSubject("Customer.address.street"))
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "null-check-non-nullable-member"
+    assert exc.code == "null-check-non-nullable-member"
 
 
 def test_null_checks_accept_nullable_leaves_in_every_scope() -> None:
@@ -1596,12 +1595,12 @@ def test_a_value_object_quantifier_judges_its_where_against_the_element() -> Non
         )
     )
     exc = _rejects(Quantifier("any", "Customer.address.geo", where), _CUSTOMER, "Customer")
-    assert exc.rule == "path-target-kind-mismatch"
+    assert exc.code == "path-target-kind-mismatch"
     for kind in ("any", "none"):
         unknown = Quantifier(kind, "Customer.address.phones", _eq("bogus", "x"))
-        assert _rejects(unknown, _CUSTOMER, "Customer").rule == "path-unknown-member"
+        assert _rejects(unknown, _CUSTOMER, "Customer").code == "path-unknown-member"
     mistyped = Quantifier("any", "Customer.address.phones", _eq("type", 42))
-    assert _rejects(mistyped, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
+    assert _rejects(mistyped, _CUSTOMER, "Customer").code == "neutral-literal-type-mismatch"
 
 
 @pytest.mark.parametrize(
@@ -1618,7 +1617,7 @@ def test_corpus_scoped_where_cases_still_validate_unrejected(case_id: str) -> No
 def test_include_value_object_segment_rejects() -> None:
     includes = (IncludePathNode(segments=(IncludeSegment(rel="Customer.address"),)),)
     exc = _query_rejects("Customer", _CUSTOMER, includes=includes)
-    assert exc.rule == "deep-fetch-value-object-segment"
+    assert exc.code == "deep-fetch-value-object-segment"
 
 
 def test_include_relationship_path_accepts() -> None:
@@ -1651,7 +1650,7 @@ def test_boolean_combinators_walk_every_operand() -> None:
     _validate("Customer", valid, _CUSTOMER)  # no raise
 
     rejecting = And(operands=(_eq("Customer.name", "Ada"), _OUT_OF_SCOPE))
-    assert _rejects(rejecting, _CUSTOMER, "Customer").rule == "predicate-subject-outside-scope"
+    assert _rejects(rejecting, _CUSTOMER, "Customer").code == "predicate-subject-outside-scope"
 
     or_rejecting = And(
         operands=(
@@ -1659,7 +1658,7 @@ def test_boolean_combinators_walk_every_operand() -> None:
             Or(operands=(_OUT_OF_SCOPE, _eq("Customer.name", "Bob"))),
         )
     )
-    assert _rejects(or_rejecting, _CUSTOMER, "Customer").rule == "predicate-subject-outside-scope"
+    assert _rejects(or_rejecting, _CUSTOMER, "Customer").code == "predicate-subject-outside-scope"
 
 
 def test_negation_and_grouping_propagate() -> None:
@@ -1672,7 +1671,7 @@ def test_negation_and_grouping_propagate() -> None:
     for wrap in wraps:
         _validate("Customer", wrap(good), _CUSTOMER)
         exc = _rejects(wrap(_OUT_OF_SCOPE), _CUSTOMER, "Customer")
-        assert exc.rule == "predicate-subject-outside-scope"
+        assert exc.code == "predicate-subject-outside-scope"
 
 
 def test_the_constants_are_no_ops() -> None:
@@ -1685,7 +1684,7 @@ def test_the_constants_are_no_ops() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_sort_key_outside_the_active_position_rejects() -> None:
     exc = _query_rejects("Order", _ORDERS, order_by=(OrderKey(attr="OrderItem.sku"),))
-    assert exc.rule == "attribute-outside-active-position"
+    assert exc.code == "attribute-outside-active-position"
 
 
 def test_a_sort_key_at_the_queried_position_accepts() -> None:
@@ -1695,7 +1694,7 @@ def test_a_sort_key_at_the_queried_position_accepts() -> None:
 def test_every_sort_key_is_checked_not_only_the_first() -> None:
     keys = (OrderKey(attr="Order.sku"), OrderKey(attr="OrderItem.sku", direction="desc"))
     exc = _query_rejects("Order", _ORDERS, order_by=keys)
-    assert exc.rule == "attribute-outside-active-position"
+    assert exc.code == "attribute-outside-active-position"
 
 
 def test_a_sort_key_reads_the_position_result_narrowing_moved_it_to() -> None:
@@ -1706,7 +1705,7 @@ def test_a_sort_key_reads_the_position_result_narrowing_moved_it_to() -> None:
         "Animal", _ANIMAL, narrow_to=("Dog",), order_by=(OrderKey(attr="Dog.barkVolume"),)
     )
     exc = _query_rejects("Animal", _ANIMAL, order_by=(OrderKey(attr="Dog.barkVolume"),))
-    assert exc.rule == "subtype-attribute-outside-narrow-scope"
+    assert exc.code == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_narrow_inside_the_predicate_does_not_move_a_sort_keys_position() -> None:
@@ -1727,12 +1726,12 @@ def test_a_narrow_inside_the_predicate_does_not_move_a_sort_keys_position() -> N
             predicate=predicate,
             order_by=(OrderKey(attr="Dog.barkVolume"),),
         )
-        assert exc.rule == "subtype-attribute-outside-narrow-scope"
+        assert exc.code == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_sort_key_rooted_at_a_value_object_names_the_root_misuse() -> None:
     exc = _query_rejects("Customer", _CUSTOMER, order_by=(OrderKey(attr="address.city"),))
-    assert exc.rule == "find-root-value-object"
+    assert exc.code == "find-root-value-object"
 
 
 # --------------------------------------------------------------------------- #
@@ -1770,7 +1769,7 @@ def test_a_canonical_reference_resolves_across_namespaces() -> None:
 def test_a_canonical_reference_to_the_other_namespace_is_outside_the_position() -> None:
     op = Comparison(op="eq", subject=FieldSubject("sales.Customer.name"), value="Ada")
     exc = _rejects(op, _TWO_NAMESPACES, "crm.Customer")
-    assert exc.rule == "attribute-outside-active-position"
+    assert exc.code == "attribute-outside-active-position"
 
 
 def test_a_bare_reference_two_namespaces_share_resolves_nowhere() -> None:
@@ -1779,7 +1778,7 @@ def test_a_bare_reference_two_namespaces_share_resolves_nowhere() -> None:
     # refusal, whose message answers with the spellings that would resolve.
     op = Comparison(op="eq", subject=FieldSubject("Customer.name"), value="Ada")
     exc = _rejects(op, _TWO_NAMESPACES, "crm.Customer")
-    assert exc.rule == "reference-ambiguous-entity-name"
+    assert exc.code == "reference-ambiguous-entity-name"
     assert "crm.Customer" in str(exc)
     assert "sales.Customer" in str(exc)
 
@@ -1805,7 +1804,7 @@ _AMBIGUOUS_BY_POSITION: Mapping[str, PredicateNode] = {
 @pytest.mark.parametrize("position", sorted(_AMBIGUOUS_BY_POSITION))
 def test_an_ambiguous_bare_name_is_rejected_in_every_reference_position(position: str) -> None:
     exc = _rejects(_AMBIGUOUS_BY_POSITION[position], _SHARED_LOCAL_NAME, "Register")
-    assert exc.rule == "reference-ambiguous-entity-name"
+    assert exc.code == "reference-ambiguous-entity-name"
     assert "archive.SharedVariant" in str(exc)
     assert "catalog.SharedVariant" in str(exc)
 
@@ -1837,7 +1836,7 @@ _AMBIGUOUS_BY_CLAUSE: Mapping[str, dict[str, Any]] = {
 @pytest.mark.parametrize("position", sorted(_AMBIGUOUS_BY_CLAUSE))
 def test_an_ambiguous_bare_name_is_rejected_in_every_query_clause(position: str) -> None:
     exc = _query_rejects("Register", _SHARED_LOCAL_NAME, **_AMBIGUOUS_BY_CLAUSE[position])
-    assert exc.rule == "reference-ambiguous-entity-name"
+    assert exc.code == "reference-ambiguous-entity-name"
     assert "archive.SharedVariant" in str(exc)
     assert "catalog.SharedVariant" in str(exc)
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import cast
+from typing import Final, Literal, cast
 
 from parallax.core import inheritance
+from parallax.core.base import ManagedValue, NeutralType, UsageError
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     EntityIdentity,
@@ -36,7 +37,9 @@ from parallax.core.object_query._resolved import (
     ResolvedTemporalSelection,
 )
 from parallax.core.predicate import (
-    ModelRejectedError,
+    NARROW_EMPTY_EFFECTIVE_SET,
+    NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+    QUERY_CLAUSE_INVALID,
     PositionScope,
     canonical_interpretation,
     check_attribute_reference,
@@ -48,15 +51,38 @@ from parallax.core.predicate import (
     root_position,
     validate_narrow,
 )
-from parallax.core.wire import WireDecodingError, decode_wire
+from parallax.core.wire import WireValue, decode_wire, located_refusal
 
-__all__ = ["validate_include_path", "validate_object_query"]
+__all__ = [
+    "DEEP_FETCH_PAST_BACK_REFERENCE",
+    "DEEP_FETCH_VALUE_OBJECT_SEGMENT",
+    "TEMPORAL_READ_DIMENSION_SELECTION_CARDINALITY",
+    "ObjectQueryRejectionCode",
+    "validate_include_path",
+    "validate_object_query",
+]
+
+type ObjectQueryRejectionCode = Literal[
+    "deep-fetch-past-back-reference",
+    "deep-fetch-value-object-segment",
+    "temporal-read-dimension-selection-cardinality",
+]
+"""The model-aware rules an Object Query's own clauses break, beside the
+predicate rules its predicate, narrowing and Sort Keys are held to.
+``temporal-read-dimension-selection-cardinality`` is this binding's own; the
+others are core ``rejectedRule`` spellings."""
+
+DEEP_FETCH_PAST_BACK_REFERENCE: Final = "deep-fetch-past-back-reference"
+DEEP_FETCH_VALUE_OBJECT_SEGMENT: Final = "deep-fetch-value-object-segment"
+TEMPORAL_READ_DIMENSION_SELECTION_CARDINALITY: Final = (
+    "temporal-read-dimension-selection-cardinality"
+)
 
 
 def validate_object_query(
     root: EntityMetadata, query: QueryInput, model: Metamodel
 ) -> ResolvedObjectQuery:
-    """Validate ``query`` against ``model``, raising :class:`ModelRejectedError`.
+    """Validate ``query`` against ``model``, raising a model-aware refusal.
 
     ``root`` is the queried position, already resolved to accepted Metadata by
     the caller from the query's own ``target``. The clause rules run in the order
@@ -118,8 +144,8 @@ def validate_include_path(
 
     The source guard is constrained by ``queried`` and each segment is resolved
     from the preceding relationship target. Narrowing, wrong-kind, and
-    past-back-reference violations raise :class:`ModelRejectedError` with their
-    shared rule code. A relationship
+    past-back-reference violations raise a
+    :class:`~parallax.core.base.UsageError` with their shared rule code. A relationship
     direction that is unresolved, undeclared, or disconnected from the preceding
     target raises ``ValueError`` because accepted metadata supplies no direction
     to return from that position.
@@ -134,7 +160,7 @@ def validate_include_path(
     at_back_reference = False
     for segment in path.segments:
         target = relationship_target(
-            segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
+            segment.rel, model, wrong_kind_rule=DEEP_FETCH_VALUE_OBJECT_SEGMENT
         )
         class_name, dot, member_name = segment.rel.rpartition(".")
         declaring = entity_by_name(model, class_name) if dot else None
@@ -146,8 +172,8 @@ def validate_include_path(
                 f"{sorted(active_scope.effective)}"
             )
         if at_back_reference:
-            raise ModelRejectedError(
-                "deep-fetch-past-back-reference",
+            raise UsageError(
+                DEEP_FETCH_PAST_BACK_REFERENCE,
                 f"{segment.rel!r} continues past a back-reference level, which ends its path",
             )
         direction = RelationshipIdentity(declaring.identity, member_name)
@@ -158,14 +184,14 @@ def validate_include_path(
         if segment.narrow_to:
             resolved = resolve_subtype_selection(segment.narrow_to, model)
             if not resolved:
-                raise ModelRejectedError(
-                    "narrow-empty-effective-set",
+                raise UsageError(
+                    NARROW_EMPTY_EFFECTIVE_SET,
                     f"include segment narrowTo {list(segment.narrow_to)} resolves to the empty "
                     "concrete-subtype set",
                 )
             if not resolved <= target_scope.effective:
-                raise ModelRejectedError(
-                    "narrow-outside-relationship-target",
+                raise UsageError(
+                    NARROW_OUTSIDE_RELATIONSHIP_TARGET,
                     f"include segment narrowTo {list(segment.narrow_to)} resolves to "
                     f"{sorted(resolved)}, which is not a subset of "
                     f"{target.identity.name}'s effective concrete set "
@@ -212,8 +238,8 @@ def _validate_temporal_selections(
             )
             if detail
         )
-        raise ModelRejectedError(
-            "temporal-read-dimension-selection-cardinality",
+        raise UsageError(
+            TEMPORAL_READ_DIMENSION_SELECTION_CARDINALITY,
             f"{root.identity.canonical}: temporal read selections are invalid ({details}); "
             "a canonical Object Query names exactly one selection per declared dimension",
         )
@@ -223,31 +249,27 @@ def _validate_temporal_selections(
         start = declarer.attribute(axis.start_attribute.name)
         if start is None:
             raise ValueError(f"{axis.start_attribute} names no declared temporal Attribute")
-        try:
-            if isinstance(selection, History):
-                product = ResolvedHistorySelection(axis)
-            elif isinstance(selection, AsOfRange):
-                managed_start = cast("dt.datetime", decode_wire(start.type, selection.start))
-                managed_end = cast("dt.datetime", decode_wire(start.type, selection.end))
-                if managed_start >= managed_end:
-                    raise ModelRejectedError(
-                        "query-clause-invalid",
-                        f"{root.identity.canonical}.{dimension}: asOfRange scans [start, end), "
-                        "so start < end",
-                    )
-                product = ResolvedRangeSelection(
-                    axis,
-                    managed_start,
-                    managed_end,
+        where = f"{root.identity.canonical}.{dimension}"
+        if isinstance(selection, History):
+            product = ResolvedHistorySelection(axis)
+        elif isinstance(selection, AsOfRange):
+            managed_start = cast("dt.datetime", _decoded(start.type, selection.start, where))
+            managed_end = cast("dt.datetime", _decoded(start.type, selection.end, where))
+            if managed_start >= managed_end:
+                raise UsageError(
+                    QUERY_CLAUSE_INVALID, f"{where}: asOfRange scans [start, end), so start < end"
                 )
-            elif selection.coordinate == "latest":
-                product = ResolvedLatestSelection(axis)
-            else:
-                product = ResolvedAsOfSelection(axis, decode_wire(start.type, selection.coordinate))
-        except WireDecodingError as error:
-            raise ModelRejectedError(
-                f"neutral-literal-{error.reason}",
-                f"{root.identity.canonical}.{dimension}: {error}",
-            ) from error
+            product = ResolvedRangeSelection(axis, managed_start, managed_end)
+        elif selection.coordinate == "latest":
+            product = ResolvedLatestSelection(axis)
+        else:
+            product = ResolvedAsOfSelection(axis, _decoded(start.type, selection.coordinate, where))
         products.append(product)
     return tuple(products)
+
+
+def _decoded(neutral_type: NeutralType, value: WireValue, where: str) -> ManagedValue:
+    try:
+        return decode_wire(neutral_type, value)
+    except UsageError as error:
+        raise located_refusal(error, where) from error

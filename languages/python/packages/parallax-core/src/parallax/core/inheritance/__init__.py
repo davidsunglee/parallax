@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Final, Literal
 
+from parallax.core.base import UsageError
 from parallax.core.inheritance._compile import MODEL_COMPILER, root_metadata
 from parallax.core.inheritance._facet import (
     FACET_KEY,
@@ -32,20 +34,24 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
 __all__ = [
+    "ABSTRACT_WRITE_TARGET",
     "FACET_KEY",
     "INHERITANCE_MODULE",
     "ISSUE_CODES",
     "MODEL_COMPILER",
     "RULE_SET",
+    "SUBTYPE_WRITE_METADATA_FIELD",
+    "SUBTYPE_WRITE_SET_BASED_UNSUPPORTED",
+    "SUBTYPE_WRITE_SIBLING_ATTRIBUTE",
     "WIRE_TYPE_KEY",
     "AttributeTableContributor",
     "EntityMemberSelection",
     "InheritanceEntityView",
-    "InheritanceError",
     "InheritanceFacet",
     "InheritanceFamilyView",
     "InheritancePositionView",
     "InheritanceTableGroup",
+    "SubtypeWriteCode",
     "TableGroupContributor",
     "TopLevelValueObjectTableContributor",
     "family_variant_name",
@@ -57,20 +63,20 @@ __all__ = [
 ]
 
 
-class InheritanceError(ValueError):
-    """An inheritance family invariant is violated: either a raw descriptor's
-    structural family shape (``parallax.descriptor.validate_inheritance_families``)
-    or an accepted model's concrete-subtype write-payload shape
-    (:func:`validate_subtype_write` / :func:`reject_predicate_write`).
+type SubtypeWriteCode = Literal[
+    "subtype-write-set-based-unsupported",
+    "subtype-write-metadata-field",
+    "subtype-write-sibling-attribute",
+    "abstract-write-target",
+]
+"""The concrete-subtype write-payload rules an inheritance-family write breaks,
+raised as a :class:`~parallax.core.base.UsageError` under their core
+``rejectedRule`` spellings."""
 
-    ``rule`` is the corpus ``rejectedRule`` classification (e.g.
-    ``inheritance-cycle``); ``entity`` names the offending participant when one.
-    """
-
-    def __init__(self, rule: str, message: str, *, entity: str | None = None) -> None:
-        super().__init__(message)
-        self.rule = rule
-        self.entity = entity
+SUBTYPE_WRITE_SET_BASED_UNSUPPORTED: Final = "subtype-write-set-based-unsupported"
+SUBTYPE_WRITE_METADATA_FIELD: Final = "subtype-write-metadata-field"
+SUBTYPE_WRITE_SIBLING_ATTRIBUTE: Final = "subtype-write-sibling-attribute"
+ABSTRACT_WRITE_TARGET: Final = "abstract-write-target"
 
 
 def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
@@ -94,7 +100,8 @@ _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", WIRE_TY
 def validate_subtype_write(
     model: AcceptedMetamodel, entity: EntityMetadata, row: Mapping[str, object]
 ) -> None:
-    """Validate a concrete-subtype write payload's SHAPE, raising :class:`InheritanceError`.
+    """Validate a concrete-subtype write payload's SHAPE, raising a
+    :class:`~parallax.core.base.UsageError` coded with the rule it breaks.
 
     A no-op for a non-participant ``entity`` (every entity outside an inheritance
     family accepts any well-formed row shape here). For a participant, checks in
@@ -120,24 +127,22 @@ def validate_subtype_write(
     key = position.primary_key.identity.name
     name = entity.identity.name
     if key not in row:
-        raise InheritanceError(
-            "subtype-write-set-based-unsupported",
+        raise UsageError(
+            SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
             f"{name}: write carries none of the family's primary-key attribute(s) "
             f"{[key]} -- a keyless payload denotes an unsupported set-based "
             "inheritance write",
-            entity=name,
         )
     forbidden = _FORBIDDEN_METADATA_KEYS
     if position.tag_column is not None:
         forbidden = forbidden | {position.tag_column}
     carried_metadata = sorted(forbidden & row.keys())
     if carried_metadata:
-        raise InheritanceError(
-            "subtype-write-metadata-field",
+        raise UsageError(
+            SUBTYPE_WRITE_METADATA_FIELD,
             f"{name}: write carries framework-owned metadata field(s) "
             f"{carried_metadata} -- the tag / tagValue / _type are derived, never "
             "authored",
-            entity=name,
         )
     effective = tuple(concrete.name for concrete in position.concrete_subtypes)
     accepted = _concrete_accepted_field_names(facet, position.concrete_subtypes)
@@ -153,19 +158,17 @@ def validate_subtype_write(
     )
     candidate_fields = frozenset(row) & family_declared
     if not any(candidate_fields <= names for names in accepted):
-        raise InheritanceError(
-            "subtype-write-sibling-attribute",
+        raise UsageError(
+            SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
             f"{name}: no single concrete subtype in the effective set {sorted(effective)} "
             f"accepts every field {sorted(candidate_fields)} -- the accepted fields are exactly "
             "the target's own ancestry chain",
-            entity=name,
         )
     if not isinstance(entity.inheritance, ConcreteSubtype):
-        raise InheritanceError(
-            "abstract-write-target",
+        raise UsageError(
+            ABSTRACT_WRITE_TARGET,
             f"{name}: a create/update/delete/terminate handle MUST name a concrete "
             f"subtype, not the abstract {_ABSTRACT_ROLES[type(entity.inheritance)]}",
-            entity=name,
         )
 
 
@@ -211,13 +214,12 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     if entity.inheritance is None:
         return
     name = entity.identity.name
-    raise InheritanceError(
-        "subtype-write-set-based-unsupported",
+    raise UsageError(
+        SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
         f"{name}: a predicate-selected (set-based) write on an inheritance-family "
         "entity is unsupported (subtype-write-set-based-unsupported) — per-object writes "
         "are keyed (m-inheritance 'Per-object writes are keyed; set-based inheritance "
         "writes are out of scope')",
-        entity=name,
     )
 
 

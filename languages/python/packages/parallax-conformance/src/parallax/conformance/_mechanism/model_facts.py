@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 from parallax.conformance import case_format, models
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core import inheritance
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity import DomainModel
@@ -39,7 +39,7 @@ __all__ = [
 def _case_model_path(case: case_format.Case) -> Path:
     model_ref = case.document.get("model")
     if not isinstance(model_ref, str):
-        raise EngineError(f"{case.path.name}: `model` must be a string path")
+        raise UnclassifiedEngineError(f"{case.path.name}: `model` must be a string path")
     return model_path(model_ref)
 
 
@@ -71,7 +71,7 @@ def case_setup_model_ref(case: case_format.Case) -> str:
         return provisioning
     model_ref = case.document.get("model")
     if not isinstance(model_ref, str):
-        raise EngineError(f"{case.path.name}: `model` must be a string path")
+        raise UnclassifiedEngineError(f"{case.path.name}: `model` must be a string path")
     return model_ref
 
 
@@ -123,7 +123,7 @@ def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     resolves one.
 
     A miss is a ``KeyError``: it is a lookup that found nothing, and every lane
-    already translates one into an :class:`EngineError` naming the case file, so
+    already translates one into an :class:`UnclassifiedEngineError` naming the case file, so
     a corpus defect reports the case rather than an engine frame.
     """
     metadata = entity_by_name(model, name)
@@ -151,10 +151,12 @@ def family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityM
     """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise EngineError(f"{entity.identity.canonical!r} names no entity the model declares")
+        raise UnclassifiedEngineError(
+            f"{entity.identity.canonical!r} names no entity the model declares"
+        )
     root = model.entity(view.root)
     if root is None:  # pragma: no cover - a family root is an accepted Entity
-        raise EngineError(f"{view.root.canonical!r} names no entity the model declares")
+        raise UnclassifiedEngineError(f"{view.root.canonical!r} names no entity the model declares")
     return root
 
 
@@ -183,14 +185,14 @@ def default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
     if not distinct:
         return None
     if len(distinct) > 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             "the case's model declares no single inheritance family root; a case whose "
             "`when` names no explicit target has no default to resolve against a model "
             "carrying several families"
         )
     root = model.entity(next(iter(distinct)))
     if root is None:  # pragma: no cover - a family root is an accepted Entity
-        raise EngineError("the case's model names a family root it does not declare")
+        raise UnclassifiedEngineError("the case's model names a family root it does not declare")
     return root
 
 
@@ -214,7 +216,7 @@ def first_declared_entity(case: case_format.Case) -> str:
     """
     spellings = models.declared_entity_spellings(models.read_document(_case_model_path(case)))
     if not spellings:  # pragma: no cover - a formed model declares at least one entity
-        raise EngineError(f"{case.path.name}: the case's model declares no entity")
+        raise UnclassifiedEngineError(f"{case.path.name}: the case's model declares no entity")
     return spellings[0]
 
 

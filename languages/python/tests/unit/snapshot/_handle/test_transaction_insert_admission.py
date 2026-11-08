@@ -21,20 +21,19 @@ from parallax.core import (
 )
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
-    InstructionRejectedError,
     KeyedWriteInstruction,
     PreparedKeyedInstruction,
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.read_delivery._page import ABSENT
-from parallax.core.unit_work import WriteRejectedError
 from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.snapshot import TxnContext
 from parallax.snapshot._publication._wire import WireEntity
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._transact_support import FIXED, db_for
 from tests.unit.snapshot._handle._vessel_model import VESSEL, Ferry
@@ -270,10 +269,10 @@ def test_an_earlier_missing_required_member_wins_over_a_later_invalid_value(
 
     def fn(tx: TxnContext) -> None:
         with pytest.raises(
-            WriteRejectedError, match=r"^Parcel\.weight: required attribute is absent \(or null\)$"
+            UsageError, match=r"Parcel\.weight: required attribute is absent \(or null\)$"
         ) as refused:
             write(values)(tx)
-        assert refused.value.rule == "write-required-attribute-missing"
+        assert refused.value.code == "write-required-attribute-missing"
 
     port = ScriptedAdapter(Transact())
     db_for(_MODEL, port).transact(fn)
@@ -283,8 +282,8 @@ def test_an_earlier_missing_required_member_wins_over_a_later_invalid_value(
 def test_a_typed_earlier_invalid_value_wins_over_a_later_missing_required_member() -> None:
     def fn(tx: TxnContext) -> None:
         with pytest.raises(
-            WriteRejectedError,
-            match=r"^Parcel\.weight: value Decimal\('2\.505'\) does not match the declared "
+            UsageError,
+            match=r"Parcel\.weight: value Decimal\('2\.505'\) does not match the declared "
             r"type Decimal\(precision=6, scale=2\)$",
         ):
             tx.insert(Parcel.model_construct(id=1, weight=Decimal("2.505"), count=3))
@@ -297,9 +296,9 @@ def test_a_wire_payload_is_judged_in_member_order_not_its_key_order() -> None:
     payload = {"count": 2**40, "label": "L", "weight": "2.505", "id": 1}
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(InstructionRejectedError, match=r"\.Parcel\.weight: ") as refused:
+        with pytest.raises(UsageError, match=r"\.Parcel\.weight: ") as refused:
             tx.wire.insert("Parcel", payload)
-        assert refused.value.rule.startswith("neutral-literal-")
+        assert refused.value.code.startswith("neutral-literal-")
 
     db_for(_MODEL, ScriptedAdapter(Transact())).transact(fn)
 
@@ -316,8 +315,9 @@ def test_a_rows_names_are_judged_before_its_values(
     prepare: Callable[..., object], decimal: Callable[[str], object]
 ) -> None:
     row = {"id": 1, "weight": decimal("2.505"), "label": "L", "count": 3, "bogus": 1}
-    with pytest.raises(
-        instructions.WriteInstructionError,
+    with raises_code(
+        UsageError,
+        "write-instruction-invalid",
         match=r"Parcel: keyed write row names undeclared member\(s\) \['bogus'\]",
     ):
         prepare(KeyedWriteInstruction("insert", _PARCEL, (row,)), write_preparation_of(_META))
@@ -328,7 +328,7 @@ def test_a_rows_declaration_order_decides_whatever_its_key_order(
     prepare: Callable[..., object], decimal: Callable[[str], object]
 ) -> None:
     row = {"count": 2**40, "id": 1, "label": "L", "weight": decimal("2.505")}
-    with pytest.raises(ValueError, match=r"Parcel\.weight: ") as refused:
+    with pytest.raises(UsageError, match=r"Parcel\.weight: ") as refused:
         prepare(KeyedWriteInstruction("insert", _PARCEL, (row,)), write_preparation_of(_META))
     assert "count" not in str(refused.value)
 
@@ -340,7 +340,7 @@ def test_a_rows_declaration_order_decides_whatever_its_key_order(
         ({"id": 1, "label": "L", "count": 2**40}, r"Parcel\.count: "),
         (
             {"id": 1, "label": "L", "count": 3, "weight": None},
-            r"^Parcel\.weight: required attribute is absent \(or null\)$",
+            r"Parcel\.weight: required attribute is absent \(or null\)$",
         ),
     ],
     ids=["invalid-value", "missing-required"],
@@ -353,7 +353,7 @@ def test_an_earlier_rows_value_failure_wins_over_a_later_rows_name_failure(
 ) -> None:
     first = {"weight": decimal("2.50"), **first}
     second = {"id": 2, "weight": decimal("2.50"), "label": "L", "count": 3, "bogus": 1}
-    with pytest.raises(ValueError, match=refusal) as refused:
+    with pytest.raises(UsageError, match=refusal) as refused:
         prepare(
             KeyedWriteInstruction("insert", _PARCEL, (first, second)),
             write_preparation_of(_META),
@@ -367,7 +367,7 @@ def test_a_later_rows_failure_is_heard_once_every_earlier_row_is_admitted(
 ) -> None:
     first = {"id": 1, "weight": decimal("2.50"), "label": "L", "count": 3}
     second = {"id": 2, "weight": decimal("2.50"), "count": 3}
-    with pytest.raises(WriteRejectedError, match=r"^Parcel\.label: required attribute"):
+    with pytest.raises(UsageError, match=r"Parcel\.label: required attribute"):
         prepare(
             KeyedWriteInstruction("insert", _PARCEL, (first, second)),
             write_preparation_of(_META),
@@ -405,9 +405,10 @@ def test_a_wire_opening_refuses_an_unplannable_marker_before_buffering(
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(
-            instructions.WriteInstructionError,
-            match=rf"^unsupported DB-computed marker on 'Parcel'\.count: {refusal}",
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
+            match=rf"unsupported DB-computed marker on 'Parcel'\.count: {refusal}",
         ):
             tx.wire.insert("Parcel", _payload(count=marker))
 
@@ -421,9 +422,10 @@ def test_a_registry_advance_cannot_fold_into_a_pending_opening() -> None:
     # pending insert as it was.
     def fn(tx: TxnContext) -> None:
         opened = tx.wire.insert("Parcel", _payload())
-        with pytest.raises(
-            instructions.WriteInstructionError,
-            match=r"^unsupported DB-computed marker on 'Parcel'\.count: a 'increment' marker is "
+        with raises_code(
+            UsageError,
+            "write-instruction-invalid",
+            match=r"unsupported DB-computed marker on 'Parcel'\.count: a 'increment' marker is "
             r"not recognized for insert planning$",
         ):
             tx.wire.amend(opened, {"count": {"increment": 1}})

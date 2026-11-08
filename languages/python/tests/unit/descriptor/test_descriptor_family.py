@@ -10,10 +10,11 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core.inheritance import InheritanceError
+from parallax.core.base import UsageError
 from parallax.descriptor import validate_inheritance_families
 from parallax.descriptor._family import validate_families
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import corpus_records
 
 _REPO = case_format.find_repo_root()
@@ -95,9 +96,9 @@ def test_every_descriptor_rejection_case_is_covered() -> None:
 def test_rejected_descriptor_classifies_with_its_corpus_rule(
     stem: str, model: dict[str, Any], rule: str
 ) -> None:
-    with pytest.raises(InheritanceError) as caught:
+    with pytest.raises(UsageError) as caught:
         validate_inheritance_families(model)
-    assert caught.value.rule == rule
+    assert caught.value.code == rule
 
 
 def test_valid_inheritance_family_passes_validation() -> None:
@@ -120,9 +121,8 @@ def test_independent_families_in_one_descriptor_pass_validation() -> None:
 def test_a_table_per_hierarchy_root_without_a_shared_table_is_rejected() -> None:
     root, concrete, *_other_family = _INDEPENDENT_FAMILIES["entities"]
     tableless_root = {key: value for key, value in root.items() if key != "table"}
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-tph-root-table-required"):
         validate_inheritance_families({"entities": [tableless_root, concrete]})
-    assert caught.value.rule == "inheritance-tph-root-table-required"
 
 
 def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
@@ -143,9 +143,8 @@ def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
             },
         ]
     }
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-missing-root"):
         validate_inheritance_families(document)
-    assert caught.value.rule == "inheritance-missing-root"
 
 
 def test_two_families_with_same_named_roots_in_different_namespaces_stay_apart() -> None:
@@ -228,7 +227,7 @@ def test_a_bare_parent_is_never_read_across_a_namespace_boundary() -> None:
     # declaring namespace does not declare reaches nothing, even when exactly
     # one entity of the whole model carries that local name. Adopting the other
     # namespace's `Record` would enrol this leaf in a foreign family.
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-unknown-parent") as caught:
         validate_inheritance_families(
             {
                 "entities": [
@@ -247,8 +246,7 @@ def test_a_bare_parent_is_never_read_across_a_namespace_boundary() -> None:
                 ]
             }
         )
-    assert caught.value.rule == "inheritance-unknown-parent"
-    assert caught.value.entity == "StrayLeaf"
+    assert "StrayLeaf " in caught.value.args[1]
 
 
 def test_a_chain_that_repeats_a_local_name_is_no_cycle() -> None:
@@ -305,10 +303,9 @@ def test_reject_descendant_temporality_under_a_non_temporal_root() -> None:
         attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
     )
     meta = Metamodel(entities=(root, pet, dog))
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-temporality-not-root-owned") as caught:
         validate_families(meta)
-    assert caught.value.rule == "inheritance-temporality-not-root-owned"
-    assert caught.value.entity == "Pet"
+    assert "Pet " in caught.value.args[1]
 
 
 def test_reject_descendant_temporality_under_a_temporal_root() -> None:
@@ -327,10 +324,9 @@ def test_reject_descendant_temporality_under_a_temporal_root() -> None:
         temporality="bitemporal",
     )
     meta = Metamodel(entities=(root, deposit))
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-temporality-not-root-owned") as caught:
         validate_families(meta)
-    assert caught.value.rule == "inheritance-temporality-not-root-owned"
-    assert caught.value.entity == "DepositRate"
+    assert "DepositRate " in caught.value.args[1]
 
 
 def test_temporal_root_and_root_owned_profile_still_validate_cleanly() -> None:
@@ -362,10 +358,9 @@ def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> No
         attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
     )
     meta = Metamodel(entities=(root, pet, dog))
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-optimistic-locking-not-root-owned") as caught:
         validate_families(meta)
-    assert caught.value.rule == "inheritance-optimistic-locking-not-root-owned"
-    assert caught.value.entity == "Pet"
+    assert "Pet " in caught.value.args[1]
 
 
 def test_reject_descendant_optimistic_locking_under_a_versioned_root() -> None:
@@ -388,10 +383,24 @@ def test_reject_descendant_optimistic_locking_under_a_versioned_root() -> None:
         ),
     )
     meta = Metamodel(entities=(root, fridge))
-    with pytest.raises(InheritanceError) as caught:
+    with raises_code(UsageError, "inheritance-optimistic-locking-not-root-owned") as caught:
         validate_families(meta)
-    assert caught.value.rule == "inheritance-optimistic-locking-not-root-owned"
-    assert caught.value.entity == "Fridge"
+    assert "Fridge " in caught.value.args[1]
+
+
+def test_a_table_per_concrete_subtype_concrete_declares_its_own_table() -> None:
+    root = Entity(
+        name="Appliance",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=_minimal_attrs(),
+    )
+    fridge = Entity(
+        name="Fridge", inheritance=Inheritance(role="concrete-subtype", parent="Appliance")
+    )
+    with raises_code(
+        UsageError, "inheritance-tpcs-concrete-table-required", match="concrete Fridge declares"
+    ):
+        validate_families(Metamodel(entities=(root, fridge)))
 
 
 def test_versioned_root_and_root_owned_version_still_validates_cleanly() -> None:

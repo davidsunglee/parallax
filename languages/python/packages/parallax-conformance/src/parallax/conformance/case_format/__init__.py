@@ -40,6 +40,7 @@ __all__ = [
     "load_cases",
     "raised_error_codes",
     "read_only_keywords",
+    "rejected_rules",
     "request_keywords",
     "safe_load_yaml",
     "select",
@@ -664,16 +665,23 @@ def load_cases(directory: Path | None = None) -> list[Case]:
     return [load_case(path) for path in sorted(root.rglob("*.yaml"))]
 
 
-_ERROR_NAMING_PROPERTIES: Final = frozenset({"rejectedRule", "expectError"})
-
-
-@functools.cache
 def raised_error_codes() -> frozenset[str]:
     """Every code a case names a raised error by: the values the case schema
     admits for any ``rejectedRule`` or ``expectError`` property.
 
     Read from the schema itself, so the core vocabularies stay its own.
     """
+    return _schema_admitted_codes(frozenset({"rejectedRule", "expectError"}))
+
+
+def rejected_rules() -> frozenset[str]:
+    """Every rule a ``rejected`` case names its refusal by: the values the case
+    schema admits for ``rejectedRule``."""
+    return _schema_admitted_codes(frozenset({"rejectedRule"}))
+
+
+@functools.cache
+def _schema_admitted_codes(properties: frozenset[str]) -> frozenset[str]:
     path = find_repo_root() / "core" / "schemas" / "compatibility-case.schema.json"
     schema = cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
     definitions = cast("dict[str, Any]", schema["$defs"])
@@ -687,7 +695,7 @@ def raised_error_codes() -> frozenset[str]:
             continue
         for key, value in cast("dict[str, object]", node).items():
             pending.append(value)
-            if key in _ERROR_NAMING_PROPERTIES and isinstance(value, dict):
+            if key in properties and isinstance(value, dict):
                 codes.update(_admitted_values(cast("dict[str, Any]", value), definitions))
     return frozenset(codes)
 

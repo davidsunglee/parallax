@@ -135,7 +135,7 @@ class Supplier(Entity, table="supplier", persistence=READ_ONLY):
 
 
 def rename_a_supplier(db: ScopedDatabase, supplier_id: int, name: str) -> None:
-    """Refused with ``InstructionRejectedError``: Parallax writes no ``Supplier``."""
+    """Refused with a ``UsageError``: Parallax writes no ``Supplier``."""
 
     def rename(tx: TxnContext) -> None:
         supplier = tx.find(Supplier.where(Supplier.id == supplier_id)).result()
@@ -146,7 +146,7 @@ def rename_a_supplier(db: ScopedDatabase, supplier_id: int, name: str) -> None:
 <!-- /example -->
 
 `rename_a_supplier` reads a supplier as it would read any entity, but `tx.amend` refuses
-to write it. The verb raises `InstructionRejectedError`, whose `rule` is
+to write it. The verb raises a `UsageError` whose `code` is
 `"read-only-write-target"`, before anything is buffered or sent to the database. Every
 write verb refuses a read-only entity the same way, whether it writes your classes or
 Wire mappings: `insert`, `amend`, `replace`, `delete` and `terminate`, and the

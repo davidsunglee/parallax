@@ -18,10 +18,10 @@ from typing import cast
 import pytest
 
 from parallax.conformance import provision
+from parallax.core.base import UsageError
 from parallax.core.db_port import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.wire import WireDecodingError
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
@@ -218,7 +218,7 @@ def test_fixture_statements_skip_a_non_list_entity_block() -> None:
 def test_fixture_statements_refuse_infinity_for_an_ordinary_timestamp() -> None:
     fixtures = {"Event": [{"id": 1, "occurredAt": "infinity"}]}
 
-    with pytest.raises(WireDecodingError):
+    with pytest.raises(UsageError):
         provision.fixture_statements(_MODELS["event"], fixtures)
 
 

@@ -38,7 +38,7 @@ from parallax.core.metamodel import (
     OccurrenceDefinition,
     ScalarDefinition,
 )
-from parallax.core.wire import WireDecodingError
+from parallax.core.wire import is_decoding_refusal
 from parallax.core.wire._codec import wire_converter
 
 _ABSENT: Final = object()
@@ -221,7 +221,7 @@ def test_a_wire_mismatch_carries_its_decoding_failure() -> None:
     refused = _refusal(_WIRE, (7, None, _ABSENT, ["a", 3], _ABSENT, _ABSENT))
 
     assert refused.violation == AuthoringViolation("[1]", "type-mismatch", 3, STRING)
-    assert isinstance(refused.cause, WireDecodingError)
+    assert is_decoding_refusal(refused.cause)
 
 
 def test_a_root_policy_authors_only_a_top_level_scalar_marker() -> None:
@@ -366,7 +366,7 @@ def test_an_addressing_position_spells_its_marker_as_an_ordinary_value() -> None
         )
 
     assert planned.cells == ("planned",)
-    assert isinstance(refused.value.cause, WireDecodingError)
+    assert is_decoding_refusal(refused.value.cause)
 
 
 def test_a_complete_row_states_an_unstated_nulled_member_as_null() -> None:

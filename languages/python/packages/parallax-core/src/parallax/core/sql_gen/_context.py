@@ -16,6 +16,7 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     StructuredDocument,
+    UsageError,
     detach_json_container,
 )
 from parallax.core.dialect import JSON_NULL, ArrayBind, Dialect
@@ -25,7 +26,6 @@ from parallax.core.predicate import StringOp
 from parallax.core.predicate._execution_values import ExecutionValueSource, source_order
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
-    WireDecodingError,
     WireEncodingError,
     WireValue,
     decode_wire,
@@ -448,7 +448,7 @@ def _document_wire_bind(value: object) -> WireValue:
     try:
         managed = decode_wire(JSON, cast("WireValue", value))
         return encode_wire(JSON, managed)
-    except (WireDecodingError, WireEncodingError) as error:
+    except (UsageError, WireEncodingError) as error:
         raise SqlGenError(
             f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}"
         ) from error

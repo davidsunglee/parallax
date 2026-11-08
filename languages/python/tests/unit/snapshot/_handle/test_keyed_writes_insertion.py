@@ -31,13 +31,13 @@ from parallax.conformance.vo_models import (
     ContactPoint,
 )
 from parallax.core import ConflictError
-from parallax.core.base import DocumentValue, StructuredDocument
+from parallax.core.base import DocumentValue, StructuredDocument, UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import MISSING_TARGET, WriteEvidenceError, WriteInstructionError
+from parallax.core.unit_work import MISSING_TARGET, WriteEvidenceError
 from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm
@@ -52,6 +52,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -175,7 +176,7 @@ def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_openi
         opened = _position()
         tx.insert(opened, valid_from=_MAR, until=_SEP)
         for bound in (_JAN, _MAR):
-            with pytest.raises(WriteInstructionError):
+            with raises_code(UsageError, "write-instruction-invalid"):
                 tx.amend(opened.edit(value=Decimal("150.00")), until=bound)
         tx.amend(opened.edit(value=Decimal("175.00")), until=_JUN)
 
@@ -295,7 +296,7 @@ def test_a_refused_insertion_grants_nothing() -> None:
 
     def fn(tx: TxnContext) -> None:
         refused = _position()
-        with pytest.raises(WriteInstructionError):
+        with raises_code(UsageError, "write-instruction-invalid"):
             tx.insert(refused, valid_from=_SEP, until=_JAN)
         _refused_as_not_stored(lambda: tx.amend(refused.edit(value=Decimal("1.00"))))
 
@@ -358,7 +359,7 @@ def test_converting_a_wire_insertion_node_loses_its_authority() -> None:
         node = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         for converted in (dict(node), pickle.loads(pickle.dumps(node))):
             assert converted == node
-            with pytest.raises(WriteInstructionError):
+            with raises_code(UsageError, "write-instruction-invalid"):
                 tx.wire.amend(cast("Any", converted), {"name": "Grace"})
         tx.wire.amend(node, {"name": "Grace"})
 
@@ -1240,7 +1241,9 @@ def test_a_destruction_of_all_a_pending_replacement_reached_admits_a_reinsertion
         tx.replace(first.edit(value=Decimal("300.00")), until=_JUN)
         tx.terminate(first, until=_JUN)
         _refused_as_not_stored(lambda: tx.replace(first.edit(value=Decimal("1.00")), until=_JUN))
-        with pytest.raises(WriteInstructionError, match="names no Valid-Time instant"):
+        with raises_code(
+            UsageError, "write-instruction-invalid", match="names no Valid-Time instant"
+        ):
             tx.terminate(first, until=_JUN)
         tx.insert(_position("400.00"), valid_from=_JAN, until=_JUN)
 

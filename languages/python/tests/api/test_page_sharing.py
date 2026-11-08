@@ -38,11 +38,12 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity import UnloadedRelationshipError, model_of
 from parallax.core.execution import KeyedWriteValueError
 from parallax.core.object_query import TX_TIME
 from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
+from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import (
     ScopedDatabase,
     SharingScope,
@@ -56,6 +57,7 @@ from parallax.snapshot import (
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 
@@ -520,7 +522,7 @@ def test_an_invalid_documents_write_is_refused_and_its_neighbours_admitted(
             (invalid.data, {"note": "moved"}),
             (invalid.data["buyer"], {"name": "Grace"}),
         ):
-            with pytest.raises(WriteInstructionError):
+            with raises_code(UsageError, "write-instruction-invalid"):
                 tx.wire.amend(document, edit)
         tx.wire.amend(_purchase_document(first, _INVALID), {"note": "moved"})
         tx.wire.amend(first["buyer"], {"name": "Grace"})

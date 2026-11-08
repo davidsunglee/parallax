@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import _case_ingress, models
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.transaction_control import transact, write_adapter
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance._wire_submission import (
@@ -97,7 +97,7 @@ def test_keyed_verbs_submit_against_the_units_own_read(mutation: str, declared: 
         return submitter.submit_unit(read_submissions(model, [_entry(mutation, row)]))
 
     if declared == 2:
-        with pytest.raises(EngineError, match=r"observedVersion: 2.*source observed 1"):
+        with pytest.raises(UnclassifiedEngineError, match=r"observedVersion: 2.*source observed 1"):
             _run("account", port, body)
         assert len(port.reads) == 1 and port.writes == []
         return
@@ -217,7 +217,8 @@ def test_named_find_and_latest_read_keep_distinct_generations(
 
     if declared is not None and declared != expected:
         with pytest.raises(
-            EngineError, match=rf"observedVersion: {declared}.*source observed {expected}"
+            UnclassifiedEngineError,
+            match=rf"observedVersion: {declared}.*source observed {expected}",
         ):
             _run("account", port, body)
         assert port.writes == []
@@ -244,7 +245,7 @@ def test_missing_forward_foreign_or_non_scalar_references_never_fall_back(
         submitter.record_find(0, tx.wire.find({"target": "Account", "predicate": {"true": {}}}))
         submitter.submit(_one(model, _entry("amend", {"id": 1, "owner": "Grace"}, on=on)))
 
-    with pytest.raises(EngineError, match=reason):
+    with pytest.raises(UnclassifiedEngineError, match=reason):
         _run("account", port, body)
     assert port.writes == []
 
@@ -259,7 +260,7 @@ def test_a_named_empty_find_refuses_even_with_another_same_key_read() -> None:
         )
         submitter.submit(_one(model, _entry("amend", {"id": 1, "owner": "Grace"}, on=0), step=2))
 
-    with pytest.raises(EngineError, match="published 0 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="published 0 rows"):
         _run("account", port, body)
     assert port.writes == []
 
@@ -314,7 +315,7 @@ def test_a_refused_insert_opens_no_pointer_to_an_earlier_insertion() -> None:
             )
         )
 
-    with pytest.raises(EngineError, match="opened no value"):
+    with pytest.raises(UnclassifiedEngineError, match="opened no value"):
         _run("account", port, body)
     assert port.writes == [] and port.reads == []
 
@@ -362,7 +363,7 @@ def test_framework_markers_are_flagged_then_refused(unit: bool) -> None:
         assert submissions[0].is_framework_marker
         submitter.submit_unit(submissions) if unit else submitter.submit(submissions[0])
 
-    with pytest.raises(EngineError, match="framework bookkeeping"):
+    with pytest.raises(UnclassifiedEngineError, match="framework bookkeeping"):
         _run("account", port, body)
     assert port.reads == [] and port.writes == []
 
@@ -486,7 +487,7 @@ def test_a_later_declared_mismatch_prevents_the_hook_and_every_verb(
             before_writes=lambda: invoked.append("hook"),
         )
 
-    with pytest.raises(EngineError, match=r"observedVersion: 2.*source observed 3"):
+    with pytest.raises(UnclassifiedEngineError, match=r"observedVersion: 2.*source observed 3"):
         _run("account", port, body)
     assert invoked == [] and port.writes == [] and len(port.reads) == 1
 
@@ -524,7 +525,9 @@ def test_unit_insertions_publish_in_order_before_a_dependent_submission(
         )
 
     if declared is not None:
-        with pytest.raises(EngineError, match=r"observedVersion: 1.*source observed None"):
+        with pytest.raises(
+            UnclassifiedEngineError, match=r"observedVersion: 1.*source observed None"
+        ):
             _run("account", port, body)
         assert port.writes == []
     else:
@@ -561,7 +564,7 @@ def test_declared_versions_are_checked_against_each_retried_attempts_source(decl
         )
 
     if declared == 1:
-        with pytest.raises(EngineError, match=r"observedVersion: 1.*source observed 2"):
+        with pytest.raises(UnclassifiedEngineError, match=r"observedVersion: 1.*source observed 2"):
             _run("account", port, body, retry=fast_retry(1))
         assert len(port.writes) == 1 and hooks == [1]
     else:
@@ -720,7 +723,8 @@ def test_a_pinned_bitemporal_source_is_selected_by_the_writes_start(named: bool)
         submitter.submit(_one(model, entry))
 
     with pytest.raises(
-        EngineError, match="another Valid-Time instant" if named else "no read of its own"
+        UnclassifiedEngineError,
+        match="another Valid-Time instant" if named else "no read of its own",
     ):
         _run("position", port, body)
     assert port.writes == []
@@ -752,7 +756,7 @@ def test_a_named_insertion_must_be_the_submissions_own_object() -> None:
             _one(model, _entry("amend", {"id": 91, "owner": "Grace"}, on="/scenario/0/write/0"))
         )
 
-    with pytest.raises(EngineError, match="published 0 rows"):
+    with pytest.raises(UnclassifiedEngineError, match="published 0 rows"):
         _run("account", port, body)
     assert port.writes == []
 

@@ -25,15 +25,16 @@ from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
+    WRITE_INSTRUCTION_INVALID,
     KeyedMutation,
     KeyedWriteInstruction,
     PreparedKeyedInstruction,
-    WriteInstructionError,
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
+from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
@@ -425,8 +426,9 @@ def stated_valid_from(valid_from: dt.datetime | Omitted) -> dt.datetime | None:
     if isinstance(valid_from, Omitted):
         return None
     if cast("object", valid_from) is None:
-        raise WriteInstructionError(
-            "valid_from=None states no start; omit valid_from rather than stating None"
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            "valid_from=None states no start; omit valid_from rather than stating None",
         )
     return valid_from
 
@@ -548,17 +550,19 @@ def source_start(
     if isinstance(valid_time, dt.datetime):
         return valid_time
     if valid_time is None:
-        raise WriteInstructionError(
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
             f"{entity.identity.canonical}: {mutation!r} starts where its source was read, and "
             "this source names no Valid-Time instant — no read pinned it and no insertion "
             "this transaction admitted anchors it; read the row at a finite Valid-Time "
-            "instant and write what that read returns"
+            "instant and write what that read returns",
         )
-    raise WriteInstructionError(
+    raise UsageError(
+        WRITE_INSTRUCTION_INVALID,
         f"{entity.identity.canonical}: {mutation!r} starts where its source was read, and this "
         "source was read at Valid-Time LATEST, which selects the open-ended rectangle rather "
         "than naming an instant to start from; read the row at a finite Valid-Time instant "
-        "and write what that read returns"
+        "and write what that read returns",
     )
 
 

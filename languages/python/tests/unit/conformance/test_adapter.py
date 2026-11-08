@@ -35,7 +35,13 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import INFINITY, NeutralType, ScalarConverter, StructuredDocument
+from parallax.core.base import (
+    INFINITY,
+    NeutralType,
+    ScalarConverter,
+    StructuredDocument,
+    UsageError,
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
@@ -47,7 +53,6 @@ from parallax.core.predicate import (
     And,
     Comparison,
     FieldSubject,
-    ModelRejectedError,
     Presence,
     Quantifier,
     ScalarLiteral,
@@ -58,6 +63,7 @@ from parallax.core.temporal_read import TimeInterval
 from parallax.core.wire._codec import wire_converter
 from parallax.core.write_plan.managed_row import named_members
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
+from tests._support.errors import raises_code
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
 from tests.unit._second_dialect import BACKTICKED
 
@@ -230,14 +236,13 @@ def test_case_write_adapter_leaves_malformed_values_for_core_classification() ->
         "parallax.compatibility.Account",
         ({"id": 7, "owner": "Newton", "balance": True, "version": 1},),
     )
-    with pytest.raises(instructions.InstructionRejectedError) as caught:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         _prepare_case_write(instruction, models.load_models()["account"])
-    assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
     instruction = instructions.KeyedWriteInstruction("insert", "Missing", ({"id": 1},))
-    with pytest.raises(instructions.WriteInstructionError, match="declares no entity 'Missing'"):
+    with raises_code(UsageError, "write-instruction-invalid", match="declares no entity 'Missing'"):
         _prepare_case_write(instruction, models.load_models()["account"])
 
 
@@ -375,10 +380,9 @@ def test_case_row_decoding_keeps_every_other_timestamp_finite(
 ) -> None:
     # Only the declared axis-end definitions hold the open bound; a leaf merely
     # named or typed like one is an ordinary finite Timestamp.
-    with pytest.raises(instructions.InstructionRejectedError) as caught:
+    with raises_code(UsageError, "neutral-literal-type-mismatch") as caught:
         _case_ingress.decode_case_row({**_STORED_SHIPMENT, **row}, _SHIPMENT, _SHIPMENT_ENTITY)
-    assert caught.value.rule == "neutral-literal-type-mismatch"
-    assert str(caught.value).startswith(f"{path}: ")
+    assert caught.value.args[1].startswith(f"{path}: ")
 
 
 def test_case_row_decoding_takes_a_native_timestamp_to_utc_without_a_wire_spelling() -> None:
@@ -395,13 +399,12 @@ def test_case_row_decoding_takes_a_native_timestamp_to_utc_without_a_wire_spelli
 
 
 def test_case_row_decoding_refuses_a_native_timestamp_naming_no_instant() -> None:
-    with pytest.raises(instructions.InstructionRejectedError) as caught:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         _case_ingress.decode_case_row(
             {**_STORED_SHIPMENT, "shippedAt": dt.datetime(2024, 7, 1)},
             _SHIPMENT,
             _SHIPMENT_ENTITY,
         )
-    assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 def test_case_row_decoding_keeps_the_codec_canonicalization_of_other_native_values() -> None:
@@ -470,9 +473,8 @@ def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> Non
     comparison = cast("dict[str, object]", serialize_predicate(normalized.predicate)["eq"])
     assert comparison["value"] == "2026-W01-1T00:00:00+00:00"
     root = model_facts.case_entity(model, normalized.target.canonical)
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         validate_object_query(root, normalized, model)
-    assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 def test_case_query_adapter_preserves_unresolved_predicate_values_for_core_validation() -> None:
@@ -616,7 +618,7 @@ class _FakePort(ConnectsAsItself):
         return [projected_row(sql, {"id": 1, "name": "Ada"}, document_reads)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise engine.EngineError("the fake port refuses writes")
+        raise engine.UnclassifiedEngineError("the fake port refuses writes")
 
     def transaction[T](
         self,
@@ -778,7 +780,7 @@ def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declarati
     # reaching the internal dispatch is refused loudly by its own conflict
     # branch, never silently falling through to the read compiler.
     case = _case(shape="conflict", tags=("m-concurrency", "slice-snapshot-1"))
-    with pytest.raises(engine.EngineError, match="always declared"):
+    with pytest.raises(engine.UnclassifiedEngineError, match="always declared"):
         adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private compile helper
 
 
@@ -2060,8 +2062,7 @@ def test_case_row_decoding_reads_each_element_of_a_collection_its_structure_refu
 def test_case_row_decoding_refuses_a_literal_beside_a_structural_refusal(
     row: Mapping[str, object], path: str
 ) -> None:
-    with pytest.raises(instructions.InstructionRejectedError) as caught:
+    with raises_code(UsageError, "neutral-literal-type-mismatch") as caught:
         _case_ingress.decode_case_row({"id": 1, **row}, _LEDGER, _LEDGER_ENTITY)
 
-    assert caught.value.rule == "neutral-literal-type-mismatch"
-    assert str(caught.value).startswith(f"{path}: ")
+    assert caught.value.args[1].startswith(f"{path}: ")

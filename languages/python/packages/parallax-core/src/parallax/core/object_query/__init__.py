@@ -17,11 +17,21 @@ from parallax.core.object_query._nodes import (
     QueryInput,
     TemporalSelection,
 )
-from parallax.core.object_query.serde import deserialize
-from parallax.core.object_query.validate import validate_object_query
+from parallax.core.object_query.serde import OBJECT_QUERY_DOCUMENT_INVALID, deserialize
+from parallax.core.object_query.validate import (
+    DEEP_FETCH_PAST_BACK_REFERENCE,
+    DEEP_FETCH_VALUE_OBJECT_SEGMENT,
+    TEMPORAL_READ_DIMENSION_SELECTION_CARDINALITY,
+    ObjectQueryRejectionCode,
+    validate_object_query,
+)
 
 __all__ = [
+    "DEEP_FETCH_PAST_BACK_REFERENCE",
+    "DEEP_FETCH_VALUE_OBJECT_SEGMENT",
     "LATEST",
+    "OBJECT_QUERY_DOCUMENT_INVALID",
+    "TEMPORAL_READ_DIMENSION_SELECTION_CARDINALITY",
     "TX_TIME",
     "VALID_TIME",
     "AsOf",
@@ -31,6 +41,7 @@ __all__ = [
     "InterpretedQuery",
     "Latest",
     "ObjectQueryNode",
+    "ObjectQueryRejectionCode",
     "OrderKey",
     "QueryClauses",
     "QueryInput",

@@ -40,7 +40,15 @@ from parallax.core.metamodel._issues import (
     canonical_location_key,
     sort_issues,
 )
-from parallax.core.metamodel._judgement import WriteAssignmentError, judge_assignment
+from parallax.core.metamodel._judgement import (
+    WRITE_ASSIGNMENT_CODES,
+    WRITE_ASSIGNMENT_FRAMEWORK_OWNED,
+    WRITE_ASSIGNMENT_PRIMARY_KEY,
+    WRITE_ASSIGNMENT_READ_ONLY,
+    WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
+    WriteAssignmentCode,
+    judge_assignment,
+)
 from parallax.core.metamodel._naming import default_column_name
 from parallax.core.metamodel._resolve import (
     RESOLVER_ISSUE_CODES,
@@ -141,6 +149,11 @@ __all__ = [
     "NOT_PRIMARY_KEY",
     "RESOLVER_ISSUE_CODES",
     "TABLE_PER_CONCRETE_SUBTYPE",
+    "WRITE_ASSIGNMENT_CODES",
+    "WRITE_ASSIGNMENT_FRAMEWORK_OWNED",
+    "WRITE_ASSIGNMENT_PRIMARY_KEY",
+    "WRITE_ASSIGNMENT_READ_ONLY",
+    "WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH",
     "AbstractRoot",
     "AbstractSubtype",
     "ApplicationAssigned",
@@ -231,7 +244,7 @@ __all__ = [
     "ValueObjectOccurrenceDeclaration",
     "ValueObjectShapeDeclaration",
     "ValueObjectShapeKey",
-    "WriteAssignmentError",
+    "WriteAssignmentCode",
     "accept_metamodel",
     "canonical_location_key",
     "default_column_name",

@@ -7,6 +7,7 @@ from parallax.core.metamodel import EntityIdentity
 
 __all__ = [
     "CURRENT_SCALAR_ELEMENT",
+    "QUERY_CLAUSE_INVALID",
     "QUERY_DEFINITION_CODES",
     "And",
     "Comparison",
@@ -83,12 +84,16 @@ QuantifierKind = Literal["any", "all", "none"]
 PresenceOp = Literal["exists", "notExists"]
 
 
+QUERY_CLAUSE_INVALID: Final = "query-clause-invalid"
+"""A query clause states something no query can mean, whether a query is being
+built or a canonical query is being validated against a model."""
+
 QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
     {
         "query-target-mismatch",
         "query-expression-invalid",
         "query-path-invalid",
-        "query-clause-invalid",
+        QUERY_CLAUSE_INVALID,
         "query-assignment-invalid",
         "query-not-mutation-compatible",
     }
@@ -111,9 +116,8 @@ class QueryDefinitionError(ValueError):
     substring.
 
     This is the query-authoring family, disjoint by the question it answers from
-    the two wire-and-model families beside it: ``CanonicalDocumentError`` says a
-    serialized document is malformed, and ``ModelRejectedError`` says a
-    well-formed one is illegal against a model.
+    the serialized-document and model-aware refusals beside it: a malformed
+    serialized document, and a well-formed one that is illegal against a model.
     """
 
     def __init__(self, *, code: str, message: str) -> None:

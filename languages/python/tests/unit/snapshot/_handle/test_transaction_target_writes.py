@@ -28,7 +28,6 @@ from parallax.core.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     WriteEvidenceError,
     WritePreconditionError,
-    WriteRejectedError,
 )
 from parallax.snapshot import TxnContext
 from parallax.snapshot._handle._wire import WireTransactionView
@@ -716,7 +715,7 @@ def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_memb
     port = ScriptedAdapter(Transact(*acquired, Write()))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteRejectedError):
+        with pytest.raises(UsageError):
             tx.wire.amend_if("Ferry", {"id": 4, "pull": 1}, version=3)
         tx.wire.amend_if("Ferry", {"id": 4, "berths": 8}, version=3)
 

@@ -46,7 +46,6 @@ from typing import Any, Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
 from parallax.core import DomainModel, ParallaxError, Predicate, object_query
-from parallax.core._execution._unit_work.instructions import InstructionRejectedError
 from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import AttributeAssignment
@@ -230,9 +229,9 @@ class Refused:
 
     ``error`` is the raised class itself rather than its name, so a row states the
     class it imported and a rename cannot leave two unrelated exceptions sharing
-    one spelling. ``code`` is ``None`` for the refusal classes that carry no code
-    — the whole of the `m-core` window and instruction vocabulary — whose message
-    is then the only thing distinguishing two refusals of one class. ``phase``
+    one spelling. ``code`` is ``None`` for a refusal class that carries no code,
+    whose message is then the only thing distinguishing two refusals of one
+    class. ``phase``
     distinguishes two refusals that are otherwise identical but reach the caller
     at different points, and ``calls`` carries everything the transaction had
     already done to the database by then.
@@ -270,11 +269,12 @@ class Answer:
     that buffers nothing, and a same-transaction pair that coalesces into one
     statement from two writes that stay two.
 
-    ``message`` is stated for every refusal, wherever it landed. Neither the
-    `m-core` window and instruction vocabulary nor the two planning refusals a
-    write this order admitted can earn carry a code, so the message is the only
-    thing distinguishing two refusals of one class — and a row that stated the
-    class alone would accept a different verdict about a different rule.
+    ``message`` is stated for every refusal, wherever it landed. One code covers
+    every malformed instruction, and the `m-core` instant refusal and the two
+    planning refusals a write this order admitted can earn carry none, so the
+    message is what distinguishes two refusals of one class and code — and a row
+    that stated those alone would accept a different verdict about a different
+    rule.
 
     Deliberately coarser than :class:`Completed`'s whole chronology: the SQL each
     verb lowers to belongs to the per-representation lowering goldens, and what
@@ -1170,10 +1170,9 @@ def _message(raised: Exception) -> str:
 
 
 def _code(raised: Exception) -> str | None:
-    """The classification ``raised`` carries: its own ``code``, or the closed
-    pre-SQL rule an instruction refusal names."""
-    if isinstance(raised, InstructionRejectedError):
-        return raised.rule
+    """The classification ``raised`` carries: its own ``code``, where it has one."""
+    if isinstance(raised, ParallaxError):
+        return raised.code
     return cast("str | None", getattr(raised, "code", None))
 
 

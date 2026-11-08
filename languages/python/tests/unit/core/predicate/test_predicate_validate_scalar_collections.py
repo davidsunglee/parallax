@@ -13,8 +13,9 @@ from __future__ import annotations
 import pytest
 
 from parallax.conformance import models
+from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityMetadata, entity_by_name
-from parallax.core.predicate import ModelRejectedError, deserialize, validate_predicate
+from parallax.core.predicate import deserialize, validate_predicate
 
 _MODEL = models.load_model(
     models.default_models_dir() / "scalar-collection-layout-twin-columns.yaml"
@@ -66,6 +67,6 @@ _PREFIX = "parallax.compatibility.CollectionTwinItem"
 def test_a_collection_subject_is_refused_before_any_literal(
     document: dict[str, object], rule: str
 ) -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with pytest.raises(UsageError) as caught:
         validate_predicate(_ITEM, deserialize(document), _MODEL)
-    assert caught.value.rule == rule
+    assert caught.value.code == rule

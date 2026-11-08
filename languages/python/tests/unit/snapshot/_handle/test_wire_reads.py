@@ -32,7 +32,15 @@ from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, StructuredDocument
+from parallax.core.base import (
+    INFINITY,
+    JSON,
+    STRING,
+    TIMESTAMP,
+    ManagedValue,
+    StructuredDocument,
+    UsageError,
+)
 from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -61,7 +69,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import typed_read_query
-from parallax.core.predicate import ModelRejectedError, TrueNode
+from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, Page, PageBuilder, ViewSchema
 from parallax.core.read_planning import IncludeTree
@@ -102,6 +110,7 @@ from tests._support.db_port import (
     body_outcome,
 )
 from tests._support.document_reads import fold_mapping_rows
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import wire_facts_for
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
@@ -660,9 +669,8 @@ def test_a_typed_continuation_past_a_back_reference_is_refused_before_any_statem
 ) -> None:
     port = ScriptedAdapter()
     database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
-    with pytest.raises(ModelRejectedError, match="back-reference") as refused:
+    with raises_code(UsageError, "deep-fetch-past-back-reference", match="back-reference"):
         read(database)
-    assert refused.value.rule == "deep-fetch-past-back-reference"
     assert [call for call in port.calls if isinstance(call, ReadCall)] == []
 
 

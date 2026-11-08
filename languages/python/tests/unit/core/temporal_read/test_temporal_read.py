@@ -23,7 +23,7 @@ from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError, read_planning
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -44,7 +44,6 @@ from parallax.core.object_query._resolved import (
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
 )
-from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
 from parallax.core.predicate._perspective import (
     AtPerspective,
@@ -77,6 +76,7 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import PredecessorRow
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
 
@@ -191,7 +191,7 @@ def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: EntityMetadata) ->
 
 
 def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "neutral-literal-type-mismatch"):
         oq.validate_object_query(
             POSITION,
             _query(
@@ -203,8 +203,6 @@ def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:
             ),
             _ACCEPTED["Position"],
         )
-
-    assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #
@@ -268,9 +266,8 @@ def test_serialized_as_of_range_requires_decoded_start_before_end(end: str) -> N
         BALANCE,
         {"transaction-time": oq.AsOfRange(start=_B, end=end)},
     )
-    with pytest.raises(ModelRejectedError, match="start < end") as caught:
+    with raises_code(UsageError, "query-clause-invalid", match="start < end"):
         oq.validate_object_query(BALANCE, query, _ACCEPTED["Balance"])
-    assert caught.value.rule == "query-clause-invalid"
 
 
 def test_history_injects_no_term() -> None:
@@ -346,9 +343,8 @@ def test_bitemporal_both_past_reads_valid_time_first() -> None:
 
 
 def test_preflight_rejects_a_missing_declared_selection_before_injection() -> None:
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "temporal-read-dimension-selection-cardinality"):
         _where(POSITION, _bitemporal(_B, None))
-    assert excinfo.value.rule == "temporal-read-dimension-selection-cardinality"
 
 
 def test_bitemporal_history_scans_both_axes() -> None:

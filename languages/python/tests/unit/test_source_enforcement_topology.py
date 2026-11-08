@@ -579,11 +579,9 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     **{
         (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
         for lane in (
-            "parallax.conformance._case_ingress",
             "parallax.conformance._wire_submission",
             "parallax.conformance._lanes.rejected",
             "parallax.conformance._lanes.scenario",
-            "parallax.conformance._lanes.snapshot",
         )
     },
     (

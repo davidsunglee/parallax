@@ -25,7 +25,7 @@ from parallax.conformance._lanes.scenario import (
 from parallax.conformance._lifecycle_observation import LifecycleRun, lifecycle_run
 from parallax.conformance._mechanism import case_document
 from parallax.conformance._mechanism.case_document import RunOnly, eligibility
-from parallax.conformance._mechanism.envelope import Emission, EngineError, ScenarioRun
+from parallax.conformance._mechanism.envelope import Emission, ScenarioRun, UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import (
     case_edition,
     case_serving_model,
@@ -37,9 +37,9 @@ from parallax.conformance._mechanism.model_facts import (
 
 __all__ = [
     "Emission",
-    "EngineError",
     "RunOnly",
     "ScenarioRun",
+    "UnclassifiedEngineError",
     "case_database",
     "case_edition",
     "case_serving_model",

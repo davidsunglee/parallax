@@ -98,7 +98,6 @@ from parallax.core import (
     EntityDefinitionError,
     IncludePath,
     Int32,
-    ModelRejectedError,
     ObjectQuery,
     Predicate,
     QueryDefinitionError,
@@ -112,6 +111,7 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredConstant, authored_include_path
@@ -121,9 +121,9 @@ from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWriteInstruction,
     WriteAssignment,
-    WriteInstructionError,
 )
 from tests._support import snapshot_models
+from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_document, predicate_document
 from tests._support.snapshot_models import (
     Animal,
@@ -237,26 +237,23 @@ def test_a_subtype_predicate_never_addresses_an_ancestor_position() -> None:
     # `Predicate[Dog]` in an `Animal` position: the concrete subtype's member is
     # not available to every concrete the position resolves to, and narrowing is
     # the remedy the runtime rule names (see the narrow case below).
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(Animal.where(Dog.bark_volume > 3))  # pyright: ignore[reportArgumentType]
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_an_unrelated_entitys_predicate_never_addresses_the_queried_position() -> None:
     # `Predicate[AnimalOwner]` in an `Animal` position. The two Entities share
     # one model and no inheritance family, so no narrow could rescue it — which
     # is exactly the distinction between this rule and the one above.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "attribute-outside-active-position"):
         accepted_read_query(Animal.where(AnimalOwner.name == "Ada"))  # pyright: ignore[reportArgumentType]
-    assert caught.value.rule == "attribute-outside-active-position"
 
 
 def test_an_unrelated_entitys_predicate_is_refused_from_the_other_side_too() -> None:
     # The same rule with the positions swapped, so neither direction is accepted
     # by an accident of which Entity happens to declare the member.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "attribute-outside-active-position"):
         accepted_read_query(AnimalOwner.where(Animal.name == "Ada"))  # pyright: ignore[reportArgumentType]
-    assert caught.value.rule == "attribute-outside-active-position"
 
 
 # --------------------------------------------------------------------------- #
@@ -352,26 +349,24 @@ def test_a_mixed_conjunction_never_launders_the_descendants_term_upward() -> Non
     # combinator admits: the ancestor's term is on the LEFT, so reading the
     # combination as the left operand's position would let a `Dog` member into
     # an `Animal` query with no diagnostic at all.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(
             Animal.where(
                 (Animal.name == "Ada") & (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
             )
         )
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_the_same_laundering_is_refused_in_the_other_operand_order_too() -> None:
     # Its commuted twin, refused identically — the property that makes the
     # rejection a rule about the terms rather than about which one was typed
     # first.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(
             Animal.where(
                 (Dog.bark_volume > 3) & (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
             )
         )
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
@@ -405,13 +400,12 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
 def test_a_disjunction_launders_no_more_than_a_conjunction_does() -> None:
     # And the rejection half for `|`, on the operand order a left-biased
     # combinator would have admitted.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(
             Animal.where(
                 (Animal.name == "Ada") | (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
             )
         )
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_the_disjunctions_laundering_is_refused_in_the_other_operand_order_too() -> None:
@@ -420,26 +414,24 @@ def test_the_disjunctions_laundering_is_refused_in_the_other_operand_order_too()
     # other cell in the table stayed green: the forward operator alone solves the
     # meet in THIS order, so this is the case that would survive losing the
     # reflected twin.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(
             Animal.where(
                 (Dog.bark_volume > 3) | (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
             )
         )
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_conjunction_of_one_positions_terms_keeps_that_position() -> None:
     # The composition does not launder a subtype's terms into an ancestor
     # position: two `Dog` terms combine to a `Dog` predicate, which the `Animal`
     # query refuses statically and the validator refuses again.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(
             Animal.where(
                 (Dog.bark_volume > 3) & (Dog.bark_volume < 9)  # pyright: ignore[reportArgumentType]
             )
         )
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position() -> None:
@@ -577,17 +569,15 @@ def test_a_subtype_sort_key_never_orders_an_ancestor_result() -> None:
     # un-narrowed `Animal` result. The runtime twin is the same rule an order
     # key's attribute reference draws against the ordered rows' position.
     key: SortKey[Animal] = Dog.bark_volume.desc()  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(Animal.where(Animal.all).order_by(key))
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_an_unrelated_entitys_sort_key_never_orders_the_queried_result() -> None:
     # The non-family half of the same rule, which no narrow could rescue.
     key: SortKey[SnapOrder] = SnapOrderStatus.code.asc()  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "attribute-outside-active-position"):
         accepted_read_query(SnapOrder.where(SnapOrder.all).order_by(key), _ORDERS)
-    assert caught.value.rule == "attribute-outside-active-position"
 
 
 def test_an_ancestors_sort_key_orders_a_union_narrowed_result() -> None:
@@ -612,9 +602,8 @@ def test_a_subtype_sort_key_never_orders_a_union_narrowed_result() -> None:
     # a `Dog` member does not apply to every concrete still in the position —
     # exactly what the validator says of the same query.
     key: SortKey[Cat | Dog] = Dog.bark_volume.asc()  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(Animal.where(Animal.all).narrow(Cat, Dog).order_by(key))
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_a_sort_key_orders_the_result_a_single_subtype_narrow_moved_to() -> None:
@@ -664,9 +653,8 @@ def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
     # A sibling's key is refused by the answered parameter and by the gate: the
     # ordered rows are Dogs, and `Cat.indoor` applies to none of them.
     refused = Animal.where(Animal.all).narrow(Dog).order_by(Cat.indoor.asc())  # pyright: ignore[reportArgumentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(refused)
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_narrowing_to_two_subtypes_answers_their_union() -> None:
@@ -683,9 +671,8 @@ def test_narrowing_to_two_subtypes_answers_their_union() -> None:
     # every concrete the narrow left in the position — the union is what the
     # parameter answers, not the common base.
     refused = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Dog.bark_volume.asc())  # pyright: ignore[reportArgumentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "subtype-attribute-outside-narrow-scope"):
         accepted_read_query(refused)
-    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
@@ -738,7 +725,9 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
         target=PredicateSelection(entity="SnapOrder", predicate=TrueNode()),
         assignments=(WriteAssignment(attr=str(assignment.attr), value=assignment.value),),
     )
-    with pytest.raises(WriteInstructionError, match="does not name a declared member"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match="does not name a declared member"
+    ):
         prepare_typed_write(write, write_preparation_of(model_of(_ORDERS)))
 
 
@@ -848,18 +837,16 @@ def test_an_ancestors_path_is_not_an_include_source_of_a_descendants_query() -> 
     # refuses: the path would start from queried objects the position does not
     # contain.
     source: IncludePath[Hound, Any] = Beast.keeper  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-position"):
         accepted_read_query(Hound.where(Hound.all).include(source), _BESTIARY)
-    assert caught.value.rule == "narrow-outside-position"
 
 
 def test_an_unrelated_entitys_path_is_never_an_include_source() -> None:
     # A sibling outside the position, refused by the same guard — the include
     # half of `Order.where(...).include(Customer.notes)`.
     source: IncludePath[Beast, Any] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-position"):
         accepted_read_query(Beast.where(Beast.all).include(source), _BESTIARY)
-    assert caught.value.rule == "narrow-outside-position"
 
 
 def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> None:
@@ -888,21 +875,19 @@ def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
     # The static half of `narrow-outside-relationship-target`, carried by the
     # receiver's own target rather than by a type-parameter bound, which may not
     # itself be generic.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-relationship-target"):
         accepted_read_query(
             Keeper.where(Keeper.all).include(Keeper.beasts.narrow(Badge)),  # pyright: ignore[reportArgumentType]
             _BESTIARY,
         )
-    assert caught.value.rule == "narrow-outside-relationship-target"
 
 
 def test_a_target_local_subtype_test_is_measured_against_the_hops_target() -> None:
     # A to-one hop's `is_a` names subtypes of what the hop reaches. The subtype
     # list is a per-model fact like every narrowing's, so a class unrelated to the
     # target is refused at the gate.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-relationship-target"):
         accepted_read_query(Keeper.where(Keeper.badge.is_a(Hound)), _BESTIARY)
-    assert caught.value.rule == "narrow-outside-relationship-target"
 
 
 def test_a_path_reaches_the_element_type_of_every_declared_relationship_shape() -> None:
@@ -1003,9 +988,8 @@ def test_a_narrow_to_a_class_the_position_excludes_is_refused_at_the_gate() -> N
     # `Entity.is_a`'s subtype list keeps only its runtime rejection: a type
     # parameter's bound may not itself be generic, so the narrowed subtypes
     # cannot be bounded by the narrowing position.
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-position"):
         accepted_read_query(Animal.where(Animal.is_a(AnimalOwner)))
-    assert caught.value.rule == "narrow-outside-position"
 
 
 def test_the_narrow_clause_erases_relatedness_for_the_same_reason() -> None:
@@ -1019,6 +1003,5 @@ def test_the_narrow_clause_erases_relatedness_for_the_same_reason() -> None:
     # refuses an unrelated class but cannot name the result, and one naming the
     # result carries it and accepts anything. A hop narrow escapes the trade
     # only because its bound sits on the RECEIVER (see the hop case above).
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "narrow-outside-position"):
         accepted_read_query(Animal.where(Animal.all).narrow(AnimalOwner))
-    assert caught.value.rule == "narrow-outside-position"

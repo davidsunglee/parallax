@@ -42,6 +42,7 @@ from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_pipeline import ReadInputs
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._scope import ExecutionScope
+from parallax.core.base import UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
@@ -66,7 +67,6 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import _delivery as delivery
 from parallax.core.read_delivery._page_reader import (
@@ -94,6 +94,7 @@ from parallax.snapshot._handle._wire import (
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, RefusingAdapter, ScriptedAdapter
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import (
     cataloged_for,
     graph_construction_for,
@@ -480,7 +481,9 @@ def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> N
         lambda: _wire_find(quiet, malformed),
         lambda: _wire_stream(quiet, malformed, _VALID_BATCH_SIZE),
     ):
-        with pytest.raises(ObjectQueryError, match="missing required clause"):
+        with raises_code(
+            UsageError, "object-query-document-invalid", match="missing required clause"
+        ):
             complaining()
 
     assert refusing.calls == []

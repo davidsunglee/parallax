@@ -8,7 +8,7 @@ import pytest
 
 from parallax.core._execution._unit_work import instructions as wi
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT32, STRING, TIMESTAMP
+from parallax.core.base import INT32, STRING, TIMESTAMP, UsageError
 from parallax.core.metamodel import (
     AbstractRoot,
     AsOfAxisMetadata,
@@ -23,6 +23,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
 )
 from parallax.core.write_plan.managed_row import named_members
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
@@ -117,9 +118,8 @@ def test_a_version_assignment_is_refused_by_role_before_any_value(
     instruction = wi.KeyedWriteInstruction(
         "amend", _VERSIONED.canonical, ({"id": "bad-key", "label": 7, "revisionCounter": value},)
     )
-    with pytest.raises(wi.InstructionRejectedError, match=r"Counted\.revisionCounter") as refused:
+    with raises_code(UsageError, _RULE, match=r"Counted\.revisionCounter"):
         prepare(instruction, _PREPARATION)
-    assert refused.value.rule == _RULE
 
 
 @_LANES
@@ -135,9 +135,8 @@ def test_temporal_assignment_roles_are_refused_in_bounded_and_unbounded_writes(
         valid_from=_START,
         until=_END if mutation.endswith("Until") else None,
     )
-    with pytest.raises(wi.InstructionRejectedError, match=rf"Recorded\.{member}") as refused:
+    with raises_code(UsageError, _RULE, match=rf"Recorded\.{member}"):
         prepare(instruction, _PREPARATION)
-    assert refused.value.rule == _RULE
 
 
 @_LANES
@@ -145,9 +144,8 @@ def test_temporal_assignment_roles_are_refused_in_bounded_and_unbounded_writes(
 def test_each_amendment_row_is_judged(prepare: _Prepare, bad_row: int) -> None:
     rows: list[dict[str, object]] = [{"id": i, "label": "accepted"} for i in range(3)]
     rows[bad_row]["revisionCounter"] = 2
-    with pytest.raises(wi.InstructionRejectedError) as refused:
+    with raises_code(UsageError, _RULE):
         prepare(wi.KeyedWriteInstruction("amend", _VERSIONED.canonical, tuple(rows)), _PREPARATION)
-    assert refused.value.rule == _RULE
 
 
 @_LANES
@@ -157,9 +155,9 @@ def test_an_earlier_rows_value_is_judged_before_a_later_rows_owned_name(prepare:
         _VERSIONED.canonical,
         ({"id": 1, "label": 7}, {"id": 2, "revisionCounter": 2}),
     )
-    with pytest.raises(ValueError, match=r"Counted\.label") as refused:
+    with pytest.raises(UsageError, match=r"Counted\.label") as refused:
         prepare(instruction, _PREPARATION)
-    assert getattr(refused.value, "rule", None) != _RULE
+    assert refused.value.code != _RULE
 
 
 @_LANES
@@ -167,9 +165,8 @@ def test_subtype_metadata_is_judged_before_an_inherited_owned_name(prepare: _Pre
     instruction = wi.KeyedWriteInstruction(
         "amend", _CHILD.canonical, ({"id": 1, "revisionCounter": 2, "tagValue": "child"},)
     )
-    with pytest.raises(wi.WriteRejectedError) as refused:
+    with raises_code(UsageError, "subtype-write-metadata-field"):
         prepare(instruction, _PREPARATION)
-    assert refused.value.rule == "subtype-write-metadata-field"
 
 
 @_LANES
@@ -181,9 +178,8 @@ def test_target_and_operation_applicability_precede_assignment_names(prepare: _P
         valid_from=_START,
         until=_END,
     )
-    with pytest.raises(wi.WriteInstructionError) as refused:
+    with raises_code(UsageError, "write-instruction-invalid") as refused:
         prepare(instruction, _PREPARATION)
-    assert not isinstance(refused.value, wi.InstructionRejectedError)
     assert "Non-Temporal" in str(refused.value) or "non-temporal" in str(refused.value)
 
 
@@ -198,7 +194,7 @@ def test_optimized_typed_preparation_refuses_framework_owned_assignments(
     entry = _PREPARATION.entity(entity)
     position = entry.selection.members.shape.position(member)
     assert position is not None
-    with pytest.raises(wi.InstructionRejectedError) as refused:
+    with raises_code(UsageError, _RULE):
         wi.prepare_typed_keyed_write(
             _PREPARATION,
             "amend",
@@ -208,7 +204,6 @@ def test_optimized_typed_preparation_refuses_framework_owned_assignments(
             valid_from=None if entity == _VERSIONED else _START,
             until=None,
         )
-    assert refused.value.rule == _RULE
 
 
 @pytest.mark.parametrize("mutation", ["replace", "replaceUntil"])
@@ -251,7 +246,7 @@ def test_a_target_missing_its_revision_is_refused_before_payload_ownership(
         _VERSIONED.canonical,
         {"id": 1, "revisionCounter": 2},
     )
-    with pytest.raises(wi.WriteInstructionError, match="requires version"):
+    with raises_code(UsageError, "write-instruction-invalid", match="requires version"):
         prepare(instruction, _PREPARATION)
 
 
@@ -259,7 +254,7 @@ def test_a_target_missing_its_revision_is_refused_before_payload_ownership(
 def test_an_explicit_wire_insert_still_refuses_owned_payload_members(member: str) -> None:
     target = _MODEL.entity(_TEMPORAL)
     assert target is not None
-    with pytest.raises(wi.WriteInstructionError, match="framework-owned"):
+    with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
         wi.prepare_wire_insert(
             _PREPARATION,
             "insert",
@@ -296,12 +291,10 @@ def test_authored_ownership_refusal_precedes_undeclared_members(
         valid_from=_START if entity == _TEMPORAL else None,
         until=_END if mutation == "amendUntil" else None,
     )
-    with pytest.raises(wi.InstructionRejectedError) as refused:
+    with raises_code(UsageError, _RULE):
         prepare(
             instruction,
             _PREPARATION,
             authored_members=row.keys() if authorship == "authored" else None,
             members=(lambda: assignments) if authorship == "members" else None,
         )
-
-    assert refused.value.rule == _RULE

@@ -53,6 +53,7 @@ from parallax.core.base import (
     NoResultFound,
     StructuredDocument,
     TooManyResultsFound,
+    UsageError,
 )
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
@@ -85,7 +86,6 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._resolved import ResolvedMembership
 from parallax.core.read_delivery import (
     InvalidData,
@@ -1972,10 +1972,10 @@ def test_an_invalid_query_over_a_dormant_position_is_still_refused(
 ) -> None:
     port = QueuePort([])
 
-    with pytest.raises(ModelRejectedError) as refused:
+    with pytest.raises(UsageError) as refused:
         _find(deserialize_query(document), model_of(dormant.DORMANT_POSITION_COLUMNS), port)
 
-    assert refused.value.rule == rule
+    assert refused.value.code == rule
     assert port.executed == []
 
 

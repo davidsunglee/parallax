@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.conformance import case_format
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.snapshot import SharingScope
 
@@ -46,7 +46,7 @@ def when(case: case_format.Case) -> Mapping[str, object]:
     """The case's ``when`` block, refused by name when the case carries none."""
     raw = case.document.get("when")
     if not isinstance(raw, Mapping):
-        raise EngineError(f"{case.path.name}: case has no `when`")
+        raise UnclassifiedEngineError(f"{case.path.name}: case has no `when`")
     return cast("Mapping[str, object]", raw)
 
 
@@ -54,7 +54,9 @@ def scenario_steps(case: case_format.Case) -> list[Mapping[str, object]]:
     """The case's ``when.scenario`` steps, in order."""
     steps = when(case).get("scenario")
     if not isinstance(steps, list):
-        raise EngineError(f"{case.path.name}: scenario case has no `when.scenario` list")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: scenario case has no `when.scenario` list"
+        )
     return [cast("Mapping[str, object]", step) for step in cast("list[object]", steps)]
 
 
@@ -72,7 +74,9 @@ def write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]]
     """The case's ``when.writeSequence`` entries, in order."""
     entries = when(case).get("writeSequence")
     if not isinstance(entries, list):
-        raise EngineError(f"{case.path.name}: writeSequence case has no `when.writeSequence` list")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: writeSequence case has no `when.writeSequence` list"
+        )
     return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", entries)]
 
 
@@ -119,7 +123,7 @@ def batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:
         else None
     )
     if not isinstance(size, int) or isinstance(size, bool) or size < 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{where}: a streamed delivery declares a positive integer "
             f"`stream.batchSize` (got {size!r})"
         )

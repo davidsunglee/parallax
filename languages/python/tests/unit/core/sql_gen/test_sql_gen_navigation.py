@@ -22,19 +22,19 @@ import pytest
 
 from parallax.core import inheritance, read_planning, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, STRING
+from parallax.core.base import INFINITY, STRING, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
 from parallax.core.object_query import AsOf
-from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._resolved import ResolvedAnd
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._context import StatementBuilder
 from parallax.core.sql_gen._planning import EvaluationContext, StatementPlan, plan_statement
 from parallax.core.sql_gen._predicate import EntityRowScope, render_predicate, render_shared_sources
+from tests._support.errors import raises_code
 from tests._support.sql import (
     compile_read,
     compile_write_predicate,
@@ -56,11 +56,10 @@ BEAST = model("composed-beast-reader")
 
 
 def test_an_unknown_relationship_is_rejected() -> None:
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_code(UsageError, "path-unknown-member"):
         compile_read(
             oa.Quantifier("any", "Order.missing"), ORDERS, POSTGRES, target(ORDERS, "Order")
         )
-    assert caught.value.rule == "path-unknown-member"
 
 
 def test_a_to_many_any_lowers_to_a_correlated_exists() -> None:

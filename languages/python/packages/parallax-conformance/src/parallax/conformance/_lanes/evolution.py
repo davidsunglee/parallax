@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.dialects import DIALECT_CATALOG, dialect_for
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import model_path
 from parallax.conformance.evolution_wire import (
     evolution_observation,
@@ -40,14 +40,16 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
     when = case.document.get("when")
     action = cast("Mapping[str, object]", when).get("evolve") if isinstance(when, Mapping) else None
     if not isinstance(action, Mapping):
-        raise EngineError(f"{case.path.name}: evolution case carries no `when.evolve`")
+        raise UnclassifiedEngineError(f"{case.path.name}: evolution case carries no `when.evolve`")
     named = cast("Mapping[str, object]", action)
     later_ref = named.get("later")
     if not isinstance(later_ref, str):
-        raise EngineError(f"{case.path.name}: `when.evolve.later` must be a string path")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: `when.evolve.later` must be a string path"
+        )
     earlier_ref = named.get("earlier")
     if earlier_ref is not None and not isinstance(earlier_ref, str):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: `when.evolve.earlier` is a string path or the null sentinel"
         )
     earlier = ABSENT if earlier_ref is None else models.load_model(model_path(earlier_ref))

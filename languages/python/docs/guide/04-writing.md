@@ -48,15 +48,11 @@ from parallax.core import (
     NoResultFound,
     TemporalBound,
     TxTemporal,
+    UsageError,
     attr,
 )
 from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnlyError
-from parallax.core.unit_work import (
-    InstructionRejectedError,
-    WriteEvidenceError,
-    WriteInstructionError,
-    WritePreconditionError,
-)
+from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 ```
 <!-- /example -->
@@ -315,8 +311,8 @@ amount      tx_start      tx_end
 A read of the latest state now finds no limit, while a read as of 1 February still
 answers 2500.00, and history still lists both milestones. Inserting a limit for the same
 customer later opens a new current milestone after them. `tx.delete` is refused for a
-temporal entity, because it would remove rows: it raises `WriteInstructionError`, whose
-message names `terminate` instead.
+temporal entity, because it would remove rows: it raises a `UsageError` whose `code` is
+`"write-instruction-invalid"` and whose message names `terminate` instead.
 
 ## Bitemporal entities
 
@@ -660,7 +656,7 @@ retried.
 
 `key=` takes the object's primary-key value; an entity's primary key is always one
 attribute. `Customer` has no version, so a target write can't name a revision for it,
-and Parallax refuses one with `WriteInstructionError`. Read a customer inside the transaction instead; its shared
+and Parallax refuses one with a `UsageError`. Read a customer inside the transaction instead; its shared
 lock protects the write. `replace_if` takes a whole instance, which can be an edited copy
 of the reviewed value, and states that instance's writable state.
 
@@ -740,8 +736,8 @@ every selected row; the instance's key selects nothing and is never written.
 
 Because nothing is read, there is no version to check and no milestone to close. So a
 predicate write accepts only an entity with no version and no history, such as
-`Customer` and `Shipment` here. Over `Order` or `CreditLimit` it is refused with
-`InstructionRejectedError` before anything runs. Read those objects and write each one,
+`Customer` and `Shipment` here. Over `Order` or `CreditLimit` it is refused with a
+`UsageError` whose `code` is `"set-based-write-target-unsupported"` before anything runs. Read those objects and write each one,
 or state each revision in a target write.
 
 Values this transaction read before a predicate write keep the values they were read

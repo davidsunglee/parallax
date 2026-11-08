@@ -10,7 +10,7 @@ import pytest
 
 from parallax.conformance import case_format, models
 from parallax.conformance._lanes import scenario
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core import ConflictError, UsageError
 from parallax.core.unit_work import (
     MISSING_TARGET,
@@ -279,7 +279,7 @@ def test_an_ungrouped_find_reads_committed_state_after_the_groups() -> None:
         ],
         {"g": {"outcome": "committed"}},
     )
-    with pytest.raises(EngineError, match="not an EARLIER find"):
+    with pytest.raises(UnclassifiedEngineError, match="not an EARLIER find"):
         scenario.run_scenario_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW]))
     case = _state_graded(
         [
@@ -321,7 +321,7 @@ def test_an_ungrouped_find_reads_committed_state_after_the_groups() -> None:
 )
 def test_what_a_state_graded_run_cannot_state_is_refused(steps: list[Any], refusal: str) -> None:
     case = _state_graded(steps, {"g": {"outcome": "committed"}, "h": {"outcome": "committed"}})
-    with pytest.raises(EngineError, match=refusal):
+    with pytest.raises(UnclassifiedEngineError, match=refusal):
         scenario.run_scenario_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW]))
 
 
@@ -365,5 +365,7 @@ def test_a_submission_its_model_cannot_lower_is_refused_naming_the_case() -> Non
         ],
         {"g": {"outcome": "committed"}},
     )
-    with pytest.raises(EngineError, match=r"^m-unit-work-997-synthetic\.yaml: .*`until`"):
+    with pytest.raises(
+        UnclassifiedEngineError, match=r"^m-unit-work-997-synthetic\.yaml: .*`until`"
+    ):
         scenario.run_scenario_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW]))

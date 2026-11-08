@@ -3,7 +3,7 @@
 translation and wire rendering the `then.rows` run reports, the envelope the
 graph-form and milestone-set runs report around production's Wire result, the
 streamed delivery's refusals, and every refusal the lanes translate into an
-``EngineError`` naming the case.
+``UnclassifiedEngineError`` naming the case.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
@@ -185,7 +185,7 @@ def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> No
     query["target"] = "parallax.compatibility.NoSuchEntity"
     when["objectQuery"] = query
     document["when"] = when
-    with pytest.raises(EngineError, match=case.path.name):
+    with pytest.raises(UnclassifiedEngineError, match=case.path.name):
         reads.run_read_case(dataclasses.replace(case, document=document), FakeDbPort([]))
 
 
@@ -225,7 +225,7 @@ def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
 
 def test_compile_rejects_non_read_shape() -> None:
     write_seq = next(c for c in corpus_cases() if c.shape == "writeSequence")
-    with pytest.raises(EngineError, match="only `read`-shape compile"):
+    with pytest.raises(UnclassifiedEngineError, match="only `read`-shape compile"):
         reads.compile_read_case(write_seq, "postgres")
 
 
@@ -250,7 +250,7 @@ def _synthetic(document: dict[str, object]) -> case_format.Case:
 def test_compile_read_case_reports_missing_fields(
     document: dict[str, object], message: str
 ) -> None:
-    with pytest.raises(EngineError, match=message):
+    with pytest.raises(UnclassifiedEngineError, match=message):
         reads.compile_read_case(_synthetic(document), "postgres")
 
 
@@ -428,7 +428,7 @@ def test_a_document_resident_scalar_issue_is_refused_before_flattening(
     monkeypatch: pytest.MonkeyPatch, payload: dict[str, DocumentValue]
 ) -> None:
     monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads.run_read_case(_traveler_rows_case(), FakeDbPort([_traveler(payload)]))
 
 
@@ -451,7 +451,7 @@ def test_a_scalar_collection_issue_is_refused_before_flattening(
     monkeypatch: pytest.MonkeyPatch, model: str, row: MappingRow
 ) -> None:
     monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads.run_read_case(_rows_case(model, "CollectionTwinItem"), FakeDbPort([row]))
 
 
@@ -461,7 +461,7 @@ def test_a_value_object_issue_with_no_hydrated_data_is_refused_before_flattening
     monkeypatch.setattr(reads, "flat_rows", _flattening_refused)
     address = StructuredDocument({"street": "1 Main", "city": 7})
     port = FakeDbPort([{"id": 1, "name": "Ada", "address": address}])
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads.run_read_case(_case("m-value-object-001"), port)
 
 
@@ -480,7 +480,7 @@ def test_a_non_hydrating_scalar_issue_is_refused_before_flattening(
             }
         ]
     )
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads.run_read_case(_load_case("m-temporal-read-004"), port)
 
 
@@ -513,7 +513,7 @@ def test_an_issue_under_an_included_nodes_value_object_is_refused_before_flatten
     )
     assert records is not None
     assert [record["hydrated"] for record in records] == [True]
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads.run_read_case(case, _classified_item_port(root_profile))
 
 
@@ -577,7 +577,7 @@ def test_an_issue_on_an_included_node_of_the_roots_own_family_is_refused_before_
         case, _same_family_reentry_port(None, _WRONG_KIND_TAG)
     )
     assert records is not None
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads.run_read_case(case, _same_family_reentry_port(None, _WRONG_KIND_TAG))
 
 
@@ -649,7 +649,7 @@ def test_an_issue_outside_every_omitted_occurrence_is_refused(
     member: MemberIdentity | None,
 ) -> None:
     for record in (_hydrated_record(member), _hydrated_record(_ADDRESS, member)):
-        with pytest.raises(EngineError, match="published an InvalidData record"):
+        with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
             reads._conforming_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
                 _case("m-value-object-001"), frozenset({_ADDRESS}), record
             )
@@ -665,7 +665,7 @@ def test_an_issue_outside_every_omitted_occurrence_is_refused(
 def test_an_omitted_occurrence_issue_on_another_object_is_refused(
     affected: ObjectKey | None,
 ) -> None:
-    with pytest.raises(EngineError, match="published an InvalidData record"):
+    with pytest.raises(UnclassifiedEngineError, match="published an InvalidData record"):
         reads._conforming_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
             _case("m-value-object-001"),
             frozenset({_ADDRESS}),
@@ -801,9 +801,9 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Docker-free error paths (m-conformance-adapter's lane-honest ``EngineError``  #
+# Docker-free error paths (m-conformance-adapter's lane-honest ``UnclassifiedEngineError``  #
 # wrapping): a compiled/found query that fails inside `m-sql` / `m-navigate`  #
-# / `m-temporal-read` is caught and re-raised as one `EngineError`, never a     #
+# / `m-temporal-read` is caught and re-raised as one `UnclassifiedEngineError`, never a     #
 # leaked lower-layer exception type.                                           #
 # --------------------------------------------------------------------------- #
 def test_compile_read_case_wraps_a_sql_gen_error() -> None:
@@ -818,7 +818,7 @@ def test_compile_read_case_wraps_a_sql_gen_error() -> None:
             },
         }
     )
-    with pytest.raises(EngineError, match="names no declared member"):
+    with pytest.raises(UnclassifiedEngineError, match="names no declared member"):
         reads.compile_read_case(case, "postgres")
 
 
@@ -836,7 +836,7 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
             "then": {"graph": {}},
         }
     )
-    with pytest.raises(EngineError, match="undeclared"):
+    with pytest.raises(UnclassifiedEngineError, match="undeclared"):
         reads.run_graph_case(case, QueueDbPort([]))
 
 
@@ -1034,7 +1034,7 @@ _MILESTONE_LANES: Final = pytest.mark.parametrize(
 def test_a_milestone_root_retaining_the_empty_pin_is_no_observation(
     run: Callable[[QueueDbPort], object], start: object
 ) -> None:
-    with pytest.raises(EngineError, match="no decoded milestone start"):
+    with pytest.raises(UnclassifiedEngineError, match="no decoded milestone start"):
         run(QueueDbPort([[_invoice_line("50.00", start, INFINITY)]]))
 
 
@@ -1042,7 +1042,7 @@ def test_a_milestone_root_retaining_the_empty_pin_is_no_observation(
 def test_a_non_hydrating_milestone_root_has_no_pin_to_observe(
     run: Callable[[QueueDbPort], object],
 ) -> None:
-    with pytest.raises(EngineError, match="published no value to pin"):
+    with pytest.raises(UnclassifiedEngineError, match="published no value to pin"):
         run(QueueDbPort([[_invoice_line("50.00", _JANUARY, None)]]))
 
 
@@ -1098,7 +1098,7 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
             "then": {"graphs": []},
         }
     )
-    with pytest.raises(EngineError, match="undeclared"):
+    with pytest.raises(UnclassifiedEngineError, match="undeclared"):
         reads.run_graphs_case(case, QueueDbPort([]))
 
 
@@ -1116,7 +1116,7 @@ def test_run_graph_case_refuses_a_case_whose_read_answers_a_milestone_set() -> N
             "then": {"graph": {}},
         }
     )
-    with pytest.raises(EngineError, match=r"asserts `then\.graphs`"):
+    with pytest.raises(UnclassifiedEngineError, match=r"asserts `then\.graphs`"):
         reads.run_graph_case(case, QueueDbPort([[]]))
 
 
@@ -1134,7 +1134,7 @@ def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
             "then": {"graphs": []},
         }
     )
-    with pytest.raises(EngineError, match=r"asserts `then\.graph`"):
+    with pytest.raises(UnclassifiedEngineError, match=r"asserts `then\.graph`"):
         reads.run_graphs_case(case, QueueDbPort([[]]))
 
 
@@ -1178,7 +1178,7 @@ _STREAM_CASE_ID: Final[str] = "m-snapshot-read-029"
 
 def test_run_stream_case_refuses_a_page_size_that_is_not_a_positive_int() -> None:
     case = _doctored(_STREAM_CASE_ID, stream={"batchSize": 0})
-    with pytest.raises(EngineError, match="positive integer"):
+    with pytest.raises(UnclassifiedEngineError, match="positive integer"):
         reads.run_stream_case(case, FakeDbPort([]))
 
 
@@ -1192,7 +1192,9 @@ def test_run_stream_case_refuses_a_case_declaring_no_delivery() -> None:
     document = dict(case.document)
     document["when"] = {key: value for key, value in when.items() if key != "stream"}
 
-    with pytest.raises(EngineError, match=re.escape("declares `when.stream.batchSize`")):
+    with pytest.raises(
+        UnclassifiedEngineError, match=re.escape("declares `when.stream.batchSize`")
+    ):
         reads.run_stream_case(dataclasses.replace(case, document=document), FakeDbPort([]))
 
 
@@ -1202,7 +1204,7 @@ def test_run_stream_case_refuses_a_milestone_set_read() -> None:
     # its own milestone pin, which is `then.graphs`, so the `then.graph` lane refuses
     # it rather than reporting one flat graph the case never stated.
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 2})
-    with pytest.raises(EngineError, match=re.escape("asserts `then.graphs`")):
+    with pytest.raises(UnclassifiedEngineError, match=re.escape("asserts `then.graphs`")):
         reads.run_stream_case(case, FakeDbPort([]))
 
 
@@ -1211,7 +1213,7 @@ def test_run_streamed_graphs_case_refuses_a_single_instant_read() -> None:
     # one pin the query itself states, so there is no milestone partition to
     # report and the case's own member says so.
     case = _doctored(_STREAM_CASE_ID)
-    with pytest.raises(EngineError, match=re.escape("asserts `then.graph`")):
+    with pytest.raises(UnclassifiedEngineError, match=re.escape("asserts `then.graph`")):
         reads.run_streamed_graphs_case(case, FakeDbPort([]))
 
 
@@ -1231,7 +1233,7 @@ def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None
         stream={"batchSize": 2},
     )
     port = FakeDbPort([])
-    with pytest.raises(EngineError):
+    with pytest.raises(UnclassifiedEngineError):
         reads.run_stream_case(case, port)
     assert port.executed == []
 

@@ -26,10 +26,10 @@ from parallax.core import (
 )
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
-from parallax.core.base import Int32
+from parallax.core.base import Int32, UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import WriteRejectedError
 from parallax.core.write_plan.managed_row import ManagedRow, named_members
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 
 _NS = "replacement.completion"
@@ -158,10 +158,10 @@ def test_an_omitted_required_member_is_refused(
     form: _Form, addressed: bool, prepare: _Prepare, empty: object
 ) -> None:
     del addressed, empty
-    with pytest.raises(WriteRejectedError, match=r"owner: a replacement states every") as refused:
+    with raises_code(
+        UsageError, "write-required-attribute-missing", match=r"owner: a replacement states every"
+    ):
         prepare(form({"id": 1, "note": "n"}), write_preparation_of(_MODEL))
-
-    assert refused.value.rule == "write-required-attribute-missing"
 
 
 @_FORMS
@@ -170,7 +170,9 @@ def test_a_required_member_stated_null_is_refused_as_an_assignment(
     form: _Form, addressed: bool, prepare: _Prepare, empty: object
 ) -> None:
     del addressed, empty
-    with pytest.raises(wi.WriteInstructionError, match=r"owner: required attribute is absent"):
+    with raises_code(
+        UsageError, "write-instruction-invalid", match=r"owner: required attribute is absent"
+    ):
         prepare(form({"id": 1, "owner": None}), write_preparation_of(_MODEL))
 
 
@@ -235,7 +237,7 @@ def test_an_earlier_rows_value_failure_wins_over_a_later_rows_name_failure(
     del empty
     first = {"id": 1, "owner": 7}
     second = {"id": 2, "owner": "B", "bogus": 1}
-    with pytest.raises(ValueError, match=r"Ledger\.owner: ") as refused:
+    with pytest.raises(UsageError, match=r"Ledger\.owner: ") as refused:
         prepare(
             wi.KeyedWriteInstruction(mutation, f"{_NS}.Ledger", (first, second)),
             write_preparation_of(_MODEL),

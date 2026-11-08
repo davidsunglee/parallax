@@ -36,6 +36,7 @@ from parallax.core.base import (
     TIMESTAMP,
     UUID,
     NeutralType,
+    UsageError,
 )
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.metamodel import (
@@ -57,7 +58,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.unit_work import KeyedMutation, KeyedWriteInstruction, WriteRejectedError
+from parallax.core.unit_work import KeyedMutation, KeyedWriteInstruction
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
@@ -179,8 +180,8 @@ def _refused(
     row: Mapping[str, object],
     *,
     mutation: KeyedMutation = "insert",
-) -> WriteRejectedError:
-    with pytest.raises(WriteRejectedError) as exc_info:
+) -> UsageError:
+    with pytest.raises(UsageError) as exc_info:
         _prepare(model, entity, row, mutation=mutation)
     return exc_info.value
 
@@ -201,7 +202,7 @@ def _accept(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> No
     _prepare(_WIDGET_MODEL, "Widget", row, mutation=mutation)
 
 
-def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> WriteRejectedError:
+def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> UsageError:
     return _refused(_WIDGET_MODEL, "Widget", row, mutation=mutation)
 
 
@@ -213,15 +214,15 @@ def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> W
 def test_required_attribute_missing_at_depth_zero_on_insert() -> None:
     row = _row()
     del row["label"]
-    assert _rejects(row).rule == "write-required-attribute-missing"
+    assert _rejects(row).code == "write-required-attribute-missing"
 
 
 def test_required_attribute_null_at_depth_zero_on_insert() -> None:
-    assert _rejects(_row(label=None)).rule == "write-required-attribute-missing"
+    assert _rejects(_row(label=None)).code == "write-required-attribute-missing"
 
 
 def test_sparse_update_still_type_checks_a_present_attribute() -> None:
-    assert _rejects({"id": 1, "flag": "nope"}, mutation="amend").rule == "write-value-type-mismatch"
+    assert _rejects({"id": 1, "flag": "nope"}, mutation="amend").code == "write-value-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #
@@ -239,25 +240,25 @@ def test_nested_value_object_required_missing_once_the_parent_is_present() -> No
     # regardless of mutation kind -- there is no sparse write below a
     # value-object document boundary.
     row = _row(spec={"note": "n"})
-    assert _rejects(row).rule == "write-required-value-object-missing"
-    assert _rejects(row, mutation="amend").rule == "write-required-value-object-missing"
+    assert _rejects(row).code == "write-required-value-object-missing"
+    assert _rejects(row, mutation="amend").code == "write-required-value-object-missing"
 
 
 def test_nested_leaf_attribute_type_mismatch() -> None:
-    assert _rejects(_row(spec={"note": "n", "detail": {"hint": 7}})).rule == (
+    assert _rejects(_row(spec={"note": "n", "detail": {"hint": 7}})).code == (
         "write-value-type-mismatch"
     )
 
 
 def test_value_object_document_must_be_a_mapping() -> None:
-    assert _rejects(_row(spec="not-a-document")).rule == "write-value-type-mismatch"
+    assert _rejects(_row(spec="not-a-document")).code == "write-value-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #
 # To-many value objects: the array walk.                                      #
 # --------------------------------------------------------------------------- #
 def test_many_value_object_must_be_a_sequence() -> None:
-    assert _rejects(_row(tags="not-a-list")).rule == "write-value-type-mismatch"
+    assert _rejects(_row(tags="not-a-list")).code == "write-value-type-mismatch"
 
 
 def test_an_unnamed_many_value_object_is_its_empty_collection() -> None:
@@ -273,8 +274,8 @@ def test_a_many_value_object_named_null_is_still_refused() -> None:
     # The model gives a `many` no null state to name: `value-object-many-nullable`
     # rejects a nullable one at formation, so naming one null in a write input names
     # a state that does not exist — refused at both depths.
-    assert _rejects(_row(tags=None)).rule == "write-required-value-object-missing"
-    assert _rejects(_row(book={"phones": None})).rule == "write-required-value-object-missing"
+    assert _rejects(_row(tags=None)).code == "write-required-value-object-missing"
+    assert _rejects(_row(book={"phones": None})).code == "write-required-value-object-missing"
 
 
 def test_a_sparse_update_may_omit_a_many_occurrence_but_never_name_it_null() -> None:
@@ -284,29 +285,29 @@ def test_a_sparse_update_may_omit_a_many_occurrence_but_never_name_it_null() -> 
     # the state the model has none of.
     _accept({"id": 1}, mutation="amend")
     assert (
-        _rejects({"id": 1, "tags": None}, mutation="amend").rule
+        _rejects({"id": 1, "tags": None}, mutation="amend").code
         == "write-required-value-object-missing"
     )
     assert (
-        _rejects({"id": 1, "book": {"phones": None}}, mutation="amend").rule
+        _rejects({"id": 1, "book": {"phones": None}}, mutation="amend").code
         == "write-required-value-object-missing"
     )
 
 
 def test_many_value_object_element_must_be_a_mapping() -> None:
-    assert _rejects(_row(tags=[123])).rule == "write-value-type-mismatch"
+    assert _rejects(_row(tags=[123])).code == "write-value-type-mismatch"
 
 
 def test_many_value_object_element_type_mismatch() -> None:
-    assert _rejects(_row(tags=[{"label": "ok"}, {"label": 42}])).rule == "write-value-type-mismatch"
+    assert _rejects(_row(tags=[{"label": "ok"}, {"label": 42}])).code == "write-value-type-mismatch"
 
 
 def test_a_nested_many_element_violation_keeps_its_index_on_the_nested_member() -> None:
     # The index attaches to `phones` with no separating dot, and the leaf name
     # dot-joins after it.
     error = _rejects(_row(book={"phones": [{"number": "1"}, {"number": 2}]}))
-    assert error.rule == "write-value-type-mismatch"
-    assert str(error).startswith("Widget.book.phones[1].number:")
+    assert error.code == "write-value-type-mismatch"
+    assert error.args[1].startswith("Widget.book.phones[1].number:")
 
 
 # --------------------------------------------------------------------------- #
@@ -366,7 +367,7 @@ def test_value_conformance_over_the_full_neutral_type_vocabulary(
     if valid:
         _accept(row)
     else:
-        assert _rejects(row).rule == "write-value-type-mismatch"
+        assert _rejects(row).code == "write-value-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #
@@ -442,8 +443,8 @@ def test_the_write_refuses_a_collection_element_outside_its_value_space(
 ) -> None:
     error = _refused(_BUNDLE_MODEL, "Bundle", {"id": 1, member: elements})
 
-    assert error.rule == "write-value-type-mismatch"
-    assert str(error) == message
+    assert error.code == "write-value-type-mismatch"
+    assert error.args[1] == message
 
 
 def test_the_write_admits_collection_elements_inside_their_value_spaces() -> None:
@@ -505,18 +506,18 @@ def _valid_truck_row() -> dict[str, object]:
 def test_a_subtype_insert_requires_an_inherited_required_attribute() -> None:
     row = _valid_truck_row()
     del row["name"]
-    assert _refused(_FAMILY_MODEL, "Truck", row).rule == "write-required-attribute-missing"
+    assert _refused(_FAMILY_MODEL, "Truck", row).code == "write-required-attribute-missing"
 
 
 def test_a_subtype_insert_requires_an_inherited_required_value_object() -> None:
     row = _valid_truck_row()
     del row["plate"]
-    assert _refused(_FAMILY_MODEL, "Truck", row).rule == "write-required-value-object-missing"
+    assert _refused(_FAMILY_MODEL, "Truck", row).code == "write-required-value-object-missing"
 
 
 def test_a_subtype_update_type_checks_an_inherited_attribute() -> None:
     refused = _refused(_FAMILY_MODEL, "Truck", {"id": 1, "name": 123}, mutation="amend")
-    assert refused.rule == "write-value-type-mismatch"
+    assert refused.code == "write-value-type-mismatch"
 
 
 def test_a_complete_subtype_insert_over_inherited_members_is_accepted() -> None:

@@ -41,9 +41,7 @@ from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ROLLBACK_ONLY,
     WriteEvidenceError,
-    WriteInstructionError,
     WritePreconditionError,
-    WriteRejectedError,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRows
@@ -66,6 +64,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import close_owned_roots
 from tests.unit import _family_predecessor_support as family
 from tests.unit._transact_support import (
@@ -1002,7 +1001,7 @@ def test_a_temporal_target_of_a_subtype_writes_its_own_table_and_refuses_a_sibli
     port = ScriptedAdapter(Transact(Read(rows=[row]), Write(times=3)))
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteRejectedError):
+        with pytest.raises(UsageError):
             tx.wire.amend_if(
                 "DepositRate", {"id": 4, "spread": "1.00"}, valid_from=_MAR, tx_start=_T0
             )
@@ -1625,7 +1624,7 @@ def test_a_termination_states_its_key_alone() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteInstructionError, match="primary key alone"):
+        with raises_code(UsageError, "write-instruction-invalid", match="primary key alone"):
             tx.wire.terminate_if(
                 "WherePosition", {"id": 1, "value": "1.00"}, valid_from=_MAR, tx_start=_T0
             )

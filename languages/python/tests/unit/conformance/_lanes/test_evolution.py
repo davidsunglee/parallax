@@ -12,7 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import evolution
-from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.metamodel import EntityIdentity, Table
 from parallax.evolution.model_evolution import EntityAdded
 from parallax.evolution.schema_delta import (
@@ -39,12 +39,12 @@ def _evolution_case(document: dict[str, object]) -> case_format.Case:
 
 
 def test_an_evolution_case_without_its_endpoints_is_rejected() -> None:
-    with pytest.raises(EngineError, match=r"when\.evolve"):
+    with pytest.raises(UnclassifiedEngineError, match=r"when\.evolve"):
         evolution.run_evolution_case(_evolution_case({"when": {}}))
 
 
 def test_an_evolution_case_without_a_later_endpoint_is_rejected() -> None:
-    with pytest.raises(EngineError, match=r"when\.evolve\.later"):
+    with pytest.raises(UnclassifiedEngineError, match=r"when\.evolve\.later"):
         evolution.run_evolution_case(_evolution_case({"when": {"evolve": {"earlier": None}}}))
 
 
@@ -54,7 +54,7 @@ def test_an_evolution_case_whose_earlier_endpoint_is_neither_a_path_nor_null_is_
     bad = _evolution_case(
         {"when": {"evolve": {"earlier": 7, "later": "models/evolution-widget-v1.yaml"}}}
     )
-    with pytest.raises(EngineError, match=r"when\.evolve\.earlier"):
+    with pytest.raises(UnclassifiedEngineError, match=r"when\.evolve\.earlier"):
         evolution.run_evolution_case(bad)
 
 

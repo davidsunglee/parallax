@@ -12,6 +12,7 @@ from parallax.core.base import (
     NeutralType,
     SqlNull,
     StructuredDocument,
+    UsageError,
     adopt_frozen_map,
     frozen_map_json_backing,
     retain_document_value,
@@ -39,7 +40,7 @@ from parallax.core.document_codec._shape import (
     resolve,
 )
 from parallax.core.metamodel import Multiplicity
-from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
+from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.core.wire._json import same_json_number
 
 __all__ = [
@@ -314,7 +315,7 @@ class MemberDecodePlan:
             return MISSING
         try:
             return decode_canonical_wire(self._member.type, raw)
-        except WireDecodingError:
+        except UsageError:
             findings.append(DocumentFinding("leaf-undecodable", path, raw))
             return UNAVAILABLE
 
@@ -403,7 +404,7 @@ class _ShapeDecodePlan:
                     continue
                 try:
                     append(decode_canonical_wire(member.type, raw))
-                except WireDecodingError:
+                except UsageError:
                     findings.append(DocumentFinding("leaf-undecodable", (*path, name), raw))
                     append(self._unavailable)
             elif kind == _ONE:
@@ -497,7 +498,7 @@ def _interpreted_scalar_many(
     for index, element in enumerate(raw):
         try:
             values.append(decode_canonical_wire(element_type, cast("WireValue", element)))
-        except WireDecodingError:
+        except UsageError:
             if findings is None:
                 findings = []
             findings.append(DocumentFinding("leaf-undecodable", (*path, index), element))

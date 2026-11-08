@@ -29,12 +29,12 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.inheritance import InheritanceError
 from parallax.core.inheritance._facet import _InheritanceFacet
 from parallax.core.metamodel import EntityIdentity, TablePerConcreteSubtype
 from parallax.core.sql_gen import _compile as sql_compile
@@ -413,10 +413,10 @@ def test_a_family_predicate_update_is_refused_before_any_position_is_resolved(
     served = _served(profile_run, spies)
     db = served.db
     spies.clear()
-    refusals: list[InheritanceError] = []
+    refusals: list[UsageError] = []
 
     def update(tx: TxnContext) -> None:
-        with pytest.raises(InheritanceError) as caught:
+        with pytest.raises(UsageError) as caught:
             if representation == "typed":
                 typed(tx)
             else:
@@ -426,7 +426,7 @@ def test_a_family_predicate_update_is_refused_before_any_position_is_resolved(
     db.transact(update)
 
     assert spies.counts() == _Counts(0, 0, 0)
-    assert [refusal.rule for refusal in refusals] == ["subtype-write-set-based-unsupported"]
+    assert [refusal.code for refusal in refusals] == ["subtype-write-set-based-unsupported"]
     committed = db.wire.find(
         {"target": selection["entity"], "predicate": selection["predicate"]}
     ).result()

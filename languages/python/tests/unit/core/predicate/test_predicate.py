@@ -18,10 +18,12 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import predicate
-from parallax.core.predicate import CanonicalDocumentError, QueryDefinitionError
+from parallax.core.base import UsageError
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.predicate._nodes import QUERY_DEFINITION_CODES
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
+from tests._support.errors import raises_code
 from tests._support.repo import REPO_ROOT
 
 
@@ -107,7 +109,7 @@ def _admitted(definition: str, spelling: str) -> bool:
 def _accepted(document: dict[str, Any]) -> bool:
     try:
         predicate.deserialize(document)
-    except CanonicalDocumentError:
+    except UsageError:
         return False
     return True
 
@@ -374,12 +376,12 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
     ),
 )
 def test_deserialize_rejects_malformed(doc: object, message: str) -> None:
-    with pytest.raises(CanonicalDocumentError, match=message):
+    with raises_code(UsageError, "predicate-document-invalid", match=message):
         predicate.deserialize(doc)
 
 
 def test_deserialize_rejects_non_scalar_value() -> None:
-    with pytest.raises(CanonicalDocumentError, match="scalar literal"):
+    with raises_code(UsageError, "predicate-document-invalid", match="scalar literal"):
         predicate.deserialize({"eq": {"path": "Order.id", "value": {"nested": 1}}})
 
 

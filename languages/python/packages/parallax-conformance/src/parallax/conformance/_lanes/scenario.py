@@ -21,8 +21,8 @@ from parallax.conformance._mechanism import case_document, envelope
 from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import (
     Emission,
-    EngineError,
     ScenarioRun,
+    UnclassifiedEngineError,
 )
 from parallax.conformance._mechanism.flat_rows import flat_rows
 from parallax.conformance._mechanism.given_state import apply_given_apply
@@ -95,9 +95,6 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.predicate import (
-    CanonicalDocumentError,
-)
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
@@ -191,19 +188,16 @@ __all__ = [
 # write depending on any is refused (:func:`_refuse_row_acquisition`,
 # :func:`_unlicensed`), and its case declares `compileEligibility: run-only`.
 
-# The failures the write lanes convert to a neutral :class:`EngineError`, so
+# The failures the write lanes convert to a neutral :class:`UnclassifiedEngineError`, so
 # the adapter reports a ``*-failed`` diagnostic rather than leaking a
 # lower-layer exception type across the conformance seam.
 # `UnobservedVersionError` is Unit of Work's own refusal of a versioned write
 # that observed nothing. A deferred witness (the auto-retry boundary forms) that
 # reaches this engine-local write path without a recorded observation must
-# degrade to a reasoned `EngineError`, never an uncaught crash of the sweep.
+# degrade to a reasoned `UnclassifiedEngineError`, never an uncaught crash of the sweep.
 LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
-    instructions.WriteInstructionError,
     WritePlanningError,
-    inheritance.InheritanceError,
     UnobservedVersionError,
-    CanonicalDocumentError,
     SqlGenError,
     TemporalReadError,
     UsageError,
@@ -328,7 +322,7 @@ def _observation_from_source(
     """
     matched = [record for record in source if record.key.object == pk_key]
     if len(matched) != 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{entity_name!r}: the find step this write settles against observed "
             f"{len(matched)} rows of {pk_key!r} — a keyed write settles against the ONE "
             "observed state the value it was handed came from (m-case-format 'Settling "
@@ -444,7 +438,7 @@ def _check_statement_count_consistency(
         described = ", ".join(
             f"{entry.get('entity')!r} {entry.get('mutation')!r}" for entry in entries
         )
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{described}: authored `statements: {expected}` does not match the "
             f"{emitted_count} statement(s) this flush emits (m-case-format: `statements` is a "
             "count-consistency assertion, not a semantics discriminator)"
@@ -511,7 +505,7 @@ def _keyed_entry_entity(entry: Mapping[str, object]) -> str:
             if isinstance(target, Mapping)
             else None
         )
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"a writeSequence entry must be a keyed mutation (`entity` + `rows`) — a "
             f"structured predicate-selected instruction ({entry.get('mutation')!r} on "
             f"{target!r}) is scenario-write-only (m-case-format: the writeSequence "
@@ -690,7 +684,7 @@ def _composition_refusal() -> Generator[None]:
     try:
         yield
     except WriteEvidenceError as refusal:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"a simulated transaction cannot admit this write beside the ones it already "
             f"buffered — {refusal}"
         ) from refusal
@@ -772,7 +766,7 @@ def _simulated_unit(
 
 
 def _refuse_row_acquisition(request: object, consumer: object, /) -> Never:
-    raise EngineError(
+    raise UnclassifiedEngineError(
         "a simulated transaction reads no stored row: a write depending on one is "
         "query-result-dependent (m-case-format *Compile eligibility*)"
     )
@@ -893,7 +887,7 @@ def step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQu
     """
     query_doc = step.get("objectQuery")
     if query_doc is None:
-        raise EngineError("a scenario read step needs `objectQuery`")
+        raise UnclassifiedEngineError("a scenario read step needs `objectQuery`")
     return _case_ingress.normalize_case_query(deserialize_query(query_doc), model)
 
 
@@ -1096,7 +1090,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
             lowered.append(_lower_scenario_step(context, dialect, steps[index], index))
             index += 1
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     return lowered
 
 
@@ -1131,7 +1125,7 @@ def _write_sequence_lowered(
             for index, entry in enumerate(case_document.write_sequence_entries(case))
         ]
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 
 def read_step_graph(
@@ -1161,7 +1155,7 @@ def read_step_graph(
     if "expectGraph" not in step:
         return None
     if not query.includes:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: a find step states relationship contents but declares no "
             "`includes` — the contents a read states are the relationships its own Include "
             "Paths materialized"
@@ -1196,7 +1190,7 @@ def compile_write_sequence_case(
 
 def _refuse_group_markers(submissions: Sequence[Submission]) -> None:
     if any(s.is_framework_marker for s in submissions):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             "a DB-computed write marker is a choreography unit of its own; "
             "a `uow` group's held transaction has no verb to buffer one through"
         )
@@ -1294,14 +1288,14 @@ def _framework_unit(translated: Sequence[Submission]) -> bool:
     if not framework:
         return False
     if len(framework) != len(translated):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             "a choreography unit states either the framework's own bookkeeping or the writes "
             f"a caller authors, never both: this one holds {len(framework)} entry(s) carrying "
             f"a DB-computed write marker beside {len(translated) - len(framework)} that a "
             "public verb states"
         )
     if len(translated) != 1:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             "an entry carrying a DB-computed write marker states the framework's own "
             "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
             f"entry: this one holds {len(translated)}"
@@ -1435,7 +1429,7 @@ def _scenario_uow_spans(
         interleaved = span_a[1] >= span_b[0] and span_b[1] >= span_a[0]
         if interleaved:
             return None
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case_name}: uow group(s) {sorted(noncontiguous)} interleave beyond the "
         "witnessed TWO-group shape (run_interleaved_scenario_case) — the engine's "
         "scenario run lane supports exactly that interleaving, not an arbitrary one"
@@ -1521,7 +1515,7 @@ def group_writes(
     buffered = state.buffered
     first = buffered[0][1] if buffered else len(delivered)
     if first:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{where}: the lifecycle delivered {first} write(s) before any write step had "
             "buffered one"
         )
@@ -1853,7 +1847,9 @@ def _run_state_graded_case(
     model = models.accepted_model_of(serving.current().model)
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
-        raise EngineError(f"{case.path.name}: a state-graded case runs its groups one at a time")
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: a state-graded case runs its groups one at a time"
+        )
     starts = {start: (label, end) for label, (start, end) in spans.items()}
     context = CaseContext(
         serving,
@@ -1882,7 +1878,7 @@ def _run_state_graded_case(
                 continue
             step = steps[index]
             if "write" in step:
-                raise EngineError(
+                raise UnclassifiedEngineError(
                     f"{case.path.name}: scenario[{index}] is an ungrouped write, which a "
                     "state-graded case states no fate for"
                 )
@@ -1892,7 +1888,7 @@ def _run_state_graded_case(
             rows_observed.append(step_rows(model, index, query, read.checked().results()))
             index += 1
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     return ScenarioRun(
         [], database_calls, refusals, rows_observed, [], units, read_table_state(port, model)
     )
@@ -1935,7 +1931,7 @@ def run_scenario_case(
     step_graphs: list[dict[str, object]] = []
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: interleaved uow groups need a second, peer-backed "
             "connection this function does not construct — call "
             "run_interleaved_scenario_case instead"
@@ -2007,7 +2003,7 @@ def run_scenario_case(
                 lowered.append(LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             index += 1
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     emissions = envelope.emissions([(step.pointer, step.statements) for step in lowered])
     then = case.document.get("then")
     table_state = (
@@ -2079,7 +2075,7 @@ def run_write_sequence_case(
             database_calls += unit_calls
             lowered.append((f"/writeSequence/{index}", statements))
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     emissions = envelope.emissions(lowered)
     table_state = read_table_state(port, model)
     return emissions, table_state, database_calls
@@ -2172,7 +2168,7 @@ def _refuse_a_bound_short_of_the_authored_attempts(case: case_format.Case, autho
     bound = case_format.effective_options(case).retry.max_retries
     if bound + 1 >= authored:
         return
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case.path.name}: the case authors {authored} attempts and its transaction resolves "
         f"`maxRetries: {bound}`, which admits {bound + 1} — every authored attempt is one "
         "production attempt of a single invocation (m-case-format 'Conflict cases')"
@@ -2229,7 +2225,7 @@ def _final_flush_failure_count(observed: LifecycleObservation) -> int:
                 and isinstance(event.outcome, DatabaseWriteCompleted)
             ):
                 return event.outcome.affected_rows
-    raise EngineError(
+    raise UnclassifiedEngineError(
         "the conflict attempt's affected-row refusal names no completed write call of its "
         "final attempt's Flush"
     )
@@ -2293,7 +2289,7 @@ def _run_conflict_attempts(
         for attempt in parsed_attempts
         for submission in attempt
     ):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{target!r}: every versioned conflict write against an existing row declares "
             "`observedVersion` (m-case-format 'Conflict cases')"
         )
@@ -2311,7 +2307,7 @@ def _run_conflict_attempts(
 
         def body(tx: TxnContext) -> int:
             if len(starts) == len(parsed_attempts):
-                raise EngineError(
+                raise UnclassifiedEngineError(
                     f"{target!r}: production replayed the conflict case's last authored attempt "
                     f"again — attempt {len(starts) + 1} of a case authoring "
                     f"{len(parsed_attempts)}; a case whose final attempt fails states the "
@@ -2333,7 +2329,7 @@ def _run_conflict_attempts(
         implied = _implied_shortfall_code(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, requests, implied, observed, body)
     if len(starts) != len(parsed_attempts):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{target!r}: production ended the conflict case's invocation after {len(starts)} "
             f"attempt(s), and the case authors {len(parsed_attempts)} (m-case-format "
             "'Conflict cases')"
@@ -2358,7 +2354,7 @@ def _refuse_a_locking_conflict_target(
     """
     entity = case_entity(model, target).identity
     if concurrency_view(model).effective_strategy(entity, concurrency) == "locking":
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{target!r}: a conflict case stages a writer that commits between the attempt's "
             "source read and its write, which only the Optimistic strategy leaves room for — "
             "under Locking that read holds the shared row lock the writer would wait on "
@@ -2382,7 +2378,7 @@ def _refuse_a_snapshot_level_under_a_staged_writer(case: case_format.Case) -> No
     level = case_format.effective_options(case).isolation
     if level == "read_committed":
         return
-    raise EngineError(
+    raise UnclassifiedEngineError(
         f"{case.path.name}: a conflict case stages a writer that commits between the "
         f"attempt's source read and its write, and at `{level.replace('_', '-')}` that read "
         "fixes the snapshot the write then conflicts with — only Read Committed leaves the "
@@ -2438,7 +2434,7 @@ def run_conflict_case(
     _refuse_a_snapshot_level_under_a_staged_writer(case)
     target = first_declared_entity(case)
     if _is_temporal_entity(model, target):
-        raise EngineError(
+        raise UnclassifiedEngineError(
             f"{case.path.name}: {target!r} is temporal, and a conflict case's write targets a "
             "non-temporal Entity — a temporal write's race is an interleaved scenario "
             "(m-case-format 'Conflict cases')"
@@ -2478,7 +2474,7 @@ def run_conflict_case(
             lifecycle,
         )
     except LOWERING_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+        raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
         Emission(pointer, statement)
         for (pointer, _attempt), statements in zip(attempts, writes, strict=True)

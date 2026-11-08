@@ -25,12 +25,12 @@ from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lanes import snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document, model_facts
-from parallax.conformance._mechanism.envelope import Emission, EngineError, ScenarioRun
-from parallax.core._execution._unit_work import instructions
+from parallax.conformance._mechanism.envelope import Emission, ScenarioRun, UnclassifiedEngineError
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
     STRING,
+    UsageError,
 )
 from parallax.core.db_port import (
     DatabaseConnection,
@@ -187,7 +187,7 @@ def _order_view(**members: object) -> Any:
 
 def test_edited_copy_raises_when_the_target_step_holds_zero_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
-    with pytest.raises(EngineError, match="expected exactly one"):
+    with pytest.raises(UnclassifiedEngineError, match="expected exactly one"):
         _edited_copy(step, 0, _scenario_result(identity=_ORDER_IDENTITY))
 
 
@@ -196,13 +196,13 @@ def test_edited_copy_raises_when_the_target_step_holds_many_nodes() -> None:
     source = _scenario_result(
         {"id": 1, "name": "Ada"}, {"id": 2, "name": "Bob"}, identity=_ORDER_IDENTITY
     )
-    with pytest.raises(EngineError, match="expected exactly one"):
+    with pytest.raises(UnclassifiedEngineError, match="expected exactly one"):
         _edited_copy(step, 0, source)
 
 
 def test_edited_copy_raises_when_set_is_not_a_mapping() -> None:
     step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
-    with pytest.raises(EngineError, match="`set` is a mapping"):
+    with pytest.raises(UnclassifiedEngineError, match="`set` is a mapping"):
         _edited_copy(step, 0, _order_view(id=1, name="Ada"))
 
 
@@ -240,7 +240,7 @@ def test_edited_copy_refuses_a_set_naming_a_relationship_member() -> None:
     # observed, so authoring `items` would state a fetch that never happened.
     step: dict[str, object] = {"action": "mutate", "on": 0, "set": {"items": []}}
     source = _order_view(id=1, name="Ada", items=())
-    with pytest.raises(EngineError, match="name relationship members"):
+    with pytest.raises(UnclassifiedEngineError, match="name relationship members"):
         _edited_copy(step, 0, source)
 
 
@@ -250,7 +250,7 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
     # still holds the state the find step materialized.
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "nickname": "Nick"}}
     source = _order_view(id=1, name="Ada")
-    with pytest.raises(EngineError, match="has no assignable member of"):
+    with pytest.raises(UnclassifiedEngineError, match="has no assignable member of"):
         _edited_copy(step, 0, source)
     assert source.roots[0] == {"id": 1, "name": "Ada"}
 
@@ -260,16 +260,20 @@ def test_edited_copy_reports_a_value_its_member_cannot_decode() -> None:
     # loudly rather than escaping the lane as a decoder error.
     step = {"action": "mutate", "on": 0, "set": {"qty": "five"}}
     source = _order_view(id=1, name="Ada", qty=5)
-    with pytest.raises(EngineError, match="cannot decode"):
+    with pytest.raises(UnclassifiedEngineError, match="cannot decode"):
         _edited_copy(step, 0, source)
 
 
 def test_edited_copy_names_the_member_whose_value_cannot_decode() -> None:
     step = {"action": "mutate", "on": 0, "set": {"qty": "five"}}
-    with pytest.raises(EngineError) as caught:
+    with pytest.raises(UnclassifiedEngineError) as caught:
         _edited_copy(step, 0, _order_view(id=1, name="Ada", qty=5))
-    assert "cannot decode — parallax.compatibility.Order.qty: " in str(caught.value)
-    assert isinstance(caught.value.__cause__, instructions.InstructionRejectedError)
+    assert (
+        "cannot decode — neutral-literal-type-mismatch: parallax.compatibility.Order.qty: "
+        in str(caught.value)
+    )
+    assert isinstance(caught.value.__cause__, UsageError)
+    assert caught.value.__cause__.code == "neutral-literal-type-mismatch"
 
 
 def test_edited_copy_carries_the_decoded_value_a_member_would_hold() -> None:
@@ -327,14 +331,14 @@ def test_edited_copy_refuses_an_assignment_to_read_time_provenance() -> None:
     # `_type` is a key the read publishes, not a member anything on the
     # node's ancestry declares, so a gate asking the materialized mapping would
     # accept it and carry a node claiming to be a `Cat`. The gate asks the model.
-    with pytest.raises(EngineError, match="Dog has no assignable member of"):
+    with pytest.raises(UnclassifiedEngineError, match="Dog has no assignable member of"):
         _edited_animal({"_type": "parallax.compatibility.Cat"}, _abstract_read_of_a_dog())
 
 
 def test_edited_copy_refuses_a_sibling_branchs_member() -> None:
     # `indoor` is declared on `Cat`, the sibling concrete branch: it is no more
     # assignable on a `Dog` node than a name the family declares nowhere.
-    with pytest.raises(EngineError, match="Dog has no assignable member of"):
+    with pytest.raises(UnclassifiedEngineError, match="Dog has no assignable member of"):
         _edited_animal({"indoor": True}, _abstract_read_of_a_dog())
 
 
@@ -355,7 +359,7 @@ def test_edited_copy_refuses_a_variant_naming_no_concrete_subtype() -> None:
     # An unresolvable variant is refused rather than fallen back on: resolving
     # against the abstract target instead is exactly the hole the resolution
     # closes, so it may not be the failure mode when resolution fails.
-    with pytest.raises(EngineError, match="no concrete subtype of Animal"):
+    with pytest.raises(UnclassifiedEngineError, match="no concrete subtype of Animal"):
         _edited_animal(
             {"name": "Rexy"}, _abstract_read_of_a_dog(_type="parallax.compatibility.Unicorn")
         )
@@ -378,7 +382,7 @@ def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> No
 
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
-    with pytest.raises(EngineError, match="holds no view to edit"):
+    with pytest.raises(UnclassifiedEngineError, match="holds no view to edit"):
         snapshot._grade_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
             _case("m-snapshot-read-010"), _ORDERS_MODEL, step, [_scenario_result({"id": 1})]
         )
@@ -410,13 +414,13 @@ def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None
 
 
 # --------------------------------------------------------------------------- #
-# Docker-free error paths (m-conformance-adapter's lane-honest ``EngineError``  #
+# Docker-free error paths (m-conformance-adapter's lane-honest ``UnclassifiedEngineError``  #
 # wrapping): a compiled/found query that fails inside `m-sql` / `m-navigate`  #
-# / `m-temporal-read` is caught and re-raised as one `EngineError`, never a     #
+# / `m-temporal-read` is caught and re-raised as one `UnclassifiedEngineError`, never a     #
 # leaked lower-layer exception type.                                           #
 # --------------------------------------------------------------------------- #
 def test_check_action_step_rejects_an_unknown_verb() -> None:
-    with pytest.raises(EngineError, match="not supported by compile/run"):
+    with pytest.raises(UnclassifiedEngineError, match="not supported by compile/run"):
         snapshot._check_action_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
             _case("m-snapshot-read-010"), {"action": "unknown"}
         )
@@ -432,7 +436,7 @@ def test_compile_scenario_case_snapshot_lane_requires_an_object_query() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="needs `objectQuery`"):
+    with pytest.raises(UnclassifiedEngineError, match="needs `objectQuery`"):
         _compile(case, "postgres")
 
 
@@ -449,7 +453,7 @@ def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="names no declared member"):
+    with pytest.raises(UnclassifiedEngineError, match="names no declared member"):
         _compile(case, "postgres")
 
 
@@ -461,7 +465,7 @@ def test_run_scenario_case_snapshot_lane_requires_an_object_query() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="needs `objectQuery`"):
+    with pytest.raises(UnclassifiedEngineError, match="needs `objectQuery`"):
         _run(case, QueueDbPort([]))
 
 
@@ -478,7 +482,7 @@ def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor()
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="names no declared member"):
+    with pytest.raises(UnclassifiedEngineError, match="names no declared member"):
         _run(case, QueueDbPort([]))
 
 
@@ -542,7 +546,7 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    with pytest.raises(EngineError, match="Order has no assignable member of"):
+    with pytest.raises(UnclassifiedEngineError, match="Order has no assignable member of"):
         _run(case, port)
     assert len(port.writes) == 0
 
@@ -621,7 +625,7 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/position.yaml", "when": when})
-    with pytest.raises(EngineError, match="declares no expectError"):
+    with pytest.raises(UnclassifiedEngineError, match="declares no expectError"):
         _run(case, FakeDbPort([dict(_POSITION_R1_ROW)]))
 
 
@@ -632,7 +636,7 @@ def test_run_scenario_case_mutate_grading_rejects_an_out_of_range_on_index() -> 
     # out of range, absent, or naming a write step, which holds none.
     when = {"scenario": [{"action": "mutate", "on": 5, "set": {"name": "Mutant"}}]}
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="holds no view to edit"):
+    with pytest.raises(UnclassifiedEngineError, match="holds no view to edit"):
         _run(case, FakeDbPort([]))
 
 
@@ -658,7 +662,7 @@ def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     port = FakeDbPort([{"id": 1, "name": "Ada"}])
-    with pytest.raises(EngineError, match="but the mutation was accepted"):
+    with pytest.raises(UnclassifiedEngineError, match="but the mutation was accepted"):
         _run(case, port)
 
 
@@ -769,7 +773,7 @@ def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_view() -> N
         {"action": "access", "on": 5, "path": "items", "expectGraph": {"OrderItem": []}},
         includes=True,
     )
-    with pytest.raises(EngineError, match="holds no view to navigate"):
+    with pytest.raises(UnclassifiedEngineError, match="holds no view to navigate"):
         _run(case, _include_scenario_port())
 
 
@@ -794,7 +798,9 @@ def test_run_scenario_case_access_step_graph_refuses_an_on_naming_a_derived_copy
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(EngineError, match="derived its view rather than materializing it"):
+    with pytest.raises(
+        UnclassifiedEngineError, match="derived its view rather than materializing it"
+    ):
         _run(case, _include_scenario_port())
 
 
@@ -807,7 +813,7 @@ def test_run_scenario_case_access_step_graph_refuses_a_multi_source_on() -> None
         {"action": "access", "on": [0], "path": "items", "expectGraph": {"OrderItem": []}},
         includes=True,
     )
-    with pytest.raises(EngineError, match="names ONE materializing read"):
+    with pytest.raises(UnclassifiedEngineError, match="names ONE materializing read"):
         _run(case, _include_scenario_port())
 
 
@@ -815,7 +821,7 @@ def test_run_scenario_case_access_step_graph_needs_a_navigated_path() -> None:
     case = _orders_access_scenario(
         {"action": "access", "on": 0, "expectGraph": {"OrderItem": []}}, includes=True
     )
-    with pytest.raises(EngineError, match="needs a `path`"):
+    with pytest.raises(UnclassifiedEngineError, match="needs a `path`"):
         _run(case, _include_scenario_port())
 
 
@@ -827,7 +833,7 @@ def test_run_scenario_case_access_step_graph_refuses_an_unincluded_relationship(
         {"action": "access", "on": 0, "path": "items", "expectGraph": {"OrderItem": []}},
         includes=False,
     )
-    with pytest.raises(EngineError, match="carries no loaded 'items'"):
+    with pytest.raises(UnclassifiedEngineError, match="carries no loaded 'items'"):
         _run(case, QueueDbPort([[dict(_ORDER_ROW)]]))
 
 
@@ -836,7 +842,7 @@ def test_run_scenario_case_access_step_graph_refuses_an_undeclared_relationship(
         {"action": "access", "on": 0, "path": "nope", "expectGraph": {"OrderItem": []}},
         includes=True,
     )
-    with pytest.raises(EngineError, match="declares no relationship 'nope'"):
+    with pytest.raises(UnclassifiedEngineError, match="declares no relationship 'nope'"):
         _run(case, _include_scenario_port())
 
 
@@ -1097,7 +1103,7 @@ def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane()
     # lane's own shape behind the refusal — which is what keeps it apart from the
     # two predicate forms below, each refused for a reason of its own.
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
-    with pytest.raises(EngineError, match="BUFFERED KEYED instruction list"):
+    with pytest.raises(UnclassifiedEngineError, match="BUFFERED KEYED instruction list"):
         _run(_write_between_find_and_access("insert"), port)
     assert port.writes == []
 
@@ -1160,7 +1166,7 @@ def test_run_scenario_case_refuses_a_predicate_write_on_the_snapshot_lane() -> N
         },
     }
     port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
-    with pytest.raises(EngineError, match="predicate write owes no resolving find"):
+    with pytest.raises(UnclassifiedEngineError, match="predicate write owes no resolving find"):
         _run(_write_between_find_and_access(write), port)
     assert port.writes == []
 
@@ -1173,7 +1179,7 @@ def test_only_the_run_lane_reaches_a_temporal_close_of_a_fixture_milestone() -> 
     # The find, then the resolving read the keyed write's own unit of work owes.
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)], [dict(_LEDGER_2_ROW)]])
 
-    with pytest.raises(EngineError, match="insertion's authority"):
+    with pytest.raises(UnclassifiedEngineError, match="insertion's authority"):
         _compile(case, "postgres")
     run = _run(case, port)
 

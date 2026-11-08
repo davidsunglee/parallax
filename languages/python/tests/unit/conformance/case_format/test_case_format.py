@@ -13,16 +13,24 @@ import yaml
 
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
-from parallax.core.base import FLOAT32, FLOAT64, INT32, INT64, ManagedValue, matches_neutral_type
+from parallax.core.base import (
+    FLOAT32,
+    FLOAT64,
+    INT32,
+    INT64,
+    ManagedValue,
+    UsageError,
+    matches_neutral_type,
+)
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.wire import (
-    WireDecodingError,
     WireEncodingError,
     WireValue,
     decode_canonical_wire,
     decode_wire,
     encode_wire,
 )
+from tests._support.errors import raises_code
 
 
 def _case(
@@ -840,9 +848,8 @@ def test_a_yaml_integer_keeps_source_negative_zero_for_canonical_float_decoding(
     loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: -0\n"))
     authored = cast("int", loaded["ratio"])
     assert decode_wire(FLOAT64, authored) == 0.0
-    with pytest.raises(WireDecodingError) as exc_info:
+    with raises_code(UsageError, "neutral-literal-noncanonical"):
         decode_canonical_wire(FLOAT64, authored)
-    assert exc_info.value.reason == "noncanonical"
 
 
 def test_out_of_space_yaml_numbers_are_not_managed_scalar_members() -> None:
@@ -874,3 +881,17 @@ def test_raised_error_codes_are_every_value_the_schema_names_a_raised_error_by()
     } <= codes
     # Other core tokens name no raised error.
     assert codes.isdisjoint({"deadlock", "not-idle", "missingTarget", "timeout"})
+
+
+def test_rejected_rules_are_the_values_the_schema_admits_for_rejected_rule() -> None:
+    rules = case_format.rejected_rules()
+    assert {"between-bounds-inverted", "neutral-literal-type-mismatch"} <= rules
+    assert rules < case_format.raised_error_codes()
+    assert rules.isdisjoint(
+        {
+            "write-value-not-stored",
+            "transaction-time-pin-read-only",
+            "query-clause-invalid",
+            "temporal-read-dimension-selection-cardinality",
+        }
+    )

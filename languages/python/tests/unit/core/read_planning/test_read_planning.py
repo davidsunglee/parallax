@@ -45,7 +45,7 @@ from parallax.core import (
     rel,
     relationship,
 )
-from parallax.core.base import INFINITY, INT64, ManagedValue
+from parallax.core.base import INFINITY, INT64, ManagedValue, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -73,7 +73,6 @@ from parallax.core.object_query._resolved import ResolvedOrderTerm
 from parallax.core.predicate import (
     Comparison,
     FieldSubject,
-    ModelRejectedError,
     Narrow,
     PredicateNode,
     TrueNode,
@@ -99,6 +98,7 @@ from parallax.core.read_planning._include_tree import EMPTY_RENDER, IncludePosit
 from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.temporal_read import Bitemporal, TimeInterval, perspective_terms
 from parallax.core.temporal_read import view as temporal_view
+from tests._support.errors import raises_code
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -542,9 +542,8 @@ def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:
     # A narrow denotes ONE position, so a member the model does not declare (or
     # one belonging to another family) resolves to no position at all rather
     # than silently contributing nothing to the union.
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "narrow-empty-effective-set"):
         _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Ghost",))),))
-    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 # --------------------------------------------------------------------------- #
@@ -1107,9 +1106,8 @@ def test_a_root_guard_naming_an_undeclared_subtype_is_rejected() -> None:
     # A guard denotes ONE position, exactly as a segment narrow does, so a member
     # the model does not declare resolves to no position rather than silently
     # contributing nothing to the union.
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "narrow-empty-effective-set"):
         _plan(ANIMAL, "Animal", (_path(_seg("Animal.owner"), narrow=_guard("Ghost")),))
-    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
@@ -1491,13 +1489,12 @@ def test_a_to_one_revisit_of_a_one_way_arrival_is_an_ordinary_queried_level() ->
 
 
 def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
-    with pytest.raises(ModelRejectedError) as refused:
+    with raises_code(UsageError, "deep-fetch-past-back-reference"):
         _plan(
             ORDERS,
             "Order",
             (_path(_seg("Order.items"), _seg("OrderItem.order"), _seg("Order.items")),),
         )
-    assert refused.value.rule == "deep-fetch-past-back-reference"
 
 
 # --------------------------------------------------------------------------- #
@@ -1536,9 +1533,8 @@ def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() ->
 
 
 def test_plan_rejects_an_unknown_result_narrowing_target() -> None:
-    with pytest.raises(ModelRejectedError) as excinfo:
+    with raises_code(UsageError, "narrow-empty-effective-set"):
         _plan(ORDERS, "Order", (), narrow_to=("Ghost",))
-    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 # --------------------------------------------------------------------------- #

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import Final, cast
 
+from parallax.core.base import UsageError
 from parallax.core.predicate._nodes import (
     CURRENT_SCALAR_ELEMENT,
     And,
@@ -33,7 +34,7 @@ from parallax.core.predicate._nodes import (
     canonical_subtype_selection,
 )
 
-__all__ = ["CanonicalDocumentError", "deserialize", "serialize"]
+__all__ = ["PREDICATE_DOCUMENT_INVALID", "deserialize", "serialize"]
 
 _COMPARISONS: frozenset[str] = frozenset(
     {"eq", "notEq", "greaterThan", "greaterThanEquals", "lessThan", "lessThanEquals"}
@@ -55,8 +56,8 @@ _ENTITY_NAME = re.compile(rf"^{_ENTITY}$")
 _PATH = re.compile(rf"^({_ENTITY}(\.{_MEMBER})+|{_MEMBER}(\.{_MEMBER})*)$")
 
 
-class CanonicalDocumentError(ValueError):
-    """A serialized document is not a well-formed canonical node."""
+PREDICATE_DOCUMENT_INVALID: Final = "predicate-document-invalid"
+"""A serialized predicate document is not a well-formed canonical node."""
 
 
 _Shape = tuple[frozenset[str], frozenset[str]]  # (required, optional)
@@ -71,38 +72,44 @@ def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
     required, optional = shape
     extra = sorted(set(body) - required - optional)
     if extra:
-        raise CanonicalDocumentError(f"{tag}: unexpected key(s) {extra}")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: unexpected key(s) {extra}")
     missing = sorted(required - body.keys())
     if missing:
-        raise CanonicalDocumentError(f"{tag}: missing required key(s) {missing}")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: missing required key(s) {missing}")
 
 
 def _single_key(doc: object) -> tuple[str, Mapping[str, object]]:
     if not isinstance(doc, Mapping):
-        raise CanonicalDocumentError(f"predicate node must be a mapping, got {type(doc).__name__}")
+        raise UsageError(
+            PREDICATE_DOCUMENT_INVALID,
+            f"predicate node must be a mapping, got {type(doc).__name__}",
+        )
     node = cast("Mapping[str, object]", doc)
     if len(node) != 1:
-        raise CanonicalDocumentError(
-            f"predicate node must have exactly one key, got {sorted(node)}"
+        raise UsageError(
+            PREDICATE_DOCUMENT_INVALID,
+            f"predicate node must have exactly one key, got {sorted(node)}",
         )
     (tag,) = node
     body = node[tag]
     if not isinstance(body, Mapping):
-        raise CanonicalDocumentError(f"predicate {tag!r} body must be a mapping")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"predicate {tag!r} body must be a mapping")
     return tag, cast("Mapping[str, object]", body)
 
 
 def _str(body: Mapping[str, object], key: str, tag: str) -> str:
     value = body.get(key)
     if not isinstance(value, str):
-        raise CanonicalDocumentError(f"{tag}: `{key}` must be a string")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: `{key}` must be a string")
     return value
 
 
 def _path(body: Mapping[str, object], tag: str) -> str:
     value = _str(body, "path", tag)
     if _PATH.match(value) is None:
-        raise CanonicalDocumentError(f"{tag}: `path` {value!r} is not a valid predicate path")
+        raise UsageError(
+            PREDICATE_DOCUMENT_INVALID, f"{tag}: `path` {value!r} is not a valid predicate path"
+        )
     return value
 
 
@@ -118,46 +125,53 @@ def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
         return None
     raw = body["caseInsensitive"]
     if not isinstance(raw, bool):
-        raise CanonicalDocumentError(f"{tag}: `caseInsensitive` must be a boolean")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: `caseInsensitive` must be a boolean")
     return raw
 
 
 def _scalar(value: object, tag: str) -> ScalarLiteral:
     if isinstance(value, (str, int, float, bool)):
         return value
-    raise CanonicalDocumentError(
-        f"{tag}: value must be a non-null scalar literal, got {type(value).__name__}"
+    raise UsageError(
+        PREDICATE_DOCUMENT_INVALID,
+        f"{tag}: value must be a non-null scalar literal, got {type(value).__name__}",
     )
 
 
 def _values(body: Mapping[str, object], tag: str) -> tuple[ScalarLiteral, ...]:
     raw = body.get("values")
     if not isinstance(raw, list) or not raw:
-        raise CanonicalDocumentError(f"{tag}: `values` must be a non-empty list")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: `values` must be a non-empty list")
     return tuple(_scalar(item, tag) for item in cast("list[object]", raw))
 
 
 def _operands(body: Mapping[str, object], tag: str) -> tuple[PredicateNode, ...]:
     raw = body.get("operands")
     if not isinstance(raw, list):
-        raise CanonicalDocumentError(f"{tag}: `operands` must have at least two entries")
+        raise UsageError(
+            PREDICATE_DOCUMENT_INVALID, f"{tag}: `operands` must have at least two entries"
+        )
     items = cast("list[object]", raw)
     if len(items) < 2:
-        raise CanonicalDocumentError(f"{tag}: `operands` must have at least two entries")
+        raise UsageError(
+            PREDICATE_DOCUMENT_INVALID, f"{tag}: `operands` must have at least two entries"
+        )
     return tuple(deserialize(item) for item in items)
 
 
 def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     raw = body.get("to")
     if not isinstance(raw, list) or not raw:
-        raise CanonicalDocumentError(f"{tag}: `to` must be a non-empty list")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: `to` must be a non-empty list")
     items = cast("list[object]", raw)
     out: list[str] = []
     for item in items:
         if not isinstance(item, str):
-            raise CanonicalDocumentError(f"{tag}: `to` entries must be strings")
+            raise UsageError(PREDICATE_DOCUMENT_INVALID, f"{tag}: `to` entries must be strings")
         if _ENTITY_NAME.match(item) is None:
-            raise CanonicalDocumentError(f"{tag}: `to` entry {item!r} is not a valid entity name")
+            raise UsageError(
+                PREDICATE_DOCUMENT_INVALID, f"{tag}: `to` entry {item!r} is not a valid entity name"
+            )
         out.append(item)
     return tuple(out)
 
@@ -167,7 +181,7 @@ def deserialize(doc: object) -> PredicateNode:
     tag, body = _single_key(doc)
     grammar = _GRAMMAR.get(tag)
     if grammar is None:
-        raise CanonicalDocumentError(f"unknown predicate node {tag!r}")
+        raise UsageError(PREDICATE_DOCUMENT_INVALID, f"unknown predicate node {tag!r}")
     shape, parse = grammar
     _check_shape(tag, shape, body)
     return parse(tag, body)
