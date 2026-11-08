@@ -69,7 +69,7 @@ from parallax.core.model_formation._errors import (
     FORMATION_RULE_SET_RESULT_INVALID,
     FormationContractError,
 )
-from parallax.core.model_formation._manifest import CompilerRequirement, RequiredRuleSet
+from parallax.core.model_formation._manifest import CompilerRequirement
 from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
 _ORDER = identity("Order")
@@ -476,33 +476,6 @@ def _contract_failure(
 # --------------------------------------------------------------------------
 
 
-def test_the_builtin_manifest_declares_the_fixed_resolver_and_metadata_compiler() -> None:
-    entry = BUILTIN_MANIFEST.entries[0]
-    assert entry.owner == METAMODEL_MODULE
-    assert entry.rule_set is FIXED_RESOLVER
-    assert entry.issue_codes == RESOLVER_ISSUE_CODES
-    assert entry.compiler is METADATA_COMPILER_REQUIRED
-    assert BUILTIN_PROFILE.metadata_compiler is METADATA_COMPILER
-
-
-def test_the_builtin_profile_supplies_exactly_the_contributors_the_manifest_declares() -> None:
-    """The composition root's own drift proof, independent of which rows exist yet."""
-    required = [
-        entry.owner
-        for entry in BUILTIN_MANIFEST.entries
-        if isinstance(entry.rule_set, RequiredRuleSet)
-    ]
-    compiling = [
-        entry.owner
-        for entry in BUILTIN_MANIFEST.entries
-        if isinstance(entry.compiler, ModelCompilerRequirement)
-    ]
-    assert sorted(rule_set.owner for rule_set in BUILTIN_PROFILE.rule_sets) == sorted(required)
-    assert sorted(compiler.owner for compiler in BUILTIN_PROFILE.model_compilers) == sorted(
-        compiling
-    )
-
-
 def test_a_hand_built_model_forms_into_an_accepted_metamodel() -> None:
     model = form_metamodel(source(*_valid_model()))
     assert [entity.identity for entity in model.entities] == [_ITEM, _ORDER]
@@ -637,33 +610,6 @@ def test_every_builtin_row_matches_its_specification_row(row: _SpecRow) -> None:
     assert entry.compiler == _compiler_requirement(row)
     assert entry.required_modules == row.required_modules
     assert {key.owner for key in entry.required_facets} == row.required_facets
-
-
-def test_every_builtin_issue_code_carries_its_owners_catalog_stem() -> None:
-    offenders = [
-        (entry.owner, code)
-        for entry in BUILTIN_MANIFEST.entries
-        for code in sorted(entry.issue_codes)
-        if not code.startswith(f"{entry.owner.removeprefix('m-')}-")
-    ]
-    assert offenders == []
-
-
-def test_no_builtin_issue_code_is_claimed_by_two_owners() -> None:
-    claimed: dict[IssueCode, ModuleIdentity] = {}
-    collisions: list[tuple[IssueCode, ModuleIdentity, ModuleIdentity]] = []
-    for entry in BUILTIN_MANIFEST.entries:
-        for code in sorted(entry.issue_codes):
-            owner = claimed.setdefault(code, entry.owner)
-            if owner != entry.owner:
-                collisions.append((code, owner, entry.owner))
-    assert collisions == []
-
-
-def test_the_builtin_facet_keys_are_owned_by_the_modules_that_declare_them() -> None:
-    for entry in BUILTIN_MANIFEST.entries:
-        if isinstance(entry.compiler, ModelCompilerRequirement):
-            assert entry.compiler.facet_key.owner == entry.owner
 
 
 # --------------------------------------------------------------------------

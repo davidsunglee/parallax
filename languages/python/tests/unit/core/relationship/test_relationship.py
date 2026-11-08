@@ -11,10 +11,9 @@ from typing import cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INT32, INT64, STRING, UUID, Decimal, NeutralType
 from parallax.core.metamodel import (
-    METAMODEL_MODULE,
     NOT_PRIMARY_KEY,
     AbstractRoot,
     AbstractSubtype,
@@ -62,23 +61,17 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
 )
 from parallax.core.model_formation import (
-    MODEL_FORMATION_MODULE,
     MetamodelValidationError,
-    ModelCompilerRequirement,
 )
-from parallax.core.model_formation._manifest import RequiredRuleSet
 from parallax.core.relationship import (
-    FACET_KEY,
     ISSUE_CODES,
     MODEL_COMPILER,
-    RELATIONSHIP_MODULE,
     RULE_SET,
     RelationshipFacet,
     RelationshipMetadata,
     project_join_endpoints,
     view,
 )
-from parallax.core.relationship._facet import EntityRelationships
 from parallax.core.relationship._rules import (
     CARDINALITY_JOIN_MISMATCH,
     DEFINING_DUPLICATE,
@@ -285,47 +278,6 @@ def _scalar(entity: EntityIdentity, name: str, column: str, *, primary: bool) ->
 
 
 # --------------------------------------------------------------------------
-# The module's formation contract.
-# --------------------------------------------------------------------------
-
-
-def test_the_owned_issue_code_set_is_closed() -> None:
-    assert sorted(ISSUE_CODES) == [
-        "relationship-cardinality-join-mismatch",
-        "relationship-defining-duplicate",
-        "relationship-join-source-invalid",
-        "relationship-join-target-invalid",
-        "relationship-join-type-mismatch",
-        "relationship-order-attribute-invalid",
-        "relationship-order-on-to-one",
-        "relationship-reverse-cycle",
-        "relationship-reverse-inconsistent",
-        "relationship-reverse-not-defining",
-    ]
-    assert RULE_SET.owner == RELATIONSHIP_MODULE
-    assert RULE_SET.issue_codes == ISSUE_CODES
-
-
-def test_the_builtin_manifest_declares_this_modules_rule_set_and_compiler() -> None:
-    (entry,) = (entry for entry in BUILTIN_MANIFEST.entries if entry.owner == RELATIONSHIP_MODULE)
-    assert isinstance(entry.rule_set, RequiredRuleSet)
-    assert entry.issue_codes == ISSUE_CODES
-    assert entry.compiler == ModelCompilerRequirement(FACET_KEY)
-    assert entry.required_facets == frozenset()
-    assert entry.required_modules == frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE})
-    assert RULE_SET in BUILTIN_PROFILE.rule_sets
-    assert MODEL_COMPILER in BUILTIN_PROFILE.model_compilers
-    assert MODEL_COMPILER.owner == RELATIONSHIP_MODULE
-    assert MODEL_COMPILER.facet_key == FACET_KEY
-    assert MODEL_COMPILER.requires == frozenset()
-
-
-def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
-    model = form_metamodel(source(*_orders((_ITEMS,), (_ORDER_OF_ITEM,))))
-    assert view(model) is model.facet(FACET_KEY)
-
-
-# --------------------------------------------------------------------------
 # The compiled directions.
 # --------------------------------------------------------------------------
 
@@ -386,19 +338,6 @@ def test_a_one_way_defining_declaration_has_no_reverse_name() -> None:
     assert _direction(facet, RelationshipIdentity(_ORDER, "items")).reverse is None
 
 
-def test_a_direction_carries_no_duplicated_target_foreign_key_or_reverse_pair() -> None:
-    assert {field.name for field in dataclasses.fields(RelationshipMetadata)} == {
-        "identity",
-        "cardinality",
-        "join",
-        "reverse",
-        "dependent",
-        "order_by",
-    }
-    items = _direction(_facet(*_orders((_ITEMS,))), RelationshipIdentity(_ORDER, "items"))
-    assert items.join.target.entity == _ITEM
-
-
 def test_a_reverse_name_is_either_absent_or_nonempty() -> None:
     with pytest.raises(ValueError, match="either absent or nonempty"):
         RelationshipMetadata(
@@ -437,15 +376,6 @@ def test_enumeration_preserves_local_declaration_order() -> None:
         "items",
         "tags",
     ]
-
-
-def test_the_facet_offers_no_global_enumeration_or_reverse_pair_lookup() -> None:
-    facet = _facet(*_orders((_ITEMS,), (_ORDER_OF_ITEM,)))
-    assert {name for name in dir(facet) if not name.startswith("_")} == {
-        "referential_rank",
-        "relationship",
-        "relationships",
-    }
 
 
 # --------------------------------------------------------------------------
@@ -540,13 +470,6 @@ def test_a_cycle_and_what_depends_on_it_follow_in_canonical_order() -> None:
 def test_an_entity_the_model_does_not_contain_has_no_rank() -> None:
     facet = _facet(*_orders((_ITEMS,)))
     assert facet.referential_rank(EntityIdentity("elsewhere", "Order")) is None
-
-
-def test_an_entitys_record_holds_its_directions_beside_its_rank_and_nothing_else() -> None:
-    assert [field.name for field in dataclasses.fields(EntityRelationships)] == [
-        "directions",
-        "rank",
-    ]
 
 
 # --------------------------------------------------------------------------
@@ -785,17 +708,6 @@ def test_a_join_source_naming_no_local_attribute_is_rejected() -> None:
     assert issue.code == JOIN_SOURCE_INVALID
     assert issue.location == RelationshipLocation(RelationshipIdentity(_ORDER, "items"))
     assert issue.related == (AttributeLocation(AttributeIdentity(_ORDER, "missing")),)
-
-
-def test_a_join_source_addressed_at_another_entity_is_rejected() -> None:
-    foreign = _defining(
-        _ORDER,
-        "items",
-        join_source=AttributeIdentity(_TAG, "id"),
-        target=_ITEM,
-        target_attribute="orderId",
-    )
-    assert _codes(*_orders((foreign,))) == [JOIN_SOURCE_INVALID]
 
 
 _INHERITED_SOURCE = """

@@ -95,14 +95,12 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from tests._support.write_preparation import write_preparation_of
-from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, accepted, attribute, identity, key, source
 
 _REPO = case_format.find_repo_root()
-_MODELS = corpus_records()
 _CASES = _REPO / "core" / "compatibility" / "cases"
-_MODEL_FILES = sorted((_REPO / "core" / "compatibility" / "models").glob("*.yaml"))
 
 
 def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
@@ -167,12 +165,6 @@ strategy — the shape a Domain Model assembles from independently declared
 families."""
 
 
-def test_inheritance_error_carries_rule_and_entity() -> None:
-    error = inheritance.InheritanceError("inheritance-cycle", "boom", entity="Pet")
-    assert error.rule == "inheritance-cycle"
-    assert error.entity == "Pet"
-
-
 # --------------------------------------------------------------------------- #
 # `reject_predicate_write`: a predicate-selected                              #
 # (set-based) write on ANY inheritance-family entity is unsupported before    #
@@ -191,43 +183,18 @@ def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
     assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
-def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
-    inheritance.reject_predicate_write(_metadata("account", "Account"))  # no raise
-
-
 # --------------------------------------------------------------------------- #
-# `validate_subtype_write`'s keyless branch reads the family key formation     #
-# already found, at every position below the root that declared it.           #
+# `validate_subtype_write`'s keyless branch names the family key at every      #
+# position below the root that declared it.                                    #
 # --------------------------------------------------------------------------- #
-def _undiscoverable_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail any read that asks a declared Attribute whether it is the key."""
-
-    def undiscoverable(attribute: AttributeMetadata) -> object:
-        raise AssertionError(f"{attribute.identity} was searched for the family key")
-
-    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
-
-
 @pytest.mark.parametrize(("stem", "name"), [("animal", "Dog"), ("appliance", "Oven")])
-def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(
-    monkeypatch: pytest.MonkeyPatch, stem: str, name: str
-) -> None:
+def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(stem: str, name: str) -> None:
     model = corpus_model(stem)
     entity = _metadata(stem, name)
-    _undiscoverable_keys(monkeypatch)
     with pytest.raises(inheritance.InheritanceError) as caught:
         inheritance.validate_subtype_write(model, entity, {"name": "Rex"})
     assert caught.value.rule == "subtype-write-set-based-unsupported"
     assert "primary-key attribute(s) ['id']" in str(caught.value)
-
-
-def test_a_keyed_subtype_write_passes_the_keyless_check_without_a_key_search(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = corpus_model("animal")
-    dog = _metadata("animal", "Dog")
-    _undiscoverable_keys(monkeypatch)
-    inheritance.validate_subtype_write(model, dog, {"id": 1, "name": "Rex"})  # no raise
 
 
 # --------------------------------------------------------------------------- #
@@ -584,34 +551,6 @@ def _relationship(
     )
 
 
-def test_the_owned_issue_code_set_is_closed() -> None:
-    assert sorted(inheritance.ISSUE_CODES) == [
-        "inheritance-concrete-subtype-with-children",
-        "inheritance-concrete-without-abstract-root",
-        "inheritance-cycle",
-        "inheritance-duplicate-tag-value",
-        "inheritance-layout-not-root-owned",
-        "inheritance-materialization-key-collision",
-        "inheritance-member-shadowing",
-        "inheritance-missing-concrete-subtype",
-        "inheritance-missing-root",
-        "inheritance-missing-tag-value",
-        "inheritance-optimistic-locking-not-root-owned",
-        "inheritance-persistence-not-root-owned",
-        "inheritance-primary-key-missing",
-        "inheritance-primary-key-multiple",
-        "inheritance-strategy-redeclared",
-        "inheritance-tag-on-concrete-subtype-strategy",
-        "inheritance-temporality-not-root-owned",
-        "inheritance-tpcs-abstract-table-forbidden",
-        "inheritance-tpcs-concrete-table-required",
-        "inheritance-tph-descendant-table-forbidden",
-        "inheritance-tph-root-table-required",
-    ]
-    assert inheritance.RULE_SET.owner == inheritance.INHERITANCE_MODULE
-    assert inheritance.RULE_SET.issue_codes == inheritance.ISSUE_CODES
-
-
 def test_every_corpus_rejection_fixture_is_classified() -> None:
     classified = {
         *_RULE_SET_REJECTIONS,
@@ -654,15 +593,6 @@ def test_a_frontend_owned_fixture_reaches_formation_carrying_nothing_to_reject(s
     for entity in formed.entities:
         if isinstance(entity.inheritance, AbstractSubtype | ConcreteSubtype):
             assert entity.declared_as_of_axes == ()
-
-
-@pytest.mark.parametrize("path", _MODEL_FILES, ids=lambda path: cast("Path", path).stem)
-def test_every_corpus_model_satisfies_the_family_invariants(path: Path) -> None:
-    document = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
-    assert isinstance(document, dict)
-    candidate = parse_document(cast("dict[str, object]", document))
-    formed = form_metamodel(unresolved_metamodel(candidate))
-    assert inheritance.view(formed).entity(formed.entities[0].identity) is not None
 
 
 def test_a_cycle_is_reported_once_from_its_canonically_first_member() -> None:

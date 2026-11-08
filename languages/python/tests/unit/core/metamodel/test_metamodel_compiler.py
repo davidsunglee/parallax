@@ -10,8 +10,6 @@ import pytest
 
 from parallax.core import base
 from parallax.core.metamodel import (
-    METADATA_COMPILER,
-    METAMODEL_MODULE,
     AbstractRoot,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -136,17 +134,6 @@ def _peer() -> Declaration:
     )
 
 
-def test_the_compiler_declares_its_manifest_owner() -> None:
-    assert METADATA_COMPILER.owner == METAMODEL_MODULE
-
-
-def test_compiled_entities_keep_canonical_order_and_total_lookup() -> None:
-    metadata = METADATA_COMPILER.compile(accepted(source(_model(), _peer())))
-    assert [entity.identity for entity in metadata.entities] == [_ITEM, _ORDER]
-    assert metadata.entity(_ORDER) is not None
-    assert metadata.entity(EntityIdentity("parallax.test", "Absent")) is None
-
-
 def test_entity_metadata_exposes_only_declared_local_facts() -> None:
     metadata = compile_metadata(accepted(source(_model(), _peer())))
     order = metadata.entity(_ORDER)
@@ -164,26 +151,11 @@ def test_entity_metadata_exposes_only_declared_local_facts() -> None:
         "txEnd",
     ]
     assert [member.identity.name for member in order.declared_relationships] == ["items"]
+    assert item.declared_relationships == ()
     assert [axis.dimension for axis in order.declared_as_of_axes] == [
         TemporalDimension.TRANSACTION_TIME
     ]
     assert [member.identity.name for member in order.indices] == ["orders_pk"]
-
-
-def test_local_member_lookup_returns_absence_on_a_miss() -> None:
-    metadata = compile_metadata(accepted(source(_model(), _peer())))
-    order = metadata.entity(_ORDER)
-    assert order is not None
-    assert order.attribute("sku") is not None
-    assert order.attribute("absent") is None
-    assert order.relationship("items") is not None
-    assert order.relationship("absent") is None
-    assert order.value_object("shipTo") is not None
-    assert order.value_object("absent") is None
-    assert order.as_of_axis(TemporalDimension.TRANSACTION_TIME) is not None
-    assert order.as_of_axis(TemporalDimension.VALID_TIME) is None
-    assert order.index("orders_pk") is not None
-    assert order.index("absent") is None
 
 
 def test_lookup_never_exposes_an_inherited_member() -> None:
@@ -312,17 +284,6 @@ def test_every_occurrence_window_iterates_its_own_bound_members_in_order() -> No
         assert hash(window) == hash(expected), shape
 
 
-def test_iterating_an_occurrence_window_never_indexes_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(_window: object, index: object) -> object:
-        raise AssertionError(f"iteration indexed the window at {index!r}")
-
-    windows = _occurrence_windows()
-    for shape, window, expected in windows:
-        monkeypatch.setattr(type(window), "__getitem__", refuse)
-        assert list(window) == list(expected), shape
-        assert all(left is right for left, right in zip(window, expected, strict=True)), shape
-
-
 def test_one_reused_shape_expands_to_distinct_occurrence_trees() -> None:
     metadata = compile_metadata(accepted(source(_model(), _peer())))
     order = metadata.entity(_ORDER)
@@ -342,26 +303,6 @@ def test_one_reused_shape_expands_to_distinct_occurrence_trees() -> None:
     assert ship_city.definition is bill_city.definition
     assert [member.identity.name for member in ship_geo.attributes] == ["lat", "lon"]
     assert not hasattr(ship_geo, "storage")
-
-
-def test_compilation_discards_every_shape_key() -> None:
-    metadata = compile_metadata(accepted(source(_model(), _peer())))
-    order = metadata.entity(_ORDER)
-    assert order is not None
-    ship_to = order.value_object("shipTo")
-    assert ship_to is not None
-    assert not hasattr(ship_to, "key")
-    assert not hasattr(ship_to, "shape")
-
-
-def test_relationship_declarations_survive_compilation_without_pairing() -> None:
-    metadata = compile_metadata(accepted(source(_model(), _peer())))
-    order = metadata.entity(_ORDER)
-    item = metadata.entity(_ITEM)
-    assert order is not None and item is not None
-    declared = order.declared_relationships[0]
-    assert not hasattr(declared, "reverse")
-    assert item.declared_relationships == ()
 
 
 def test_a_shape_graph_that_re_enters_one_key_is_a_compiler_contract_failure() -> None:

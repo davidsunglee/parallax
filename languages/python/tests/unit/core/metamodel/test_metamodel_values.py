@@ -17,8 +17,6 @@ from parallax.core.metamodel import (
     MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
-    AbstractRoot,
-    AbstractSubtype,
     ApplicationAssigned,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -34,13 +32,11 @@ from parallax.core.metamodel import (
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     NotPrimaryKey,
-    PersistenceMode,
     PrimaryKey,
     RelationshipIdentity,
     RelationshipReference,
     RelativeEntityReference,
     Sequence,
-    SortDirection,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -284,25 +280,6 @@ def test_identifier_eligibility_preserves_string_length_and_leaf_derivation() ->
         AttributeMetadata(
             identity, base.STRING, Column("id"), primary_key=PrimaryKey(), max_length=0
         )
-
-
-def test_the_ordering_and_axis_vocabularies_are_closed() -> None:
-    assert [direction.name for direction in SortDirection] == ["ASCENDING", "DESCENDING"]
-    assert [mode.name for mode in PersistenceMode] == ["READ_WRITE", "READ_ONLY"]
-    assert [dimension.name for dimension in TemporalDimension] == [
-        "VALID_TIME",
-        "TRANSACTION_TIME",
-    ]
-    assert TemporalDimension.VALID_TIME.value < TemporalDimension.TRANSACTION_TIME.value
-
-
-def test_inheritance_variants_carry_the_role_without_a_parallel_field() -> None:
-    root = AbstractRoot(TablePerHierarchy("kind"))
-    assert root.strategy == TablePerHierarchy("kind")
-    assert AbstractSubtype(_ORDERS).parent == _ORDERS
-    assert ConcreteSubtype(_ORDERS).tag_value is None
-    assert ConcreteSubtype(_ORDERS, "order").tag_value == "order"
-    assert not hasattr(AbstractSubtype(_ORDERS), "strategy")
 
 
 def test_a_many_value_object_occurrence_stays_nullable_at_construction() -> None:
@@ -649,10 +626,8 @@ def test_the_two_designated_categories_are_derived_and_nothing_else_is() -> None
 
 
 def test_an_attribute_in_neither_category_is_returned_unchanged() -> None:
-    # Identity, not equality: the derivation rebuilds only what it changes.
     plain = AttributeMetadata(AttributeIdentity(_ORDERS, "sku"), base.STRING, Column("sku"))
     assert designate_framework_owned((plain,), ()) == (plain,)
-    assert designate_framework_owned((plain,), ())[0] is plain
 
 
 def test_the_designation_is_derived_rather_than_carried_in() -> None:

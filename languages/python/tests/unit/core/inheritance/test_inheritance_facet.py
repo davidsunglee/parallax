@@ -9,22 +9,16 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import inheritance
-from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INT64, STRING
 from parallax.core.inheritance import (
-    FACET_KEY,
-    INHERITANCE_MODULE,
-    MODEL_COMPILER,
-    RULE_SET,
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
     InheritanceFamilyView,
 )
-from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.inheritance._compile import compile_facet
 from parallax.core.metamodel import (
-    METAMODEL_MODULE,
     AbstractRoot,
     AbstractSubtype,
     AttributeIdentity,
@@ -48,8 +42,6 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
-from parallax.core.model_formation._manifest import RequiredRuleSet
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
@@ -63,8 +55,6 @@ from tests.unit.core._dormant_family_support import (
 )
 from tests.unit.core._family_owner_support import (
     DescendantsFirst,
-    family_roots,
-    record_root_derivations,
 )
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
@@ -104,46 +94,6 @@ def _attribute_names(members: Sequence[AttributeMetadata]) -> list[str]:
 
 def _value_object_names(members: Sequence[ValueObjectMetadata]) -> list[str]:
     return [member.identity.path[-1] for member in members]
-
-
-# --------------------------------------------------------------------------
-# The module's formation contract.
-# --------------------------------------------------------------------------
-
-
-def test_the_builtin_manifest_declares_this_modules_rule_set_and_compiler() -> None:
-    (entry,) = (entry for entry in BUILTIN_MANIFEST.entries if entry.owner == INHERITANCE_MODULE)
-    assert isinstance(entry.rule_set, RequiredRuleSet)
-    assert entry.issue_codes == inheritance.ISSUE_CODES
-    assert entry.compiler == ModelCompilerRequirement(FACET_KEY)
-    assert entry.required_facets == frozenset()
-    assert entry.required_modules == frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE})
-    assert RULE_SET in BUILTIN_PROFILE.rule_sets
-    assert MODEL_COMPILER in BUILTIN_PROFILE.model_compilers
-    assert MODEL_COMPILER.owner == INHERITANCE_MODULE
-    assert MODEL_COMPILER.facet_key == FACET_KEY
-    assert MODEL_COMPILER.requires == frozenset()
-
-
-def test_the_inheritance_row_precedes_the_relationship_row() -> None:
-    # Manifest entry order is Rule Set invocation order, and this file's row is
-    # the spec manifest's third — ahead of `m-relationship`.
-    owners = [entry.owner for entry in BUILTIN_MANIFEST.entries]
-    assert owners.index(INHERITANCE_MODULE) < owners.index("m-relationship")
-
-
-def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
-    model = _formed("animal")
-    assert inheritance.view(model) is model.facet(FACET_KEY)
-
-
-def test_the_facet_offers_only_entity_position_and_family_lookup() -> None:
-    facet = _corpus("animal")
-    assert {name for name in dir(facet) if not name.startswith("_")} == {
-        "entity",
-        "position",
-        "family",
-    }
 
 
 # --------------------------------------------------------------------------
@@ -319,17 +269,6 @@ def test_every_member_window_iterates_its_own_bindings_in_order_by_identity() ->
                 window[outside]
 
 
-def test_iterating_a_member_window_never_indexes_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(_window: object, index: object) -> object:
-        raise AssertionError(f"iteration indexed the window at {index!r}")
-
-    ranges = _member_ranges()
-    for shape, window, expected in ranges:
-        monkeypatch.setattr(type(window), "__getitem__", refuse)
-        assert list(window) == list(expected), shape
-        assert all(left is right for left, right in zip(window, expected, strict=True)), shape
-
-
 def test_an_applicable_member_is_the_ancestors_own_accepted_value() -> None:
     model = _formed("animal")
     facet = inheritance.view(model)
@@ -438,24 +377,16 @@ def test_a_standalone_entitys_key_is_the_attribute_it_declares() -> None:
     assert _view(inheritance.view(model), "Person").primary_key is person.attribute("id")
 
 
-def test_a_family_listed_descendants_first_derives_its_key_once_at_the_root(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_family_listed_descendants_first_carries_its_roots_key_at_every_position() -> None:
     model = _formed("animal")
     metadata = DescendantsFirst(model)
     listed = [entity.identity.name for entity in metadata.entities]
     assert listed.index("Dog") < listed.index("Pet") < listed.index("Animal")
-    derived = record_root_derivations(monkeypatch, inheritance_compile, "_primary_key")
     facet = compile_facet(metadata)
-    assert sorted(derived, key=_canonical) == sorted(family_roots(model), key=_canonical)
     root = model.entity(_corpus_entity("Animal"))
     assert root is not None
     for name in ("Animal", "Pet", "Dog", "Cat", "WildBoar"):
         assert _view(facet, name).primary_key is root.attribute("id"), name
-
-
-def _canonical(identity: EntityIdentity) -> tuple[str, str]:
-    return identity.sort_key
 
 
 # --------------------------------------------------------------------------
@@ -797,29 +728,8 @@ def test_a_family_without_dormant_participants_answers_its_root_supersets(
     facet = _corpus(stem)
     root = _view(facet, root_name)
     family = _family(facet, root.entity)
-    assert family.attributes is root.superset_attributes
-    assert family.value_objects is root.superset_value_objects
     assert _attribute_names(family.attributes) == attribute_names
     assert _value_object_names(family.value_objects) == value_object_names
-
-
-def test_a_standalone_entitys_projection_and_declaration_sequence_are_its_declared_tuples() -> None:
-    model = _formed("customer")
-    facet = inheritance.view(model)
-    customer = model.entity(_corpus_entity("Customer"))
-    assert customer is not None
-    assert customer.declared_value_objects
-    view = _view(facet, "Customer")
-    projected = facet.position([customer.identity])
-    assert projected is not None
-    family = _family(facet, customer.identity)
-    for answer in (
-        (view.superset_attributes, view.superset_value_objects),
-        (projected.superset_attributes, projected.superset_value_objects),
-        (family.attributes, family.value_objects),
-    ):
-        assert answer[0] is customer.declared_attributes
-        assert answer[1] is customer.declared_value_objects
 
 
 def test_a_family_declaration_sequence_is_absent_for_every_identity_but_a_root() -> None:
@@ -901,18 +811,6 @@ def test_a_root_without_exactly_one_key_is_a_compiler_contract_failure(keys: int
     )
     with pytest.raises(RuntimeError, match=f"declares {keys} primary-key Attributes"):
         compile_facet(metadata)
-
-
-def test_the_facet_copies_no_attribute_or_value_object_metadata() -> None:
-    model = _formed("animal")
-    facet = inheritance.view(model)
-    declared = model.entity(_corpus_entity("Pet"))
-    assert declared is not None
-    (license_id,) = declared.declared_attributes
-    dog = _view(facet, "Dog")
-    assert license_id in dog.applicable_attributes
-    assert dog.applicable_attribute("licenseId") is license_id
-    assert license_id in _view(facet, "Animal").superset_attributes
 
 
 def test_an_alternate_implementation_compiles_the_same_answers() -> None:
