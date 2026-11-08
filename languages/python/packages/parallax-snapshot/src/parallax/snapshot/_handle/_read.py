@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from parallax.core import read_planning
 from parallax.core._execution._unit_work.evidence import ReadEvidence
+from parallax.core.base import NoResultFound, TooManyResultsFound
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._authored_resolver import include_path_node
 from parallax.core.entity._expressions import authored_include_path
@@ -14,8 +15,8 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
-from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.read_delivery._page import Page
+from parallax.core.read_delivery import InvalidData
+from parallax.core.read_delivery._page import Page, invalid_result_refusal
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.read_delivery._publication import RootsOf
 from parallax.core.temporal_read import Pin, TemporalShape
@@ -35,12 +36,10 @@ from parallax.snapshot._publication._wire_render import WireRootPublisher
 
 __all__ = [
     "CheckedSnapshot",
-    "NoResultFound",
     "PublicationBuilder",
     "SharingScope",
     "Snapshot",
     "SnapshotPublication",
-    "TooManyResultsFound",
     "check_sharing_scope",
     "typed_publication",
     "typed_publication_builder",
@@ -61,15 +60,6 @@ def check_sharing_scope(sharing_scope: SharingScope) -> None:
     """Refuse anything but a :data:`SharingScope` at the call that named it."""
     if sharing_scope not in ("root", "page"):
         raise ValueError(f"sharing_scope requires 'root' or 'page' (got {sharing_scope!r})")
-
-
-class NoResultFound(RuntimeError):
-    """``Snapshot.result()`` matched zero roots."""
-
-
-class TooManyResultsFound(RuntimeError):
-    """``Snapshot.result()`` / ``.result_or_none()`` matched more than one root
-    ."""
 
 
 def _sole[T](roots: tuple[T, ...], *, empty_is_absence: bool) -> T | None:
@@ -277,7 +267,7 @@ class Snapshot[T]:
         whenever the accessor is reached rather than while the read ran.
         """
         if self._invalid:
-            raise InvalidDataError(self._invalid, edition=self._edition)
+            raise invalid_result_refusal(self._invalid, edition=self._edition)
 
 
 def _require_projection_inputs(

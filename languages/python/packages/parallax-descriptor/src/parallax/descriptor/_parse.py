@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Literal, cast
 
 from parallax.core.metamodel import default_column_name, derive_temporal_structure
-from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._errors import DESCRIPTOR_SCHEMA_INVALID, DescriptorError
 from parallax.descriptor._records import (
     TEMPORAL_DIMENSIONS,
     AsOfAxisMetadata,
@@ -46,20 +46,24 @@ _STRATEGIES: frozenset[str] = frozenset({"table-per-hierarchy", "table-per-concr
 
 def _mapping(value: object, where: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
-        raise DescriptorError(f"{where}: expected a mapping, got {type(value).__name__}")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}: expected a mapping, got {type(value).__name__}"
+        )
     return cast("Mapping[str, object]", value)
 
 
 def _list(value: object, where: str) -> list[object]:
     if not isinstance(value, list):
-        raise DescriptorError(f"{where}: expected a list, got {type(value).__name__}")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}: expected a list, got {type(value).__name__}"
+        )
     return cast("list[object]", value)
 
 
 def _str(m: Mapping[str, object], key: str, where: str) -> str:
     value = m.get(key)
     if not isinstance(value, str):
-        raise DescriptorError(f"{where}: `{key}` must be a string")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: `{key}` must be a string")
     return value
 
 
@@ -68,14 +72,14 @@ def _opt_str(m: Mapping[str, object], key: str, where: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise DescriptorError(f"{where}: `{key}` must be a string")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: `{key}` must be a string")
     return value
 
 
 def _bool(m: Mapping[str, object], key: str, *, default: bool, where: str) -> bool:
     value = m.get(key, default)
     if not isinstance(value, bool):
-        raise DescriptorError(f"{where}: `{key}` must be a boolean")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: `{key}` must be a boolean")
     return value
 
 
@@ -84,13 +88,16 @@ def _opt_int(m: Mapping[str, object], key: str, where: str) -> int | None:
     if value is None:
         return None
     if not isinstance(value, int) or isinstance(value, bool):
-        raise DescriptorError(f"{where}: `{key}` must be an integer")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: `{key}` must be an integer")
     return int(value)
 
 
 def _enum(value: str, allowed: frozenset[str], key: str, where: str) -> str:
     if value not in allowed:
-        raise DescriptorError(f"{where}: `{key}` must be one of {sorted(allowed)}, got {value!r}")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID,
+            f"{where}: `{key}` must be one of {sorted(allowed)}, got {value!r}",
+        )
     return value
 
 
@@ -98,7 +105,7 @@ def _closed(m: Mapping[str, object], allowed: frozenset[str], where: str) -> Non
     unknown = sorted(set(m) - allowed)
     if unknown:
         rendered = ", ".join(f"`{key}`" for key in unknown)
-        raise DescriptorError(f"{where}: unknown properties: {rendered}")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: unknown properties: {rendered}")
 
 
 def _pk_from(value: object, where: str) -> PkGenerator:
@@ -117,7 +124,9 @@ def _pk_from(value: object, where: str) -> PkGenerator:
     raw = _str(m, "strategy", where)
     _enum(raw, _PK_STRATEGIES, "strategy", where)
     if raw != "sequence":
-        raise DescriptorError(f"{where}: object pkGeneration requires `strategy: sequence`")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}: object pkGeneration requires `strategy: sequence`"
+        )
     batch_size = _opt_int(m, "batchSize", where)
     initial_value = _opt_int(m, "initialValue", where)
     increment_size = _opt_int(m, "incrementSize", where)
@@ -155,7 +164,9 @@ def _attribute_from(value: object, where: str) -> Attribute:
     column = _opt_str(m, "column", f"{where}.{name}")
     primary_key = _bool(m, "primaryKey", default=False, where=f"{where}.{name}")
     if pk is not None and not primary_key:
-        raise DescriptorError(f"{where}.{name}: `pkGeneration` requires `primaryKey: true`")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}.{name}: `pkGeneration` requires `primaryKey: true`"
+        )
     return Attribute(
         name=name,
         type=_str(m, "type", f"{where}.{name}"),
@@ -179,10 +190,14 @@ def _order_by_from(value: object, where: str) -> OrderByTerm:
     _closed(m, frozenset({"attribute", "direction", "nulls"}), where)
     direction = m.get("direction", "asc")
     if direction not in ("asc", "desc"):
-        raise DescriptorError(f"{where}: `direction` must be 'asc' or 'desc'")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}: `direction` must be 'asc' or 'desc'"
+        )
     nulls = m.get("nulls", "last")
     if nulls not in ("first", "last"):
-        raise DescriptorError(f"{where}: `nulls` must be 'first' or 'last'")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}: `nulls` must be 'first' or 'last'"
+        )
     return OrderByTerm(attr=_str(m, "attribute", where), direction=direction, nulls=nulls)
 
 
@@ -207,11 +222,15 @@ def _relationship_from(value: object, where: str) -> RelationshipDeclaration:
         repeated = sorted(set(m) & {"cardinality", "join", "dependent"})
         if repeated:
             raise DescriptorError(
+                DESCRIPTOR_SCHEMA_INVALID,
                 f"{where}.{name}: reverse relationship repeats defining properties: "
-                + ", ".join(f"`{key}`" for key in repeated)
+                + ", ".join(f"`{key}`" for key in repeated),
             )
         if "." not in reverse_of:
-            raise DescriptorError(f"{where}.{name}: `reverseOf` must name Entity.relationship")
+            raise DescriptorError(
+                DESCRIPTOR_SCHEMA_INVALID,
+                f"{where}.{name}: `reverseOf` must name Entity.relationship",
+            )
         return ReverseRelationship(
             name=name,
             reverse_of=reverse_of,
@@ -327,7 +346,9 @@ def _vo_attribute_from(value: object, where: str) -> ValueObjectAttribute:
 def _vo_multiplicity(m: Mapping[str, object], where: str) -> Multiplicity:
     value = m.get("multiplicity", "one")
     if not isinstance(value, str):
-        raise DescriptorError(f"{where}: `multiplicity` must be a string")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID, f"{where}: `multiplicity` must be a string"
+        )
     return cast(
         "Multiplicity",
         _enum(value, _VO_CARDINALITIES, "multiplicity", where),
@@ -471,7 +492,7 @@ def _persistence_from(m: Mapping[str, object], where: str) -> Persistence | None
         return None
     value = m["persistence"]
     if not isinstance(value, str):
-        raise DescriptorError(f"{where}: `persistence` must be a string")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: `persistence` must be a string")
     return cast("Persistence", _enum(value, _PERSISTENCE_MODES, "persistence", where))
 
 
@@ -487,7 +508,7 @@ def _temporality_from(m: Mapping[str, object], where: str) -> Temporality | None
         return None
     value = m["temporality"]
     if not isinstance(value, str):
-        raise DescriptorError(f"{where}: `temporality` must be a string")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: `temporality` must be a string")
     return cast("Temporality", _enum(value, _TEMPORALITIES, "temporality", where))
 
 
@@ -504,7 +525,7 @@ def _layout_from(m: Mapping[str, object], where: str) -> Layout | None:
     layout = _mapping(m["layout"], f"{where}.layout")
     _closed(layout, frozenset({"document"}), f"{where}.layout")
     if "document" not in layout:
-        raise DescriptorError(f"{where}.layout: `document` is required")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}.layout: `document` is required")
     document = _mapping(layout["document"], f"{where}.layout.document")
     _closed(document, frozenset({"column"}), f"{where}.layout.document")
     return DocumentLayout(column=_str(document, "column", f"{where}.layout.document"))
@@ -521,12 +542,15 @@ def _parsed_entities(document: Mapping[str, object]) -> tuple[Entity, ...]:
     has_single = "entity" in document
     has_many = "entities" in document
     if has_single == has_many:
-        raise DescriptorError("descriptor must declare exactly one of `entity` or `entities`")
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID,
+            "descriptor must declare exactly one of `entity` or `entities`",
+        )
     if has_single:
         return (_entity_from(document["entity"]),)
     entities = tuple(_entity_from(item) for item in _list(document["entities"], "entities"))
     if not entities:
-        raise DescriptorError("`entities` must not be empty")
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, "`entities` must not be empty")
     return entities
 
 

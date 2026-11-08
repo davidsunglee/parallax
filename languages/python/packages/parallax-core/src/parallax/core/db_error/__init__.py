@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
+from parallax.core.base import ParallaxError
 from parallax.core.dialect import Dialect, PhysicalIndexName
 
 __all__ = [
@@ -60,7 +61,7 @@ def as_category(value: str | None) -> Category | None:
     return None
 
 
-class DatabaseError(Exception):
+class DatabaseError(ParallaxError):
     """A neutral Parallax database error raised at the `m-db-port` boundary.
 
     Carries the neutral :data:`Category` (``None`` when the native code did not
@@ -100,7 +101,7 @@ class DatabaseError(Exception):
         self.constraint_name = (constraint_name if constraint_name is not None else indexed) or None
         code = native_code if native_code is not None else "no-sqlstate"
         label = category if category is not None else "uncategorized"
-        super().__init__(f"{label} [{code}]: {message}")
+        super().__init__("database-statement-failed", f"{label} [{code}]: {message}")
 
     @property
     def violated_index(self) -> PhysicalIndexName | None:

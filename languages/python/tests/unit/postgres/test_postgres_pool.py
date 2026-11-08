@@ -1876,7 +1876,9 @@ def test_a_probe_that_answers_more_than_one_row_fails_startup(
         _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "probe"
-    assert str(failed.value) == "the startup probe returned 2 rows rather than one"
+    assert str(failed.value) == (
+        "database-startup-failed: the startup probe returned 2 rows rather than one"
+    )
 
 
 def test_a_probe_that_cannot_run_fails_startup_with_the_failure_as_its_cause(
@@ -1890,6 +1892,7 @@ def test_a_probe_that_cannot_run_fails_startup_with_the_failure_as_its_cause(
 
     assert failed.value.phase == "probe"
     assert str(failed.value) == (
+        "database-startup-failed: "
         "the database runtime's startup probe did not return what it asked for"
     )
     assert failed.value.__cause__ is failure
@@ -2072,7 +2075,9 @@ def test_any_other_exception_a_source_raises_is_wrapped_with_fixed_text() -> Non
     with pytest.raises(CredentialResolutionError) as raised:
         resolve()
 
-    assert str(raised.value) == "the credential source could not produce a password"
+    assert str(raised.value) == (
+        "credential-resolution-failed: the credential source could not produce a password"
+    )
     assert "hunter2" not in str(raised.value)
     assert raised.value.__cause__ is native
     assert _recorded(establishment) is raised.value

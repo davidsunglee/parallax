@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, Final, Protocol, runtime_checkable
 
+from parallax.core.base import ParallaxError
+
 __all__ = [
     "DRIVER_MANAGED",
     "Credential",
@@ -86,10 +88,13 @@ DRIVER_MANAGED: Final[DriverManaged] = DriverManaged()
 """The one :class:`DriverManaged` declaration, recognized by identity."""
 
 
-class CredentialResolutionError(Exception):
+class CredentialResolutionError(ParallaxError):
     """A source could not produce a credential, so no connection was authenticated.
 
     The message never carries a secret. A source that wraps a native failure
     keeps that discipline for its own message; what it chains as a cause is the
     provider's to police, since nothing here can scrub it.
     """
+
+    def __init__(self, message: str) -> None:
+        super().__init__("credential-resolution-failed", message)

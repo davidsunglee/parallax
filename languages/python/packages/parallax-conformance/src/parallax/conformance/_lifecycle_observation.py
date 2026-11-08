@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
-from parallax.conformance.case_format import serialized_access_mode, serialized_isolation
+from parallax.conformance.case_format import (
+    raised_error_codes,
+    serialized_access_mode,
+    serialized_isolation,
+)
+from parallax.core.base import ParallaxError
 from parallax.core.db_port import (
     AcquisitionReason,
     CleanupCode,
@@ -20,6 +25,7 @@ from parallax.core.db_port import (
     Route,
     RoutePolicy,
 )
+from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -628,8 +634,9 @@ def _activity_failure(failure: DirectFailure | CausedFailure) -> dict[str, objec
     ``attribution`` is stated rather than implied by the presence of ``cause``:
     which child a failure names — or that it names none — is the assertion, and
     an absent key would read as an unwritten one. ``code`` is the stable string
-    an exception publishes as its own, absent for one publishing none, which is
-    every first-party failure this corpus can produce.
+    an exception publishes as its own, where :func:`_portable_code` keeps it:
+    absent for a failure publishing none, and for a Parallax error whose code
+    the Python binding rather than the core spec authors.
     """
     fields: dict[str, object] = {}
     match failure:
@@ -640,9 +647,36 @@ def _activity_failure(failure: DirectFailure | CausedFailure) -> dict[str, objec
             fields["cause"] = cause
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
-    if failure.diagnostic.code is not None:
-        fields["code"] = failure.diagnostic.code
+    code = _portable_code(failure.diagnostic)
+    if code is not None:
+        fields["code"] = code
     return fields
+
+
+def _portable_code(diagnostic: FailureDiagnostic) -> str | None:
+    """``diagnostic``'s code, unless the Python binding authored it.
+
+    A foreign exception's own code is the application's, and a code a case names
+    a raised error by is the core spec's; both are portable. A Parallax error's
+    code outside that set is the binding's own, as unportable as its type name,
+    so the projection drops it.
+    """
+    code = diagnostic.code
+    if code is None or code in raised_error_codes():
+        return code
+    return None if diagnostic.qualified_type in _parallax_error_types() else code
+
+
+def _parallax_error_types() -> frozenset[str]:
+    """Every defined :class:`ParallaxError` class, by the ``module.qualname``
+    a Failure Diagnostic names its type with."""
+    names: set[str] = set()
+    pending: list[type[ParallaxError]] = [ParallaxError]
+    while pending:
+        kind = pending.pop()
+        names.add(f"{kind.__module__}.{kind.__qualname__}")
+        pending.extend(kind.__subclasses__())
+    return frozenset(names)
 
 
 def _read_outcome(outcome: ReadCompleted | ReadFailed) -> dict[str, object]:
@@ -693,8 +727,9 @@ def _database_call_outcome(outcome: DatabaseCallOutcome) -> dict[str, object]:
 
 def _diagnosed(outcome: str, diagnostic: DatabaseFailureDiagnostic) -> dict[str, object]:
     fields: dict[str, object] = {"outcome": outcome, "category": diagnostic.category}
-    if diagnostic.failure.code is not None:
-        fields["code"] = diagnostic.failure.code
+    code = _portable_code(diagnostic.failure)
+    if code is not None:
+        fields["code"] = code
     return fields
 
 
@@ -778,8 +813,9 @@ def _attempt_outcome(
                 "outcome": "rollbackFailed",
                 **_attempt_failure(triggering),
             }
-            if rollback.code is not None:
-                rolled["rollbackCode"] = rollback.code
+            rollback_code = _portable_code(rollback)
+            if rollback_code is not None:
+                rolled["rollbackCode"] = rollback_code
             return rolled
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)

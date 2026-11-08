@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
+from parallax.core.base import UsageError
 from parallax.core.metamodel import canonical_location_key
 
 if TYPE_CHECKING:
@@ -219,15 +220,20 @@ class EntityRowError(RuntimeError):
         self.identity = identity
 
 
-class UnloadedRelationshipError(AttributeError):
+class UnloadedRelationshipError(UsageError, AttributeError):
     """A closed-world relationship (or narrowed view) was not fetched by the read
     that produced this node: access raises, naming the path and the
-    ``.include(...)`` fix rather than issuing lazy SQL."""
+    ``.include(...)`` fix rather than issuing lazy SQL.
+
+    Also an :class:`AttributeError`, so ``hasattr`` and ``getattr`` with a
+    default treat an unloaded relationship as absent.
+    """
 
     def __init__(self, path: str) -> None:
         super().__init__(
+            "relationship-unloaded",
             f"{path!r} was not included in this find; add `.include({path})` "
-            "to fetch it (this snapshot lifecycle never lazy-loads)"
+            "to fetch it (this snapshot lifecycle never lazy-loads)",
         )
         self.path = path
 
@@ -285,7 +291,7 @@ class EditViolation:
     message: str = field(default="", compare=False)
 
 
-class EditError(ValueError):
+class EditError(UsageError):
     """Every assignment rule the authored edit breaks, in one report.
 
     One class covers both authoring surfaces — ``Entity.edit(**changes)`` and a
@@ -297,8 +303,8 @@ class EditError(ValueError):
 
     ``violations`` is nonempty and canonically ordered by location, then code,
     then member name with an unset name first, so a report never depends on
-    caller keyword order. There is deliberately no ``code`` attribute:
-    selecting one violation to expose would misreport the others, which is what
+    caller keyword order. ``code`` is always ``edit-rejected``: selecting one
+    violation's code to expose would misreport the others, which is what
     ``codes`` is for. Constructing one with no violation raises
     :class:`ValueError` — a refusal that names no rule is not a report.
     """
@@ -314,7 +320,7 @@ class EditError(ValueError):
         self.codes = frozenset(violation.code for violation in reported)
         summary = ", ".join(sorted(self.codes))
         detail = "".join(f"\n  {violation.code}: {violation.message}" for violation in reported)
-        super().__init__(f"{len(reported)} edit violation(s): {summary}{detail}")
+        super().__init__("edit-rejected", f"{len(reported)} edit violation(s): {summary}{detail}")
 
 
 def _canonical_violation_key(violation: EditViolation) -> tuple[ModelLocationKey, str, bool, str]:

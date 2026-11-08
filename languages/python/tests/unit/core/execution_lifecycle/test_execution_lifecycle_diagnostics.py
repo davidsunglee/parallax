@@ -78,7 +78,9 @@ class _ShadowedDatabaseError(DatabaseError):
     """A port error whose two neutral facts refuse to be read."""
 
     def __init__(self) -> None:
-        Exception.__init__(self, "this error shadows its own classification")
+        Exception.__init__(
+            self, "database-statement-failed", "this error shadows its own classification"
+        )
 
     @property
     def category(self) -> Category:  # pyright: ignore[reportIncompatibleVariableOverride]

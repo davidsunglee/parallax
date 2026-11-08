@@ -7,10 +7,8 @@ from parallax.snapshot._handle._errors import (
 )
 from parallax.snapshot._handle._read import (
     CheckedSnapshot,
-    NoResultFound,
     SharingScope,
     Snapshot,
-    TooManyResultsFound,
 )
 from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._transaction import ReadOnlyTxnContext, TxnContext
@@ -38,7 +36,6 @@ from parallax.snapshot._publication._wire import (
 __all__ = [
     "CheckedSnapshot",
     "Database",
-    "NoResultFound",
     "ReadOnlyTxnContext",
     "ScopedDatabase",
     "SharingScope",
@@ -48,7 +45,6 @@ __all__ = [
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
     "SnapshotStream",
-    "TooManyResultsFound",
     "TxnContext",
     "WireChanges",
     "WireDatabaseView",

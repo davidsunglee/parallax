@@ -859,3 +859,18 @@ def test_out_of_space_yaml_numbers_are_not_managed_scalar_members() -> None:
             assert matches_neutral_type(value, neutral_type) is False
             with pytest.raises(WireEncodingError):
                 encode_wire(neutral_type, cast("ManagedValue", value))
+
+
+def test_raised_error_codes_are_every_value_the_schema_names_a_raised_error_by() -> None:
+    codes = case_format.raised_error_codes()
+    # `rejectedRule`, a step's `expectError` enum, a keyed write's `expectError`
+    # through its `$ref`, and an `expectError` pinned by `const`.
+    assert {
+        "between-bounds-inverted",
+        "write-value-not-stored",
+        "transaction-time-pin-read-only",
+        "write-evidence-already-claimed",
+        "write-evidence-unavailable",
+    } <= codes
+    # Other core tokens name no raised error.
+    assert codes.isdisjoint({"deadlock", "not-idle", "missingTarget", "timeout"})

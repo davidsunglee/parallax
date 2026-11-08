@@ -47,7 +47,13 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY, INT64, StructuredDocument
+from parallax.core.base import (
+    INFINITY,
+    INT64,
+    NoResultFound,
+    StructuredDocument,
+    TooManyResultsFound,
+)
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
     ArrayBind,
@@ -91,10 +97,12 @@ from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
 from parallax.core.read_delivery._page import (
     ABSENT,
+    RESULT_DATA_INVALID,
     ChildSlot,
     InvalidRootInput,
     Page,
     PageRows,
+    invalid_result_refusal,
     page_edges,
     page_rows,
 )
@@ -112,10 +120,8 @@ from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import (
     Database,
-    NoResultFound,
     Snapshot,
     SnapshotMaterializationError,
-    TooManyResultsFound,
     WireEntity,
     pin_of,
 )
@@ -1467,13 +1473,26 @@ def test_eager_results_aggregates_every_invalid_root_in_result_order() -> None:
 
 def test_the_invalid_data_report_is_the_errors_sole_machine_readable_surface() -> None:
     record = _invalid(0)
-    error = InvalidDataError((record,), edition="edition")
+    error = invalid_result_refusal((record,), edition="edition")
+    assert error.code == RESULT_DATA_INVALID
     assert error.invalid_data == (record,)
     assert error.edition == "edition"
-    for absent in ("code", "issues", "records", "cause"):
+    for absent in ("issues", "records", "cause"):
         assert not hasattr(error, absent)
     with pytest.raises(ValueError, match="at least one record"):
-        InvalidDataError((), edition="edition")
+        InvalidDataError(RESULT_DATA_INVALID, "nothing", invalid_data=(), edition="edition")
+    with pytest.raises(ValueError, match="at least one record and an edition"):
+        InvalidDataError(RESULT_DATA_INVALID, "no edition", invalid_data=(record,))
+
+
+def test_only_a_result_refusal_carries_records_or_an_edition() -> None:
+    record = _invalid(0)
+    with pytest.raises(ValueError, match="only a result-data-invalid refusal"):
+        InvalidDataError("stored-data-decoding-failed", "with records", invalid_data=(record,))
+    with pytest.raises(ValueError, match="only a result-data-invalid refusal"):
+        InvalidDataError("stored-data-decoding-failed", "with an edition", edition="edition")
+    atomic = InvalidDataError("stored-data-decoding-failed", "no result to report")
+    assert (atomic.invalid_data, atomic.edition) == ((), None)
 
 
 def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
@@ -1482,7 +1501,7 @@ def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
     # `args` the message lives in would let a caller leave the refusal's wording
     # describing results the report no longer carries.
     record = _invalid(0)
-    error = InvalidDataError((record,), edition="edition")
+    error = invalid_result_refusal((record,), edition="edition")
     message = str(error)
     writable = cast("Any", error)
     for name, replacement in (
@@ -1490,7 +1509,7 @@ def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
         ("_invalid_data", ()),
         ("edition", "other"),
         ("_edition", "other"),
-        ("args", ("nothing is wrong",)),
+        ("args", ("result-data-invalid", "nothing is wrong")),
     ):
         with pytest.raises(AttributeError):
             setattr(writable, name, replacement)
@@ -1504,7 +1523,7 @@ def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
 def test_the_frozen_refusal_still_carries_the_state_the_interpreter_owns() -> None:
     # Freezing by hand rather than as a frozen dataclass is what keeps notes and
     # chaining working on a refusal whose report is settled.
-    error = InvalidDataError((_invalid(0),), edition="edition")
+    error = invalid_result_refusal((_invalid(0),), edition="edition")
     error.add_note("an ordinary exception still takes notes")
     assert error.__notes__ == ["an ordinary exception still takes notes"]
     del error.__notes__

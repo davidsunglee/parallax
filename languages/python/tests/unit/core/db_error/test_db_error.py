@@ -127,9 +127,9 @@ def test_database_error_properties_reflect_predicates(
 
 def test_database_error_str_carries_category_code_and_message() -> None:
     error = DatabaseError(category=DEADLOCK, native_code="40P01", message="deadlock detected")
-    assert str(error) == "deadlock [40P01]: deadlock detected"
+    assert str(error) == "database-statement-failed: deadlock [40P01]: deadlock detected"
     uncategorized = DatabaseError(category=None, native_code=None, message="down")
-    assert str(uncategorized) == "uncategorized [no-sqlstate]: down"
+    assert str(uncategorized) == "database-statement-failed: uncategorized [no-sqlstate]: down"
 
 
 def test_a_unique_violation_keeps_the_constraint_name_as_the_violated_index() -> None:
@@ -219,7 +219,9 @@ def test_naming_a_constraint_leaves_formatting_and_args_unchanged() -> None:
         category=CONSTRAINT_VIOLATION, native_code="23514", message="m", constraint_name="c"
     )
     plain = DatabaseError(category=CONSTRAINT_VIOLATION, native_code="23514", message="m")
-    assert named.args == plain.args == ("constraintViolation [23514]: m",)
+    assert (
+        named.args == plain.args == ("database-statement-failed", "constraintViolation [23514]: m")
+    )
     assert str(named) == str(plain)
 
 

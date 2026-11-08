@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import NeutralType
+from parallax.core.base import NeutralType, UsageError
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -59,7 +59,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Sequence as SequenceGeneration
 from parallax.descriptor import _records
-from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._errors import DESCRIPTOR_VALUE_INVALID, DescriptorError
 from parallax.descriptor._type_spelling import parse_type_spelling
 
 __all__ = ["unresolved_metamodel"]
@@ -130,7 +130,7 @@ def unresolved_metamodel(metamodel: _records.Metamodel) -> UnresolvedMetamodel:
     receives an empty source.
     """
     if not metamodel.entities:
-        raise DescriptorError("descriptor declares no entity")
+        raise DescriptorError(DESCRIPTOR_VALUE_INVALID, "descriptor declares no entity")
     return _UnresolvedMetamodel(tuple(_adapted(entity) for entity in metamodel.entities))
 
 
@@ -146,8 +146,10 @@ def _adapted(entity: _records.Entity) -> UnresolvedEntityDeclaration:
         return _declaration(entity)
     except DescriptorError:
         raise
-    except ValueError as error:
-        raise DescriptorError(f"entity {entity.canonical_name!r}: {error}") from error
+    except (ValueError, UsageError) as error:
+        raise DescriptorError(
+            DESCRIPTOR_VALUE_INVALID, f"entity {entity.canonical_name!r}: {error}"
+        ) from error
 
 
 def _declaration(entity: _records.Entity) -> UnresolvedEntityDeclaration:
@@ -268,7 +270,9 @@ def _generation(generator: _records.PkGenerator, where: str) -> PkGeneration:
         case "sequence":
             name = generator.sequence_name
             if name is None:
-                raise DescriptorError(f"{where}: a sequence generation names its sequence")
+                raise DescriptorError(
+                    DESCRIPTOR_VALUE_INVALID, f"{where}: a sequence generation names its sequence"
+                )
             return SequenceGeneration(
                 name=name,
                 batch_size=1 if generator.batch_size is None else generator.batch_size,
@@ -280,7 +284,9 @@ def _generation(generator: _records.PkGenerator, where: str) -> PkGeneration:
 def _neutral_type(spelling: str, where: str) -> NeutralType:
     resolved = parse_type_spelling(spelling)
     if resolved is None:
-        raise DescriptorError(f"{where}: {spelling!r} is not a neutral type spelling")
+        raise DescriptorError(
+            DESCRIPTOR_VALUE_INVALID, f"{where}: {spelling!r} is not a neutral type spelling"
+        )
     return resolved
 
 
@@ -366,18 +372,25 @@ def _strategy(inheritance: _records.Inheritance, where: str) -> InheritanceStrat
         case "table-per-hierarchy":
             tag_column = inheritance.tag_column
             if tag_column is None:
-                raise DescriptorError(f"{where}: a table-per-hierarchy root declares a tag column")
+                raise DescriptorError(
+                    DESCRIPTOR_VALUE_INVALID,
+                    f"{where}: a table-per-hierarchy root declares a tag column",
+                )
             return TablePerHierarchy(tag_column)
         case "table-per-concrete-subtype":
             return TABLE_PER_CONCRETE_SUBTYPE
         case None:
-            raise DescriptorError(f"{where}: an inheritance root declares a strategy")
+            raise DescriptorError(
+                DESCRIPTOR_VALUE_INVALID, f"{where}: an inheritance root declares a strategy"
+            )
 
 
 def _parent(inheritance: _records.Inheritance, where: str) -> EntityReference:
     parent = inheritance.parent
     if parent is None:
-        raise DescriptorError(f"{where}: an inheritance descendant names its parent")
+        raise DescriptorError(
+            DESCRIPTOR_VALUE_INVALID, f"{where}: an inheritance descendant names its parent"
+        )
     return _entity_reference(parent)
 
 

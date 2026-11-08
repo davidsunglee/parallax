@@ -6,6 +6,7 @@ from typing import NoReturn
 
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_planner import WritePlanner
+from parallax.core.base import ConflictError
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import ClassIndex
@@ -194,7 +195,7 @@ def write_projection(selection: ModelSelection, /) -> SelectedWriteModel:
     return selection._write  # pyright: ignore[reportPrivateUsage] - the same-module accessor the opaque selection is read through
 
 
-class PublicationConflictError(RuntimeError):
+class PublicationConflictError(ConflictError):
     """A publication was refused because the Serving Model did not hold the
     selection the publisher expected.
 
@@ -214,7 +215,8 @@ class PublicationConflictError(RuntimeError):
 
     def __init__(self, *, expected: ModelSelection, held: ModelSelection) -> None:
         super().__init__(
-            f"publication refused: expected {expected!r} to be serving, but {held!r} is"
+            "publication-conflict",
+            f"publication refused: expected {expected!r} to be serving, but {held!r} is",
         )
         self._expected = expected
         self._held = held

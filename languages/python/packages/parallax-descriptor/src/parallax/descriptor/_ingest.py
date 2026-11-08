@@ -15,12 +15,10 @@ from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._errors import (
     DescriptorFormat,
     DescriptorSchemaError,
-    DescriptorSchemaViolation,
     DescriptorSyntaxError,
     DescriptorValueError,
-    DescriptorValueViolation,
-    canonical_schema_violations,
-    canonical_value_violations,
+    DescriptorViolation,
+    canonical_violations,
 )
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import Metamodel
@@ -86,7 +84,7 @@ def ingest_document(document: object) -> Metamodel:
         *_index_temporal_violations(mapping),
     )
     if violations:
-        raise DescriptorValueError(canonical_value_violations(violations))
+        raise DescriptorValueError(canonical_violations(violations))
     return parse_document(mapping)
 
 
@@ -132,17 +130,17 @@ def _validate_schema(document: object) -> None:
     if not errors:
         return
     violations = (
-        DescriptorSchemaViolation(
+        DescriptorViolation(
             path=tuple(error.absolute_path), rule=str(error.validator), message=error.message
         )
         for error in errors
     )
-    raise DescriptorSchemaError(canonical_schema_violations(violations))
+    raise DescriptorSchemaError(canonical_violations(violations))
 
 
 def _type_spelling_violations(
     document: Mapping[str, object],
-) -> tuple[DescriptorValueViolation, ...]:
+) -> tuple[DescriptorViolation, ...]:
     """Every schema-valid but unconstructible ``type`` spelling in ``document``.
 
     Walks every entity attribute and every Value Object attribute, nested to
@@ -173,7 +171,7 @@ def _endpoint_names(entity: Mapping[str, object]) -> frozenset[str]:
 
 def _temporal_attribute_violations(
     document: Mapping[str, object],
-) -> tuple[DescriptorValueViolation, ...]:
+) -> tuple[DescriptorViolation, ...]:
     """Every authored Attribute bearing an As-Of Axis endpoint's canonical name.
 
     A Temporality Profile derives both endpoints of every axis it names, over
@@ -191,13 +189,13 @@ def _temporal_attribute_violations(
 
 def _entity_temporal_attribute_violations(
     entity: Mapping[str, object], prefix: tuple[str | int, ...]
-) -> list[DescriptorValueViolation]:
+) -> list[DescriptorViolation]:
     """``entity``'s offending Attribute declarations, in document order."""
     reserved = _endpoint_names(entity)
     profile = entity.get("temporality")
     attributes = cast("list[Mapping[str, Any]]", entity.get("attributes", ()))
     return [
-        DescriptorValueViolation(
+        DescriptorViolation(
             path=(*prefix, "attributes", position, "name"),
             rule="temporal-attribute-declared",
             message=(
@@ -212,7 +210,7 @@ def _entity_temporal_attribute_violations(
 
 def _index_temporal_violations(
     document: Mapping[str, object],
-) -> tuple[DescriptorValueViolation, ...]:
+) -> tuple[DescriptorViolation, ...]:
     """Every authored Index component naming an As-Of Axis endpoint.
 
     Every Index of a temporal Entity already ends with the derived axis ends, so
@@ -229,7 +227,7 @@ def _index_temporal_violations(
 
 def _entity_index_temporal_violations(
     entity: Mapping[str, object], prefix: tuple[str | int, ...]
-) -> list[DescriptorValueViolation]:
+) -> list[DescriptorViolation]:
     """``entity``'s offending Index components, in document order.
 
     The schema phase has already fixed every shape read here: an ``indices``
@@ -238,7 +236,7 @@ def _entity_index_temporal_violations(
     endpoints = _endpoint_names(entity)
     indices = cast("list[Mapping[str, Any]]", entity.get("indices", ()))
     return [
-        DescriptorValueViolation(
+        DescriptorViolation(
             path=(*prefix, "indices", position, "attributes", offset),
             rule="index-temporal-attribute",
             message=(
@@ -266,7 +264,7 @@ def _entities(
 
 def _entity_type_violations(
     entity: Mapping[str, object], prefix: tuple[str | int, ...]
-) -> list[DescriptorValueViolation]:
+) -> list[DescriptorViolation]:
     violations = _attribute_violations(entity.get("attributes"), prefix)
     value_objects = entity.get("valueObjects")
     if isinstance(value_objects, list):
@@ -281,7 +279,7 @@ def _entity_type_violations(
 
 def _value_object_violations(
     occurrence: Mapping[str, object], prefix: tuple[str | int, ...]
-) -> list[DescriptorValueViolation]:
+) -> list[DescriptorViolation]:
     violations = _attribute_violations(occurrence.get("attributes"), prefix)
     nested = occurrence.get("valueObjects")
     if isinstance(nested, list):
@@ -296,15 +294,15 @@ def _value_object_violations(
 
 def _attribute_violations(
     attributes: object, prefix: tuple[str | int, ...]
-) -> list[DescriptorValueViolation]:
+) -> list[DescriptorViolation]:
     if not isinstance(attributes, list):
         return []
-    violations: list[DescriptorValueViolation] = []
+    violations: list[DescriptorViolation] = []
     for index, attribute in enumerate(cast("list[object]", attributes)):
         spelling = cast("Mapping[str, object]", attribute).get("type")
         if isinstance(spelling, str) and parse_type_spelling(spelling) is None:
             violations.append(
-                DescriptorValueViolation(
+                DescriptorViolation(
                     path=(*prefix, "attributes", index, "type"),
                     rule="type-spelling-invalid",
                     message=f"{spelling!r} does not denote a constructible neutral type",

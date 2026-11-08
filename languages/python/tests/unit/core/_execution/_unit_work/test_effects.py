@@ -396,7 +396,7 @@ def test_a_gate_binding_a_callers_revision_fails_as_that_precondition(
     with pytest.raises(WritePreconditionError) as failed:
         enforce_affected_rows(step, 0)
     assert (failed.value.entity, dict(failed.value.key), failed.value.expected) == (
-        _ACCOUNT,
+        _ACCOUNT.canonical,
         {"id": 1},
         4,
     )

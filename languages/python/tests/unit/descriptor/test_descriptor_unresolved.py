@@ -47,9 +47,14 @@ from parallax.core.metamodel import (
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor._errors import (
+    DESCRIPTOR_SCHEMA_INVALID,
+    DESCRIPTOR_VALUE_INVALID,
+    DescriptorError,
+)
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._type_spelling import parse_type_spelling
+from tests._support.errors import raises_code
 
 _MODELS = sorted(
     (case_format.find_repo_root() / "core" / "compatibility" / "models").glob("*.yaml")
@@ -135,11 +140,11 @@ def test_parse_leaves_a_relationship_target_unresolved() -> None:
 
 
 def test_parse_rejects_an_empty_or_ambiguous_source() -> None:
-    with pytest.raises(DescriptorError, match="must not be empty"):
+    with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="must not be empty"):
         parse_document({"entities": []})
-    with pytest.raises(DescriptorError, match="exactly one"):
+    with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="exactly one"):
         parse_document({})
-    with pytest.raises(DescriptorError, match="exactly one"):
+    with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="exactly one"):
         parse_document({"entity": {}, "entities": []})
 
 
@@ -330,12 +335,12 @@ def test_parse_rejects_a_shape_defect_naming_where_it_sits(
     # doors: `validate_inheritance_families` parses shape alone, with no schema
     # phase in front of it, so a malformed document reaching that door is refused
     # here and nowhere earlier.
-    with pytest.raises(DescriptorError, match=re.escape(message)):
+    with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match=re.escape(message)):
         parse_document(document)
 
 
 def test_the_adapter_rejects_an_empty_record_model() -> None:
-    with pytest.raises(DescriptorError, match="declares no entity"):
+    with raises_code(DescriptorError, DESCRIPTOR_VALUE_INVALID, match="declares no entity"):
         unresolved_metamodel(records.Metamodel())
 
 
@@ -345,14 +350,18 @@ def test_the_adapter_rejects_an_empty_record_model() -> None:
 def test_an_empty_namespace_is_a_descriptor_rejection_naming_its_entity() -> None:
     key = records.Attribute(name="id", type="int64", column="id", primary_key=True)
     entity = records.Entity(name="Account", namespace="", table="account", attributes=(key,))
-    with pytest.raises(DescriptorError, match=r"entity '\.Account': an Entity namespace"):
+    with raises_code(
+        DescriptorError, DESCRIPTOR_VALUE_INVALID, match=r"entity '\.Account': an Entity namespace"
+    ):
         unresolved_metamodel(records.Metamodel((entity,)))
 
 
 def test_a_bounded_length_on_a_non_text_attribute_is_a_descriptor_rejection() -> None:
     key = records.Attribute(name="id", type="int64", column="id", primary_key=True, max_length=8)
     entity = records.Entity(name="Account", table="account", attributes=(key,))
-    with pytest.raises(DescriptorError, match="only a String Attribute bounds its length"):
+    with raises_code(
+        DescriptorError, DESCRIPTOR_VALUE_INVALID, match="only a String Attribute bounds its length"
+    ):
         unresolved_metamodel(records.Metamodel((entity,)))
 
 
@@ -716,7 +725,7 @@ def test_a_sequence_generation_without_a_name_is_rejected() -> None:
         pk_generator=records.PkGenerator(strategy="sequence"),
     )
     entity = records.Entity(name="Account", table="account", attributes=(key,))
-    with pytest.raises(DescriptorError, match="names its sequence"):
+    with raises_code(DescriptorError, DESCRIPTOR_VALUE_INVALID, match="names its sequence"):
         unresolved_metamodel(records.Metamodel((entity,)))
 
 
@@ -958,7 +967,7 @@ def test_an_incoherent_inheritance_record_is_rejected(
     inheritance: records.Inheritance, message: str
 ) -> None:
     entity = records.Entity(name="Animal", table="animal", inheritance=inheritance)
-    with pytest.raises(DescriptorError, match=message):
+    with raises_code(DescriptorError, DESCRIPTOR_VALUE_INVALID, match=message):
         unresolved_metamodel(records.Metamodel((entity,)))
 
 
@@ -998,7 +1007,9 @@ def test_an_unrepresentable_attribute_spelling_is_rejected() -> None:
           type: decimal(2,5)
           primaryKey: true
     """
-    with pytest.raises(DescriptorError, match="not a neutral type spelling"):
+    with raises_code(
+        DescriptorError, DESCRIPTOR_VALUE_INVALID, match="not a neutral type spelling"
+    ):
         _view(text)
 
 
@@ -1020,5 +1031,5 @@ def test_an_unrepresentable_value_object_spelling_is_rejected() -> None:
                 - name: number
                   type: telephone
     """
-    with pytest.raises(DescriptorError, match=r"contact\.phone\.number"):
+    with raises_code(DescriptorError, DESCRIPTOR_VALUE_INVALID, match=r"contact\.phone\.number"):
         _view(text)

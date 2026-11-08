@@ -24,10 +24,9 @@ from parallax.descriptor import _ingest
 from parallax.descriptor._errors import (
     DescriptorError,
     DescriptorSchemaError,
-    DescriptorSchemaViolation,
     DescriptorSyntaxError,
     DescriptorValueError,
-    DescriptorValueViolation,
+    DescriptorViolation,
 )
 from parallax.descriptor._ingest import parse_json, parse_yaml
 
@@ -139,7 +138,7 @@ def test_descriptor_ingestion_matches_the_corpus_expectation(fixture: _Fixture) 
 
 
 def _assert_violations(
-    actual: Sequence[DescriptorSchemaViolation] | Sequence[DescriptorValueViolation],
+    actual: Sequence[DescriptorViolation],
     expected: object,
 ) -> None:
     assert isinstance(expected, Sequence)

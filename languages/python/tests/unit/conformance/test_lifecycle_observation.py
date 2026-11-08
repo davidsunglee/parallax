@@ -29,18 +29,21 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.conformance._mechanism.envelope import EngineError
+from parallax.core.base import UsageError
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     AcquisitionReason,
     CleanupCode,
     CleanupIssue,
     CleanupPhase,
+    ConnectionAcquisitionError,
     FallbackReason,
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
     RoutePolicy,
 )
-from parallax.core.diagnostics import FailureDiagnostic
+from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
@@ -269,6 +272,51 @@ def test_a_call_ordered_transport_never_ran_or_left_unknown_states_only_what_is_
             "code": "connection lost",
         }
     }
+
+
+def test_a_failure_keeps_only_a_code_that_is_portable() -> None:
+    # A code the Python binding authors for its own error is as unportable as its
+    # type name; a code a case names a raised error by is the core spec's, and a
+    # foreign exception's own code is the application's.
+    statement = diagnostic_for(DatabaseError(category=None, native_code=None, message="gone"))
+    acquisition = diagnostic_for(ConnectionAcquisitionError("pool shut", reason="closed"))
+    core = diagnostic_for(UsageError("transaction-time-pin-read-only", "pinned"))
+    assert statement.code == "database-statement-failed"
+    call = DatabaseCallFinished(
+        _EXECUTION,
+        1,
+        1,
+        None,
+        _STATEMENT,
+        7,
+        DatabaseCallFailed(DatabaseFailureDiagnostic(statement, None, None)),
+    )
+    assert _transition(call) == {"databaseCallFinished": {"outcome": "failed", "category": None}}
+    for diagnostic, expected in (
+        (acquisition, {"outcome": "failed", "attribution": "direct"}),
+        (
+            core,
+            {
+                "outcome": "failed",
+                "attribution": "direct",
+                "code": "transaction-time-pin-read-only",
+            },
+        ),
+        (_diagnostic("stale"), {"outcome": "failed", "attribution": "direct", "code": "stale"}),
+    ):
+        outcome = OuterInvocationFailed(DirectFailure(diagnostic))
+        assert _transition(TransactionInvocationFinished(_EXECUTION, 1, 1, None, outcome)) == {
+            "transactionInvocationFinished": expected
+        }
+    failed_rollback = AttemptRollbackFailed(
+        AttemptFailure("callback", DirectFailure(_diagnostic()), retry_eligible=False), statement
+    )
+    assert (
+        "rollbackCode"
+        not in _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, failed_rollback))[
+            "transactionAttemptFinished"
+        ]
+    )
 
 
 def test_an_outer_invocation_states_the_policy_a_joined_one_inherits() -> None:

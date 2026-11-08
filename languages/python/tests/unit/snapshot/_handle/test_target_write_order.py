@@ -826,8 +826,11 @@ _REVISION: Final[tuple[_Row, ...]] = (
         _both(
             _refused(
                 WritePreconditionError,
-                "Account: the state this write starts from no longer matches its precondition — "
-                "key={'id': 1}, expected revision 3",
+                code="write-precondition-failed",
+                message=(
+                    "Account: the state this write starts from no longer matches its "
+                    "precondition — key={'id': 1}, expected revision 3"
+                ),
                 read=True,
             )
         ),
@@ -837,9 +840,12 @@ _REVISION: Final[tuple[_Row, ...]] = (
         _both(
             _refused(
                 WritePreconditionError,
-                "Balance: the state this write starts from no longer matches its precondition — "
-                "key={'id': 1}, expected revision datetime.datetime(2023, 12, 1, 0, 0, "
-                "tzinfo=datetime.timezone.utc)",
+                code="write-precondition-failed",
+                message=(
+                    "Balance: the state this write starts from no longer matches its "
+                    "precondition — key={'id': 1}, expected revision "
+                    "datetime.datetime(2023, 12, 1, 0, 0, tzinfo=datetime.timezone.utc)"
+                ),
                 phase="flush",
                 read=True,
             )
@@ -980,8 +986,11 @@ _PENDING_REFUSED: Final[tuple[_Row, ...]] = (
         _both(
             _refused(
                 WritePreconditionError,
-                "Account: the state this write starts from no longer matches its precondition — "
-                "key={'id': 1}, expected revision 3",
+                code="write-precondition-failed",
+                message=(
+                    "Account: the state this write starts from no longer matches its "
+                    "precondition — key={'id': 1}, expected revision 3"
+                ),
                 read=True,
             )
         ),

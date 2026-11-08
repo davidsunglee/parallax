@@ -117,7 +117,9 @@ def test_a_signing_failure_is_a_refusal_that_names_no_token() -> None:
     with pytest.raises(CredentialResolutionError) as refused:
         _credentials(session).resolve()
 
-    assert str(refused.value) == "RDS IAM token could not be generated"
+    assert (
+        str(refused.value) == "credential-resolution-failed: RDS IAM token could not be generated"
+    )
     assert refused.value.__cause__ is native
 
 

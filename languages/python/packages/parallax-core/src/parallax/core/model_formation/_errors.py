@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Final
 
+from parallax.core.base import UsageError
 from parallax.core.metamodel import MetamodelIssue
 from parallax.core.model_formation._manifest import ModuleIdentity
 
@@ -95,7 +96,7 @@ FORMATION_CONTRACT_CODES: Final[frozenset[FormationContractCode]] = frozenset(
 """The closed contract-failure vocabulary. Every raise names one of these."""
 
 
-class MetamodelValidationError(ValueError):
+class MetamodelValidationError(UsageError):
     """The supplied model is invalid, reported as every issue that makes it so.
 
     ``issues`` is nonempty and canonically ordered, so two runs over the same
@@ -112,7 +113,7 @@ class MetamodelValidationError(ValueError):
             raise ValueError("a Metamodel validation failure reports at least one issue")
         self.issues = reported
         summary = ", ".join(sorted({issue.code for issue in reported}))
-        super().__init__(f"{len(reported)} model issue(s): {summary}")
+        super().__init__("model-formation-rejected", f"{len(reported)} model issue(s): {summary}")
 
 
 class FormationContractError(RuntimeError):
