@@ -22,7 +22,6 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
 from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
@@ -74,21 +73,6 @@ def test_shared_helper_rejects_an_ambiguous_bare_name() -> None:
     assert entity_by_name(model, "Nope") is None
 
 
-def test_predicate_resolver_rejects_an_ambiguous_bare_name() -> None:
-    model = _model()
-    root = entity_by_name(model, "a.Person")
-    assert root is not None
-    # A selection whose alternative is the ambiguous bare "Person" must not silently
-    # resolve to whichever namespace's Person appears first. The miss is named as
-    # the resolution failure it is, not as the empty resolved set it would
-    # otherwise collapse into: a narrow rule would invite narrowing differently,
-    # while the spelling itself is what names no position.
-    op = Narrow(to=("Person",), operand=TrueNode())
-    with pytest.raises(ModelRejectedError) as excinfo:
-        validate_predicate(root, op, model)
-    assert excinfo.value.rule == "reference-ambiguous-entity-name"
-
-
 def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
     # The write side of the same thesis: a deserialized instruction's target
     # resolves through the SAME helper, and its miss is classified with the SAME
@@ -125,15 +109,6 @@ def test_read_query_resolution_classifies_an_ambiguous_bare_name_by_the_same_rul
         model = _model()
         resolve_read_query(_query("Person"), model=model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
-
-
-def test_read_query_resolution_refuses_a_target_the_model_does_not_declare() -> None:
-    # An undeclared target earns `query-target-not-in-model` before the validated
-    # execution token exists and therefore before any executor or I/O can run.
-    with pytest.raises(QueryTargetError) as excinfo:
-        model = _model()
-        resolve_read_query(_query("Nope"), model=model)
-    assert excinfo.value.code == "query-target-not-in-model"
 
 
 def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position() -> None:

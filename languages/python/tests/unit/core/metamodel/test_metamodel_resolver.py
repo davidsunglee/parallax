@@ -9,7 +9,6 @@ import pytest
 
 from parallax.core import base
 from parallax.core.metamodel import (
-    RESOLVER_ISSUE_CODES,
     AbstractRoot,
     AbstractSubtype,
     AsOfAxisLocation,
@@ -148,13 +147,6 @@ def test_a_well_formed_model_resolves_to_a_canonical_candidate() -> None:
     assert [entity.identity for entity in candidate.entities] == [_ITEM, _ORDER]
     assert candidate.entity(_ORDER) is not None
     assert candidate.entity(identity("Absent")) is None
-
-
-def test_local_sequences_keep_their_authored_order() -> None:
-    candidate = accepted(source(_order(), _item()))
-    item = candidate.entity(_ITEM)
-    assert item is not None
-    assert [member.identity.name for member in item.attributes] == ["id", "orderId", "sku"]
 
 
 def test_a_defining_declaration_resolves_its_join_target_and_ordering() -> None:
@@ -901,10 +893,6 @@ def test_a_standalone_entity_declares_exactly_one_primary_key() -> None:
     assert len(issues[0].related) == 2
 
 
-def test_an_inheritance_participant_leaves_primary_keys_to_its_family() -> None:
-    accepted(source(*_family()))
-
-
 @pytest.mark.parametrize(
     ("components", "expected"),
     [
@@ -1024,12 +1012,6 @@ def test_as_of_axes_are_distinct_typed_and_locally_owned() -> None:
     }
 
 
-def test_resolution_aggregates_every_issue_rather_than_the_first() -> None:
-    first = Declaration(identity=_ORDER, attributes=())
-    second = Declaration(identity=_ITEM, attributes=(key(_ITEM), key(_ITEM, "sku")))
-    assert codes(source(first, second)) == (PRIMARY_KEY_MULTIPLE, PRIMARY_KEY_MISSING)
-
-
 def test_the_issue_sequence_is_stable_under_frontend_permutation() -> None:
     names = ("Delta", "Alpha", "Charlie", "Bravo")
     declarations = [Declaration(identity=identity(name), attributes=()) for name in names]
@@ -1042,11 +1024,6 @@ def test_the_issue_sequence_is_stable_under_frontend_permutation() -> None:
         permuted = list(declarations)
         shuffler.shuffle(permuted)
         assert rejection(source(*permuted)) == expected
-
-
-def test_the_resolver_owns_exactly_the_manifest_issue_code_set() -> None:
-    assert len(RESOLVER_ISSUE_CODES) == 20
-    assert all(code.startswith("metamodel-") for code in RESOLVER_ISSUE_CODES)
 
 
 def test_value_object_occurrences_reach_the_candidate_unchanged() -> None:

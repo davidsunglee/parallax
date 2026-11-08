@@ -915,8 +915,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         ),
         "member-column-defaults": (
             "no mirror authored; its ASCII default-column vectors are covered directly by "
-            "the metamodel naming, declaration frontend, descriptor serde/export, and "
-            "compile-sweep contract tests"
+            "the declaration frontend, descriptor serde/export, and compile-sweep "
+            "contract tests"
         ),
         "materialization-key-compatibility": (
             "portable compatibility-only model whose overlap and qualified-identity behavior "
