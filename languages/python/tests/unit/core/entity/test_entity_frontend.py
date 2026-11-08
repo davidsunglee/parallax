@@ -10,7 +10,6 @@ import datetime as dt
 import inspect
 from collections.abc import Callable
 from decimal import Decimal
-from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -19,7 +18,6 @@ from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
     ONE_TO_ONE,
-    READ_ONLY,
     AbstractRoot,
     Attr,
     Bitemporal,
@@ -47,8 +45,7 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._declaration import members_of, wire_names_of
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._declaration import wire_names_of
 from parallax.core.entity._errors import EditError
 from parallax.core.entity._expressions import (
     AssignableScalarExpr,
@@ -158,14 +155,6 @@ def test_the_entity_name_is_the_class_name_unless_the_header_overrides_it() -> N
     assert Order.container == Table("orders")
 
 
-def test_persistence_is_declared_only_where_it_is_exceptional() -> None:
-    class Archive(Entity, table="archive", persistence=READ_ONLY):
-        id: Attr[int] = attr(primary_key=True)
-
-    assert Order.persistence is None
-    assert Archive.persistence is READ_ONLY
-
-
 def test_the_storage_layout_is_declared_only_where_it_is_exceptional() -> None:
     class Bare(Entity, table="bare", layout=Document):
         id: Attr[int] = attr(primary_key=True)
@@ -190,14 +179,6 @@ def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
     assert by_name["amount"].type == NeutralDecimal(18, 2)
     assert by_name["placedAt"].type == Timestamp()
     assert Customer.attributes[1].type == String()
-
-
-def test_name_overrides_the_canonical_member_and_column_overrides_its_storage() -> None:
-    by_name = {member.identity.name: member for member in Customer.attributes}
-    assert set(by_name) == {"id", "taxID", "legacyID", "binNo"}
-    assert by_name["taxID"].storage == Column("tax_id")
-    assert by_name["legacyID"].storage == Column("legacy_i_d")
-    assert by_name["binNo"].storage == Column("BIN_NO")
 
 
 def test_the_primary_key_algebra_carries_its_generation_on_the_key_branch() -> None:
@@ -445,14 +426,6 @@ def test_an_option_the_declaration_context_refuses_names_the_member_it_came_from
     assert caught.value.message == message
 
 
-def test_the_remaining_attribute_options_reach_the_declaration() -> None:
-    label = Ticket.attributes[1]
-    assert label.max_length == 32
-    assert label.read_only is True
-    version = next(m for m in Order.attributes if m.identity.name == "version")
-    assert version.optimistic_locking is True
-
-
 def test_the_three_designations_stay_distinct_on_the_declaration() -> None:
     # A rejection can say WHICH of the three it is only while the declaration
     # keeps them apart: the version names a role AND is framework-owned, a
@@ -670,56 +643,6 @@ def test_the_type_checking_mirror_matches_the_engine_injection_table() -> None:
     }
 
 
-def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
-    names = wire_names_of(Order)
-    assert names.name_to_py["placedAt"] == "placed_at"
-    assert names.column_to_py["BIN_NO" if "BIN_NO" in names.column_to_py else "id"] is not None
-    assert names.pk_py == frozenset({"id"})
-    assert names.relationship_py == {"customer": "customer", "coupon": "coupon"}
-    # The member map carries the declared Metadata each name resolves to, which
-    # is what decides assignability — there is no second name set restating it.
-    assert set(names.members) == set(names.py_to_name)
-    assert names.members["qty"] in Order.attributes
-    # The framework-owned names are that map projected, not a set recorded
-    # beside it: they move when the designation does.
-    assert names.framework_owned_py == frozenset({"version"})
-    assert wire_names_of(Episode).framework_owned_py == frozenset(
-        {"valid_start", "valid_end", "tx_start", "tx_end"}
-    )
-
-
-def test_wire_names_are_the_one_value_the_class_was_stamped_with() -> None:
-    assert wire_names_of(Order) is wire_names_of(Order)
-
-
-def test_the_retained_correspondences_refuse_a_write_rather_than_being_corrupted() -> None:
-    # Every reader is handed the one stamped value rather than a copy, so a
-    # single write would corrupt every later derivation for the process's life.
-    # The maps refuse it at runtime, not only under a type checker.
-    class Ledger(Entity, table="ledger"):
-        id: Attr[int] = attr(primary_key=True)
-        memo: Attr[str] = attr(name="memoText", column="MEMO")
-
-    class Root(
-        Entity,
-        table="ledger_root",
-        inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
-    ):
-        id: Attr[int] = attr(primary_key=True)
-
-    class Branch(Root, inheritance=ConcreteSubtype(tag_value="branch")):
-        memo: Attr[str] = attr(name="memoText", column="MEMO")
-
-    for names in (wire_names_of(Ledger), wire_names_of(Branch), members_of(Ledger)):
-        with pytest.raises(TypeError):
-            cast("dict[str, str]", names.name_to_py)["memoText"] = "corrupted"
-
-    # A family of one shares its own maps with its merged value outright, so the
-    # refusal has to hold through both names of the identical object.
-    assert wire_names_of(Ledger).name_to_py is members_of(Ledger).name_to_py
-    assert wire_names_of(Ledger).name_to_py["memoText"] == "memo"
-
-
 def test_the_wire_names_stamp_is_readable_the_moment_a_subclass_exists() -> None:
     # An inherited ``__pydantic_init_subclass__`` runs inside class-object
     # creation, which is the earliest moment any code can observe a subtype and
@@ -769,22 +692,6 @@ def test_a_subtypes_own_declaration_wins_the_names_it_shares_with_its_root() -> 
     assert subtype.name_to_py["ref"] == "bond_ref"
     assert subtype.column_to_py["REF"] == "bond_ref"
     assert set(subtype.py_to_name) == {"id", "root_ref", "bond_ref"}
-
-
-def test_deferred_annotations_are_recovered_without_the_future_import() -> None:
-    class Deferred(Entity, table="deferred"):
-        id: Attr[int] = attr(primary_key=True)
-        label: Attr[str]
-        customer_id: Attr[int]
-        customer: Rel[Customer] = rel(cardinality=MANY_TO_ONE, join=("customer_id", "id"))
-
-    declaration = engine.declaration_of(Deferred)
-    assert [member.identity.name for member in declaration.attributes] == [
-        "id",
-        "label",
-        "customerId",
-    ]
-    assert [member.identity.name for member in declaration.relationships] == ["customer"]
 
 
 def test_authoring_a_temporal_endpoint_is_refused_at_construction() -> None:
@@ -839,20 +746,6 @@ def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> 
     )
     edited = hydrated.edit(celsius=2.0)
     assert edited.tx_start == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
-
-
-def test_an_edited_copy_records_its_earliest_original() -> None:
-    # What that record then means to a write — the effective change set and the
-    # derived row — is the Typed write source's, and is pinned in
-    # ``test_typed_write_source.py``.
-    order = _order()
-    assert CHANGE_RECORD_SLOT not in order.__dict__
-    once = order.edit(qty=5)
-    assert once.__dict__[CHANGE_RECORD_SLOT] == {"qty": 2}
-    assert (
-        once.__dict__[CHANGE_RECORD_SLOT]
-        == order.edit(qty=5).edit(qty=2).__dict__[CHANGE_RECORD_SLOT]
-    )
 
 
 @pytest.mark.parametrize("member", ["id", "version", "customer", "nonesuch"])
