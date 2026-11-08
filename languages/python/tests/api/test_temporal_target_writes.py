@@ -31,6 +31,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     Attr,
     Bitemporal,
+    ConflictError,
     Document,
     DomainModel,
     TxTemporal,
@@ -49,7 +50,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
-    OptimisticLockConflictError,
+    OPTIMISTIC_LOCK_CONFLICT,
     WriteEvidenceError,
     WritePreconditionError,
 )
@@ -1006,7 +1007,8 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
         ours.transact(
             lambda tx: _span_patch(tx, entity, amount=150), retry=RetryPolicy(max_retries=0)
         )
-    assert isinstance(failed.value.cause, OptimisticLockConflictError)
+    assert isinstance(failed.value.cause, ConflictError)
+    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert [row[:2] for row in _span_rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
 
@@ -1051,7 +1053,8 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
     # The peer's close waited for the commit, then found its milestone gone.
     (failure,) = peer_failures
     assert isinstance(failure, ExecutionFailure)
-    assert isinstance(failure.cause, OptimisticLockConflictError)
+    assert isinstance(failure.cause, ConflictError)
+    assert failure.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert [row[:6] for row in _span_rows(profile_run, entity)] == [
         (_T0, _TA, _JAN, _JUN, 100, "a"),
         (_T1, _TA, _JUN, None, 200, "b"),
@@ -1153,7 +1156,8 @@ def test_a_source_replacement_whose_evidence_fails_opens_nothing(
 
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(fn, retry=RetryPolicy(max_retries=0))
-    assert isinstance(failed.value.cause, OptimisticLockConflictError)
+    assert isinstance(failed.value.cause, ConflictError)
+    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     rows = _span_rows(profile_run, entity)
     assert all(row[4] != 300 for row in rows)
     assert not any(row[2] == _APR for row in rows)

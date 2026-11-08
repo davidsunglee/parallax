@@ -170,10 +170,11 @@ order (`m-execution-authority` *Join authority*). Authority, access-mode, and op
 healthy transaction usable when caught. A joined callback failure marks the
 outer transaction rollback-only before escaping; catching it cannot permit a
 commit. A failure while a flush executes — a database error or an affected-row
-`WriteEffectError`, whether the flush served a dependent read or a commit —
+refusal, whether the flush served a dependent read or a commit —
 likewise marks the transaction rollback-only before it escapes the operation
 that triggered the flush. Once rollback-only, every further read, write, or
-joining callback raises `RollbackOnlyError` with the original cause, and a
+joining callback raises `UsageError(transaction-rollback-only)` with the original
+cause, and a
 callback that caught the failure and returned normally still rolls back with its
 result withheld. Preparation, evidence, and planning refusals raised by a write
 verb leave the transaction usable when caught. Transaction context references

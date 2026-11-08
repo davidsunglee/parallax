@@ -162,7 +162,7 @@ def test_translate_driver_error_keeps_a_checks_name_without_reading_it_as_an_ind
     assert (error.category, error.native_code) == ("constraintViolation", "23514")
     assert error.constraint_name == "pxc_tx_balance_c54215aec2277be436e89b2c6506715d"
     assert error.violated_index is None
-    assert not error.is_retriable
+    assert not error.is_transient
 
 
 def test_translate_driver_error_reports_no_index_when_the_diagnostics_name_none() -> None:

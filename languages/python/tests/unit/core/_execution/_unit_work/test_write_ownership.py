@@ -22,9 +22,9 @@ from weakref import WeakValueDictionary
 
 import pytest
 
-from parallax.core import temporal_read
-from parallax.core._execution._unit_work._errors import UnitOfWorkError
+from parallax.core import UsageError, temporal_read
 from parallax.core._execution._unit_work._write_ownership import (
+    INSERTION_AUTHORITY_INVALID,
     NO_INSERTION_AUTHORITY,
     InsertionComposition,
     KeyedWriteRefusalAdvice,
@@ -63,6 +63,7 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, MaxPlusOne, WriteRow
+from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import source_authority
 from tests._support.write_preparation import write_preparation_of
@@ -367,7 +368,7 @@ def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() ->
         write_preparation_of(_POSITION),
     )
     assert isinstance(amendment, PreparedKeyedInstruction)
-    with pytest.raises(UnitOfWorkError, match="no longer stands"):
+    with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
         ownership.resolve_insertion_authorized_write(
             InsertionAuthorizedWrite(amendment, _KEY, first)
         )

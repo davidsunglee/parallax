@@ -92,7 +92,7 @@ def test_classify_error_uncategorized_for_an_unknown_code() -> None:
     error = classify_error(POSTGRES, "99999", "mystery")
     assert error.category is None
     assert error.native_code == "99999"
-    assert not error.is_retriable
+    assert not error.is_transient
     assert not error.violates_unique_index
     assert not error.is_timed_out
 
@@ -107,20 +107,23 @@ def test_classify_error_uncategorized_without_a_native_code() -> None:
 
 
 @pytest.mark.parametrize(
-    ("category", "retriable", "unique", "timed_out"),
+    ("category", "transient", "unique", "timed_out"),
     [
         (UNIQUE_VIOLATION, False, True, False),
         (CONSTRAINT_VIOLATION, False, False, False),
         (DEADLOCK, True, False, False),
-        (LOCK_WAIT_TIMEOUT, False, False, True),
+        (LOCK_WAIT_TIMEOUT, True, False, True),
+        (CONNECTION_DEAD, False, False, False),
         (None, False, False, False),
     ],
 )
 def test_database_error_properties_reflect_predicates(
-    category: Category | None, retriable: bool, unique: bool, timed_out: bool
+    category: Category | None, transient: bool, unique: bool, timed_out: bool
 ) -> None:
+    # A lock-wait timeout may succeed later although the retry loop never
+    # replays one, so it is transient without being retriable.
     error = DatabaseError(category=category, native_code="x", message="m")
-    assert error.is_retriable is retriable
+    assert error.is_transient is transient
     assert error.violates_unique_index is unique
     assert error.is_timed_out is timed_out
 

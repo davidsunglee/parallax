@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Final, Literal, Protocol, runtime_checkable
 
 from parallax.core.base import ParallaxError
 from parallax.core.diagnostics import FailureDiagnostic
@@ -176,6 +176,11 @@ statement ran, so nothing was classified, and no retry rule reads them.
 """
 
 
+_TRANSIENT_ACQUISITION_REASONS: Final[frozenset[AcquisitionReason]] = frozenset(
+    {"timeout", "queue_rejected", "unavailable"}
+)
+
+
 class ConnectionAcquisitionError(ParallaxError):
     """No connection was acquired, and ``reason`` says which way.
 
@@ -202,6 +207,12 @@ class ConnectionAcquisitionError(ParallaxError):
         super().__init__("connection-acquisition-failed", message)
         self.reason: AcquisitionReason = reason
         self.selection: RouteSelection | None = selection
+
+    @property
+    def is_transient(self) -> bool:
+        """A budget spent waiting, a full waiting queue, and an unreachable
+        route may each clear by a later attempt."""
+        return self.reason in _TRANSIENT_ACQUISITION_REASONS
 
 
 class InvalidAuthorizationError(ValueError):

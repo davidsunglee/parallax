@@ -14,13 +14,12 @@ from typing import Any
 
 import pytest
 
-from parallax.core import inheritance, temporal_read
+from parallax.core import ConflictError, inheritance, temporal_read
 from parallax.core._execution._unit_work.strategy import NO_AUDIT, AuditDecoration
 from parallax.core.base import INFINITY
 from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write import TemporalConflictError
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, CoverageTransform
 from parallax.core.temporal_write.expansion import (
     ExpansionRole,
@@ -29,6 +28,7 @@ from parallax.core.temporal_write.expansion import (
     TemporalFacts,
     opening,
 )
+from parallax.core.unit_work import TEMPORAL_CONFLICT
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
 from parallax.core.write_plan.keys import TemporalObjectStateKey
@@ -67,6 +67,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import inert_instant
+from tests._support.errors import raises_code
 from tests._support.managed_rows import row_selection_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
@@ -370,17 +371,17 @@ def test_a_close_at_or_before_its_predecessors_stored_start_is_refused(
             decorated.append(close)
             return close
 
-    with pytest.raises(TemporalConflictError) as refused:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
         _expand(
             _expansion(_SPAN_FACTS, transform, gated=gated, audit=Recording()),
             _SPAN_FACTS,
             predecessor,
             role,
         )
-    assert refused.value.entity == _SPAN
-    assert refused.value.instant == _NOW
-    assert refused.value.key == {"id": 1}
-    assert refused.value.stored_bound == stored_start
+    assert (refused.value.entity, refused.value.key) == (_SPAN.canonical, {"id": 1})
+    assert refused.value.is_transient
+    assert f"Transaction Instant {_NOW.isoformat()} " in str(refused.value)
+    assert f"stored start {stored_start.isoformat()}" in str(refused.value)
     assert decorated == []
 
 
@@ -389,13 +390,14 @@ def test_a_transaction_time_only_close_at_or_before_its_stored_start_is_refused(
     stored_start: dt.datetime,
 ) -> None:
     predecessor = PredecessorRow(members={**_balance().members, "txStart": stored_start})
-    with pytest.raises(TemporalConflictError) as refused:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
         _expand(
             _expansion(_BALANCE_FACTS, _assigning(None, {"value": Decimal("9.00")})),
             _BALANCE_FACTS,
             predecessor,
         )
-    assert (refused.value.key, refused.value.stored_bound) == ({"id": 1}, stored_start)
+    assert refused.value.key == {"id": 1}
+    assert f"stored start {stored_start.isoformat()}" in str(refused.value)
 
 
 def test_a_close_one_microsecond_after_its_predecessors_start_proceeds() -> None:

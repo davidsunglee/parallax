@@ -5,7 +5,7 @@ strictly later than the row's stored Transaction-Time start (`m-unit-work`
 *Closes the instant cannot follow*). A clock repeating an instant, a clock
 behind another writer's, and an instant one attempt captured before another
 transaction committed a later version all reach a refused close: a
-``TemporalConflictError`` whose attempt rolls back, storing nothing, and whose
+``temporal-conflict`` whose attempt rolls back, storing nothing, and whose
 retry is a new attempt at a fresh instant.
 
 Each proof drives the public Typed and Wire verbs under both storage layouts and
@@ -22,11 +22,20 @@ from typing import Any, Final, Literal
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock, ScriptedClock
-from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, attr
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    ConflictError,
+    Document,
+    DomainModel,
+    TxTemporal,
+    UsageError,
+    attr,
+)
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import RollbackOnlyError, TemporalConflictError
+from parallax.core.unit_work import TEMPORAL_CONFLICT, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
@@ -166,9 +175,10 @@ def _amend_until(tx: TxnContext, observed: Any, representation: _Representation)
         tx.wire.amend(observed, {"amount": 150}, until=_MAY)
 
 
-def _refused(failure: pytest.ExceptionInfo[ExecutionFailure]) -> TemporalConflictError:
+def _refused(failure: pytest.ExceptionInfo[ExecutionFailure]) -> ConflictError:
     cause = failure.value.cause
-    assert isinstance(cause, TemporalConflictError)
+    assert isinstance(cause, ConflictError)
+    assert cause.code == TEMPORAL_CONFLICT
     return cause
 
 
@@ -205,9 +215,9 @@ def test_a_transaction_time_close_at_or_before_its_stored_start_is_refused(
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(change, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     refusal = _refused(failed)
-    assert refusal.entity == _identity(entity)
-    assert (refusal.instant, refusal.stored_bound) == (instant, _SEEDED)
-    assert refusal.key == {"id": 1}
+    assert (refusal.entity, refusal.key) == (_identity(entity).canonical, {"id": 1})
+    assert f"Transaction Instant {instant.isoformat()} " in str(refusal)
+    assert f"stored start {_SEEDED.isoformat()}" in str(refusal)
     assert _log_rows(profile_run, entity) == [(_SEEDED, None, "seeded")]
 
 
@@ -230,7 +240,7 @@ def test_a_bounded_bitemporal_amendment_behind_its_stored_start_opens_no_piece(
             concurrency=concurrency,
             retry=RetryPolicy(max_retries=0),
         )
-    assert _refused(failed).stored_bound == _SEEDED
+    assert f"stored start {_SEEDED.isoformat()}" in str(_refused(failed))
     assert _span_rows(profile_run, entity) == [(_SEEDED, None, _JAN, None, 100)]
 
 
@@ -292,21 +302,21 @@ def test_a_caught_refusal_of_a_held_row_still_fails_the_attempt(
     # The refused write planned against the row its read holds stays buffered,
     # so the commit refuses it again rather than committing anything.
     db = _seeded_db(profile_run, entity, [_SEEDED, _SEEDED])
-    caught: list[TemporalConflictError] = []
+    caught: list[ConflictError] = []
 
     def change(tx: TxnContext) -> str:
         _amend(tx, _find(tx, entity, "typed"), "typed", "first")
         tx.insert(entity(id=2, label="other"))
         try:
             _find(tx, entity, "typed")
-        except TemporalConflictError as refusal:
+        except ConflictError as refusal:
             caught.append(refusal)
         return "withheld"
 
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(change, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     assert len(caught) == 1
-    assert _refused(failed).stored_bound == _SEEDED
+    assert f"stored start {_SEEDED.isoformat()}" in str(_refused(failed))
     assert _log_rows(profile_run, entity) == [(_SEEDED, None, "seeded")]
     assert _log_rows(profile_run, entity, key=2) == []
 
@@ -330,14 +340,16 @@ def test_a_caught_refusal_bound_inside_the_flush_dooms_the_attempt_and_is_retrie
         for _ in range(2):
             try:
                 _find(tx, entity, representation)
-            except (TemporalConflictError, RollbackOnlyError) as failure:
+            except (ConflictError, UsageError) as failure:
                 observed.append(failure)
 
     db.transact(change, concurrency="optimistic")
 
     refusal, doomed, *retried = observed
-    assert isinstance(refusal, TemporalConflictError)
-    assert isinstance(doomed, RollbackOnlyError)
+    assert isinstance(refusal, ConflictError)
+    assert refusal.code == TEMPORAL_CONFLICT
+    assert isinstance(doomed, UsageError)
+    assert doomed.code == TRANSACTION_ROLLBACK_ONLY
     assert doomed.__cause__ is refusal
     assert retried == []
     assert _log_rows(profile_run, entity) == [(_SEEDED, _JUN, "seeded"), (_JUN, None, "first")]

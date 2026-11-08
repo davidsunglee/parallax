@@ -22,7 +22,7 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import Attr, ConflictError, DomainModel, Entity, InternalError, UsageError, attr
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
@@ -37,9 +37,9 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
+    CARDINALITY_CORRUPTION,
+    OPTIMISTIC_LOCK_CONFLICT,
+    TRANSACTION_ROLLBACK_ONLY,
     WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
@@ -290,7 +290,7 @@ def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_ret
     starts = [call for call in _writes(lost_later) if call.binds[2] == _JUN]
     assert [call.binds[-1] for call in starts] == [_T0, _T0]
     without_retry = ScriptedAdapter(Transact(Read(rows=rows), Write(), Write(affected=0)))
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
         _db(without_retry).transact(
             lambda tx: _patch(tx, value="150.00"), retry=RetryPolicy(max_retries=0)
         )
@@ -903,7 +903,7 @@ def test_an_invariant_failure_of_the_start_outranks_the_callers_precondition() -
     port = ScriptedAdapter(
         Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=2))
     )
-    with raises_contextualized(CardinalityCorruptionError):
+    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION):
         _db(port).transact(lambda tx: _patch(tx, value="150.00"))
 
 
@@ -920,9 +920,9 @@ def test_two_current_rows_at_the_start_are_corruption_before_any_write(
         attempts += 1
         _patch(tx, value="150.00")
 
-    with raises_contextualized(CardinalityCorruptionError) as corrupt:
+    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION) as corrupt:
         _db(port).transact(fn, concurrency=concurrency)
-    assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert "affected 2 row(s), expected 1" in str(corrupt.value)
     assert attempts == 1
     assert _writes(port) == []
 
@@ -938,9 +938,9 @@ def test_a_locked_observation_and_a_flush_read_row_both_at_the_start_are_corrupt
         tx.amend(_source(tx).edit(acct_num="B"), until=_SEP)
         _patch(tx, value="150.00")
 
-    with raises_contextualized(CardinalityCorruptionError) as corrupt:
+    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION) as corrupt:
         _db(port).transact(fn, concurrency="locking")
-    assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert "affected 2 row(s), expected 1" in str(corrupt.value)
     assert _writes(port) == []
 
 
@@ -983,7 +983,7 @@ def test_a_caught_temporal_precondition_failure_still_rolls_the_attempt_back() -
             tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
         return "withheld"
 
-    with raises_contextualized(RollbackOnlyError):
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
         _db(port).transact(fn)
     assert RollbackCall() in port.calls
     assert _writes(port) == []

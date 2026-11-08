@@ -1631,14 +1631,15 @@ An execution result reports the driver's affected-row count; this module alone
 says what it means. SQL lowering and database adapters **report** counts and never
 classify them. Inserts expect nothing.
 
-Enforcement raises the closed, module-owned **Write Effect Error** family:
+Enforcement raises the closed, module-owned **Write Effect Error** family, four
+classifications:
 
 ```text
-MissingTargetError | StaleWriteError
-OptimisticLockConflictError | CardinalityCorruptionError
+Missing Target | Stale Write
+Optimistic Lock Conflict | Cardinality Corruption
 ```
 
-Each error carries the same semantic payload — the Entity Identity, the Write
+Each classification reports the same facts — the Entity Identity, the Write
 Target, the expected count, and the actual count — and **nothing else**: no SQL, statement index, driver exception, whole Planned Step,
 assignments, or observation. That keeps the diagnostic stable across dialects and
 lets `m-auto-retry` recognize the canonical Optimistic Lock Conflict Error over

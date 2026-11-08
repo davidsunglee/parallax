@@ -21,15 +21,24 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, attr, index
+from parallax.core import (
+    Attr,
+    ConflictError,
+    DomainModel,
+    Entity,
+    InternalError,
+    UsageError,
+    attr,
+    index,
+)
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution import RetryPolicy, ServingModel, TxnOptions, prepare_model
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
-    MissingTargetError,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
-    StaleWriteError,
+    CARDINALITY_CORRUPTION,
+    MISSING_TARGET,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
+    TRANSACTION_ROLLBACK_ONLY,
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
@@ -45,6 +54,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
@@ -131,7 +141,7 @@ def test_an_optimistic_conflict_surfaces_after_one_attempt_under_a_zero_bound() 
             Write(affected=0),
         )
     )
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
         account_db(port).transact(
             _observe_and_update, concurrency="optimistic", retry=RetryPolicy(max_retries=0)
         )
@@ -156,7 +166,7 @@ def test_an_optimistic_conflict_exhausts_its_bound() -> None:
             Transact(Read(rows=grace), Write(affected=0)) for _ in range(3)
         )  # every attempt conflicts
     )
-    with raises_contextualized(OptimisticLockConflictError) as excinfo:
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as excinfo:
         account_db(port).transact(
             _observe_and_update, concurrency="optimistic", retry=fast_retry(2)
         )
@@ -184,7 +194,7 @@ def test_stale_write_is_never_retried() -> None:
             Write(affected=0),
         )
     )
-    with raises_contextualized(StaleWriteError):
+    with raises_contextualized(ConflictError, code=STALE_WRITE):
         account_db(port).transact(_observe_and_update, concurrency="locking")
     assert port.calls.count(BeginCall()) == 1
 
@@ -201,7 +211,7 @@ def test_missing_target_is_never_retried() -> None:
     # read — an unversioned target needs no observation to WRITE, but every
     # keyed update needs a value some read of this store produced.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write(affected=0)))
-    with raises_contextualized(MissingTargetError):
+    with raises_contextualized(ConflictError, code=MISSING_TARGET):
         db_for(PERSON, port).transact(_rename_person)
     assert port.calls.count(BeginCall()) == 1
 
@@ -216,7 +226,7 @@ def test_cardinality_corruption_is_never_retried() -> None:
             Write(affected=2),
         )
     )
-    with raises_contextualized(CardinalityCorruptionError):
+    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION):
         account_db(port).transact(_observe_and_update, concurrency="optimistic")
     assert port.calls.count(BeginCall()) == 1
 
@@ -242,7 +252,7 @@ def test_optimistic_conflict_rollback_only_cause_is_retried() -> None:
     db = account_db(port)
 
     def outer(_tx: TxnContext) -> str:
-        with contextlib.suppress(OptimisticLockConflictError):
+        with contextlib.suppress(ConflictError):
             db.transact(_observe_update_then_force_flush)  # joins; conflicts mid-scope
         return "caught"
 
@@ -255,9 +265,9 @@ def test_optimistic_conflict_rollback_only_cause_is_retried() -> None:
 def _update_force_flush_and_catch(refusals: list[BaseException]) -> Callable[[TxnContext], str]:
     def callback(tx: TxnContext) -> str:
         _observe_and_update(tx)
-        with contextlib.suppress(OptimisticLockConflictError):
+        with contextlib.suppress(ConflictError):
             tx.find(mm.Account.where(mm.Account.id == 3))  # the flush this forces conflicts
-        with pytest.raises(RollbackOnlyError) as refused:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused:
             tx.find(mm.Account.where(mm.Account.id == 3))
         refusals.append(refused.value)
         return "caught"
@@ -273,15 +283,17 @@ def test_a_caught_dependent_read_flush_failure_refuses_further_work_and_the_comm
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
     refusals: list[BaseException] = []
-    with raises_contextualized(RollbackOnlyError) as failure:
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as failure:
         account_db(port).transact(
             _update_force_flush_and_catch(refusals),
             concurrency="optimistic",
             retry=RetryPolicy(max_retries=0),
         )
-    assert isinstance(failure.value.__cause__, OptimisticLockConflictError)
+    assert isinstance(failure.value.__cause__, ConflictError)
+    assert failure.value.__cause__.code == OPTIMISTIC_LOCK_CONFLICT
     (refusal,) = refusals
-    assert isinstance(refusal.__cause__, OptimisticLockConflictError)
+    assert isinstance(refusal.__cause__, ConflictError)
+    assert refusal.__cause__.code == OPTIMISTIC_LOCK_CONFLICT
     assert port.calls.count(CommitCall()) == 0
     assert port.calls.count(RollbackCall()) == 1
 
@@ -320,11 +332,11 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
         for current in tx.find(mm.Account.where(mm.Account.id >= 3)).results():
             tx.amend(current.edit(balance=Decimal("30.00")))
 
-    with raises_contextualized(OptimisticLockConflictError) as raised:
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as raised:
         account_db(port).transact(
             callback, concurrency="optimistic", retry=RetryPolicy(max_retries=0)
         )
-    assert raised.value.target.key_values == ((3,),)
+    assert raised.value.key == {"id": 3}
     writes = [call for call in port.calls if isinstance(call, ReadCall | WriteCall)][1:]
     assert len(writes) == 1
 
@@ -333,7 +345,7 @@ def test_a_zero_bound_root_surfaces_a_conflict_and_an_explicit_bound_replays_it(
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     zero = TxnOptions(retry=RetryPolicy(max_retries=0))
     port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
         _configured_db(port, zero).transact(_observe_and_update)
     assert port.calls.count(BeginCall()) == 1
     port = ScriptedAdapter(

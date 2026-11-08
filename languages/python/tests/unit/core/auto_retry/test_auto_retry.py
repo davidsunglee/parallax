@@ -12,7 +12,6 @@ Conflict's own verdict is graded here beside the loop.
 from __future__ import annotations
 
 import dataclasses
-import datetime as dt
 import math
 import random
 import sys
@@ -23,18 +22,26 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.core import ConflictError, InternalError, UsageError
 from parallax.core.auto_retry import (
     AdaptiveBackoff,
-    RetryCandidate,
     RetryPolicy,
     RetryTiming,
+    _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - handed to the loop as the runner does
     retry_eligible,
     retry_policy,
     run_with_retry,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import RollbackOnlyError, TemporalConflictError
+from parallax.core.unit_work import (
+    MISSING_TARGET,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
+    TEMPORAL_CONFLICT,
+    TRANSACTION_ESCAPED,
+    TRANSACTION_ROLLBACK_ONLY,
+    WRITE_PRECONDITION_FAILED,
+)
 
 
 @dataclass
@@ -104,7 +111,7 @@ def _failing_for(
         if duration is None:
             return "ok"
         timeline.work(duration)
-        raise RetryCandidate(failure)
+        raise _RetryCandidate(failure)
 
     return attempt
 
@@ -546,19 +553,24 @@ def test_the_converter_answers_a_policy_itself_and_refuses_anything_else() -> No
             retry_policy(value)
 
 
-_CONFLICT = TemporalConflictError(
-    EntityIdentity("parallax.compatibility", "Balance"),
-    dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+_CONFLICT = ConflictError(
+    TEMPORAL_CONFLICT,
+    "the Transaction Instant does not follow stored temporal history",
+    entity="parallax.compatibility.Balance",
     key={"id": 1},
-    stored_bound=dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    transient=True,
 )
 
 
-def _doomed_by(cause: BaseException) -> RollbackOnlyError:
+def _refused_by(code: str, cause: BaseException) -> UsageError:
     try:
-        raise RollbackOnlyError("the attempt is rollback-only") from cause
-    except RollbackOnlyError as refused:
+        raise UsageError(code, "the attempt refused further work") from cause
+    except UsageError as refused:
         return refused
+
+
+def _doomed_by(cause: BaseException) -> UsageError:
+    return _refused_by(TRANSACTION_ROLLBACK_ONLY, cause)
 
 
 @pytest.mark.parametrize(
@@ -568,6 +580,32 @@ def _doomed_by(cause: BaseException) -> RollbackOnlyError:
 )
 def test_a_temporal_conflict_is_a_recoverable_conflict(failure: BaseException) -> None:
     assert retry_eligible(failure)
+
+
+@pytest.mark.parametrize(
+    "code", [MISSING_TARGET, STALE_WRITE, WRITE_PRECONDITION_FAILED, OPTIMISTIC_LOCK_CONFLICT]
+)
+def test_a_conflict_is_eligible_exactly_when_its_raise_site_stated_it_transient(
+    code: str,
+) -> None:
+    # The verdict reads the raise site's statement, never the code: the same
+    # code raised without it is not replayed.
+    assert retry_eligible(ConflictError(code, "m", transient=True))
+    assert not retry_eligible(ConflictError(code, "m"))
+
+
+def test_only_the_rollback_only_refusal_hands_on_its_cause() -> None:
+    assert not retry_eligible(_refused_by(TRANSACTION_ESCAPED, _CONFLICT))
+    assert not retry_eligible(InternalError(TRANSACTION_ROLLBACK_ONLY, "m"))
+
+
+def test_a_lock_wait_timeout_is_transient_but_never_replayed() -> None:
+    timeout = DatabaseError(category="lockWaitTimeout", native_code="55P03", message="m")
+    assert timeout.is_transient
+    assert not retry_eligible(timeout)
+    deadlock = DatabaseError(category="deadlock", native_code="40P01", message="m")
+    assert deadlock.is_transient
+    assert retry_eligible(deadlock)
 
 
 def _exclusion_violation() -> DatabaseError:

@@ -59,7 +59,7 @@ class TxnContext:
     Every windowed verb selects its bounded form with keyword-only ``until``,
     and a stated ``valid_from`` or ``until`` of ``None`` is refused rather than
     read as omission. A reference used after its attempt ended raises
-    ``EscapedTransactionError``: the attempt's lifetime fences every verb.
+    ``transaction-escaped``: the attempt's lifetime fences every verb.
 
     :attr:`wire` is the Wire read AND write interface over this same transaction
     — a view, not a second lifecycle, so a Wire read participates exactly as
@@ -526,7 +526,7 @@ class ReadOnlyTxnContext:
     exactly as :class:`TxnContext` does — :meth:`find`, :meth:`stream`, and
     :attr:`wire` — except that no read takes a participation lock, the
     unversioned fallback included, and it has no verb that writes. A reference
-    used after its attempt ended raises ``EscapedTransactionError``, a live stream
+    used after its attempt ended raises ``transaction-escaped``, a live stream
     included.
     """
 

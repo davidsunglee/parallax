@@ -20,6 +20,7 @@ from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
     AcquisitionReason,
+    ConnectionAcquisitionError,
     ConnectionContext,
     ConnectionContextSource,
     DatabaseConnection,
@@ -214,3 +215,12 @@ def test_a_pipeline_answered_statement_by_statement_keeps_the_batchs_read_intent
     port.execute_pipeline((PipelineStatement("c"),))
 
     assert port.received == [("execute", True), ("execute", True), ("execute", False)]
+
+
+def test_an_acquisition_failure_is_transient_only_where_a_later_attempt_may_connect() -> None:
+    transient = {
+        reason
+        for reason in get_args(AcquisitionReason.__value__)
+        if ConnectionAcquisitionError("m", reason=reason).is_transient
+    }
+    assert transient == {"timeout", "queue_rejected", "unavailable"}

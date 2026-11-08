@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import pytest
 
+from parallax.core import InternalError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
 from parallax.core._execution._unit_work.write_items import (
@@ -20,7 +21,7 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.base import INFINITY
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
+    CARDINALITY_CORRUPTION,
     TransactionInstant,
     WritePlanningRequest,
     WritePreconditionError,
@@ -48,6 +49,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
@@ -282,7 +284,7 @@ def test_two_current_rows_at_any_operations_start_are_corruption() -> None:
     )
     overlapping = [rectangle(JAN, JUN, "100.00"), rectangle(MAY, DEC, "1.00", tx_start=T1)]
     overlapping.append(rectangle(JUN, SEP, "2.00", tx_start=T1))
-    with pytest.raises(CardinalityCorruptionError):
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         _bound(settled, overlapping)
 
 

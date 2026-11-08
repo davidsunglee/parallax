@@ -11,7 +11,16 @@ from typing import Final
 
 import pytest
 
-from parallax.core import Attr, Bitemporal, DomainModel, Entity, Int32, TxTemporal, attr
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    ConflictError,
+    DomainModel,
+    Entity,
+    Int32,
+    TxTemporal,
+    attr,
+)
 from parallax.core._execution._unit_work import write_settlement
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
@@ -26,8 +35,7 @@ from parallax.core.execution_lifecycle import (
     FlushStarted,
     RootExecution,
 )
-from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.core.write_plan.steps import MilestoneTarget
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -326,13 +334,11 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
         ),
         ordered=True,
     )
-    with raises_contextualized(OptimisticLockConflictError) as raised:
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as raised:
         db_for(_MODEL, port).transact(
             _loop("transaction-time"), concurrency="optimistic", retry=RetryPolicy(max_retries=0)
         )
-    target = raised.value.target
-    assert isinstance(target, MilestoneTarget)
-    assert target.key_values == (2,)
+    assert raised.value.key == {"id": 2}
     assert _shapes(port.calls) == [("grouped", 2)]
     assert [type(call) for call in port.calls] == [BeginCall, ReadCall, ReadCall, RollbackCall]
 

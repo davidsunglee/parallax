@@ -116,9 +116,10 @@ class DatabaseError(ParallaxError):
         return PhysicalIndexName(self.constraint_name)
 
     @property
-    def is_retriable(self) -> bool:
-        """The retry-loop predicate (`m-auto-retry`) over this error's category."""
-        return is_retriable(self.category)
+    def is_transient(self) -> bool:
+        """A deadlock or serialization failure, which the retry loop replays,
+        and a lock-wait timeout, which it does not, may each succeed later."""
+        return is_retriable(self.category) or is_timed_out(self.category)
 
     @property
     def violates_unique_index(self) -> bool:

@@ -31,6 +31,7 @@ from parallax.core import (
     TX_TIME,
     Attr,
     Bitemporal,
+    ConflictError,
     Document,
     DomainModel,
     Entity,
@@ -52,8 +53,8 @@ from parallax.core.predicate import ModelRejectedError, QueryDefinitionError
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
+    STALE_WRITE,
     ReadEvidence,
-    StaleWriteError,
 )
 from parallax.core.write_plan import TemporalObservation
 from parallax.snapshot import Database, ReadOnlyTxnContext, TxnContext, WireEntity
@@ -969,7 +970,7 @@ def test_a_locking_temporal_close_missing_its_row_is_a_stale_write__m_temporal_r
         )
     )
 
-    with raises_contextualized(StaleWriteError):
+    with raises_contextualized(ConflictError, code=STALE_WRITE):
         db_for(BALANCE, port).transact(_terminate_balance_1, concurrency="locking")
     assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
     (close,) = [call for call in port.calls if isinstance(call, WriteCall)]

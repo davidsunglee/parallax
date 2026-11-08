@@ -26,6 +26,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import (
     MAX,
     Attr,
+    ConflictError,
     DomainModel,
     TxTemporal,
     attr,
@@ -44,9 +45,9 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, TransactionTimeOnly
 from parallax.core.unit_work import (
+    TEMPORAL_CONFLICT,
     KeyedMutation,
     KeyedWriteInstruction,
-    TemporalConflictError,
     TransactionSettings,
     UnitOfWork,
 )
@@ -84,6 +85,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.descriptor._records import Metamodel
 from tests._support.clock_probes import instant_at
+from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
@@ -885,12 +887,12 @@ def test_a_row_the_attempt_did_not_open_is_never_closed_at_or_before_its_start(
     # this one would be closed into an empty or inverted interval.
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
     observation = _observed(tx_start=stored_start, payload={"id": 1, "acctNum": "A", "value": 150})
-    with pytest.raises(TemporalConflictError) as refused:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
         _finalize(update, BALANCE, _T, observation=observation)
-    assert refused.value.entity == _BALANCE_ID
-    assert refused.value.instant == _instant(_T)
-    assert refused.value.key == {"id": 1}
-    assert refused.value.stored_bound == _instant(stored_start)
+    assert (refused.value.entity, refused.value.key) == (_BALANCE_ID.canonical, {"id": 1})
+    assert refused.value.is_transient
+    assert f"Transaction Instant {_instant(_T).isoformat()} " in str(refused.value)
+    assert f"stored start {_instant(stored_start).isoformat()}" in str(refused.value)
 
 
 def _owned_position(valid_start: str, valid_end: str = "infinity") -> TemporalObservation:

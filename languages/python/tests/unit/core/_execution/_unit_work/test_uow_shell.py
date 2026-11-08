@@ -28,13 +28,25 @@ from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, DomainModel, Entity, attr, inheritance, temporal_read
+from parallax.core import (
+    Attr,
+    ConflictError,
+    DomainModel,
+    Entity,
+    UsageError,
+    attr,
+    inheritance,
+    temporal_read,
+)
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import write_settlement
-from parallax.core._execution._unit_work._write_ownership import NO_INSERTION_AUTHORITY
+from parallax.core._execution._unit_work._write_ownership import (
+    INSERTION_AUTHORITY_INVALID,
+    NO_INSERTION_AUTHORITY,
+)
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CoverageReadRequest,
@@ -51,7 +63,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
-from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenFlush
+from parallax.core._execution._unit_work.uow import OpenFlush
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
     KeyedInsert,
@@ -67,6 +79,9 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
+    TEMPORAL_CONFLICT,
+    TRANSACTION_ESCAPED,
+    TRANSACTION_ROLLBACK_ONLY,
     BufferOutcome,
     Clock,
     FlushTrigger,
@@ -76,13 +91,10 @@ from parallax.core.unit_work import (
     PredicateWriteInstruction,
     ReadAuthorizedWrite,
     RetainedObservation,
-    RollbackOnlyError,
     SystemClock,
-    TemporalConflictError,
     TransactionInstant,
     TransactionSettings,
     UnitOfWork,
-    UnitOfWorkError,
     WriteAssignment,
     WriteEvidenceError,
     WritePlanner,
@@ -114,6 +126,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
 )
 from tests._support.clock_probes import CountingClock
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     TEST_ACTOR_IDENTITY,
@@ -273,11 +286,11 @@ def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -
         tx.buffer_insert(_account_insert(9), insertion_advice=None)
         lifetime.doom(first)
         lifetime.doom(RuntimeError("second"))
-        with pytest.raises(RollbackOnlyError):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             tx.buffer_insert(_account_insert(10), insertion_advice=None)
         return "withheld"
 
-    with pytest.raises(RollbackOnlyError) as exc:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as exc:
         _run(body, lifetime=lifetime, opening=_opener(order))
     assert exc.value.__cause__ is first
     assert order == []  # the flush was refused before it planned
@@ -380,7 +393,7 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
 
     def body(tx: UnitOfWork) -> None:
         stranger = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
-        with pytest.raises(UnitOfWorkError, match="no longer stands"):
+        with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
             tx.buffer(admitted_write(update, None, stranger.object_key, authority=stranger))
         superseded = tx.buffer_insert(_account_insert(1), insertion_advice=None)
         assert superseded is not None
@@ -390,7 +403,7 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
         assert standing is not None and standing is not superseded
         assert tx.source_authority.insertion_authority(stranger) is NO_INSERTION_AUTHORITY
         assert tx.source_authority.insertion_authority(superseded) is NO_INSERTION_AUTHORITY
-        with pytest.raises(UnitOfWorkError, match="no longer stands"):
+        with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
             tx.buffer(admitted_write(update, None, superseded.object_key, authority=superseded))
         # A standing insertion of an object without Valid Time has no window,
         # which is not the absence of its authority.
@@ -510,9 +523,9 @@ def test_escaped_reference_raises_on_every_use() -> None:
 
     _run(body)
     tx = captured["tx"]
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         tx.buffer_insert(_account_insert(1), insertion_advice=None)
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         tx.source_authority.retain(
             RetainedObservation(
                 VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 1),
@@ -520,9 +533,9 @@ def test_escaped_reference_raises_on_every_use() -> None:
                 None,
             )
         )
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         tx.flush(trigger="pre_commit")
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         tx.read(lambda: None)
 
 
@@ -869,7 +882,7 @@ def test_a_row_its_settled_write_removed_is_no_longer_owned() -> None:
         # refused rather than revising it in place.
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    with pytest.raises(TemporalConflictError):
+    with raises_code(ConflictError, TEMPORAL_CONFLICT):
         _run(body, meta=_BALANCE, steps=simulated)
     assert _kinds(simulated) == ["insert", "delete", "delete"]
 
@@ -880,9 +893,9 @@ def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_open
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    with pytest.raises(TemporalConflictError) as refused:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
         _run(body, meta=_BALANCE, steps=simulated)
-    assert refused.value.stored_bound == _FIXED
+    assert f"stored start {_FIXED.isoformat()}" in str(refused.value)
     assert _kinds(simulated) == []
 
 
@@ -949,7 +962,7 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
         with pytest.raises(RuntimeError, match="the second group failed"):
             uow.read(lambda: None)
 
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _run(failed, steps=steps)
     assert [claim.invalidated for claim in failing] == [True] * limit + [False] * (limit + 2)
     assert steps.executions == 2
@@ -966,14 +979,14 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
         uow.buffer(claimed)
         with pytest.raises(RuntimeError, match="the statement failed"):
             uow.read(lambda: None)
-        with pytest.raises(RollbackOnlyError) as refused:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused:
             uow.read(lambda: None)
         assert refused.value.__cause__ is failure
-        with pytest.raises(RollbackOnlyError):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             uow.buffer_insert(_account_insert(5), insertion_advice=None)
         return "withheld"
 
-    with pytest.raises(RollbackOnlyError) as exc:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as exc:
         _run(body, steps=steps)
     assert exc.value.__cause__ is failure
     assert not claimed.retained_observation.invalidated
@@ -1182,7 +1195,7 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
         with pytest.raises(RuntimeError, match="the group failed"):
             uow.read(lambda: None)
 
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _run(body, steps=ObservedSteps(_simulated(), failing=failing, failure=failure))
     assert tuple(claim.invalidated for claim in claims) == published
 
@@ -1516,7 +1529,7 @@ def test_an_empty_predicate_write_is_refused_once_the_lifetime_has_ended() -> No
         captured["tx"] = tx
 
     _run(body, meta=_PREDICATED)
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         captured["tx"].execute_predicate(_shell_predicate_write(assignments=()))
 
 
@@ -1526,11 +1539,11 @@ def test_a_doomed_lifetime_refuses_an_empty_predicate_write() -> None:
 
     def body(tx: UnitOfWork) -> None:
         lifetime.doom(cause)
-        with pytest.raises(RollbackOnlyError) as refused:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused:
             tx.execute_predicate(_shell_predicate_write(assignments=()))
         assert refused.value.__cause__ is cause
 
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _run(body, meta=_PREDICATED, lifetime=lifetime)
 
 
@@ -1596,7 +1609,7 @@ def test_an_execution_failure_before_a_predicate_write_dooms_it_unplanned(
         with pytest.raises(RuntimeError, match="the insert failed"):
             uow.execute_predicate(_shell_predicate_write())
 
-    with pytest.raises(RollbackOnlyError) as doomed:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as doomed:
         _run(body, meta=_PREDICATED, steps=steps, counted=_Counted(simulated, order))
     assert doomed.value.__cause__ is failure
     assert (planned, order) == ([], [])
@@ -1639,12 +1652,12 @@ def test_a_failure_executing_a_predicate_write_dooms_the_attempt() -> None:
     def body(uow: UnitOfWork) -> str:
         with pytest.raises(RuntimeError, match="the predicate statement failed"):
             uow.execute_predicate(_shell_predicate_write())
-        with pytest.raises(RollbackOnlyError) as refused:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused:
             uow.read(lambda: None)
         assert refused.value.__cause__ is failure
         return "withheld"
 
-    with pytest.raises(RollbackOnlyError):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _run(
             body,
             meta=_PREDICATED,
@@ -1737,19 +1750,20 @@ def test_a_held_predecessor_starting_later_is_refused_while_planning() -> None:
     # instant captured once however many flushes plan it again.
     clock = CountingClock([_FIXED])
     simulated = _simulated(_BALANCE)
-    refusals: list[TemporalConflictError] = []
+    refusals: list[ConflictError] = []
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_update_from(1, _LATER))
         for _ in range(2):
-            with pytest.raises(TemporalConflictError) as refused:
+            with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
                 uow.read(lambda: None)
             refusals.append(refused.value)
 
-    with pytest.raises(TemporalConflictError) as at_commit:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT) as at_commit:
         _run(body, meta=_BALANCE, steps=simulated, clock=clock)
-    assert [refusal.stored_bound for refusal in (*refusals, at_commit.value)] == [_LATER] * 3
-    assert {refusal.instant for refusal in (*refusals, at_commit.value)} == {_FIXED}
+    for refusal in (*refusals, at_commit.value):
+        assert f"Transaction Instant {_FIXED.isoformat()} " in str(refusal)
+        assert f"stored start {_LATER.isoformat()}" in str(refusal)
     assert clock.calls == 1
     assert _kinds(simulated) == []
 
@@ -1777,21 +1791,23 @@ def test_a_predecessor_bound_inside_the_flush_starting_later_dooms_the_attempt()
     clock = CountingClock([_FIXED])
     simulated = _simulated(_PREDICATED)
     coverage = HeldRows(_PREDICATED, (_position_row(_JAN, _LATER),))
-    caught: list[TemporalConflictError] = []
+    caught: list[ConflictError] = []
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer_target(_late_position_target())
-        with pytest.raises(TemporalConflictError) as refused:
+        with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
             uow.read(lambda: None)
         caught.append(refused.value)
-        with pytest.raises(RollbackOnlyError) as doomed:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as doomed:
             uow.read(lambda: None)
         assert doomed.value.__cause__ is refused.value
 
-    with pytest.raises(RollbackOnlyError) as at_commit:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as at_commit:
         _run(body, meta=_PREDICATED, steps=simulated, rows=coverage, clock=clock)
     (refusal,) = caught
     assert at_commit.value.__cause__ is refusal
-    assert (refusal.key, refusal.instant, refusal.stored_bound) == ({"id": 1}, _FIXED, _LATER)
+    assert refusal.key == {"id": 1}
+    assert f"Transaction Instant {_FIXED.isoformat()} " in str(refusal)
+    assert f"stored start {_LATER.isoformat()}" in str(refusal)
     assert clock.calls == 1
     assert _kinds(simulated) == []

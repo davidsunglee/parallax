@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
+from parallax.core import UsageError
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
-from parallax.core.unit_work import RollbackOnlyError
+from parallax.core.unit_work import TRANSACTION_ROLLBACK_ONLY
+from tests._support.errors import raises_code
 
 
 def test_an_open_lifetime_admits_work_a_join_and_a_commit() -> None:
@@ -32,7 +32,7 @@ def test_a_doomed_lifetime_refuses_each_with_its_first_cause() -> None:
         (lifetime.refuse_join, "cannot join"),
         (lifetime.refuse_commit, "commit refused"),
     ):
-        with pytest.raises(RollbackOnlyError, match=message) as refused:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY, match=message) as refused:
             refusal()
         assert refused.value.__cause__ is first
 

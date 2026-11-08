@@ -7,7 +7,7 @@ affected-row semantics, and a transaction callback that commits its value). The
 `m-db-error` translation-boundary proof completes the smoke: two crossed-update
 `peer` connections provoke a genuine `40P01`, and the port boundary re-raises it as
 a neutral ``DatabaseError`` -- narrowed to the FULL-shape assertions
-(`is_retriable`, `violates_unique_index`,
+(`is_transient`, `violates_unique_index`,
 the preserved driver message) the corpus's own case-driven grading of this SAME
 choreography (`m-db-error-004`, `parallax.conformance.concurrency_runner`) does not
 check; the exact `errorClass`/`nativeCode` pin lives there now. Docker-gated; a
@@ -650,7 +650,7 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
     `category`/`native_code` exact-value pins retire from here (redundant with
     that grading) and only the assertions the corpus's own `then` block never
     declares survive: the adapter populates the FULL `DatabaseError` shape
-    (`is_retriable`, `violates_unique_index`, the preserved driver `message`),
+    (`is_transient`, `violates_unique_index`, the preserved driver `message`),
     a provider-contract obligation the case format has no vocabulary for.
     """
     port = profile_run.port
@@ -698,7 +698,7 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
     # `category`/`native_code` exact-value pins are not asserted here: graded
     # byte-exact against the corpus golden by `m-db-error-004`'s own
     # case-driven proof now (`test_run_sweep.test_concurrency_rounds`).
-    assert victim.is_retriable
+    assert victim.is_transient
     assert not victim.violates_unique_index
     assert victim.message  # the preserved driver message crosses the port
 

@@ -3,10 +3,29 @@ from __future__ import annotations
 import threading
 from collections.abc import Collection, Generator
 from contextlib import contextmanager
+from typing import Final, Literal
 
-from parallax.core._execution._unit_work.uow import EscapedTransactionError, RollbackOnlyError
+from parallax.core.base import UsageError
 
-__all__ = ["ActiveBinding", "TxnAttemptLifetime"]
+__all__ = [
+    "TRANSACTION_ESCAPED",
+    "TRANSACTION_ROLLBACK_ONLY",
+    "ActiveBinding",
+    "TransactionLifetimeCode",
+    "TxnAttemptLifetime",
+]
+
+type TransactionLifetimeCode = Literal["transaction-escaped", "transaction-rollback-only"]
+"""Why an attempt refused work: a reference to it escaped once it ended, or a
+failure doomed it.
+
+A rollback-only refusal carries the failure that doomed the attempt as its
+``__cause__``, so that failure's retriability survives for the outermost retry
+loop.
+"""
+
+TRANSACTION_ESCAPED: Final = "transaction-escaped"
+TRANSACTION_ROLLBACK_ONLY: Final = "transaction-rollback-only"
 
 
 class TxnAttemptLifetime:
@@ -49,26 +68,27 @@ class TxnAttemptLifetime:
     def ensure_open(self) -> None:
         """Refuse work on an attempt that ended or is rollback-only."""
         if self._closed:
-            raise EscapedTransactionError(
-                "the transaction has ended; a reference escaped its attempt"
+            raise UsageError(
+                TRANSACTION_ESCAPED, "the transaction has ended; a reference escaped its attempt"
             )
         if self._rollback_only:
-            raise RollbackOnlyError(
-                "the transaction is rollback-only; it accepts no further work"
+            raise UsageError(
+                TRANSACTION_ROLLBACK_ONLY,
+                "the transaction is rollback-only; it accepts no further work",
             ) from self._first_cause
 
     def refuse_join(self) -> None:
         """Refuse a joining invocation into a rollback-only attempt."""
         if self._rollback_only:
-            raise RollbackOnlyError(
-                "cannot join a rollback-only transaction"
+            raise UsageError(
+                TRANSACTION_ROLLBACK_ONLY, "cannot join a rollback-only transaction"
             ) from self._first_cause
 
     def refuse_commit(self) -> None:
         """Refuse to commit an attempt a caught failure left rollback-only."""
         if self._rollback_only:
-            raise RollbackOnlyError(
-                "transaction is rollback-only; commit refused"
+            raise UsageError(
+                TRANSACTION_ROLLBACK_ONLY, "transaction is rollback-only; commit refused"
             ) from self._first_cause
 
 

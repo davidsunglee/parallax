@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core import Attr, Document, DomainModel, TxTemporal, attr
+from parallax.core import Attr, Document, DomainModel, TxTemporal, UsageError, attr
 from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.sql_gen import SqlGenError
-from parallax.core.unit_work import RollbackOnlyError
+from parallax.core.unit_work import TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -143,7 +143,7 @@ def test_a_refused_revision_dooms_the_attempt_where_a_later_read_flushes_it(
             refused.append(error)
         tx.find(RevisedLog.where(RevisedLog.id == 9)).result()
 
-    with raises_contextualized(RollbackOnlyError):
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
         db_for(_MODEL, port).transact(fn)
 
     assert len(refused) == 1

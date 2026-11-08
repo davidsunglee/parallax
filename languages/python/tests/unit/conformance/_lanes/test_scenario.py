@@ -23,12 +23,14 @@ from parallax.conformance import _case_ingress, _simulated_write_steps, case_for
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_observation import (
+    LifecycleObservation,
     LifecycleRun,
     execution_lifecycle_observation,
 )
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
+from parallax.core import ConflictError
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.instructions import (
@@ -69,18 +71,18 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
+    MISSING_TARGET,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
     AdmittedWrite,
     InsertionIdentity,
     KeyedMutation,
     KeyedWriteInstruction,
-    MissingTargetError,
-    OptimisticLockConflictError,
     ReadAuthorizedWrite,
     RetainedObservation,
-    StaleWriteError,
     UnitOfWork,
     UnobservedVersionError,
-    WriteEffectError,
+    WriteEffectCode,
     WriteEvidenceError,
     WriteRejectedError,
 )
@@ -95,6 +97,7 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjec
 from parallax.core.write_plan.managed_row import named_members
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
+from tests._support.errors import raises_code
 from tests._support.sweep_goldens import write_golden_statements
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
@@ -2562,18 +2565,18 @@ def test_a_locking_conflict_target_is_refused_before_any_read(case: case_format.
 
 
 def _always_implying(
-    error_cls: type[WriteEffectError],
-) -> Callable[[bool, ConcurrencyPreference, AcceptedMetamodel, str], type[WriteEffectError]]:
-    """An ``_implied_shortfall_error`` stand-in that ignores the case's own
-    declared facts — a lane admitting the wrong shortfall class."""
+    code: WriteEffectCode,
+) -> Callable[[bool, ConcurrencyPreference, AcceptedMetamodel, str], WriteEffectCode]:
+    """An ``_implied_shortfall_code`` stand-in that ignores the case's own
+    declared facts — a lane admitting the wrong shortfall code."""
 
     def implied(
         _observation_requiring: bool,
         _concurrency: ConcurrencyPreference,
         _model: AcceptedMetamodel,
         _target: str,
-    ) -> type[WriteEffectError]:
-        return error_cls
+    ) -> WriteEffectCode:
+        return code
 
     return implied
 
@@ -2582,34 +2585,33 @@ _ACCOUNT: Final[str] = "parallax.compatibility.Account"
 
 
 class TestConflictShortfallClassification:
-    """The shortfall class a conflict case's declared facts imply, and the lane's
+    """The shortfall code a conflict case's declared facts imply, and the lane's
     refusal to absorb any other one.
 
-    Every member of the Write Effect Error family carries the same ``actual``
-    count, so a lane catching the whole family would render `then.affectedRows: 0`
-    identically whichever class the write raised, and a zero-row case would assert
-    nothing about the classification (`m-concurrency` "Classification follows the
-    gate").
+    Every shortfall reports the same count, so a lane admitting every shortfall
+    code would render `then.affectedRows: 0` identically whichever the write
+    raised, and a zero-row case would assert nothing about the classification
+    (`m-concurrency` "Classification follows the gate").
     """
 
     def test_an_optimistic_strategy_implies_the_retriable_conflict(self) -> None:
         from parallax.conformance import models
 
         assert (
-            scenario._implied_shortfall_error(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            scenario._implied_shortfall_code(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
                 True, "optimistic", models.load_models()["account"], _ACCOUNT
             )
-            is OptimisticLockConflictError
+            == OPTIMISTIC_LOCK_CONFLICT
         )
 
     def test_a_locking_strategy_implies_the_non_retriable_stale_write(self) -> None:
         from parallax.conformance import models
 
         assert (
-            scenario._implied_shortfall_error(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            scenario._implied_shortfall_code(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
                 True, "locking", models.load_models()["account"], _ACCOUNT
             )
-            is StaleWriteError
+            == STALE_WRITE
         )
 
     @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
@@ -2621,21 +2623,27 @@ class TestConflictShortfallClassification:
         from parallax.conformance import models
 
         assert (
-            scenario._implied_shortfall_error(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
+            scenario._implied_shortfall_code(  # pyright: ignore[reportPrivateUsage] - the lane's own classification seam
                 False, concurrency, models.load_models()["account"], _ACCOUNT
             )
-            is MissingTargetError
+            == MISSING_TARGET
         )
 
     def test_a_gated_shortfall_admitted_as_a_stale_write_propagates(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(scenario, "_implied_shortfall_error", _always_implying(StaleWriteError))
-        with pytest.raises(OptimisticLockConflictError):
+        monkeypatch.setattr(scenario, "_implied_shortfall_code", _always_implying(STALE_WRITE))
+        with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
             scenario.run_conflict_case(
                 _load_case("m-concurrency-005"),
                 FakeWritePort([_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL),
             )
+
+    def test_a_refusal_no_failed_flush_attributes_to_a_completed_write_is_unreadable(
+        self,
+    ) -> None:
+        with pytest.raises(EngineError, match="names no completed write call"):
+            scenario._final_flush_failure_count(LifecycleObservation())  # pyright: ignore[reportPrivateUsage] - the lane's own count seam
 
 
 def test_run_conflict_case_refuses_a_temporal_target_before_any_read() -> None:

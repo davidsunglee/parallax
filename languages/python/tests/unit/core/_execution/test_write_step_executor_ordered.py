@@ -25,6 +25,7 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
+from parallax.core import ConflictError, InternalError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor, lowered
 from parallax.core._execution._write_step_executor import OrderedInvocation
@@ -58,11 +59,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.unit_work import (
-    CardinalityCorruptionError,
-    OptimisticLockConflictError,
-    StaleWriteError,
-)
+from parallax.core.unit_work import CARDINALITY_CORRUPTION, OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import (
@@ -83,6 +80,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests.unit.core._execution._write_step_support import (
     POSITION,
     RecordingPreparer,
@@ -95,7 +93,6 @@ from tests.unit.core._execution._write_step_support import (
     removal,
     revision,
     run_plan,
-    slot,
     statement,
     step_executor,
 )
@@ -263,7 +260,7 @@ def test_a_failed_run_completes_its_group_never_and_prepares_no_later_groups_ste
     steps = (close(1), close(2), close(3))
     preparer = RecordingPreparer(port, steps)
     completed: list[int] = []
-    with pytest.raises(StaleWriteError), open_flush() as flush:
+    with raises_code(ConflictError, STALE_WRITE), open_flush() as flush:
         run_plan(port, _plan(steps[:2], steps[2:]), flush, payloads=preparer, completed=completed)
     assert preparer.positions == [0, 1]
     assert completed == []
@@ -358,7 +355,8 @@ def test_an_earlier_shortfall_outranks_a_later_statement_failure() -> None:
     provider = RecordingLifecycleProvider()
     port = ScriptedAdapter(Ordered(result), ordered=True)
     executed = _execute(port, close(1), close(2), close(3), close(4), provider=provider)
-    assert isinstance(executed.raised, StaleWriteError)
+    assert isinstance(executed.raised, ConflictError)
+    assert executed.raised.code == STALE_WRITE
     calls = _finished_calls(provider)
     assert [type(call.outcome) for call in calls] == [
         DatabaseWriteCompleted,
@@ -391,15 +389,17 @@ def test_a_confirmed_statement_failure_propagates_as_itself_from_its_own_call() 
 def test_an_excess_count_is_a_cardinality_corruption_of_its_own_step() -> None:
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 2))), ordered=True)
     executed = _execute(port, close(1), close(2))
-    assert isinstance(executed.raised, CardinalityCorruptionError)
-    assert executed.raised.target == slot(2)
+    assert isinstance(executed.raised, InternalError)
+    assert executed.raised.code == CARDINALITY_CORRUPTION
+    assert "key={'id': 2}" in str(executed.raised)
 
 
 def test_each_count_is_enforced_against_the_exact_step_it_was_lowered_from() -> None:
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 0))), ordered=True)
     executed = _execute(port, close(1), guard(2))
-    assert isinstance(executed.raised, OptimisticLockConflictError)
-    assert executed.raised.target == slot(2)
+    assert isinstance(executed.raised, ConflictError)
+    assert executed.raised.code == OPTIMISTIC_LOCK_CONFLICT
+    assert executed.raised.key == {"id": 2}
 
 
 def _malformed() -> list[tuple[str, object]]:
@@ -471,7 +471,8 @@ def test_an_earlier_shortfall_outranks_the_interruption_after_it() -> None:
     result = OrderedWriteResultInterrupted((0,), 2, 0, _lost())
     port = ScriptedAdapter(Ordered(result), ordered=True)
     executed = _execute(port, close(1), close(2), close(3), provider=provider)
-    assert isinstance(executed.raised, StaleWriteError)
+    assert isinstance(executed.raised, ConflictError)
+    assert executed.raised.code == STALE_WRITE
     calls = _finished_calls(provider)
     assert [type(call.outcome) for call in calls] == [
         DatabaseWriteCompleted,
@@ -574,7 +575,8 @@ def test_a_prefix_failure_wins_over_the_lowering_failure_it_overtook(
     _failing_at(monkeypatch, steps[1], overtaken)
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((0,))), ordered=True)
     executed = _execute(port, *steps)
-    assert isinstance(executed.raised, StaleWriteError)
+    assert isinstance(executed.raised, ConflictError)
+    assert executed.raised.code == STALE_WRITE
     assert executed.raised.__context__ is None
     assert not _reaches(executed.raised, overtaken)
     assert port.calls == [ordered(steps[0])]
@@ -760,7 +762,8 @@ def test_an_ordinary_handler_failure_quarantines_the_handler_and_changes_no_exec
     provider = _Tripping(trips, RuntimeError("the exporter is full"))
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 0))), ordered=True)
     executed = _execute(port, close(1), close(2), provider=provider)
-    assert isinstance(executed.raised, StaleWriteError)
+    assert isinstance(executed.raised, ConflictError)
+    assert executed.raised.code == STALE_WRITE
     assert port.calls == [ordered(close(1), close(2))]
     assert len(provider.reported) == 1
 

@@ -29,11 +29,13 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
+from parallax.core import Attr, ConflictError, DomainModel, Entity, Int32, UsageError, attr, index
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
-from parallax.core._execution._unit_work.uow import EscapedTransactionError
-from parallax.core.auto_retry import RetryCandidate
+from parallax.core._execution._unit_work.effects import shortfall
+from parallax.core.auto_retry import (
+    _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - asserting the carrier never escapes
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -76,9 +78,10 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
+    OPTIMISTIC_LOCK_CONFLICT,
+    TRANSACTION_ESCAPED,
+    TRANSACTION_ROLLBACK_ONLY,
     DatabaseLoginActor,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
     SubjectActor,
     WritePlanner,
 )
@@ -99,6 +102,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests._support.errors import raises_code
 from tests._support.retry import TINY_BACKOFF, fast_retry
 from tests.unit.core._execution._execution_support import (
     ACCOUNT,
@@ -140,7 +144,7 @@ def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
         escaped.append(tx)
 
     scope(port).transact(fn, itself)
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         escaped[0].uow.buffer_insert(account_insert(), insertion_advice=None)
 
 
@@ -154,9 +158,9 @@ def test_a_reference_escaped_from_a_doomed_attempt_reports_the_escape_not_the_do
         with pytest.raises(RuntimeError, match="inner failure"):
             db.transact(_raise_inner, itself)
 
-    with raises_contextualized(RollbackOnlyError):
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
         db.transact(outer, itself)
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         escaped[0].uow.buffer_insert(account_insert(), insertion_advice=None)
 
 
@@ -298,12 +302,12 @@ def test_join_refusal_precedence_is_ownership_then_rollback_authority_then_optio
             owner.transact(_raise_inner, itself)
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
-        with pytest.raises(RollbackOnlyError) as rollback_only:
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as rollback_only:
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         assert isinstance(rollback_only.value.__cause__, RuntimeError)
         return "withheld"
 
-    with raises_contextualized(RollbackOnlyError) as refused_commit:
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as refused_commit:
         owner.transact(outer, itself)
     assert isinstance(refused_commit.value.__cause__, RuntimeError)
     assert port.calls == [BeginCall(), RollbackCall()]
@@ -476,13 +480,13 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
     def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(RuntimeError, match="inner failure"):
             db.transact(_raise_inner, itself)
-        with pytest.raises(RollbackOnlyError):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             db.transact(lambda _inner: ran.append(True), itself)
         return "unreachable value"
 
     # The outer callback caught everything and returned normally, but the inner
     # failure doomed the transaction: commit is refused and the value withheld.
-    with raises_contextualized(RollbackOnlyError) as excinfo:
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as excinfo:
         db.transact(outer, itself)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert ran == []
@@ -612,11 +616,11 @@ def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> 
         assert port.calls == [BeginCall()]
         # Through the owner, rollback-only foreclosure answers before the
         # otherwise-conflicting option is compared.
-        with pytest.raises(RollbackOnlyError):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             owner.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "unreachable value"
 
-    with raises_contextualized(RollbackOnlyError):
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
         owner.transact(outer, itself)
     assert port.calls == [BeginCall(), RollbackCall()]
 
@@ -635,7 +639,7 @@ def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
     with raises_contextualized(DatabaseError) as excinfo:
         scope(port).transact(lambda _tx: "ok", itself, retry=fast_retry(2))
     assert port.calls.count(BeginCall()) == 3
-    assert excinfo.value.is_retriable  # the surfaced error is the failure itself
+    assert excinfo.value.category == "deadlock"  # the surfaced error is the failure itself
     assert "3 attempts (max_retries=2)" in "".join(excinfo.value.__notes__)
 
 
@@ -940,7 +944,7 @@ def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
     with raises_contextualized(DatabaseError) as exhausted:
         db.transact(body, itself, retry=fast_retry(1))
     assert exhausted.edition == "b"
-    assert exhausted.value.is_retriable
+    assert exhausted.value.category == "deadlock"
 
 
 def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
@@ -1047,8 +1051,8 @@ _ROW_2: Final = EntityIdentity("parallax.compatibility", "Account")
 _KEY_2: Final = KeyTarget(key_attributes=(AttributeIdentity(_ROW_2, "id"),), key_values=((2,),))
 
 
-def _conflict() -> OptimisticLockConflictError:
-    return OptimisticLockConflictError(_ROW_2, _KEY_2, 1, 0)
+def _conflict() -> ConflictError:
+    return shortfall(OPTIMISTIC_LOCK_CONFLICT, _ROW_2, _KEY_2, 1, 0)
 
 
 def test_an_optimistic_conflict_is_replayed_without_any_option() -> None:
@@ -1079,7 +1083,7 @@ def test_a_conflict_a_caught_join_left_behind_is_replayed_through_the_rollback_o
     def outer(_tx: TxnAttempt) -> str:
         attempts.append(len(attempts))
         if len(attempts) == 1:
-            with contextlib.suppress(OptimisticLockConflictError):
+            with contextlib.suppress(ConflictError):
                 db.transact(inner, itself)
         return "caught"
 
@@ -1089,7 +1093,7 @@ def test_a_conflict_a_caught_join_left_behind_is_replayed_through_the_rollback_o
 
 def test_an_exhausted_conflict_surfaces_as_the_identical_failure_with_its_own_chain() -> None:
     port = ScriptedAdapter(Transact(), Transact())
-    raised: list[OptimisticLockConflictError] = []
+    raised: list[ConflictError] = []
     origin = RuntimeError("what the callback was handling")
 
     def body(_tx: TxnAttempt) -> None:
@@ -1100,14 +1104,14 @@ def test_an_exhausted_conflict_surfaces_as_the_identical_failure_with_its_own_ch
         except RuntimeError:
             raise conflict from None
 
-    with raises_contextualized(OptimisticLockConflictError) as excinfo:
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as excinfo:
         scope(port).transact(body, itself, retry=fast_retry(1))
     assert excinfo.value is raised[-1]
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__suppress_context__
     assert excinfo.value.__context__ is origin
     assert "2 attempts (max_retries=1)" in "".join(excinfo.value.__notes__)
-    assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
+    assert not any(isinstance(link, _RetryCandidate) for link in _chain(excinfo.value))
 
 
 def test_a_non_retriable_database_error_is_not_replayed() -> None:
@@ -1175,7 +1179,7 @@ def test_the_release_after_an_eligible_failure_is_told_the_failure_itself() -> N
     assert scope(port).transact(lambda _tx: "ok", itself) == "ok"
     first, second = port.released_after
     assert isinstance(first, DatabaseError)
-    assert first.is_retriable
+    assert first.category == "deadlock"
     assert second is None
 
 
@@ -1187,7 +1191,7 @@ def test_a_release_that_fails_after_an_eligible_failure_ends_the_invocation() ->
     assert port.calls.count(BeginCall()) == 1
     (released_after,) = port.released_after
     assert excinfo.value.__context__ is released_after
-    assert not any(isinstance(link, RetryCandidate) for link in _chain(excinfo.value))
+    assert not any(isinstance(link, _RetryCandidate) for link in _chain(excinfo.value))
 
 
 class _FailingOnAttemptFinished:
@@ -1215,7 +1219,7 @@ def test_a_handler_failing_after_an_eligible_failure_is_reported_against_it() ->
     assert scope(port, provider=provider).transact(lambda _tx: "ok", itself) == "ok"
     (reported,) = provider.reported
     assert "deadlock detected" in reported.diagnostic.stack
-    assert "RetryCandidate" not in reported.diagnostic.stack
+    assert "_RetryCandidate" not in reported.diagnostic.stack
 
 
 @dataclass(frozen=True, slots=True)
@@ -1786,11 +1790,11 @@ def test_join_admission_runs_ownership_rollback_only_authority_access_mode_then_
         # Ownership outranks rollback-only, which outranks everything after it.
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run, itself)
-        with pytest.raises(RollbackOnlyError):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "withheld"
 
-    with raises_contextualized(RollbackOnlyError) as refused_commit:
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as refused_commit:
         owner.read_only(outer, itself)
     assert isinstance(refused_commit.value.__cause__, RuntimeError)
     assert port.calls == [BeginCall("read_committed", "read_only"), RollbackCall()]
@@ -1806,11 +1810,11 @@ def test_a_failed_read_only_join_dooms_the_attempt_even_when_the_outer_callback_
     def outer(_rtx: ReadOnlyTxnAttempt) -> str:
         with contextlib.suppress(RuntimeError):
             db.read_only(_raise_inner, itself)
-        with pytest.raises(RollbackOnlyError):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             db.read_only(lambda _joined: ran.append(True), itself)
         return "withheld"
 
-    with raises_contextualized(RollbackOnlyError) as excinfo:
+    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as excinfo:
         db.read_only(outer, itself)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert ran == []
@@ -1821,7 +1825,7 @@ def test_an_escaped_read_only_attempt_refuses_every_read_after_it_ended() -> Non
     port = ScriptedAdapter(Transact())
     escaped: list[ReadOnlyTxnAttempt] = []
     scope(port).read_only(escaped.append, itself)
-    with pytest.raises(EscapedTransactionError):
+    with raises_code(UsageError, TRANSACTION_ESCAPED):
         WireDatabaseView(escaped[0]).find(_account_seven())
     assert port.calls == [BeginCall("read_committed", "read_only"), CommitCall()]
 

@@ -5,7 +5,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol, cast
 
-from parallax.core.base import INFINITY, TemporalBound
+from parallax.core.base import INFINITY, ConflictError, TemporalBound
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -18,7 +18,6 @@ from parallax.core.temporal_read import (
     TimeInterval,
     TransactionTimeOnly,
 )
-from parallax.core.temporal_write._errors import TemporalConflictError
 from parallax.core.temporal_write.coverage import (
     CoverageGap,
     CoverageTransform,
@@ -78,6 +77,7 @@ from parallax.core.write_plan.steps import (
 from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
 
 __all__ = [
+    "TEMPORAL_CONFLICT",
     "ExpansionRole",
     "PredecessorExpander",
     "RowAudit",
@@ -88,6 +88,12 @@ __all__ = [
     "opening",
     "openings",
 ]
+
+TEMPORAL_CONFLICT: Final = "temporal-conflict"
+"""A close the attempt's Transaction Instant cannot follow: the instant is no
+later than the stored Transaction-Time start of the milestone it would end. A
+retry is a new attempt with a fresh instant and a fresh read of stored history,
+so the conflict is transient."""
 
 type ExpansionRole = Literal["coverage", "starting", "validation"]
 """How a write's driver asks one predecessor to be expanded: as coverage its
@@ -621,7 +627,7 @@ class PredecessorExpander:
         A close of a predecessor the attempt did not open ends it at the
         attempt's instant, so that instant must follow the predecessor's
         stored Transaction-Time start; otherwise the close is refused as a
-        :class:`TemporalConflictError` before anything is decorated."""
+        ``temporal-conflict`` before anything is decorated."""
         disposal = record.code & _DISPOSAL
         if disposal == _CLOSE:
             if not record.owned:
@@ -642,17 +648,21 @@ class PredecessorExpander:
         if facts.instant > stored_start:
             return
         target = record.closing.target
-        raise TemporalConflictError(
-            facts.entity.identity,
-            facts.instant,
-            key=dict(
-                zip(
-                    (attribute.name for attribute in target.key_attributes),
-                    target.key_values,
-                    strict=True,
-                )
-            ),
-            stored_bound=stored_start,
+        entity = facts.entity.identity
+        key = dict(
+            zip(
+                (attribute.name for attribute in target.key_attributes),
+                target.key_values,
+                strict=True,
+            )
+        )
+        raise ConflictError(
+            TEMPORAL_CONFLICT,
+            f"{entity.name}: the Transaction Instant {facts.instant.isoformat()} does not follow "
+            f"stored temporal history — key={key!r}, stored start {stored_start.isoformat()}",
+            entity=entity.canonical,
+            key=key,
+            transient=True,
         )
 
     def _runs(self, candidates: list[_Candidate]) -> list[list[_Candidate]]:

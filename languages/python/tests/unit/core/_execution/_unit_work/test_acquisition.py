@@ -17,7 +17,7 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import inheritance
+from parallax.core import InternalError, inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import acquisition as acquisition_module
@@ -39,13 +39,14 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
-    CardinalityCorruptionError,
+    CARDINALITY_CORRUPTION,
     FlushTrigger,
     TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow
+from tests._support.errors import raises_code
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._reach_support import frames, reaches
@@ -159,9 +160,9 @@ def _target_request() -> TargetReadRequest:
 def test_a_locking_target_reading_several_rows_is_corruption_with_their_exact_count() -> None:
     held = HeldRows(_ACCOUNT, [_account(1), _account(1), _account(1)])
     uow, flushes = _uow(_ACCOUNT, held, concurrency="locking")
-    with pytest.raises(CardinalityCorruptionError) as corrupt:
+    with raises_code(InternalError, CARDINALITY_CORRUPTION) as corrupt:
         uow.buffer_target(_account_patch())
-    assert (corrupt.value.expected, corrupt.value.actual) == (1, 3)
+    assert "affected 3 row(s), expected 1" in str(corrupt.value)
     uow.flush(trigger="pre_commit")
     assert flushes.opened == 0
 

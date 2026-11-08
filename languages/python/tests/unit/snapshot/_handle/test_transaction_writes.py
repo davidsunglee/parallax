@@ -29,7 +29,7 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
+from parallax.core import LATEST, Attr, ConflictError, DomainModel, Entity, attr, unit_work
 from parallax.core._execution._options import OMITTED
 from parallax.core._execution._unit_work import instructions
 from parallax.core.base import INT64, DocumentValue, InstantError, StructuredDocument
@@ -45,8 +45,8 @@ from parallax.core.execution import (
 )
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
-    OptimisticLockConflictError,
-    StaleWriteError,
+    OPTIMISTIC_LOCK_CONFLICT,
+    STALE_WRITE,
     WriteEvidenceError,
     WriteInstructionError,
 )
@@ -268,7 +268,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
-    with raises_contextualized(StaleWriteError, match="Account"):
+    with raises_contextualized(ConflictError, code=STALE_WRITE, match="Account"):
         account_db(port).transact(fn, concurrency="locking")
     assert RollbackCall() in port.calls
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -279,7 +279,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
     # The gated counterpart of the locking-mode shortfall above, pinning the
     # other direction of the same rule: optimistic mode renders the version
     # gate, so a zero-row shortfall IS a detected lost update and raises the
-    # retriable `OptimisticLockConflictError`.
+    # retriable `optimistic-lock-conflict`.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
@@ -291,7 +291,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
-    with raises_contextualized(OptimisticLockConflictError, match="Account"):
+    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic", retry=RetryPolicy(max_retries=0))
     assert RollbackCall() in port.calls
 
