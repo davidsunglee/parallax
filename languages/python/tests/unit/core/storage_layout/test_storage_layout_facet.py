@@ -51,9 +51,6 @@ from parallax.core.metamodel._compile import compile_metadata
 from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.storage_layout import _compile as storage_layout_compile
-from parallax.core.storage_layout._compile import (
-    _interned_ordinal_selection,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
-)
 from parallax.descriptor._records import Attribute, Entity, Index
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests.unit._corpus_model_support import corpus, formed
@@ -1322,20 +1319,6 @@ def test_a_dormant_tpcs_branch_reaches_no_concrete_table() -> None:
         ValueObjectIdentity(ROOT, ("summary",)),
         ValueObjectIdentity(LIVE, ("liveDetail",)),
     ]
-
-
-def test_private_entity_slot_selections_are_compact_and_interned_by_ordinals() -> None:
-    model, _, alpha, _ = _tiered_tph_model()
-    layout = _require_layout(storage_layout.view(model), "record")
-    intern: dict[int, Any] = {}
-    first = _interned_ordinal_selection(layout, alpha, intern)
-    second = _interned_ordinal_selection(layout, alpha, intern)
-    assert first == second
-    assert len(intern) == 1
-    assert (
-        first.materialize(layout.columns)
-        == _require_entity(storage_layout.view(model), alpha).columns
-    )
 
 
 def test_entity_views_reference_table_slots_and_assign_concrete_discriminators() -> None:

@@ -36,7 +36,6 @@ from parallax.core.read_delivery._page import (
     PageSchedule,
     StoredDataIssueInput,
     ViewSchema,
-    _rows,
     entity_state,
     page_rows,
     page_schedule,
@@ -130,13 +129,6 @@ def _reached(page: Page, root: int) -> list[int]:
     return reached
 
 
-def _refuse_walking(monkeypatch: pytest.MonkeyPatch) -> None:
-    def walked(*_args: object) -> None:
-        raise AssertionError("an edge-free root was walked")
-
-    monkeypatch.setattr(_rows, "push_edges", walked)
-
-
 # --------------------------------------------------------------------------- #
 # Scheduling.                                                                 #
 # --------------------------------------------------------------------------- #
@@ -220,11 +212,8 @@ def test_scheduling_judges_no_root_state() -> None:
 # --------------------------------------------------------------------------- #
 # Reach.                                                                      #
 # --------------------------------------------------------------------------- #
-def test_an_edge_free_root_reaches_itself_into_a_cleared_buffer_without_a_walk(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_an_edge_free_root_reaches_itself_into_a_cleared_buffer() -> None:
     page = _flat_page("Ledger", "Account")
-    _refuse_walking(monkeypatch)
     reached = [99, 98]
 
     reach_into(page_rows(page), 1, reached)

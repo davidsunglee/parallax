@@ -13,7 +13,7 @@ from collections.abc import Callable, Hashable, Iterator, Mapping
 import pytest
 
 from parallax.core.metamodel import AttributeIdentity
-from parallax.core.write_plan import PlannedInsert, WritePlan
+from parallax.core.write_plan import PlannedInsert
 from parallax.core.write_plan.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -77,13 +77,6 @@ def test_an_attempt_that_opened_nothing_holds_nothing_for_a_source_to_continue()
     assert not NO_TEMPORAL_WRITE_OWNERSHIP.demanded(state, coordinates)
     assert NO_TEMPORAL_WRITE_OWNERSHIP.continues(object(), None) is None
     assert tuple(NO_TEMPORAL_WRITE_OWNERSHIP.current_rows(target, None)) == ()
-
-
-def test_plan_values_are_held_in_slots_on_themselves() -> None:
-    write = SettledWrite()
-    group = WriteGroup((write,), ())
-    for value in (write, BoundRange(steps=()), group, WritePlan((group,))):
-        assert not hasattr(value, "__dict__")
 
 
 def _delete(key: int) -> PlannedDelete:

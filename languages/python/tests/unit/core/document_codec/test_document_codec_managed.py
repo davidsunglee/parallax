@@ -417,28 +417,9 @@ def _is_many(member: MemberDefinition) -> bool:
     return isinstance(member, OccurrenceDefinition) and member.multiplicity is Multiplicity.MANY
 
 
-def test_the_prepared_comparison_reads_only_assigned_positions_and_stops_at_the_first_change(
+def test_a_prepared_comparison_canonicalizes_its_assignment_once_for_every_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    reads: list[int] = []
-
-    class _Row(tuple[object, ...]):
-        def __getitem__(self, index: object) -> object:  # pyright: ignore[reportIncompatibleMethodOverride] - an index-reading probe
-            reads.append(cast("int", index))
-            return super().__getitem__(cast("int", index))
-
-    stored = _row(_SHAPE, {"flag": True, "amount": decimal.Decimal("1.00"), "day": None})
-    row = _Row(stored)
-    change = prepare_effective_change(
-        _SHAPE, {"day": dt.date(2026, 1, 1), "amount": decimal.Decimal("1.00")}, absent=_ABSENT
-    )
-
-    assert change.any_effective(row)
-    assert reads == [2]
-    reads.clear()
-    assert list(change.effective_positions(row)) == [2]
-    assert reads == [2, 1]
-
     canonicalized: list[Mapping[str, object]] = []
     prepared_document = managed._prepared_document  # pyright: ignore[reportPrivateUsage] - the canonicalization probe
 

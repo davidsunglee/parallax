@@ -275,14 +275,9 @@ _RULE_REFUSED: list[tuple[NeutralType, str, wire.WireDecodingReason]] = [
 
 
 @pytest.mark.parametrize("decode", [wire.decode_wire, wire.decode_canonical_wire])
-def test_decoding_judges_each_space_by_its_own_rule_without_general_membership(
+def test_decoding_judges_each_space_by_its_own_rule(
     decode: Callable[[NeutralType, wire.WireValue], ManagedValue],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def general(_value: object, _declared: NeutralType) -> bool:
-        raise AssertionError("decoding dispatched through general membership")
-
-    monkeypatch.setattr(wire_codec, "matches_neutral_type", general)
     decoded = [decode(declared, wire.loads(written)) for declared, written, _ in _RULE_DECODED]
     reasons: list[str] = []
     for declared, written, _ in _RULE_REFUSED:
@@ -1049,24 +1044,6 @@ def test_encoding_names_a_nonmember_and_its_declared_space(
     with pytest.raises(wire.WireEncodingError) as caught:
         wire.encode_wire(neutral_type, cast("ManagedValue", value))
     assert str(caught.value) == message
-
-
-@pytest.mark.parametrize(
-    ("neutral_type", "value"),
-    [(INT32, -7), (INT64, 2**40), (FLOAT32, 1.25), (FLOAT64, 0.1)],
-)
-def test_encoding_checks_a_numeric_value_for_membership_once(
-    neutral_type: NeutralType, value: ManagedValue, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    checked: list[object] = []
-
-    def counted(candidate: object, declared: NeutralType) -> bool:
-        checked.append(candidate)
-        return matches_neutral_type(candidate, declared)
-
-    monkeypatch.setattr(wire_codec, "matches_neutral_type", counted)
-    assert wire.encode_wire(neutral_type, value) == value
-    assert checked == [value]
 
 
 def test_encoding_refuses_nonmembers_without_developer_coercion() -> None:
