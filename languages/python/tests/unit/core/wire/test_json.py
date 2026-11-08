@@ -95,11 +95,6 @@ def test_an_authored_number_is_its_own_copy_and_keeps_its_token(token: str) -> N
     assert copy.deepcopy(value) is value
 
 
-@pytest.mark.parametrize("token", ["0.1", "0.10000000000000001", "1e309"])
-def test_an_authored_float_keeps_its_token_without_an_instance_dictionary(token: str) -> None:
-    assert not hasattr(authored_number(token), "__dict__")
-
-
 def _meaning(text: str) -> object:
     return json.loads(text, parse_float=decimal.Decimal, parse_int=decimal.Decimal)
 

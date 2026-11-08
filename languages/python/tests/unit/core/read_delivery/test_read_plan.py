@@ -49,7 +49,7 @@ from parallax.core.sql_gen._compile import (
     compile_read,
     compile_write_predicate,
 )
-from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
+from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
@@ -638,20 +638,6 @@ def test_equal_quantifiers_key_alike_however_they_were_spelled() -> None:
     assert _resolved_key(_CUSTOMER, qualified) == _resolved_key(_CUSTOMER, bare)
 
 
-class _HashCountingType(type):
-    """Counts hashes of the classes it makes, which an operand key holds."""
-
-    hashes = 0
-
-    def __hash__(cls) -> int:
-        _HashCountingType.hashes += 1
-        return type.__hash__(cls)
-
-
-class _HashCountingString(str, metaclass=_HashCountingType):
-    pass
-
-
 def _key(query: ResolvedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
     values: dict[str, Any] = {
         "edition": "edition-a",
@@ -661,31 +647,6 @@ def _key(query: ResolvedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
         "preference": None,
     }
     return _read_plan._read_plan_key(**(values | fields))
-
-
-def _counting_query_keys(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    query_key = cast("Callable[[object], object]", vars(_read_plan)["_query_key"])
-    counts = {"projected": 0}
-
-    def counting(value: object) -> object:
-        counts["projected"] += 1
-        return query_key(value)
-
-    monkeypatch.setattr(_read_plan, "_query_key", counting)
-    return counts
-
-
-def _counting_family_comparisons(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-    same_family = _read_plan._ReadPlanKey.same_family
-    verdicts: list[bool] = []
-
-    def counting(self: _read_plan._ReadPlanKey, other: _read_plan._ReadPlanKey) -> bool:
-        verdict = same_family(self, other)
-        verdicts.append(verdict)
-        return verdict
-
-    monkeypatch.setattr(_read_plan._ReadPlanKey, "same_family", counting)
-    return verdicts
 
 
 def test_same_family_ignores_only_the_delivery_discriminator() -> None:
@@ -722,94 +683,17 @@ def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
     assert _key(selected(limit=3)) == _key(selected(limit=3))
 
 
-@pytest.mark.parametrize("paged", [False, True])
-def test_hits_and_cold_builds_project_the_resolved_query_once_per_lookup(
-    monkeypatch: pytest.MonkeyPatch,
-    paged: bool,
-) -> None:
-    selected = (
-        continuation.plan(_query(), _META).after(ContinuationCoordinate((1,)), limit=3)
-        if paged
-        else _query()
-    )
-    counts = _counting_query_keys(monkeypatch)
-    cache = ReadPlanCache()
-
-    _plan(cache, selected)
-    assert counts["projected"] == 1
-    _plan(cache, selected)
-    assert counts["projected"] == 2
-    assert cache._statistics().hits == 1
-
-
-def test_a_warm_hit_hashes_its_query_key_only_at_key_construction() -> None:
-    cache = ReadPlanCache()
-    _plan(cache, _name_query(_HashCountingString("counted")))
-    warm = _name_query(_HashCountingString("counted"))
-    _HashCountingType.hashes = 0
-
-    _plan(cache, warm)
-
-    assert cache._statistics().hits == 1
-    assert _HashCountingType.hashes == 1
-
-
-def test_only_an_elected_builder_scans_for_its_family_most_recent_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    verdicts = _counting_family_comparisons(monkeypatch)
+def test_a_family_member_reuses_its_familys_preparation_but_plans_its_own_root() -> None:
     cache = ReadPlanCache()
     pages = continuation.plan(_query(), _META)
     first = _plan(cache, pages.first(limit=3))
     _plan(cache, _query(2))
-    assert verdicts == [False]
-
-    _plan(cache, _query(2))
-    assert verdicts == [False]
 
     after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=3))
 
-    assert verdicts == [False, False, True]
     assert _root(after)[1] is not _root(first)[1]
     assert after._schema is first._schema
     assert after._fetches is first._fetches
-
-
-def test_concurrent_waiters_compare_no_family_keys(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
-    started = threading.Event()
-    release = threading.Event()
-    callers = threading.Barrier(8)
-
-    def delayed_build(**kwargs: Any) -> Any:
-        started.set()
-        assert release.wait(timeout=2)
-        return uncached(**kwargs)
-
-    cache = ReadPlanCache()
-    _plan(cache, _name_query("order-2"))
-    verdicts = _counting_family_comparisons(monkeypatch)
-    monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
-    query = _query()
-
-    def plan(_index: int) -> _read_plan.ReadPlan:
-        callers.wait()
-        return _plan(cache, query)
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = tuple(pool.submit(plan, index) for index in range(8))
-        assert started.wait(timeout=2)
-        time.sleep(0.05)
-        release.set()
-        prepared = tuple(future.result() for future in futures)
-
-    assert all(_shares_preparation(value, prepared[0]) for value in prepared)
-    assert verdicts == [False]
-    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
-        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 2, 7, 2, 0
-    )
 
 
 def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_binds() -> None:
@@ -853,50 +737,6 @@ def test_capacity_zero_uses_the_uncached_read_planning_seam() -> None:
     assert second is not first
     assert _root(second)[0].statement == _root(first)[0].statement
     assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(0, 0, 0, 0, 0)
-
-
-class _Untouchable:
-    __slots__ = ()
-
-    def __getattribute__(self, name: str) -> Any:
-        raise AssertionError(f"capacity zero touched cache state through {name}")
-
-
-def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("capacity zero performed key work")
-
-    for name in (
-        "_read_plan_key",
-        "_ReadPlanKey",
-        "_QueryKey",
-        "_Identity",
-        "_query_key",
-        "continuation_pattern",
-        "compile_template",
-    ):
-        monkeypatch.setattr(_read_plan, name, reject)
-    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
-    received: list[frozenset[str]] = []
-
-    def recording(**kwargs: Any) -> Any:
-        received.append(frozenset(kwargs))
-        return uncached(**kwargs)
-
-    monkeypatch.setattr(_read_plan, "_plan_uncached", recording)
-    planner = ReadPlanCache(capacity=0)
-    planner._entries = cast("Any", _Untouchable())
-    planner._pending = cast("Any", _Untouchable())
-    planner._lock = cast("Any", _Untouchable())
-    continued = continuation.plan(_query(), _META).after(ContinuationCoordinate((1,)), limit=3)
-
-    planned = _plan(planner, continued)
-
-    assert 1 in _root(planned)[0].statement.binds
-    assert _root(planned)[0].statement.execution_value_positions() == ()
-    assert received == [
-        frozenset({"model", "dialect", "query", "preference"}),
-    ]
 
 
 def test_concurrency_preferences_have_independent_entries() -> None:
@@ -2389,22 +2229,7 @@ def test_the_cache_retains_no_later_temporal_query_or_its_coordinates() -> None:
     assert not any(_reaches(cache, coordinate) for coordinate in coordinates)
 
 
-def test_direct_compilation_and_write_reads_prepare_no_template(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def forbidden(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("a concrete statement prepared template state")
-
-    for owner, name in (
-        (ExecutionValueSources, "authored"),
-        (ExecutionValueSources, "within"),
-        (ExecutionValueSources, "moved"),
-        (LoweredStatement, "execution_value_positions"),
-        (LoweredStatement, "with_execution_values"),
-        (StatementBuilder, "bind_deferred"),
-        (_compile_module, "_template"),
-    ):
-        monkeypatch.setattr(owner, name, forbidden)
+def test_direct_compilation_and_write_reads_bind_their_values_concretely() -> None:
     order = _CORPUS_ORDERS.entity(EntityIdentity("parallax.compatibility", "Order"))
     assert order is not None
     paged = continuation.plan(

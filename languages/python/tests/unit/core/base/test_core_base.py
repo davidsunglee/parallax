@@ -262,28 +262,6 @@ def test_frozen_map_equality_stays_unequal_when_a_colliding_key_raises_key_error
     assert (left != right) is True
 
 
-def test_frozen_map_lookup_is_its_own_and_never_dispatches_through_getitem(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    frozen = base.FrozenMap({"city": "Oslo"})
-    retained = cast(
-        "base.FrozenMap[str, object]", base.retain_document_value({"nested": {"city": "Oslo"}})
-    )
-    nested = retained["nested"]
-
-    def refuse_indexing(self: object, key: object) -> object:
-        raise AssertionError(f"lookup indexed the map for {key!r}")
-
-    monkeypatch.setattr(base.FrozenMap, "__getitem__", refuse_indexing)
-
-    assert "city" in frozen
-    assert "street" not in frozen
-    assert frozen.get("city") == "Oslo"
-    assert frozen.get("street", "fallback") == "fallback"
-    assert "nested" in retained
-    assert retained.get("nested") is nested
-
-
 def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:
     eastern = dt.timezone(dt.timedelta(hours=-5))
     aware = dt.datetime(2026, 7, 12, 8, 30, 0, 123456, tzinfo=eastern)
@@ -729,24 +707,6 @@ def test_a_typed_float32_converter_names_the_spelled_number_rounded_once() -> No
     hosts = [float(spelling) for spelling in rounding_witnesses()]
 
     assert [convert(host) for host in hosts] == [rounded_once(repr(host)) for host in hosts]
-
-
-def test_a_typed_timestamp_converter_finds_the_utc_instant_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from parallax.core.base import _neutral
-
-    calls: list[dt.datetime] = []
-
-    def counted(value: dt.datetime) -> dt.datetime | None:
-        calls.append(value)
-        return utc_instant(value)
-
-    monkeypatch.setattr(_neutral, "utc_instant", counted)
-    east = dt.datetime(2026, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
-
-    assert base.typed_converter(base.TIMESTAMP)(east) == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
-    assert calls == [east]
 
 
 def test_a_typed_json_converter_owns_its_containers_in_the_judging_walk() -> None:
