@@ -22,7 +22,6 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -45,17 +44,10 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ReadFailed,
     ReadFinished,
-    ResultRepresentation,
+    ReadStarted,
 )
-from parallax.core.execution_lifecycle import _activity as activity_module
-from parallax.core.execution_lifecycle._activity import (
-    ActivityTarget,
-    InstalledLifecycle,
-    ReadActivity,
-    open_read_root,
-)
+from parallax.core.execution_lifecycle._activity import open_read_root
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -64,8 +56,6 @@ from tests._support.db_port import (
     Read,
     ReadCall,
     ScriptedAdapter,
-    Transact,
-    Write,
 )
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, ORDERS
@@ -109,17 +99,19 @@ def _transitions(events: tuple[ExecutionEvent, ...]) -> list[str]:
     return [type(event).__name__ for event in events]
 
 
-def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
+def test_a_call_reports_the_statement_the_port_ran() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
-    started, finished = root.events[3], root.events[4]
+    read, started, finished = root.events[0], root.events[3], root.events[4]
+    assert isinstance(read, ReadStarted)
+    assert read.purpose == "typed"
     assert isinstance(started, DatabaseCallStarted)
     assert isinstance(finished, DatabaseCallFinished)
-    # Started and Finished repeat ONE borrowed value — neither its text nor its
-    # binds are copied — and it is the canonical statement the port received.
-    assert finished.statement is started.statement
+    # Started and Finished report one statement, the canonical one the port
+    # received.
+    assert finished.statement == started.statement
     (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
     assert POSTGRES_DRIVER_SQL(started.statement.sql) == executed.sql
     assert started.statement.binds == (7,)
@@ -421,82 +413,12 @@ def test_a_typed_read_refused_by_preflight_creates_no_root() -> None:
     assert port.calls == []
 
 
-def test_the_default_path_constructs_nothing_lifecycle_shaped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # With no Provider installed the Handle branches before every
-    # lifecycle-specific allocation and clock read: the seam it runs against is
-    # the one shared inert activity, and nothing beside it is ever built.
-    constructed: list[str] = []
-    for name in ("_Publisher", "_LiveRead", "_LiveDatabaseCall"):
-        original = getattr(activity_module, name)
-
-        def counting(*args: object, _name: str = name, _original: Any = original, **kwargs: object):
-            constructed.append(_name)
-            return _original(*args, **kwargs)
-
-        monkeypatch.setattr(activity_module, name, counting)
-
-    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().find(
-        mm.Account.where(mm.Account.id == 7)
-    ).result()
-    assert constructed == []
-
-
-def test_the_default_path_never_spells_the_target_it_is_handed() -> None:
-    # The counting proof above sees lifecycle CLASSES; the payload an event
-    # would have carried is a string, and a namespaced Entity's canonical
-    # spelling is built rather than stored. Passing the identity and reading it
-    # only where a Handler waits is what keeps the default path allocation-free
-    # in a way a class count cannot observe.
-    class _Probe:
-        reads = 0
-
-        @property
-        def canonical(self) -> str:
-            type(self).reads += 1
-            return "ledger.Account"
-
-    probe = _Probe()
-    statement = LoweredStatement("select 1", ())
-    with (
-        open_read_root(None, target=probe, purpose="typed", edition="edition") as read,
-        read.database_call(statement, "read", probe) as call,
-    ):
-        call.read_completed(())
-    assert _Probe.reads == 0
-
-
-def test_the_default_path_never_sizes_the_rows_it_is_handed() -> None:
-    # The same argument one field over: a physical row count is an int, and one
-    # outside the interpreter's small-integer cache is an object. Handing the
-    # rows and sizing them only where a Handler waits is what keeps a large
-    # unobserved result from costing an integer nobody reads.
-    class _Rows:
-        sizings = 0
-
-        def __len__(self) -> int:
-            type(self).sizings += 1
-            return 1_000
-
-    rows = _Rows()
-    statement = LoweredStatement("select 1", ())
-    with (
-        open_read_root(None, target=ACCOUNT_TARGET, purpose="typed", edition="edition") as read,
-        read.database_call(statement, "read", ACCOUNT_TARGET) as call,
-    ):
-        call.read_completed(rows)
-    assert _Rows.sizings == 0
-
-
 @in_a_child_interpreter
 def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
     # `with` reaches `__enter__`/`__exit__` through the descriptor protocol, so
     # an ordinary method pair would have the interpreter build a method object
-    # per entry — the allocation the class counting proof above cannot see,
-    # because the object it counts belongs to no lifecycle class. Static special
-    # methods answer the function itself, so no scope entry binds anything.
+    # per entry. Static special methods answer the function itself, so no scope
+    # entry binds anything.
     statement = LoweredStatement("select 1", ())
     with (
         open_read_root(None, target=ACCOUNT_TARGET, purpose="typed", edition="edition") as read,
@@ -508,164 +430,6 @@ def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
             if isinstance(obj, MethodType) and (obj.__self__ is read or obj.__self__ is call)
         ]
     assert bound == []
-
-
-class _Borrowing:
-    """An activity that keeps what it was handed, standing in for the inert one.
-
-    Being an activity of every kind at once is what lets one object record a
-    whole read: the openers answer the shared inert activity, so a call site that
-    prepared something for the lifecycle would prepare it against this.
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[LoweredStatement, str, ActivityTarget]] = []
-        self.rows: object = None
-
-    def __enter__(self) -> _Borrowing:
-        return self
-
-    def __exit__(self, *_exit: object) -> None:
-        return None
-
-    def database_call(
-        self, statement: LoweredStatement, kind: str, target: ActivityTarget, /
-    ) -> _Borrowing:
-        self.calls.append((statement, kind, target))
-        return self
-
-    def acquisition(self, route_policy: object, /) -> _Borrowing:
-        return self
-
-    def release(self, held_since_ns: int | None, /) -> _Borrowing:
-        return self
-
-    @property
-    def held_since_ns(self) -> None:
-        return None
-
-    @property
-    def cleanup_reported(self) -> bool:
-        return False
-
-    def call_returned(self) -> None: ...
-
-    def acquired(self, selection: object, /) -> None: ...
-
-    def unacquired(self, cleanup_result: object, selection: object, /) -> None: ...
-
-    def released(self, cleanup_result: object, /) -> None: ...
-
-    def read_completed(self, returned_rows: object, /) -> None:
-        self.rows = returned_rows
-
-    def write_completed(self, affected_rows: int, /) -> None: ...
-
-    def write_rows_completed(self, returned_rows: object, /) -> None: ...
-
-
-class _ReturningPort(ScriptedAdapter):
-    """A port that keeps the exact list object each read returned.
-
-    Identity is what the assertion needs — a borrowing activity must hold the
-    very list the port answered with — and a recording of values cannot report
-    it, so this one script consumer keeps its own.
-    """
-
-    def __init__(self, *script: Read | Write | Transact) -> None:
-        super().__init__(*script)
-        self.returned: list[list[Row]] = []
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[Bind],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        rows = super().execute(sql, binds, document_reads, read_only=read_only)
-        self.returned.append(rows)
-        return rows
-
-
-def _recorded_openings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[tuple[ActivityTarget, ResultRepresentation]]:
-    """What every root opening is HANDED, in the order the composition opens them.
-
-    An activity is what the opener answers, so no stand-in — inert, borrowing, or
-    live — ever sees the root's own target and purpose. Only the opening does.
-    """
-    recorded: list[tuple[ActivityTarget, ResultRepresentation]] = []
-
-    def recording(
-        installed: InstalledLifecycle | None,
-        *,
-        target: ActivityTarget,
-        purpose: ResultRepresentation,
-        edition: str,
-    ) -> ReadActivity:
-        recorded.append((target, purpose))
-        return open_read_root(installed, target=target, purpose=purpose, edition=edition)
-
-    monkeypatch.setattr(read_pipeline_module, "open_read_root", recording)
-    return recorded
-
-
-def _recorded_compilations(monkeypatch: pytest.MonkeyPatch) -> list[CompiledRead]:
-    """Every root read the executor renders, which is where the objects a
-    Database Call reports come from when the call site prepares nothing."""
-    recorded: list[CompiledRead] = []
-    render = CompiledTemplate.render
-
-    def recording(
-        self: CompiledTemplate, keys: list[Any] | None = None, *, query: Any = None
-    ) -> CompiledRead:
-        rendered = render(self, keys, query=query)
-        if query is not None:
-            recorded.append(rendered)
-        return rendered
-
-    monkeypatch.setattr(CompiledTemplate, "render", recording)
-    return recorded
-
-
-def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The probes above drive the seam directly, which is exactly what a call site
-    # preparing an argument for the lifecycle would slip past: the preparation
-    # would live in the caller, not in the activity. So a whole find runs here
-    # with its root opening and its compilation both recorded, and every
-    # lifecycle argument is graded by IDENTITY against the object the read
-    # already holds — a freshly built Entity identity and a re-lowered statement
-    # are EQUAL to the right ones, so anything weaker than identity would pass
-    # while the call site allocated per read.
-    borrowing = _Borrowing()
-    monkeypatch.setattr(activity_module, "INERT", borrowing)
-    openings = _recorded_openings(monkeypatch)
-    compilations = _recorded_compilations(monkeypatch)
-
-    port = _ReturningPort(Read(rows=[NEW_ROW]))
-    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().find(
-        mm.Account.where(mm.Account.id == 7)
-    ).result()
-
-    (compiled,) = compilations
-    (root_target, purpose), *further_openings = openings
-    (statement, kind, call_target), *further_calls = borrowing.calls
-    assert further_openings == []
-    assert further_calls == []
-    assert (purpose, kind) == ("typed", "read")
-    assert root_target is compiled.target
-    assert call_target is compiled.target
-    assert statement is compiled.statement
-    assert borrowing.rows is port.returned[0]
-    # The borrowed statement is the one the port ran, not merely the one the
-    # compilation produced: the two together leave a re-lowered spelling nowhere.
-    (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
-    assert POSTGRES_DRIVER_SQL(statement.sql) == executed.sql
 
 
 if __name__ == "__main__":

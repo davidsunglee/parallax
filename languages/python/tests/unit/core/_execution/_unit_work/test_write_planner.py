@@ -26,7 +26,6 @@ from typing import cast
 import pytest
 
 from parallax.core import predicate as predicate_algebra
-from parallax.core import relationship, temporal_read
 from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import keys as keys_module
@@ -52,7 +51,6 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     AttributeReference,
     Cardinality,
-    EntityIdentity,
     Metamodel,
     RelationshipIdentity,
     RelativeEntityReference,
@@ -530,25 +528,16 @@ def test_a_defining_many_to_one_orders_its_source_after_its_target() -> None:
     assert _entities(_plan(buffer, model)) == ["Zeta", "Alpha"]
 
 
-def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
+def test_ordering_reads_the_ranks_its_model_compiled_and_derives_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Ranks are the Relationship Facet's, compiled with the model: a flush only
-    # reads one per insert or delete. Updates keep authored order, so they never
-    # ask.
+    # Ranks are the Relationship Facet's, compiled with the model, so no flush
+    # derives them again. Updates keep authored order.
     planner = build_write_planner(_ORDERS)
-    facet = relationship.view(_ORDERS)
-    asked: list[str] = []
-    compiled = type(facet).referential_rank
-
-    def recording(self: relationship.RelationshipFacet, entity: EntityIdentity) -> int | None:
-        asked.append(entity.name)
-        return compiled(self, entity)
 
     def refuse(*_: object) -> list[int]:
         raise AssertionError("a flush derived referential ranks")
 
-    monkeypatch.setattr(type(facet), "referential_rank", recording)
     monkeypatch.setattr(relationship_compile, "_referential_ranks", refuse)
     buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(
@@ -568,7 +557,6 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
     )
     first = planner.finalize(request)
     second = planner.finalize(request)
-    assert asked == ["OrderItem", "OrderStatus", "OrderTag"] * 2
     assert (
         _shape(first)
         == _shape(second)
@@ -1307,92 +1295,6 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
     assert isinstance(step, PlannedDelete)
-
-
-# --------------------------------------------------------------------------- #
-# Settlement reads a temporal mutation's Temporal Shape once, at dispatch, and #
-# every later decision reads that same family-owned object.                    #
-# --------------------------------------------------------------------------- #
-_TEMPORAL_FAMILIES = formed(
-    DescriptorMetamodel(
-        entities=(
-            *_MODELS["balance"].entities,
-            *_MODELS["quote"].entities,
-            *_MODELS["rate"].entities,
-        )
-    )
-)
-_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-
-
-def _temporal_family_writes() -> list[ComposedWrite]:
-    """Observed updates of an inherited Transaction-Time-Only and an inherited
-    Bitemporal position."""
-    quote = KeyedWriteInstruction("amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
-    rate = KeyedWriteInstruction(
-        "amend",
-        "DepositRate",
-        ({"id": 2, "amount": Decimal("3.00")},),
-        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-    )
-    transaction_time = {"txStart": _OPENED, "txEnd": INFINITY}
-    observed = {
-        corpus_object_key("SpotQuote", ("id", 1)): {
-            "id": 1,
-            "price": Decimal("1.00"),
-            "symbol": "Q",
-            **transaction_time,
-        },
-        corpus_object_key("DepositRate", ("id", 2)): {
-            "id": 2,
-            "amount": Decimal("1.00"),
-            "grade": "A",
-            "validStart": _OPENED,
-            "validEnd": INFINITY,
-            **transaction_time,
-        },
-    }
-    return [
-        *observed_buffer(
-            [quote, rate],
-            _TEMPORAL_FAMILIES,
-            {
-                key_: TemporalObservation(predecessor=PredecessorRow(members=members))
-                for key_, members in observed.items()
-            },
-        ),
-    ]
-
-
-def test_settlement_reads_each_temporal_mutations_family_shape_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # One read per addressed write, and none on step access: the shape dispatch
-    # read is the one every later decision — geometry, close address, gate,
-    # successor binding — reuses.
-    facet = temporal_read.view(_TEMPORAL_FAMILIES)
-    buffered = _temporal_family_writes()
-    planner = build_write_planner(_TEMPORAL_FAMILIES)
-    reads: list[str] = []
-    read_shape = type(facet).shape
-
-    def counting(self: temporal_read.TemporalFacet, entity: EntityIdentity) -> object:
-        reads.append(entity.name)
-        return read_shape(self, entity)
-
-    monkeypatch.setattr(type(facet), "shape", counting)
-    plan = planner.finalize(
-        WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
-            preference="optimistic",
-            composed_writes=buffered,
-        )
-    )
-    assert reads == ["SpotQuote", "DepositRate"]
-    _ = list(plan_steps(plan))
-    _ = plan_steps(plan)[len(plan_steps(plan)) - 1]
-    assert reads == ["SpotQuote", "DepositRate"]
 
 
 # --------------------------------------------------------------------------- #

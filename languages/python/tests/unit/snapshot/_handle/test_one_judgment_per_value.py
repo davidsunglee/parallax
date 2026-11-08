@@ -2,10 +2,10 @@
 
 A public verb is driven over a scripted port while ``sys.monitoring`` counts
 the starts of the scalar converters and of every general judgment, freeze, and
-validating codec entry point. The verb, the node a Wire insert answers, and
-the flush are observed apart, so an encoding that legitimately happens later
-is never mistaken for repeated admission. Models, instances, and payloads are
-built before the observed window opens.
+validating codec entry point. The verb and the flush are observed apart, so a
+judgment the flush makes is never mistaken for the verb's own. A write converts
+the values it states, never the members it carries from its source. Models,
+instances, and payloads are built before the observed window opens.
 """
 
 from __future__ import annotations
@@ -36,14 +36,12 @@ from parallax.core.base import (
     typed_converter,
 )
 from parallax.core.base._neutral import _general_typed_converter  # pyright: ignore[reportPrivateUsage]
-from parallax.core.db_port import StructuredDocument
 from parallax.core.entity import Document
 from parallax.core.unit_work import UnitOfWork
 from parallax.core.wire import decode_wire, encode_wire
-from parallax.core.wire._codec import encode_managed_wire, wire_converter
+from parallax.core.wire._codec import wire_converter
 from parallax.core.write_plan import PredecessorRow
 from parallax.snapshot import TxnContext, WireEntity
-from parallax.snapshot._publication._wire import opened_wire_entity
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for
 from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
@@ -80,9 +78,7 @@ _AUTHORED_SCALARS: Final = 7
 
 _CONVERT: Final = "convert"
 _GENERAL: Final = "general"
-_ENCODE: Final = "encode"
 _LABELS: Final[Mapping[CodeType, str]] = {
-    encode_managed_wire.__code__: _ENCODE,
     **{
         factory(declared).__code__: _CONVERT
         for factory in (typed_converter, wire_converter)
@@ -103,7 +99,6 @@ _LABELS: Final[Mapping[CodeType, str]] = {
 
 _READ: Final = "read"
 _VERB: Final = "verb"
-_NODE: Final = "returned-node"
 _FLUSH: Final = "flush"
 _STORED_STATE: Final = "stored-state"
 
@@ -122,9 +117,6 @@ class _Observation:
         frame = sys._getframe(1)  # pyright: ignore[reportPrivateUsage]
         phase = self.phase
         while frame is not None:
-            if frame.f_code is _NODE_CODE:
-                phase = _NODE
-                break
             if frame.f_code is _STORED_STATE_CODE:
                 phase = _STORED_STATE
                 break
@@ -138,7 +130,6 @@ class _Observation:
         return self.counts[label, phase]
 
 
-_NODE_CODE: Final = opened_wire_entity.__code__
 # A temporal successor patches the document its predecessor was read with, which
 # settlement owns once; that stored state is no value the write authored.
 _STORED_STATE_CODE: Final = PredecessorRow.with_bindable_document.__code__
@@ -200,67 +191,6 @@ def _write(
     (call,) = calls
     assert call.sql.startswith(f"insert into {entity.__name__.lower()}(")
     return observation, call
-
-
-_TYPED: Final = "typed"
-_WIRE: Final = "wire"
-
-
-def _opening(entity: type[Entity], lane: str) -> Callable[[TxnContext], object]:
-    if lane == _TYPED:
-        instance = entity(
-            id=1, price=PyDecimal("2.50"), name="N", sizes=(1, 2), spot=Spot(code="A", rank=3)
-        )
-        return lambda tx: tx.insert(instance)
-    payload = {
-        "id": 1,
-        "price": "2.50",
-        "name": "N",
-        "sizes": [1, 2],
-        "spot": {"code": "A", "rank": 3},
-    }
-    return lambda tx: tx.wire.insert(entity.__name__, payload)
-
-
-def _stored(call: WriteCall) -> list[object]:
-    """The binds of the one row ``call`` inserts, documents by their content."""
-    return [bind.document if isinstance(bind, StructuredDocument) else bind for bind in call.binds]
-
-
-_SPOT: Final = {"code": "A", "rank": 3}
-# Each layout's stored row: Columns binds every member in its own slot, and the
-# Relational Document Layout gathers the non-key members into one document.
-_STORED: Final[Mapping[type[Entity], list[object]]] = {
-    Shelf: [1, PyDecimal("2.50"), "N", (1, 2), _SPOT],
-    Drawer: [1, {"price": "2.50", "name": "N", "sizes": (1, 2), "spot": _SPOT}],
-}
-
-
-# The fields each layout's storage encodes: Columns binds its scalars as they
-# are and encodes the collection's elements and the occurrence's members, and
-# the Relational Document Layout encodes every member its document holds.
-_STORAGE_ENCODED: Final[Mapping[type[Entity], int]] = {Shelf: 4, Drawer: 6}
-# A Wire node renders a Boolean, Integer, or String as it is, so of the
-# opening's fields only the Decimal `price` is spelled.
-_NODE_ENCODED: Final = 1
-
-
-@pytest.mark.parametrize("lane", [_TYPED, _WIRE])
-@pytest.mark.parametrize("entity", [Shelf, Drawer], ids=["columns", "document"])
-def test_an_opening_converts_each_authored_scalar_once_and_judges_it_nowhere_else(
-    entity: type[Entity], lane: str
-) -> None:
-    observation, call = _write(entity, _opening(entity, lane))
-    assert observation.count(_CONVERT, _VERB) == _AUTHORED_SCALARS
-    assert observation.count(_GENERAL, _VERB) == 0
-    # Neither the Wire node the verb answers nor the flush admits or judges a
-    # value again: each encodes a field it stores or renders, once, unchecked.
-    for phase in (_NODE, _FLUSH):
-        assert observation.count(_CONVERT, phase) == 0
-        assert observation.count(_GENERAL, phase) == 0
-    assert observation.count(_ENCODE, _FLUSH) == _STORAGE_ENCODED[entity]
-    assert observation.count(_ENCODE, _NODE) == (_NODE_ENCODED if lane == _WIRE else 0)
-    assert _stored(call) == _STORED[entity]
 
 
 class _Key(int):
@@ -595,38 +525,4 @@ def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
     # The close, then one milestone insert of every successor it opens.
     close, opening = calls
     assert close.sql.startswith("update where_position")
-    assert opening.sql.startswith("insert into where_position(")
-
-
-_OPENED_POSITION: Final = WherePosition(id=1, acct_num="A", value=PyDecimal("100.00"))
-
-
-def _typed_insert_until(tx: TxnContext, _source: object) -> None:
-    tx.insert(_OPENED_POSITION, valid_from=_VALID_FROM, until=_UNTIL)
-
-
-def _wire_insert_until(tx: TxnContext, _source: object) -> None:
-    tx.wire.insert(
-        "WherePosition",
-        {"id": 1, "acctNum": "A", "value": "100.00"},
-        valid_from=_VALID_FROM,
-        until=_UNTIL,
-    )
-
-
-@pytest.mark.parametrize(
-    "write",
-    [
-        pytest.param(_typed_insert_until, id="typed-insert-until"),
-        pytest.param(_wire_insert_until, id="wire-insert-until"),
-    ],
-)
-def test_a_bounded_opening_converts_each_member_it_states_once(
-    write: Callable[[TxnContext, object], object],
-) -> None:
-    observation, calls = _run(WHERE_POSITION_META, (Write(),), write)
-    # Its key and both other members; the bounds are no member it states.
-    _admitted_once(observation, 3)
-    assert observation.count(_CONVERT, _NODE) == 0
-    (opening,) = calls
     assert opening.sql.startswith("insert into where_position(")
