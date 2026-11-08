@@ -775,6 +775,43 @@ def test_only_an_elected_builder_scans_for_its_family_most_recent_first(
     assert after._fetches is first._fetches
 
 
+def test_concurrent_waiters_compare_no_family_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
+    started = threading.Event()
+    release = threading.Event()
+    callers = threading.Barrier(8)
+
+    def delayed_build(**kwargs: Any) -> Any:
+        started.set()
+        assert release.wait(timeout=2)
+        return uncached(**kwargs)
+
+    cache = ReadPlanCache()
+    _plan(cache, _name_query("order-2"))
+    verdicts = _counting_family_comparisons(monkeypatch)
+    monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
+    query = _query()
+
+    def plan(_index: int) -> _read_plan.ReadPlan:
+        callers.wait()
+        return _plan(cache, query)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = tuple(pool.submit(plan, index) for index in range(8))
+        assert started.wait(timeout=2)
+        time.sleep(0.05)
+        release.set()
+        prepared = tuple(future.result() for future in futures)
+
+    assert all(_shares_preparation(value, prepared[0]) for value in prepared)
+    assert verdicts == [False]
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 2, 7, 2, 0
+    )
+
+
 def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_binds() -> None:
     cache = ReadPlanCache(capacity=4)
     pages = continuation.plan(_query(), _META)
