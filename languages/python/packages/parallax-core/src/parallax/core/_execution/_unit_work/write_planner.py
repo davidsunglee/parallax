@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from operator import itemgetter
+from typing import Never, final
 
 from parallax.core import concurrency, inheritance, relationship, temporal_read
 from parallax.core._execution._unit_work.clock import TransactionInstant
@@ -85,11 +86,15 @@ class WritePlanningRequest:
     counts_unchanged_rows: bool = False
 
 
+@final
 class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
-    Constructed once per accepted Metamodel with its batching and audit
-    strategies already wired; :meth:`finalize` plans a flush, :meth:`audit_decoration` supplies
+    Obtained only from
+    :func:`~parallax.core._execution._planning.build_write_planner`, once per
+    accepted Metamodel with its batching and audit strategies already wired, so
+    every planner plans under production's one set of strategies;
+    :meth:`finalize` plans a flush, :meth:`audit_decoration` supplies
     the audit a deferred range of its plans binds under once that range's
     coverage is read, and :meth:`predicate_step` plans a predicate-selected
     write's one statement. No caller sequences coalescing, batching, ordering, temporal
@@ -116,7 +121,23 @@ class WritePlanner:
         "_versioning",
     )
 
-    def __init__(
+    def __init__(self, _unconstructible: Never) -> None:
+        raise TypeError("a WritePlanner is obtained only from build_write_planner")
+
+    @classmethod
+    def _wired(
+        cls,
+        model: Metamodel,
+        *,
+        batching: BatchingStrategy,
+        audit: AuditStrategy,
+        payloads: WritePayloadPreparer,
+    ) -> WritePlanner:
+        planner = cls.__new__(cls)
+        planner._wire(model, batching=batching, audit=audit, payloads=payloads)
+        return planner
+
+    def _wire(
         self,
         model: Metamodel,
         *,

@@ -1,11 +1,9 @@
 """Source inventories over Python files, for guards stated over source shape.
 
-Two kinds of reader, and no third. What the TEXT settles: globbing a
-distribution's sources, parsing them with ``ast``, and reading the import
-statements out of the parse. What only the RUNTIME settles: importing every
-module and walking Python's subclass registry, because ancestry is a fact no
-spelling carries. A caller gets paths, ``path:line`` sites, parse trees,
-`Import` records, and classes, and decides for itself what any of it means.
+What the text settles, and nothing else: globbing a distribution's sources,
+parsing them with ``ast``, and reading the import statements out of the parse.
+A caller gets paths, ``path:line`` sites, parse trees, and `Import` records, and
+decides for itself what any of it means.
 `synthetic_sources` hands it source to read in place of this tree's, which is
 how a guard is shown to fail for the shape it forbids and to pass source that
 merely resembles it.
@@ -24,25 +22,19 @@ carried by this MODULE's underscore. Never imported by production code.
 from __future__ import annotations
 
 import ast
-import importlib
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from tests._support.distributions import ALL_PACKAGES, PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
+from tests._support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
 from tests._support.repo import PY_ROOT
 
 __all__ = [
     "CONFORMANCE_SRC",
     "ENTITY_PACKAGE",
-    "ENTITY_SRC",
-    "EXECUTION_SRC",
     "SNAPSHOT_SRC",
     "Import",
-    "all_sources",
     "declared_imports",
-    "first_party_descendants",
-    "import_every_module",
     "parsed",
     "production_sources",
     "reach",
@@ -54,10 +46,7 @@ __all__ = [
 ]
 
 _PACKAGES = PY_ROOT / "packages"
-_CORE_SRC = _PACKAGES / "parallax-core" / "src" / "parallax" / "core"
 SNAPSHOT_SRC = _PACKAGES / "parallax-snapshot" / "src" / "parallax" / "snapshot"
-ENTITY_SRC = _CORE_SRC / "entity"
-EXECUTION_SRC = _CORE_SRC / "_execution"
 CONFORMANCE_SRC = _PACKAGES / "parallax-conformance" / "src" / "parallax" / "conformance"
 
 ENTITY_PACKAGE = "parallax.core.entity"
@@ -78,11 +67,6 @@ def _package_sources(names: Iterable[str]) -> Iterator[tuple[Path, str]]:
 def production_sources() -> Iterator[tuple[Path, str]]:
     """Every shipped distribution's sources; the conformance tooling is not one."""
     yield from _package_sources(PRODUCTION_PACKAGES)
-
-
-def all_sources() -> Iterator[tuple[Path, str]]:
-    """Every distribution's sources, the dev-only conformance tooling included."""
-    yield from _package_sources(ALL_PACKAGES)
 
 
 def site_of(path: Path, line: int) -> str:
@@ -122,37 +106,6 @@ def parsed(over: Iterator[tuple[Path, str]]) -> Iterator[tuple[Path, ast.Module]
     """Each source file and its parse tree."""
     for path, text in over:
         yield path, ast.parse(text)
-
-
-def import_every_module(over: Iterator[tuple[Path, str]]) -> None:
-    """Import each source file, so a caller can ask Python rather than the text.
-
-    Importing is what turns a spelling into an object, which is the only way to
-    ask what descends from a class. A module that cannot be imported fails here
-    as an error rather than a quiet absence.
-    """
-    for path, _text in over:
-        importlib.import_module(_dotted(path))
-
-
-def _descendants(root: type) -> Iterator[type]:
-    yield root
-    for child in root.__subclasses__():
-        yield from _descendants(child)
-
-
-def first_party_descendants(root: type) -> list[type]:
-    """Every shipped class that is, or descends from, ``root``.
-
-    Python's own subclass registry answers this once every module is imported, so
-    no alias, qualified base spelling, or class name evades it — and a class
-    merely named like ``root`` is not in it. A class a test defines is not shipped
-    and is left out.
-    """
-    return sorted(
-        (kind for kind in _descendants(root) if kind.__module__.startswith("parallax.")),
-        key=lambda kind: (kind.__module__, kind.__qualname__),
-    )
 
 
 @dataclass(frozen=True, slots=True)

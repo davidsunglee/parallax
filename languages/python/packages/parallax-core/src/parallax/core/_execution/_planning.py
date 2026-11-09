@@ -194,7 +194,7 @@ def build_write_planner(model: Metamodel) -> WritePlanner:
     identically by the conformance engine's compile lane, so the two lanes plan
     and prepare through the same deterministic computation.
     """
-    return WritePlanner(
+    return WritePlanner._wired(  # pyright: ignore[reportPrivateUsage] - the composition root calls the planner's own private constructor
         model,
         batching=_BatchingAdapter(),
         audit=NO_AUDIT,
