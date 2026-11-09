@@ -421,8 +421,8 @@ _BUNDLE_MODEL = form_metamodel(
         (
             "amounts",
             (10**17,),
-            "Bundle.amounts[0]: value Decimal('100000000000000000') does not match the declared "
-            "type Decimal(precision=18, scale=2)",
+            "Bundle.amounts[0]: value 100000000000000000 does not match the declared type "
+            "Decimal(precision=18, scale=2)",
         ),
         (
             "weights",

@@ -37,12 +37,9 @@ from parallax.core.entity import (
     EditError,
     EditViolation,
     Entity,
-    EntityDefinitionError,
     Float32,
     IncludePath,
     Int32,
-    MetamodelDefinitionError,
-    MetamodelLookupError,
     ObjectQuery,
     Predicate,
     Rel,
@@ -60,7 +57,6 @@ from parallax.core.entity import (
 )
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
-from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, UndeclaredAxisError
 
@@ -92,14 +88,11 @@ __all__ = [
     "EditError",
     "EditViolation",
     "Entity",
-    "EntityDefinitionError",
     "Float32",
     "IncludePath",
     "Int32",
     "InternalError",
     "InvalidDataError",
-    "MetamodelDefinitionError",
-    "MetamodelLookupError",
     "MetamodelValidationError",
     "NoResultFound",
     "ObjectQuery",
@@ -107,7 +100,6 @@ __all__ = [
     "Pin",
     "Predicate",
     "PublicationConflictError",
-    "QueryDefinitionError",
     "Rel",
     "Sequence",
     "SortKey",

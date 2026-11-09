@@ -67,7 +67,6 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import _delivery as delivery
 from parallax.core.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
@@ -82,10 +81,7 @@ from parallax.core.unit_work import (
     ReadEvidence,
     RetainedObservation,
 )
-from parallax.snapshot import (
-    Snapshot,
-    SnapshotConnectionError,
-)
+from parallax.snapshot import Snapshot
 from parallax.snapshot._handle._read import typed_publication_for, wire_publication_for
 from parallax.snapshot._handle._stream import SnapshotStream
 from parallax.snapshot._handle._wire import (
@@ -503,10 +499,9 @@ def test_find_selects_its_model_before_it_refuses_a_classless_one() -> None:
     port = ScriptedAdapter()
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
-    with pytest.raises(SnapshotConnectionError) as caught:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         _find(scope, _typed_query())
 
-    assert caught.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
     assert port.calls == []
 
@@ -526,7 +521,7 @@ def test_find_refuses_a_classless_model_before_it_lowers_its_query() -> None:
     classless, execution = _scope(port, selected=_selection(materializing=False))
     class_backed, _ = _scope(port)
 
-    with pytest.raises(SnapshotConnectionError) as refused:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         classless.read(
             _typed_query(),
             convert_query=refusing_lowering,
@@ -539,7 +534,6 @@ def test_find_refuses_a_classless_model_before_it_lowers_its_query() -> None:
             build_publication=typed_publication_for,
         )
 
-    assert refused.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
     assert len(lowered) == 1
 
@@ -592,10 +586,9 @@ def test_a_bad_include_the_gate_refuses_reaches_no_execution_capability(
     scope, execution = _scope(RefusingAdapter(), selected=_selection(ORDERS_MODEL))
     query = Order.where(Order.id == 1).include(Order.items.no_such_member)
 
-    with pytest.raises(QueryDefinitionError, match="no_such_member") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
         verb(scope, query)
 
-    assert caught.value.code == "query-path-invalid"
     assert execution.calls == ["begin"]
 
 
@@ -711,10 +704,9 @@ def test_a_typed_stream_refuses_a_classless_selection_at_entry_before_the_gate()
     stream = _stream(scope, _typed_query(), _VALID_BATCH_SIZE)
     assert execution.calls == []
 
-    with pytest.raises(SnapshotConnectionError) as refused:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         stream.__enter__()
 
-    assert refused.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
 
 

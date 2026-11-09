@@ -100,8 +100,8 @@ def run_rejected_case(case: case_format.Case) -> str:
     reusable corpus model does. **That order is load-bearing, not incidental**:
     the document door gates on the canonical schema FIRST, and four inline
     `rejected` models violate that schema on purpose, so forming first would
-    report each as a `DescriptorSchemaError` instead of the family rule the case
-    authored. The family validator parses shape only and has no schema phase,
+    report each as `descriptor-schema-invalid` instead of the family rule the
+    case authored. The family validator parses shape only and has no schema phase,
     which is exactly why it can answer for a document expected never to form.
 
     A `write` input is one of four, dispatched in order on the members the input

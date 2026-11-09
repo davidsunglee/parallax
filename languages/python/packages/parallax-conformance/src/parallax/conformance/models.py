@@ -46,9 +46,10 @@ def domain_model(document: Mapping[str, object]) -> DomainModel:
     """The descriptor-backed Domain Model ``document`` forms into.
 
     One call of the public descriptor door, so the phase order is the door's:
-    :class:`~parallax.descriptor.DescriptorSchemaError` for a canonical-schema
-    violation, :class:`~parallax.descriptor.DescriptorValueError` for a
-    schema-valid but unconstructible value, then
+    :class:`~parallax.descriptor.DescriptorError` with
+    ``descriptor-schema-invalid`` for a canonical-schema violation and
+    ``descriptor-value-invalid`` for a schema-valid but unconstructible value,
+    then
     :class:`~parallax.core.model_formation.MetamodelValidationError` for every
     semantic model rule — all before this returns.
 

@@ -18,7 +18,7 @@ from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.serde import serialize
-from parallax.core.predicate import QueryDefinitionError, TrueNode
+from parallax.core.predicate import TrueNode
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
 from tests._support.errors import raises_code
@@ -173,9 +173,8 @@ def test_a_sort_keys_optional_members_stay_distinct_from_their_defaults() -> Non
 def test_a_sort_keys_null_placement_is_single_shot() -> None:
     key = oq.OrderKey(attr=f"{_ORDER}.sku", direction="desc")
     assert key.nulls_first().nulls == "first"
-    with pytest.raises(QueryDefinitionError, match="single-shot") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="single-shot"):
         key.nulls_first().nulls_last()
-    assert caught.value.code == "query-expression-invalid"
 
 
 def test_the_temporal_map_serializes_in_canonical_dimension_order() -> None:

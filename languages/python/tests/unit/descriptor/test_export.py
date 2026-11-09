@@ -6,8 +6,8 @@ is hand-authored in that form, so the file itself is the expected value — an
 oracle written by an author rather than by the exporter under test. These pin
 that agreement, the omission set, the enumeration order, determinism, a
 canonical fixpoint, the same export over an alternate model implementation, and
-the error path (an induced defect surfaces as ``DescriptorExportError`` with no
-partial output and no ``DescriptorError``).
+the error path (an induced defect surfaces as ``descriptor-export-failed`` with
+no partial output and no ``DescriptorError``).
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import cast
 import pytest
 
 from parallax.conformance import case_format, models
+from parallax.core import InternalError
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
@@ -38,8 +39,9 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.descriptor._errors import DescriptorError
-from parallax.descriptor._export import DescriptorExportError, export_document
+from parallax.descriptor._export import export_document
 from tests._support import fake_metamodel
+from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, instant, key, source
 
 
@@ -418,12 +420,11 @@ class _ExplodingMetamodel:
 
 def test_export_wraps_an_induced_defect_with_no_partial_output() -> None:
     model = fake_metamodel.parity_model()
-    with pytest.raises(DescriptorExportError) as caught:
+    with raises_code(InternalError, "descriptor-export-failed") as caught:
         export_document(cast("Metamodel", _ExplodingMetamodel(model)))
     error = caught.value
-    assert error.code == "descriptor-export-failed"
-    assert error.target == "document"
-    assert isinstance(error.cause, RuntimeError)
+    assert error.args[1].startswith("[document] ")
+    assert isinstance(error.__cause__, RuntimeError)
     # An export defect is an adapter boundary, never an ingestion DescriptorError.
     assert not isinstance(error, DescriptorError)
     # No partial document escaped, and the underlying model is untouched: it still

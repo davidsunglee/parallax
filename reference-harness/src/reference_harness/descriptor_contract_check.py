@@ -66,8 +66,8 @@ __all__ = [
 @dataclass(frozen=True)
 class Violation:
     """One ingestion-violation identity, independent of the phase that raised it:
-    document path plus the violated rule. For a schema-phase
-    ``DescriptorSchemaViolation`` the rule is the failing JSON-Schema keyword;
+    document path plus the violated rule. For a schema-phase Descriptor
+    Violation the rule is the failing JSON-Schema keyword;
     for a value-phase violation it is the spec-owned rule name (e.g.
     ``type-spelling-invalid``). The explanatory message is excluded from equality
     and ordering by the m-descriptor contract, so it is not a member."""

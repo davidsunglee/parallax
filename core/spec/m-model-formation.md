@@ -152,19 +152,18 @@ class binding, or export cache is published.
 
 ## Validation and contract errors
 
-`MetamodelValidationError(ValueError)` contains one nonempty immutable,
-canonically ordered sequence of `MetamodelIssue`. It represents invalid model
-input only.
+`MetamodelValidationError` contains one nonempty immutable, canonically ordered
+sequence of `MetamodelIssue`. It represents invalid model input only.
 
-Unexpected contributor behavior is a different supported error:
+Unexpected contributor behavior is a different supported failure, a formation
+contract failure, which reports:
 
 ```text
-FormationContractError(RuntimeError)
-  code: FormationContractCode
-  owner: ModuleIdentity | absent
-  cause: exception | absent
+code: Formation Contract Code
+owner: ModuleIdentity | absent
+cause: exception | absent
 
-FormationContractCode =
+Formation Contract Code =
     formation-profile-drift
   | formation-issue-code-invalid
   | formation-issue-undeclared

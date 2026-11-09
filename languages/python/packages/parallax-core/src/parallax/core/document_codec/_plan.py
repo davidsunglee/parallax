@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, overload
 
-from parallax.core.base import NeutralType, NeutralTypeMismatch, ScalarConverter, UsageError
+from parallax.core.base import NeutralType, ScalarConverter, UsageError
 from parallax.core.metamodel import (
     AuthoringViolation,
     MemberDefinition,
@@ -151,7 +151,6 @@ class _Refused(Exception):
         self.cause = cause
 
 
-_CONVERSION_FAILURES: Final = (NeutralTypeMismatch, UsageError)
 _UNSTATED: Final = object()
 _MARKER_KEYS: Final = frozenset({"computed", "increment"})
 
@@ -233,8 +232,8 @@ class AuthoringCatalog:
                 self.converter(lane, member)(raw)
         except _Refused as refused:
             return refused.violation
-        except _CONVERSION_FAILURES as failure:
-            return _mismatch("", member, raw, failure)
+        except UsageError:
+            return _mismatch("", member, raw)
         return None
 
 
@@ -472,9 +471,9 @@ class AuthoringPlan:
             return root(position, cast("Mapping[str, object]", raw))
         try:
             return cast("ScalarConverter", self._steps[base + position])(raw)
-        except _CONVERSION_FAILURES as failure:
+        except UsageError as failure:
             raise AuthoringRefusal(
-                position, _mismatch("", self.shape.members[position], raw, failure), failure
+                position, _mismatch("", self.shape.members[position], raw), failure
             ) from None
 
     def _completed(
@@ -501,10 +500,8 @@ class AuthoringPlan:
         step = self._steps[lane * len(self.shape.members) + position]
         try:
             return cast("ScalarConverter", step)(raw)
-        except _CONVERSION_FAILURES as failure:
-            raise _Refused(
-                _mismatch("", self.shape.members[position], raw, failure), failure
-            ) from None
+        except UsageError as failure:
+            raise _Refused(_mismatch("", self.shape.members[position], raw), failure) from None
 
     def _structured(self, lane: int, position: int, raw: object, produce: bool = True) -> object:
         """A collection or occurrence member's owned cell, or only its
@@ -548,11 +545,9 @@ def _scalar_collection(
             raise _Refused(AuthoringViolation(f"[{index}]", "type-mismatch", None, declared), None)
         try:
             cell = convert(element)
-        except _CONVERSION_FAILURES as failure:
+        except UsageError as failure:
             raise _Refused(
-                AuthoringViolation(
-                    f"[{index}]", "type-mismatch", _managed(element, failure), declared
-                ),
+                AuthoringViolation(f"[{index}]", "type-mismatch", element, declared),
                 failure,
             ) from None
         if produce:
@@ -560,15 +555,9 @@ def _scalar_collection(
     return tuple(converted) if produce else None
 
 
-def _mismatch(
-    path: str, member: MemberDefinition, raw: object, failure: Exception
-) -> AuthoringViolation:
+def _mismatch(path: str, member: MemberDefinition, raw: object) -> AuthoringViolation:
     declared = member.type if isinstance(member, ScalarDefinition) else None
-    return AuthoringViolation(path, "type-mismatch", _managed(raw, failure), declared)
-
-
-def _managed(raw: object, failure: Exception) -> object:
-    return failure.managed if isinstance(failure, NeutralTypeMismatch) else raw
+    return AuthoringViolation(path, "type-mismatch", raw, declared)
 
 
 def _missing_reason(

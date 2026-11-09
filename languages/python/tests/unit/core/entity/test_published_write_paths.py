@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from pydantic import BaseModel, ConfigDict, PrivateAttr, TypeAdapter, ValidationError
 
+from parallax.core import UsageError
 from parallax.core.entity import (
     MANY_TO_ONE,
     UNLOADED,
@@ -36,12 +37,13 @@ from parallax.core.entity import (
     attr,
     rel,
 )
-from parallax.core.entity._errors import EditError, EntityDefinitionError
+from parallax.core.entity._errors import EditError
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,
     auxiliary,
 )
+from tests._support.errors import raises_code
 from tests.unit.core.entity._compact_support import (
     layout_slots,
     published,
@@ -116,14 +118,18 @@ def test_assignment_validation_cannot_be_turned_on_by_a_class_body() -> None:
     # back into the mapping it read, which for a published value is a temporary.
     # It is unreachable rather than handled: the engine owns the configuration,
     # and both spellings of asking for one are refused at class creation.
-    with pytest.raises(EntityDefinitionError, match="entity-reserved-member-name"):
+    with raises_code(
+        UsageError, "entity-reserved-member-name", match="entity-reserved-member-name"
+    ):
 
         class Configured(Entity, table="configured", namespace=_NS):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
             id: Attr[int] = attr(primary_key=True)
 
             model_config = ConfigDict(validate_assignment=True)
 
-    with pytest.raises(EntityDefinitionError, match="entity-header-unknown-option"):
+    with raises_code(
+        UsageError, "entity-header-unknown-option", match="entity-header-unknown-option"
+    ):
 
         class Headered(  # pyright: ignore[reportUnusedClass] - likewise
             Entity,

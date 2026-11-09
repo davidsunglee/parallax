@@ -1,4 +1,4 @@
-"""The closed ``EntityDefinitionError`` code set.
+"""The closed ``EntityDefinitionCode`` vocabulary.
 
 Every rejection the frontend probes trigger draws its code from that set, and
 every code but the one raised during ``DomainModel`` construction has a probe.
@@ -8,13 +8,14 @@ raises, fails here.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 
-from parallax.core.entity import EntityDefinitionError
-from parallax.core.entity._errors import ENTITY_DEFINITION_CODES
+from parallax.core import UsageError
+from parallax.core.entity._errors import EntityDefinitionCode
 from tests._support import frontend_probes, frontend_probes_stringized
+from tests._support.errors import raises_code
 
 # Every class-creation and factory-call rejection, paired with the code it must
 # raise. `entity-relationship-annotation-mismatch` is absent because it is the
@@ -57,14 +58,17 @@ _PROBES: dict[str, str] = {
     "define_wide_union_annotation": "entity-annotation-invalid",
     "define_wide_union_relationship_target": "entity-annotation-invalid",
     "define_canonical_name_collision": "entity-canonical-name-collision",
+    "define_many_relationship_without_ellipsis": "entity-annotation-invalid",
+    "define_inheritance_invalid_role": "entity-header-invalid-value",
+    "define_rel_value_under_attr": "entity-member-value-invalid",
+    "define_attr_value_under_rel": "entity-member-value-invalid",
+    "define_value_object_base_invalid": "entity-base-invalid",
+    "define_value_object_occurrence_with_scalar_type": "entity-option-context-invalid",
 }
 
+_DECLARED = frozenset(get_args(EntityDefinitionCode.__value__))
+
 _MODULES = {"live": frontend_probes, "stringized": frontend_probes_stringized}
-
-
-def test_a_code_outside_the_closed_set_cannot_be_raised() -> None:
-    with pytest.raises(ValueError, match="not an entity definition code"):
-        EntityDefinitionError(code="entity-made-up", message="nope")
 
 
 @pytest.mark.parametrize("path", sorted(_MODULES))
@@ -72,13 +76,11 @@ def test_a_code_outside_the_closed_set_cannot_be_raised() -> None:
 def test_every_probe_raises_its_declared_code(path: str, probe: str) -> None:
     define = cast("object", getattr(_MODULES[path], probe))
     assert callable(define)
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, _PROBES[probe]):
         define()
-    assert caught.value.code == _PROBES[probe]
-    assert caught.value.code in ENTITY_DEFINITION_CODES
 
 
 def test_every_probe_covers_a_declared_code_and_only_realization_is_unprobed() -> None:
     probed = set(_PROBES.values())
-    assert probed <= ENTITY_DEFINITION_CODES
-    assert ENTITY_DEFINITION_CODES - probed == {"entity-relationship-annotation-mismatch"}
+    assert probed <= _DECLARED
+    assert _DECLARED - probed == {"entity-relationship-annotation-mismatch"}

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Final
+from typing import Final, Literal
 
-from parallax.core.base import UsageError
+from parallax.core.base import InternalError, UsageError
 from parallax.core.metamodel import MetamodelIssue
 from parallax.core.model_formation._manifest import ModuleIdentity
 
@@ -21,12 +21,26 @@ __all__ = [
     "FORMATION_RULE_SET_FAILED",
     "FORMATION_RULE_SET_RESULT_INVALID",
     "FormationContractCode",
-    "FormationContractError",
     "MetamodelValidationError",
+    "formation_contract_failure",
 ]
 
-type FormationContractCode = str
-"""A stable ``formation-*`` token naming one implementation-contract boundary."""
+type FormationContractCode = Literal[
+    "formation-profile-drift",
+    "formation-issue-code-invalid",
+    "formation-issue-undeclared",
+    "formation-issue-duplicate",
+    "formation-facet-missing",
+    "formation-facet-duplicate",
+    "formation-resolver-failed",
+    "formation-resolver-result-invalid",
+    "formation-rule-set-failed",
+    "formation-rule-set-result-invalid",
+    "formation-compiler-failed",
+]
+"""The ways a contributor, Formation Profile, or Formation Manifest breaks its
+contract, each an :class:`~parallax.core.base.InternalError`. None is ever a
+statement about the model under formation."""
 
 FORMATION_PROFILE_DRIFT: Final[FormationContractCode] = "formation-profile-drift"
 """The profile does not match the manifest, or reading a contributor's own
@@ -93,7 +107,8 @@ FORMATION_CONTRACT_CODES: Final[frozenset[FormationContractCode]] = frozenset(
         FORMATION_COMPILER_FAILED,
     }
 )
-"""The closed contract-failure vocabulary. Every raise names one of these."""
+"""The codes a contract failure raised inside a contributor-reading block keeps
+as its own rather than being restated as that block's."""
 
 
 class MetamodelValidationError(UsageError):
@@ -116,29 +131,10 @@ class MetamodelValidationError(UsageError):
         super().__init__("model-formation-rejected", f"{len(reported)} model issue(s): {summary}")
 
 
-class FormationContractError(RuntimeError):
-    """A contributor, Formation Profile, or Formation Manifest broke its contract.
-
-    ``owner`` names the responsible module where one is identifiable, and
-    ``cause`` retains the original exception when the failure was a contributor
-    raising rather than returning; that exception is also chained natively. This
-    is never a statement about the model under formation.
-    """
-
-    code: FormationContractCode
-    owner: ModuleIdentity | None
-    cause: BaseException | None
-
-    def __init__(
-        self,
-        code: FormationContractCode,
-        message: str,
-        *,
-        owner: ModuleIdentity | None = None,
-        cause: BaseException | None = None,
-    ) -> None:
-        self.code = code
-        self.owner = owner
-        self.cause = cause
-        responsible = "" if owner is None else f" [{owner}]"
-        super().__init__(f"{code}{responsible}: {message}")
+def formation_contract_failure(
+    code: FormationContractCode, message: str, *, owner: ModuleIdentity | None = None
+) -> InternalError:
+    """The contract failure ``code``, naming the responsible module where one is
+    identifiable. A failure that is a contributor raising rather than returning
+    is raised from that exception."""
+    return InternalError(code, message if owner is None else f"{owner}: {message}")

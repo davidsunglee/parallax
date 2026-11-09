@@ -25,11 +25,10 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
-    EntityDefinitionError,
-    QueryDefinitionError,
     Rel,
     TablePerHierarchy,
     TxTemporal,
+    UsageError,
     asc,
     attr,
     desc,
@@ -73,6 +72,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import Comparison, serialize
+from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node
 
 
@@ -190,9 +190,8 @@ def test_the_primary_key_algebra_carries_its_generation_on_the_key_branch() -> N
 
 
 def test_a_generation_is_spelled_as_its_value_and_never_as_its_type() -> None:
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-option-invalid-value"):
         attr(primary_key=Max)
-    assert caught.value.code == "entity-option-invalid-value"
 
 
 @pytest.mark.parametrize(
@@ -261,10 +260,10 @@ def test_an_intrinsically_invalid_factory_argument_is_refused_at_the_call(
 ) -> None:
     # A factory validates its own arguments, so a malformed option never reaches
     # class creation and the rejection points at the call the developer wrote.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with pytest.raises(UsageError) as caught:
         call()
     assert caught.value.code == code
-    assert caught.value.message == message
+    assert caught.value.args[1] == message
 
 
 def _blank_table() -> type:
@@ -420,10 +419,10 @@ def test_an_option_the_declaration_context_refuses_names_the_member_it_came_from
     # These rules need the whole declaration rather than the factory call alone:
     # the header's own values, the annotation an option is read against, and the
     # value layer's refusals reclassified as declaration-context defects.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with pytest.raises(UsageError) as caught:
         declare()
     assert caught.value.code == code
-    assert caught.value.message == message
+    assert caught.value.args[1] == message
 
 
 def test_the_three_designations_stay_distinct_on_the_declaration() -> None:
@@ -530,7 +529,6 @@ def test_a_null_placement_is_single_shot_on_an_ordering_term() -> None:
     with pytest.raises(ValueError, match="single-shot") as caught:
         desc("id").nulls_first().nulls_last()
     assert type(caught.value) is ValueError
-    assert not isinstance(caught.value, QueryDefinitionError)
 
 
 def test_a_one_to_one_join_names_members_by_their_python_spelling() -> None:

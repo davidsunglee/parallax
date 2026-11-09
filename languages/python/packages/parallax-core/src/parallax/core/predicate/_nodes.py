@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityIdentity
 
 __all__ = [
     "CURRENT_SCALAR_ELEMENT",
     "QUERY_CLAUSE_INVALID",
-    "QUERY_DEFINITION_CODES",
+    "QUERY_EXPRESSION_INVALID",
+    "QUERY_NOT_MUTATION_COMPATIBLE",
+    "QUERY_PATH_INVALID",
     "And",
     "Comparison",
     "ComparisonOp",
@@ -28,7 +31,7 @@ __all__ = [
     "PresenceOp",
     "Quantifier",
     "QuantifierKind",
-    "QueryDefinitionError",
+    "QueryDefinitionCode",
     "Range",
     "ScalarLiteral",
     "ScalarSubject",
@@ -45,9 +48,9 @@ ScalarLiteral = str | int | float | bool
 
 def _require_non_null_literal(value: object) -> None:
     if value is None:
-        raise QueryDefinitionError(
-            code="query-expression-invalid",
-            message="None is not a Predicate literal; use .is_null() or .is_not_null()",
+        raise UsageError(
+            QUERY_EXPRESSION_INVALID,
+            "None is not a Predicate literal; use .is_null() or .is_not_null()",
         )
 
 
@@ -84,48 +87,28 @@ QuantifierKind = Literal["any", "all", "none"]
 PresenceOp = Literal["exists", "notExists"]
 
 
-QUERY_CLAUSE_INVALID: Final = "query-clause-invalid"
-"""A query clause states something no query can mean, whether a query is being
-built or a canonical query is being validated against a model."""
+type QueryDefinitionCode = Literal[
+    "query-expression-invalid",
+    "query-path-invalid",
+    "query-clause-invalid",
+    "query-not-mutation-compatible",
+]
+"""The query-authoring refusals: an invalid Python query construction,
+composition, or refinement, raised as a :class:`~parallax.core.base.UsageError`.
 
-QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "query-target-mismatch",
-        "query-expression-invalid",
-        "query-path-invalid",
-        QUERY_CLAUSE_INVALID,
-        "query-assignment-invalid",
-        "query-not-mutation-compatible",
-    }
-)
-"""The closed query-definition rejection vocabulary.
-
-That section fixes which rule draws which code; an invalid expression — a Sort
-Key composition included — draws ``query-expression-invalid``. A query names no
+They are disjoint by the question they answer from the serialized-document and
+model-aware refusals beside them. An invalid expression — a Sort Key
+composition included — draws ``query-expression-invalid``. A query names no
 model, so there is no model-mismatch member here: a target the connected model
 does not declare is an execution refusal rather than an authoring one.
 """
 
-
-class QueryDefinitionError(ValueError):
-    """An invalid Python query construction, composition, or refinement.
-
-    ``code`` is a member of :data:`QUERY_DEFINITION_CODES`; constructing one with
-    any other code is an implementation defect and raises :class:`ValueError`. A
-    caller therefore branches on the rule that fired rather than on a message
-    substring.
-
-    This is the query-authoring family, disjoint by the question it answers from
-    the serialized-document and model-aware refusals beside it: a malformed
-    serialized document, and a well-formed one that is illegal against a model.
-    """
-
-    def __init__(self, *, code: str, message: str) -> None:
-        if code not in QUERY_DEFINITION_CODES:
-            raise ValueError(f"{code!r} is not a query definition code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
+QUERY_EXPRESSION_INVALID: Final = "query-expression-invalid"
+QUERY_PATH_INVALID: Final = "query-path-invalid"
+QUERY_CLAUSE_INVALID: Final = "query-clause-invalid"
+"""A query clause states something no query can mean, whether a query is being
+built or a canonical query is being validated against a model."""
+QUERY_NOT_MUTATION_COMPATIBLE: Final = "query-not-mutation-compatible"
 
 
 @dataclass(frozen=True, slots=True)

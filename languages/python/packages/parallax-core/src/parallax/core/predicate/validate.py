@@ -38,6 +38,7 @@ from parallax.core.predicate._interpretation import (
     ScalarOperator,
 )
 from parallax.core.predicate._nodes import (
+    QUERY_EXPRESSION_INVALID,
     And,
     Comparison,
     CurrentScalarElement,
@@ -52,7 +53,6 @@ from parallax.core.predicate._nodes import (
     Presence,
     Quantifier,
     QuantifierKind,
-    QueryDefinitionError,
     Range,
     ScalarSubject,
     StringMatch,
@@ -521,12 +521,10 @@ def adopted_operands(prepared_type: NeutralType) -> OperandAdmission:
         subject: str, member: ResolvedPredicateMember, values: tuple[object, ...]
     ) -> tuple[ManagedValue, ...]:
         if member.type != prepared_type:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{subject}: its operands were prepared for NeutralType {prepared_type!r}, "
-                    f"but the serving model declares {member.type!r}"
-                ),
+            raise UsageError(
+                QUERY_EXPRESSION_INVALID,
+                f"{subject}: its operands were prepared for NeutralType {prepared_type!r}, "
+                f"but the serving model declares {member.type!r}",
             )
         return cast("tuple[ManagedValue, ...]", values)
 

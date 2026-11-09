@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections.abc import Callable
+from typing import get_args
 
 import pytest
 
@@ -22,20 +23,19 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    EntityDefinitionError,
-    MetamodelDefinitionError,
     Rel,
     TablePerHierarchy,
     TxTemporal,
+    UsageError,
     ValueObject,
     attr,
     rel,
 )
-from parallax.core.entity import MetamodelLookupError
-from parallax.core.entity._errors import METAMODEL_DEFINITION_CODES
+from parallax.core.entity._errors import MetamodelDefinitionCode
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.model_formation import MetamodelValidationError
+from tests._support.errors import raises_code
 
 _SPEC_CODES = frozenset(
     {"metamodel-empty", "metamodel-invalid-entity-class", "metamodel-duplicate-entity-class"}
@@ -74,10 +74,9 @@ class _ReusableBrokenSecond(Entity, table="reusable_broken_second", name="Reusab
 
 
 def test_a_model_over_no_source_is_empty_with_no_argument_index() -> None:
-    with pytest.raises(MetamodelDefinitionError) as caught:
+    with raises_code(UsageError, "metamodel-empty") as caught:
         DomainModel()
-    assert caught.value.code == "metamodel-empty"
-    assert caught.value.index is None
+    assert "argument" not in caught.value.args[1]
 
 
 @pytest.mark.parametrize(
@@ -96,10 +95,9 @@ def test_an_argument_that_is_not_a_domain_entity_class_is_rejected_by_position(
     class Widget(Entity, table="widget"):
         id: Attr[int] = attr(primary_key=True)
 
-    with pytest.raises(MetamodelDefinitionError) as caught:
+    with raises_code(UsageError, "metamodel-invalid-entity-class") as caught:
         DomainModel(Widget, make_argument())  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
-    assert caught.value.code == "metamodel-invalid-entity-class"
-    assert caught.value.index == 1
+    assert caught.value.args[1].startswith("argument 1 ")
 
 
 def test_a_repeated_class_object_is_rejected_at_its_own_index() -> None:
@@ -109,10 +107,9 @@ def test_a_repeated_class_object_is_rejected_at_its_own_index() -> None:
     class Doodad(Entity, table="doodad"):
         id: Attr[int] = attr(primary_key=True)
 
-    with pytest.raises(MetamodelDefinitionError) as caught:
+    with raises_code(UsageError, "metamodel-duplicate-entity-class") as caught:
         DomainModel(Gadget, Doodad, Gadget)
-    assert caught.value.code == "metamodel-duplicate-entity-class"
-    assert caught.value.index == 2
+    assert caught.value.args[1].startswith("argument 2 ")
 
 
 def test_arguments_are_checked_left_to_right() -> None:
@@ -121,15 +118,13 @@ def test_arguments_are_checked_left_to_right() -> None:
 
     # Argument 1 is invalid and argument 2 repeats argument 0; the leftmost
     # defect is the one reported.
-    with pytest.raises(MetamodelDefinitionError) as caught:
+    with raises_code(UsageError, "metamodel-invalid-entity-class") as caught:
         DomainModel(Sprocket, object(), Sprocket)  # pyright: ignore[reportArgumentType] - deliberate non-Entity-Class argument drives constructor validation
-    assert (caught.value.code, caught.value.index) == ("metamodel-invalid-entity-class", 1)
+    assert caught.value.args[1].startswith("argument 1 ")
 
 
 def test_the_definition_code_set_is_closed() -> None:
-    assert METAMODEL_DEFINITION_CODES == _SPEC_CODES
-    with pytest.raises(ValueError, match="not a metamodel definition code"):
-        MetamodelDefinitionError(code="metamodel-made-up", message="nope")
+    assert frozenset(get_args(MetamodelDefinitionCode.__value__)) == _SPEC_CODES
 
 
 def test_two_distinct_classes_sharing_one_identity_reach_whole_model_validation() -> None:
@@ -153,14 +148,13 @@ def test_a_transaction_time_base_refuses_a_valid_time_endpoint_name_before_forma
     # The pre-injection guard still owns every temporal-base case, including a
     # dimension the base does not derive: it refuses at class definition, before
     # the shared resolver could judge the same name.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name") as caught:
 
         class Reading(TxTemporal, table="reading"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             id: Attr[int] = attr(primary_key=True)
             valid_start: Attr[_dt.datetime]
 
-    assert caught.value.code == "entity-reserved-member-name"
-    assert "temporal base" in caught.value.message
+    assert "temporal base" in caught.value.args[1]
 
 
 def test_a_nested_value_object_member_may_bear_a_temporal_endpoint_name() -> None:
@@ -209,10 +203,9 @@ def test_every_annotation_mismatch_is_reported_together_in_canonical_order() -> 
         id: Attr[int] = attr(primary_key=True)
         orders: Rel[Order] = rel(reverse_of="customer")
 
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-relationship-annotation-mismatch") as caught:
         DomainModel(Order, Customer, Coupon)
-    assert caught.value.code == "entity-relationship-annotation-mismatch"
-    reported = [line.strip() for line in caught.value.message.splitlines()[1:]]
+    reported = [line.strip() for line in caught.value.args[1].splitlines()[1:]]
     assert reported == [
         "Customer.orders spells Rel[T] but the accepted model requires Rel[tuple[T, ...]]",
         "Order.coupon spells Rel[T] but the accepted model requires Rel[T | None]",
@@ -229,10 +222,9 @@ def test_a_to_one_direction_may_not_be_spelled_many() -> None:
         shelf_id: Attr[int]
         shelf: Rel[tuple[Shelf, ...]] = rel(cardinality=MANY_TO_ONE, join=("shelf_id", "id"))
 
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-relationship-annotation-mismatch") as caught:
         DomainModel(Shelf, Book)
-    assert caught.value.code == "entity-relationship-annotation-mismatch"
-    reported = [line.strip() for line in caught.value.message.splitlines()[1:]]
+    reported = [line.strip() for line in caught.value.args[1].splitlines()[1:]]
     assert reported == [
         "Book.shelf spells Rel[tuple[T, ...]] but the accepted model requires Rel[T]"
     ]
@@ -296,7 +288,7 @@ def test_a_failed_realization_leaves_its_classes_composable() -> None:
         node_id: Attr[int]
         node: Rel[Node | None] = rel(cardinality=MANY_TO_ONE, join=("node_id", "id"))
 
-    with pytest.raises(EntityDefinitionError):
+    with raises_code(UsageError, "entity-relationship-annotation-mismatch"):
         DomainModel(Node, Edge)
 
     models = DomainModel(Node)
@@ -341,9 +333,8 @@ def test_an_entity_class_the_model_did_not_compose_names_no_entity_of_it() -> No
         id: Attr[int] = attr(primary_key=True)
 
     models = DomainModel(Composed)
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-entity-not-found"):
         models.meta(Absent)
-    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_a_partial_family_publishes_a_narrower_effective_concrete_set() -> None:

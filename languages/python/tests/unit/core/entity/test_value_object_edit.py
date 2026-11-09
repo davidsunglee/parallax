@@ -29,8 +29,8 @@ from typing import Any, cast
 import pytest
 from pydantic import PrivateAttr
 
-from parallax.core import Attr, Rel, ValueObject, attr
-from parallax.core.entity import EditError, EntityDefinitionError
+from parallax.core import Attr, Rel, UsageError, ValueObject, attr
+from parallax.core.entity import EditError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.entity._errors import EDIT_CODES
 from parallax.core.entity._instance_state import (
@@ -40,6 +40,7 @@ from parallax.core.entity._instance_state import (
 )
 from parallax.core.metamodel import MODEL_ROOT
 from tests._support import value_object_models as vm
+from tests._support.errors import raises_code
 from tests.unit.core.entity._compact_support import layout_slots
 from tests.unit.core.entity._value_object_document_support import inserted_document
 
@@ -149,14 +150,13 @@ def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
     # value's own class: this kind may not declare `__slots__` either, so a
     # concrete Value Object Class gives its instances the shared root's layout
     # and nothing more, and no root below that one adds to it.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class _Slotted(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             __slots__ = ("token",)
 
             label: Attr[str]
 
-    assert caught.value.code == "entity-reserved-member-name"
     assert set(layout_slots(_Marked)) == set(layout_slots(BackedModel))
 
 
@@ -261,23 +261,21 @@ def test_the_unreachable_codes_are_refused_where_the_designation_would_be_declar
     # cannot declare a key, a read-only mark, or a relationship in the first
     # place, and framework ownership is derived from an Entity's version Attribute
     # and As-Of Axes, which a Value Object has neither of.
-    with pytest.raises(EntityDefinitionError) as keyed:
+    with raises_code(UsageError, "entity-option-context-invalid") as keyed:
 
         class _Keyed(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             id: Attr[int] = attr(primary_key=True)
 
-    with pytest.raises(EntityDefinitionError) as read_only:
+    with raises_code(UsageError, "entity-option-context-invalid") as read_only:
 
         class _ReadOnly(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             id: Attr[int] = attr(read_only=True)
 
     assert keyed.value.code == read_only.value.code == "entity-option-context-invalid"
-    with pytest.raises(EntityDefinitionError) as related:
+    with raises_code(UsageError, "entity-annotation-invalid"):
 
         class _Related(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             owner: Rel[vm.Customer]
-
-    assert related.value.code == "entity-annotation-invalid"
 
 
 # --------------------------------------------------------------------------- #
@@ -330,9 +328,7 @@ def test_a_refused_copy_door_retains_no_cause_while_another_error_is_handled() -
 def test_a_value_object_class_may_not_declare_the_copy_verb() -> None:
     # The reservation that arrived with the verb: a declared `edit` installs its
     # descriptor over it and leaves the class with no way to derive a copy at all.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class _Audited(ValueObject):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             edit: Attr[str]  # pyright: ignore[reportIncompatibleMethodOverride] - shadowing the copy verb is the rejection under test
-
-    assert caught.value.code == "entity-reserved-member-name"

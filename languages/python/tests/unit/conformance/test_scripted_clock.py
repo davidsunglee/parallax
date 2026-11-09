@@ -21,6 +21,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ClockExhaustedError, FixedClock, ScriptedClock
 from parallax.conformance.story_models import Account
+from parallax.core import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.snapshot import Database, TxnContext
 from tests._support.adoption import raises_contextualized
@@ -31,6 +32,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _ACCOUNT = MODELS["account"]
@@ -67,7 +69,7 @@ def test_scripted_clock_yields_instants_in_order() -> None:
 
 def test_scripted_clock_normalizes_on_construction() -> None:
     naive = dt.datetime(2024, 1, 1)  # no tzinfo — rejected exactly like FixedClock
-    with pytest.raises(ValueError):
+    with raises_code(UsageError, "instant-invalid"):
         ScriptedClock([naive])
 
 

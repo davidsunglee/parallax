@@ -37,7 +37,6 @@ from parallax.core import (
     Entity,
     Int32,
     Predicate,
-    QueryDefinitionError,
     TxTemporal,
     ValueObject,
     attr,
@@ -482,7 +481,7 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
-    with raises_contextualized(QueryDefinitionError) as caught:
+    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -617,7 +616,9 @@ def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_mod
             mm.Person.name.set("Ada"),
         )
 
-    with raises_contextualized(QueryDefinitionError, match="through Wire instead"):
+    with raises_contextualized(
+        UsageError, code="query-expression-invalid", match="through Wire instead"
+    ):
         own_root(
             Database.connect(port, _classless(PERSON), clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -707,7 +708,7 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
     def fn(tx: TxnContext) -> None:
         tx.amend_where(query, mm.Person.name.set("Ada"))
 
-    with raises_contextualized(QueryDefinitionError) as caught:
+    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -720,7 +721,7 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_where(query)
 
-    with raises_contextualized(QueryDefinitionError) as caught:
+    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -738,7 +739,7 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_where(query)
 
-    with raises_contextualized(QueryDefinitionError) as caught:
+    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)

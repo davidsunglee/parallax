@@ -5,16 +5,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import UsageError
 from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
 from parallax.core.entity._errors import (
+    ENTITY_RELATIONSHIP_ANNOTATION_MISMATCH,
     METAMODEL_DUPLICATE_ENTITY_CLASS,
     METAMODEL_EMPTY,
     METAMODEL_ENTITY_NOT_FOUND,
     METAMODEL_INVALID_ENTITY_CLASS,
     METAMODEL_INVALID_ENTITY_REFERENCE,
-    EntityDefinitionError,
-    MetamodelDefinitionError,
-    MetamodelLookupError,
 )
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
@@ -85,16 +84,16 @@ class DomainModel:
 
         Each argument is a domain Entity Class, which is its own
         ``UnresolvedEntityDeclaration``. Arguments are checked left to right:
-        an empty call raises :class:`MetamodelDefinitionError` with
+        an empty call raises :class:`~parallax.core.base.UsageError` with
         ``metamodel-empty``, a non-Entity-Class argument with
         ``metamodel-invalid-entity-class``, and a repeated class object with
-        ``metamodel-duplicate-entity-class`` — the latter two carrying the
+        ``metamodel-duplicate-entity-class`` — the latter two naming the
         zero-based argument index. Two *distinct* classes declaring one Entity
         Identity are valid input and become a whole-model issue instead.
 
         Formation raises :class:`~parallax.core.model_formation.
         MetamodelValidationError` on model defects; realization raises
-        :class:`EntityDefinitionError` with
+        :class:`~parallax.core.base.UsageError` with
         ``entity-relationship-annotation-mismatch`` on annotation disagreement.
         """
         entity_classes = _validated(classes)
@@ -132,7 +131,7 @@ class DomainModel:
         (``"sales.Order"``, or a bare ``"Order"`` for an unnamespaced Entity), or
         an :class:`EntityIdentity`. All three answer the same object.
 
-        Raises :class:`MetamodelLookupError` with
+        Raises :class:`~parallax.core.base.UsageError` with
         ``metamodel-invalid-entity-reference`` for a string that is not a
         canonical spelling, and ``metamodel-entity-not-found`` when the key is
         well-formed but names no Entity here — a class this model did not compose
@@ -142,9 +141,8 @@ class DomainModel:
         identity = self._identity(key)
         metadata = self._model.entity(identity)
         if metadata is None:
-            raise MetamodelLookupError(
-                code=METAMODEL_ENTITY_NOT_FOUND,
-                message=f"this model declares no Entity {identity.canonical!r}",
+            raise UsageError(
+                METAMODEL_ENTITY_NOT_FOUND, f"this model declares no Entity {identity.canonical!r}"
             )
         return metadata
 
@@ -155,12 +153,10 @@ class DomainModel:
             return _parsed_identity(key)
         identity = None if self._classes is None else self._classes.identity_of(key)
         if identity is None:
-            raise MetamodelLookupError(
-                code=METAMODEL_ENTITY_NOT_FOUND,
-                message=(
-                    f"this model composed no Entity Class {key.__name__}; a class names an "
-                    "Entity of the models that composed it and of no other"
-                ),
+            raise UsageError(
+                METAMODEL_ENTITY_NOT_FOUND,
+                f"this model composed no Entity Class {key.__name__}; a class names an "
+                "Entity of the models that composed it and of no other",
             )
         return identity
 
@@ -202,24 +198,18 @@ def _class_index(classes: Sequence[type]) -> ClassIndex:
 def _validated(classes: tuple[UnresolvedEntityDeclaration, ...]) -> tuple[type, ...]:
     """The argument tuple as Entity Classes, checked left to right."""
     if not classes:
-        raise MetamodelDefinitionError(
-            code=METAMODEL_EMPTY,
-            message="a domain model composes at least one Entity Class",
-        )
+        raise UsageError(METAMODEL_EMPTY, "a domain model composes at least one Entity Class")
     seen: set[UnresolvedEntityDeclaration] = set()
     checked: list[type] = []
     for index, candidate in enumerate(classes):
         if not isinstance(candidate, type) or not is_entity_class(candidate):
-            raise MetamodelDefinitionError(
-                code=METAMODEL_INVALID_ENTITY_CLASS,
-                message=f"argument {index} is not a domain Entity Class: {candidate!r}",
-                index=index,
+            raise UsageError(
+                METAMODEL_INVALID_ENTITY_CLASS,
+                f"argument {index} is not a domain Entity Class: {candidate!r}",
             )
         if candidate in seen:
-            raise MetamodelDefinitionError(
-                code=METAMODEL_DUPLICATE_ENTITY_CLASS,
-                message=f"argument {index} repeats {candidate.__name__}",
-                index=index,
+            raise UsageError(
+                METAMODEL_DUPLICATE_ENTITY_CLASS, f"argument {index} repeats {candidate.__name__}"
             )
         seen.add(candidate)
         checked.append(candidate)
@@ -235,12 +225,10 @@ def _parsed_identity(spelling: str) -> EntityIdentity:
     """
     namespace, dot, name = spelling.rpartition(".")
     if not name or (dot and not namespace):
-        raise MetamodelLookupError(
-            code=METAMODEL_INVALID_ENTITY_REFERENCE,
-            message=(
-                f"{spelling!r} is not a canonical Entity spelling "
-                "(`<namespace>.<name>`, or `<name>` when unnamespaced)"
-            ),
+        raise UsageError(
+            METAMODEL_INVALID_ENTITY_REFERENCE,
+            f"{spelling!r} is not a canonical Entity spelling "
+            "(`<namespace>.<name>`, or `<name>` when unnamespaced)",
         )
     return EntityIdentity(namespace or None, name)
 
@@ -282,9 +270,9 @@ def _reject_annotation_mismatches(classes: Sequence[type], model: Metamodel) -> 
             )
     if findings:
         findings.sort()
-        raise EntityDefinitionError(
-            code="entity-relationship-annotation-mismatch",
-            message="every `Rel` annotation shape must agree with the accepted model:\n"
+        raise UsageError(
+            ENTITY_RELATIONSHIP_ANNOTATION_MISMATCH,
+            "every `Rel` annotation shape must agree with the accepted model:\n"
             + "\n".join(f"  {member} {detail}" for _, member, detail in findings),
         )
 

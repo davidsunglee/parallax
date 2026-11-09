@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from parallax.descriptor._errors import (
     DescriptorError,
-    DescriptorSchemaError,
-    DescriptorSyntaxError,
-    DescriptorValueError,
     DescriptorViolation,
 )
-from parallax.descriptor._export import DescriptorExportError
 from parallax.descriptor._family import validate_inheritance_families
 from parallax.descriptor._hub import (
     domain_model_from_document,
@@ -20,10 +16,6 @@ from parallax.descriptor._hub import (
 
 __all__ = [
     "DescriptorError",
-    "DescriptorExportError",
-    "DescriptorSchemaError",
-    "DescriptorSyntaxError",
-    "DescriptorValueError",
     "DescriptorViolation",
     "domain_model_from_document",
     "domain_model_from_json",

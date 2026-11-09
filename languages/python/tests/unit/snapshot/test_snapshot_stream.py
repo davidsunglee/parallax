@@ -44,7 +44,7 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
-from parallax.core import DomainModel
+from parallax.core import DomainModel, UsageError
 from parallax.core._execution import _read_pipeline
 from parallax.core.base import INT64, ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
@@ -58,7 +58,6 @@ from parallax.core.execution import (
 )
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery import (
     InvalidData,
     InvalidDataError,
@@ -89,6 +88,7 @@ from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT, db_for
@@ -394,9 +394,8 @@ def test_a_deep_include_binds_once_at_entry_and_reaches_its_leaf_on_every_page(
 
 def test_a_bad_continuation_refuses_a_stream_at_entry_rather_than_at_the_call() -> None:
     stream = _orders(RefusingAdapter()).stream(_all_orders().include(Order.items.no_such_member))
-    with pytest.raises(QueryDefinitionError, match="no_such_member") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
         stream.__enter__()
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:

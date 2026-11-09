@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from fractions import Fraction as _Fraction
 from typing import Any, Final, Literal, TypeGuard, cast
 
+from parallax.core.base._errors import UsageError
+
 __all__ = [
     "BOOLEAN",
     "BYTES",
@@ -22,6 +24,7 @@ __all__ = [
     "INT32",
     "INT64",
     "JSON",
+    "NEUTRAL_TYPE_MISMATCH",
     "STRING",
     "TIME",
     "TIMESTAMP",
@@ -39,7 +42,6 @@ __all__ = [
     "ManagedValue",
     "ManagedValueExclusion",
     "NeutralType",
-    "NeutralTypeMismatch",
     "ScalarConverter",
     "String",
     "Time",
@@ -495,28 +497,21 @@ _CARRIER_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
 }
 
 
-class NeutralTypeMismatch(ValueError):
-    """A converted value is no member of its declared Neutral Type.
-
-    ``managed`` is the value after the conversion the input policy applies, the
-    value a mismatch diagnostic names.
-    """
-
-    def __init__(self, managed: object, declared: NeutralType) -> None:
-        super().__init__(f"value {managed!r} does not match the declared type {declared!r}")
-        self.managed = managed
-        self.declared = declared
+NEUTRAL_TYPE_MISMATCH: Final = "neutral-type-mismatch"
+"""A converted value is no member of its declared Neutral Type."""
 
 
 type ScalarConverter = _Callable[[object], object]
 """One lane's conversion of an authored scalar into its declared value space,
-answering the owned managed value or raising the lane's mismatch."""
+answering the owned managed value or raising the lane's mismatch as a
+:class:`~parallax.core.base.UsageError`."""
 
 
 def typed_converter(declared: NeutralType) -> ScalarConverter:
     """The Typed lane's conversion for ``declared``: :func:`coerce_neutral_input`
     followed by :func:`matches_neutral_type`, with the owned form of a Json
-    value, as one call raising :class:`NeutralTypeMismatch`.
+    value, as one call refusing with :data:`NEUTRAL_TYPE_MISMATCH`, whose message
+    names the converted value.
 
     An exact built-in carrier takes its type's own rule directly; every other
     input, a subclass or an excluded carrier included, takes the general rule.
@@ -539,11 +534,11 @@ def _general_typed_converter(declared: NeutralType) -> ScalarConverter:
     return convert
 
 
-def _typed_mismatch(managed: object, declared: NeutralType) -> NeutralTypeMismatch:
-    # The package defines the frozen carriers after importing this module.
-    from parallax.core.base import retain_document_value
-
-    return NeutralTypeMismatch(retain_document_value(managed), declared)
+def _typed_mismatch(managed: object, declared: NeutralType) -> UsageError:
+    return UsageError(
+        NEUTRAL_TYPE_MISMATCH,
+        f"value {managed!r} does not match the declared type {declared!r}",
+    )
 
 
 def _typed_boolean(declared: Boolean) -> ScalarConverter:
@@ -584,12 +579,12 @@ def _typed_decimal(declared: Decimal) -> ScalarConverter:
         if type(value) is _decimal.Decimal:
             if _is_exact_decimal(value, precision, scale):
                 return value
-            raise NeutralTypeMismatch(value, declared)
+            raise _typed_mismatch(value, declared)
         if type(value) is int:
             managed = _decimal.Decimal(value)
             if _is_exact_decimal(managed, precision, scale):
                 return managed
-            raise NeutralTypeMismatch(managed, declared)
+            raise _typed_mismatch(managed, declared)
         return general(value)
 
     return convert

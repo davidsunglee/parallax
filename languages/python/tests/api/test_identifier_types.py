@@ -19,11 +19,11 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
-    EntityDefinitionError,
     Float32,
     Int32,
     Rel,
     TablePerHierarchy,
+    UsageError,
     ValueObject,
     attr,
     rel,
@@ -44,14 +44,11 @@ from parallax.core.metamodel import (
     TablePerConcreteSubtype,
 )
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.descriptor import (
-    DescriptorSchemaError,
-    domain_model_from_document,
-    domain_model_from_yaml,
-)
+from parallax.descriptor import DescriptorError, domain_model_from_document, domain_model_from_yaml
 from parallax.snapshot import connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, case_fixtures
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _ALLOWED: tuple[tuple[str, type, dict[str, Any]], ...] = (
@@ -123,12 +120,10 @@ def test_both_frontends_accept_every_application_assigned_identifier(
 def test_excluded_scalar_identifiers_fail_at_the_frontend_boundary(
     spelling: str, carrier: Any, options: dict[str, Any]
 ) -> None:
-    with pytest.raises(EntityDefinitionError) as typed:
+    with raises_code(UsageError, "entity-option-context-invalid"):
         _declared(carrier, options, True)
-    assert typed.value.code == "entity-option-context-invalid"
-    with pytest.raises(DescriptorSchemaError) as descriptor:
+    with raises_code(DescriptorError, "descriptor-schema-invalid") as descriptor:
         domain_model_from_document(_descriptor(spelling))
-    assert descriptor.value.code == "descriptor-schema-invalid"
     assert [(v.path, v.rule) for v in descriptor.value.violations] == [
         (("entity", "attributes", 0, "type"), "enum")
     ]
@@ -154,10 +149,9 @@ def test_generated_identifiers_remain_integral(
         assert left is not None and right is not None
         assert left.primary_key == right.primary_key == PrimaryKey(generation)
     else:
-        with pytest.raises(EntityDefinitionError) as typed_error:
+        with raises_code(UsageError, "entity-option-context-invalid"):
             _declared(carrier, options, generation)
-        assert typed_error.value.code == "entity-option-context-invalid"
-        with pytest.raises(DescriptorSchemaError) as descriptor_error:
+        with raises_code(DescriptorError, "descriptor-schema-invalid") as descriptor_error:
             domain_model_from_document(document)
         assert all(
             v.path == ("entity", "attributes", 0, "type") and v.rule == "enum"
@@ -211,7 +205,7 @@ def test_structured_and_collection_identifiers_still_fail_at_class_creation() ->
         text: Attr[str]
 
     for carrier in (Label, tuple[Label, ...], tuple[int, ...]):
-        with pytest.raises(EntityDefinitionError):
+        with raises_code(UsageError, "entity-option-context-invalid"):
             _declared(carrier, {}, True)
 
 

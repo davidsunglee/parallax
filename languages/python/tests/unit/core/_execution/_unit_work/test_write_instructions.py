@@ -41,7 +41,7 @@ from parallax.core import (
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, InstantError, UsageError
+from parallax.core.base import INFINITY, JSON, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import Table
@@ -953,12 +953,14 @@ def test_both_producers_refuse_a_bound_that_is_no_instant(prepare: Any) -> None:
         instruction = wi.KeyedWriteInstruction(
             "amend", "Position", ({"id": 1},), valid_from=cast("dt.datetime", bound)
         )
-        with pytest.raises(InstantError, match="takes an aware datetime for valid_from"):
+        with raises_code(
+            UsageError, "instant-invalid", match="takes an aware datetime for valid_from"
+        ):
             prepare(instruction, _POSITION)
     naive = wi.KeyedWriteInstruction(
         "amend", "Position", ({"id": 1},), valid_from=dt.datetime(2024, 1, 1)
     )
-    with pytest.raises(InstantError, match="naive datetime"):
+    with raises_code(UsageError, "instant-invalid", match="naive datetime"):
         prepare(naive, _POSITION)
 
 

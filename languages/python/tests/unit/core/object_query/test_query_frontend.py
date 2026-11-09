@@ -26,14 +26,15 @@ from parallax.core import (
     Int32,
     ObjectQuery,
     Predicate,
-    QueryDefinitionError,
     TxTemporal,
+    UsageError,
     attr,
 )
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._expressions import ScalarExpr
 from parallax.core.metamodel import EntityIdentity
+from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_document, predicate_document, predicate_node
 
 _NS = "parallax.compatibility"
@@ -86,7 +87,7 @@ def test_scalar_comparison_operators() -> None:
 def test_invalid_top_level_operands_report_the_complete_developer_input_rule(
     value: object,
 ) -> None:
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-expression-invalid") as caught:
         _ = Widget.id == value
     message = str(caught.value)
     assert "parallax.compatibility.Widget.id" in message
@@ -130,12 +131,10 @@ def test_membership_between_null_and_string_operators() -> None:
 
 @pytest.mark.parametrize("expression", [Widget.id, Widget.name], ids=["primary-key", "string"])
 def test_non_nullable_members_refuse_null_checks(expression: ScalarExpr[Any, Any]) -> None:
-    with pytest.raises(QueryDefinitionError) as is_null:
+    with raises_code(UsageError, "query-expression-invalid"):
         expression.is_null()
-    assert is_null.value.code == "query-expression-invalid"
-    with pytest.raises(QueryDefinitionError) as is_not_null:
+    with raises_code(UsageError, "query-expression-invalid"):
         expression.is_not_null()
-    assert is_not_null.value.code == "query-expression-invalid"
 
 
 def test_boolean_combinators_and_grouping() -> None:
@@ -212,21 +211,18 @@ def test_where_requires_at_least_one_predicate() -> None:
     # The coded refusal is the internal builder's own precondition, reachable
     # only by calling it directly — `Entity.where` cannot deliver it an empty
     # tuple.
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-clause-invalid"):
         build_object_query(Widget.identity, ())
-    assert caught.value.code == "query-clause-invalid"
 
 
 def test_the_unfiltered_spelling_is_the_whole_filter_or_none_of_it() -> None:
     # `Entity.all` is not a Predicate, so only `where`'s first parameter admits
     # it and a trailing one is a static error too. The runtime rule refuses both
     # orders, which is what an untyped caller reaches.
-    with pytest.raises(QueryDefinitionError) as leading:
+    with raises_code(UsageError, "query-expression-invalid"):
         Widget.where(Widget.all, Widget.id == 1)
-    assert leading.value.code == "query-expression-invalid"
-    with pytest.raises(QueryDefinitionError) as trailing:
+    with raises_code(UsageError, "query-expression-invalid"):
         Widget.where(Widget.id == 1, Widget.all)  # pyright: ignore[reportArgumentType] - Entity.all is not a Predicate, so it never joins one
-    assert trailing.value.code == "query-expression-invalid"
 
 
 def test_result_shaping_clauses() -> None:
@@ -250,32 +246,30 @@ def test_clause_invocation_order_never_reaches_the_wire() -> None:
 
 
 def test_clause_guards() -> None:
-    with pytest.raises(QueryDefinitionError) as no_key:
+    with raises_code(UsageError, "query-clause-invalid"):
         Widget.where(Widget.all).order_by()
-    assert no_key.value.code == "query-clause-invalid"
-    with pytest.raises(QueryDefinitionError) as not_positive:
+    with raises_code(UsageError, "query-clause-invalid"):
         Widget.where(Widget.all).limit(0)
-    assert not_positive.value.code == "query-clause-invalid"
 
 
 def test_a_limit_is_single_shot_and_takes_a_positive_builtin_int() -> None:
     # `True` is not the limit 1: `bool` is a subtype of `int`, so no parameter
     # refuses it and only the runtime rule can — a coercible value is refused
     # rather than coerced, and a second limit derives from the unbounded base.
-    with pytest.raises(QueryDefinitionError, match="single-shot"):
+    with raises_code(UsageError, "query-clause-invalid", match="single-shot"):
         Widget.where(Widget.all).limit(2).limit(3)
-    with pytest.raises(QueryDefinitionError, match="positive built-in int"):
+    with raises_code(UsageError, "query-clause-invalid", match="positive built-in int"):
         Widget.where(Widget.all).limit(True)
-    with pytest.raises(QueryDefinitionError, match="positive built-in int"):
+    with raises_code(UsageError, "query-clause-invalid", match="positive built-in int"):
         Widget.where(Widget.all).limit(-1)
 
 
 def test_one_attribute_orders_a_query_once() -> None:
     # Across one call and across successive calls alike, and whatever direction
     # each occurrence carries.
-    with pytest.raises(QueryDefinitionError, match="already orders"):
+    with raises_code(UsageError, "query-clause-invalid", match="already orders"):
         Widget.where(Widget.all).order_by(Widget.qty.asc(), Widget.qty.desc())
-    with pytest.raises(QueryDefinitionError, match="already orders"):
+    with raises_code(UsageError, "query-clause-invalid", match="already orders"):
         Widget.where(Widget.all).order_by(Widget.qty.asc()).order_by(Widget.qty.desc())
 
 
@@ -287,12 +281,10 @@ def test_expression_bool_and_scalar_guards() -> None:
     # A non-literal is a frontend refusal like every other one it judges, so it
     # carries the coded family rather than a bare `TypeError`; `__eq__` / `__ne__`
     # keep `object` for Liskov, which is what lets it be reached at all.
-    with pytest.raises(QueryDefinitionError) as scalar:
+    with raises_code(UsageError, "query-expression-invalid"):
         _ = Widget.id == object()
-    assert scalar.value.code == "query-expression-invalid"
-    with pytest.raises(QueryDefinitionError) as not_scalar:
+    with raises_code(UsageError, "query-expression-invalid"):
         _ = Widget.id != object()
-    assert not_scalar.value.code == "query-expression-invalid"
 
 
 def test_an_object_query_is_an_opaque_value_with_no_truth_and_no_structural_equality() -> None:
@@ -429,9 +421,8 @@ def test_as_of_range_refuses_a_window_that_does_not_advance() -> None:
     earlier = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     later = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     for window in ((later, earlier), (earlier, earlier)):
-        with pytest.raises(QueryDefinitionError, match="start < end") as caught:
+        with raises_code(UsageError, "query-clause-invalid", match="start < end"):
             Balance.where(Balance.all).as_of_range(tx_time=window)
-        assert caught.value.code == "query-clause-invalid"
 
 
 def test_as_of_range_refuses_a_latest_endpoint() -> None:
@@ -441,9 +432,8 @@ def test_as_of_range_refuses_a_latest_endpoint() -> None:
     # timestamp column.
     earlier = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     for window in ((LATEST, earlier), (earlier, LATEST)):
-        with pytest.raises(QueryDefinitionError, match="finite instants") as caught:
+        with raises_code(UsageError, "query-clause-invalid", match="finite instants"):
             Balance.where(Balance.all).as_of_range(tx_time=window)  # type: ignore[arg-type] - a deliberate LATEST endpoint drives the finiteness rule
-        assert caught.value.code == "query-clause-invalid"
 
 
 @pytest.mark.parametrize(
@@ -467,9 +457,8 @@ def test_as_of_range_refuses_a_window_that_is_not_an_exact_instant_pair(window: 
     # The window is judged as a SHAPE and nothing is coerced into it, so a
     # dynamically composed argument meets the same rule a literal one does
     # rather than unpacking into whatever two values it happens to yield.
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-clause-invalid"):
         Balance.where(Balance.all).as_of_range(tx_time=window)
-    assert caught.value.code == "query-clause-invalid"
 
 
 def test_history_selects_the_whole_milestone_set() -> None:
@@ -497,14 +486,15 @@ def test_mixed_bitemporal_variants_compose_in_both_call_orders() -> None:
 
 
 def test_bitemporal_query_requires_a_valid_time_selection_when_it_is_read() -> None:
-    with pytest.raises(QueryDefinitionError, match="requires an explicit Valid-Time selection"):
+    with raises_code(
+        UsageError, "query-clause-invalid", match="requires an explicit Valid-Time selection"
+    ):
         object_query_node(Position.where(Position.all), _TEMPORAL)
 
 
 def test_history_rejects_a_string_dimension() -> None:
-    with pytest.raises(QueryDefinitionError, match="VALID_TIME / TX_TIME") as caught:
+    with raises_code(UsageError, "query-clause-invalid", match="VALID_TIME / TX_TIME"):
         Balance.where(Balance.all).history("tx_time")  # type: ignore[arg-type] - deliberate string dimension drives history's constant-only validation
-    assert caught.value.code == "query-clause-invalid"
 
 
 def test_dimension_constants_are_frozen() -> None:
@@ -527,25 +517,25 @@ def test_dimension_constants_are_frozen() -> None:
 
 
 def test_temporal_clause_is_single_shot() -> None:
-    with pytest.raises(QueryDefinitionError, match="single-shot"):
+    with raises_code(UsageError, "query-clause-invalid", match="single-shot"):
         Balance.where(Balance.all).as_of(tx_time=LATEST).as_of(tx_time=LATEST)
 
 
 def test_temporal_dimension_is_single_shot_across_variants() -> None:
-    with pytest.raises(QueryDefinitionError, match=r"transaction-time.*single-shot"):
+    with raises_code(UsageError, "query-clause-invalid", match=r"transaction-time.*single-shot"):
         Balance.where(Balance.all).history(TX_TIME).as_of(tx_time=LATEST)
 
 
 def test_temporal_clause_requires_an_axis() -> None:
-    with pytest.raises(QueryDefinitionError, match="at least one dimension"):
+    with raises_code(UsageError, "query-clause-invalid", match="at least one dimension"):
         Balance.where(Balance.all).as_of()
 
 
 def test_undeclared_axis_is_rejected_at_build() -> None:
-    with pytest.raises(QueryDefinitionError, match="no valid_time dimension"):
+    with raises_code(UsageError, "query-clause-invalid", match="no valid_time dimension"):
         Balance.where(Balance.all).as_of(valid_time=LATEST)
 
 
 def test_naive_datetime_is_rejected_at_build() -> None:
-    with pytest.raises(ValueError, match="naive"):
+    with raises_code(UsageError, "instant-invalid", match="naive"):
         Balance.where(Balance.all).as_of(tx_time=dt.datetime(2024, 4, 1))

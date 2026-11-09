@@ -14,9 +14,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, cast
 
+from parallax.core.base import InternalError
 from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.entity._entity import attach_lifecycle_state
-from parallax.core.entity._errors import GraphConstructionError
+from parallax.core.entity._errors import (
+    ENTITY_GRAPH_INVALID_ENTITY,
+    ENTITY_GRAPH_INVALID_MEMBER,
+    ENTITY_GRAPH_INVALID_VALUE,
+    ENTITY_GRAPH_LAYOUT_MISMATCH,
+    GraphConstructionCode,
+)
 from parallax.core.entity._instance_state import allocate, attach_row
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import Multiplicity
@@ -270,9 +277,8 @@ def publish_graph(
     """
     count = len(graph)
     if count == 0:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-value",
-            message="a graph publishes its node 0, and this graph has no nodes",
+        raise InternalError(
+            ENTITY_GRAPH_INVALID_VALUE, "a graph publishes its node 0, and this graph has no nodes"
         )
     bound: list[EntityFacts] = []
     shells: list[BaseModel] = []
@@ -298,12 +304,10 @@ def publish_graph(
     states = lifecycle_states(instances)
     buffered = cast("tuple[object, ...]", states) if type(states) is tuple else tuple(states)
     if len(buffered) != count:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-value",
-            message=(
-                f"lifecycle states answer one state per node; this graph has {count} "
-                f"nodes and {len(buffered)} states arrived"
-            ),
+        raise InternalError(
+            ENTITY_GRAPH_INVALID_VALUE,
+            f"lifecycle states answer one state per node; this graph has {count} "
+            f"nodes and {len(buffered)} states arrived",
         )
     for instance, state in zip(shells, buffered, strict=True):
         attach_lifecycle_state(instance, state)
@@ -336,7 +340,7 @@ def _member_row_detail(row: object, width: int) -> str:
 
 def _row_refusal(
     entity: EntityFacts, row: object, width: int, node: int, *, kind: str
-) -> GraphConstructionError:
+) -> InternalError:
     """The refusal a node's top-level row earns for being anything but an exact
     built-in tuple of the model-fixed width.
 
@@ -346,82 +350,74 @@ def _row_refusal(
     """
     identity = entity.layout.concrete
     if type(row) is not tuple:
-        message = f"a {kind} row arrives as an exact tuple, not {type(row).__name__}"
+        detail = (
+            f"a {kind} row of {identity.canonical} arrives as an exact tuple, "
+            f"not {type(row).__name__}"
+        )
     else:
-        message = (
+        detail = (
             f"{identity.canonical} lays out {width} {kind} positions, "
             f"and this row carries {len(cast('tuple[object, ...]', row))}"
         )
-    return GraphConstructionError(
-        code="entity-graph-invalid-member", message=message, index=node, identity=identity
-    )
+    return _refusal(ENTITY_GRAPH_INVALID_MEMBER, node, detail)
 
 
 def _occurrence_refusal(
     entity: EntityFacts, refusal: _InvalidOccurrence, node: int
-) -> GraphConstructionError:
+) -> InternalError:
     """The refusal one Value Object value earns, labelled by its containment path
     and naming the node whose row holds it."""
-    identity = refusal.occurrence.declared.identity
-    return GraphConstructionError(
-        code="entity-graph-invalid-value",
-        message=f"{entity.layout.concrete.canonical}.{'.'.join(identity.path)} {refusal.detail}",
-        index=node,
-        identity=identity,
+    path = ".".join(refusal.occurrence.declared.identity.path)
+    return _refusal(
+        ENTITY_GRAPH_INVALID_VALUE,
+        node,
+        f"{entity.layout.concrete.canonical}.{path} {refusal.detail}",
     )
 
 
 def _cardinality_refusal(
     entity: EntityFacts, position: int, node: int, *, many: bool
-) -> GraphConstructionError:
+) -> InternalError:
     direction = entity.layout.relationships[position]
-    message = (
+    detail = (
         f"{direction.name} is a to-many direction and takes only a tuple of node indices"
         if many
         else f"{direction.name} is a to-one direction and takes no tuple of node indices"
     )
-    return GraphConstructionError(
-        code="entity-graph-invalid-value", message=message, index=node, identity=direction
-    )
+    return _refusal(ENTITY_GRAPH_INVALID_VALUE, node, detail)
 
 
-def _index_refusal(
-    entity: EntityFacts, position: int, value: object, node: int
-) -> GraphConstructionError:
+def _index_refusal(entity: EntityFacts, position: int, value: object, node: int) -> InternalError:
     direction = entity.layout.relationships[position]
-    return GraphConstructionError(
-        code="entity-graph-invalid-value",
-        message=f"{direction.name} received {value!r}, which names no node of this graph",
-        index=node,
-        identity=direction,
+    return _refusal(
+        ENTITY_GRAPH_INVALID_VALUE,
+        node,
+        f"{direction.name} received {value!r}, which names no node of this graph",
     )
 
 
-def _layout_refusal(
-    layout: object, entity: EntityFacts | None, node: int
-) -> GraphConstructionError:
+def _layout_refusal(layout: object, entity: EntityFacts | None, node: int) -> InternalError:
     """The refusal a node's layout earns: an Entity this model composed no class
     for, or a layout other than the one this model lays that Entity out by."""
     if type(layout) is not EntityLayout:
-        return GraphConstructionError(
-            code="entity-graph-layout-mismatch",
-            message=f"node {node} answers {type(layout).__name__} for its layout",
-            index=node,
+        return _refusal(
+            ENTITY_GRAPH_LAYOUT_MISMATCH, node, f"answers {type(layout).__name__} for its layout"
         )
     concrete = layout.concrete
     if entity is None:
-        return GraphConstructionError(
-            code="entity-graph-invalid-entity",
-            message=f"{concrete.canonical} is not an Entity this Domain Model composed a class for",
-            index=node,
-            identity=concrete,
+        return _refusal(
+            ENTITY_GRAPH_INVALID_ENTITY,
+            node,
+            f"{concrete.canonical} is not an Entity this Domain Model composed a class for",
         )
-    return GraphConstructionError(
-        code="entity-graph-layout-mismatch",
-        message=(
-            f"node {node} lays {concrete.canonical} out other than this model lays it "
-            "out, so no row of it addresses the composed class"
-        ),
-        index=node,
-        identity=concrete,
+    return _refusal(
+        ENTITY_GRAPH_LAYOUT_MISMATCH,
+        node,
+        f"lays {concrete.canonical} out other than this model lays it out, so no row of it "
+        "addresses the composed class",
     )
+
+
+def _refusal(code: GraphConstructionCode, node: int, detail: str) -> InternalError:
+    """A refusal about one node, naming the node whose row holds what it refuses."""
+    return InternalError(code, f"node {node}: {detail}")

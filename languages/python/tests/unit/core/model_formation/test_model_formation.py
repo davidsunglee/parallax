@@ -12,6 +12,7 @@ from typing import Any, Final, TypeGuard, cast
 import pytest
 
 from parallax.conformance import case_format
+from parallax.core import InternalError
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.metamodel import (
     METADATA_COMPILER,
@@ -67,9 +68,9 @@ from parallax.core.model_formation._errors import (
     FORMATION_RESOLVER_RESULT_INVALID,
     FORMATION_RULE_SET_FAILED,
     FORMATION_RULE_SET_RESULT_INVALID,
-    FormationContractError,
 )
 from parallax.core.model_formation._manifest import CompilerRequirement
+from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
 _ORDER = identity("Order")
@@ -461,13 +462,13 @@ def _contract_failure(
     code: str,
     *,
     owner: ModuleIdentity | None = None,
-) -> FormationContractError:
+) -> InternalError:
     """Form a valid model and return the contract failure the composition raises."""
-    with pytest.raises(FormationContractError) as raised:
+    with pytest.raises(InternalError) as raised:
         form(source(*_valid_model()), manifest, profile)
     assert raised.value.code == code
     if owner is not None:
-        assert raised.value.owner == owner
+        assert raised.value.args[1].startswith(f"{owner}: ")
     return raised.value
 
 
@@ -633,11 +634,10 @@ def test_a_manifest_names_each_owner_once() -> None:
 
 
 def test_a_profile_that_cannot_answer_for_its_own_contract_is_drift() -> None:
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-profile-drift") as raised:
         form(source(*_valid_model()), BUILTIN_MANIFEST, _UnreadableProfile())
     assert raised.value.code == FORMATION_PROFILE_DRIFT
-    assert isinstance(raised.value.cause, RuntimeError)
-    assert raised.value.__cause__ is raised.value.cause
+    assert isinstance(raised.value.__cause__, RuntimeError)
 
 
 def test_a_manifest_without_exactly_one_metadata_compiler_row_is_drift() -> None:
@@ -850,12 +850,11 @@ def test_a_compiler_requiring_other_facets_than_its_manifest_row_is_drift() -> N
 
 
 def test_a_resolver_that_raises_is_a_contract_failure() -> None:
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-resolver-failed") as raised:
         form(_ExplodingSource(), BUILTIN_MANIFEST, BUILTIN_PROFILE)
     assert raised.value.code == FORMATION_RESOLVER_FAILED
-    assert raised.value.owner == METAMODEL_MODULE
-    assert isinstance(raised.value.cause, RuntimeError)
-    assert raised.value.__cause__ is raised.value.cause
+    assert raised.value.args[1].startswith(f"{METAMODEL_MODULE}: ")
+    assert isinstance(raised.value.__cause__, RuntimeError)
 
 
 def _returns_a_foreign_value(unresolved: UnresolvedMetamodel) -> object:
@@ -933,18 +932,18 @@ def test_a_resolver_result_outside_its_contract_is_a_contract_failure(
     monkeypatch: pytest.MonkeyPatch, broken: object
 ) -> None:
     monkeypatch.setattr(runner, "resolve", broken)
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-resolver-result-invalid") as raised:
         form(source(*_valid_model()), BUILTIN_MANIFEST, BUILTIN_PROFILE)
     assert raised.value.code == FORMATION_RESOLVER_RESULT_INVALID
-    assert raised.value.owner == METAMODEL_MODULE
+    assert raised.value.args[1].startswith(f"{METAMODEL_MODULE}: ")
 
 
 def test_a_resolver_code_outside_its_declared_set_is_a_contract_failure() -> None:
     manifest = FormationManifest((_resolver_row(issue_codes=frozenset({"metamodel-index-empty"})),))
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-issue-undeclared") as raised:
         form(source(*_invalid_model()), manifest, _Profile())
     assert raised.value.code == FORMATION_ISSUE_UNDECLARED
-    assert raised.value.owner == METAMODEL_MODULE
+    assert raised.value.args[1].startswith(f"{METAMODEL_MODULE}: ")
 
 
 def test_a_rule_set_that_raises_is_a_contract_failure() -> None:
@@ -955,7 +954,7 @@ def test_a_rule_set_that_raises_is_a_contract_failure() -> None:
         )
     )
     failure = _contract_failure(manifest, profile, FORMATION_RULE_SET_FAILED, owner=_INHERITANCE)
-    assert isinstance(failure.cause, RuntimeError)
+    assert isinstance(failure.__cause__, RuntimeError)
 
 
 @pytest.mark.parametrize(
@@ -1013,10 +1012,10 @@ def test_a_resolver_that_emits_one_issue_twice_is_a_contract_failure(
     contract failure the runner reports, not something resolution absorbs.
     """
     monkeypatch.setattr(resolver, "_primary_key_issues", _emits_one_issue_twice)
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-issue-duplicate") as raised:
         form(source(*_valid_model()), BUILTIN_MANIFEST, BUILTIN_PROFILE)
     assert raised.value.code == FORMATION_ISSUE_DUPLICATE
-    assert raised.value.owner == METAMODEL_MODULE
+    assert raised.value.args[1].startswith(f"{METAMODEL_MODULE}: ")
 
 
 def test_a_metadata_compiler_failure_is_a_contract_failure() -> None:
@@ -1024,7 +1023,7 @@ def test_a_metadata_compiler_failure_is_a_contract_failure() -> None:
     failure = _contract_failure(
         _RESOLVER_ONLY, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
-    assert isinstance(failure.cause, RuntimeError)
+    assert isinstance(failure.__cause__, RuntimeError)
 
 
 def test_a_metadata_compiler_returning_a_foreign_value_is_a_contract_failure() -> None:
@@ -1032,7 +1031,7 @@ def test_a_metadata_compiler_returning_a_foreign_value_is_a_contract_failure() -
     failure = _contract_failure(
         _RESOLVER_ONLY, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
-    assert failure.cause is None
+    assert failure.__cause__ is None
 
 
 @pytest.mark.parametrize("genuine", [True, False], ids=["genuine", "foreign"])
@@ -1048,24 +1047,24 @@ def test_a_metadata_compiler_returning_an_entityless_graph_is_a_contract_failure
     failure = _contract_failure(
         _RESOLVER_ONLY, profile, FORMATION_COMPILER_FAILED, owner=METAMODEL_MODULE
     )
-    assert failure.cause is None
+    assert failure.__cause__ is None
 
 
 def test_an_empty_frontend_source_is_refused_at_the_resolver_seam() -> None:
     """Formation begins from a nonempty source, and every frontend rejects an
     empty one before this seam; resolving one anyway yields no candidate at all,
     which the seam reports rather than compiling a model with nothing in it."""
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-resolver-result-invalid") as raised:
         form(source(), BUILTIN_MANIFEST, BUILTIN_PROFILE)
     assert raised.value.code == FORMATION_RESOLVER_RESULT_INVALID
-    assert raised.value.owner == METAMODEL_MODULE
+    assert raised.value.args[1].startswith(f"{METAMODEL_MODULE}: ")
 
 
 def test_a_model_compiler_returning_a_mutable_collection_is_a_contract_failure() -> None:
     manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
     profile = _Profile(model_compilers=(_MutableFacetCompiler(_INHERITANCE, _INHERITANCE_FACET),))
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
-    assert failure.cause is None
+    assert failure.__cause__ is None
 
 
 def test_a_model_compiler_returning_another_type_than_its_key_promises_fails() -> None:
@@ -1077,7 +1076,7 @@ def test_a_model_compiler_returning_another_type_than_its_key_promises_fails() -
     manifest = FormationManifest((_resolver_row(), _compiler_row(_INHERITANCE, _INHERITANCE_FACET)))
     profile = _Profile(model_compilers=(_WrongTypeFacetCompiler(_INHERITANCE, _INHERITANCE_FACET),))
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
-    assert failure.cause is None
+    assert failure.__cause__ is None
 
 
 @pytest.mark.parametrize(
@@ -1101,7 +1100,7 @@ def test_a_model_compiler_cannot_substitute_its_own_acceptance_check(returns: ob
         )
     )
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_INHERITANCE)
-    assert failure.cause is None
+    assert failure.__cause__ is None
 
 
 def test_a_model_compiler_cannot_refuse_the_facet_its_own_module_accepts() -> None:
@@ -1160,7 +1159,7 @@ def test_a_model_compiler_cannot_mutate_the_facets_it_was_handed() -> None:
         )
     )
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_TEMPORAL)
-    assert isinstance(failure.cause, TypeError)
+    assert isinstance(failure.__cause__, TypeError)
 
 
 def test_a_model_compiler_failure_publishes_nothing() -> None:
@@ -1182,7 +1181,7 @@ def test_a_model_compiler_failure_publishes_nothing() -> None:
     )
     failure = _contract_failure(manifest, profile, FORMATION_COMPILER_FAILED, owner=_TEMPORAL)
     assert first.calls == [_INHERITANCE]
-    assert isinstance(failure.cause, RuntimeError)
+    assert isinstance(failure.__cause__, RuntimeError)
 
 
 def test_no_rule_set_or_compiler_runs_when_resolution_rejects() -> None:

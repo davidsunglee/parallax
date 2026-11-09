@@ -12,6 +12,7 @@ from parallax.core._execution._routing import check_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.clock import Clock
 from parallax.core.auto_retry import RetryPolicy
+from parallax.core.base import UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.entity import DomainModel
@@ -21,7 +22,7 @@ from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     check_read_plan_cache_capacity,
 )
-from parallax.snapshot._handle._errors import SnapshotConnectionError
+from parallax.snapshot._handle._errors import SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED
 from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
@@ -41,15 +42,14 @@ __all__ = ["Database", "ScopedDatabase", "connect"]
 
 _CONNECT_REFUSAL = (
     "connect() takes a Domain Model — one composed from Entity Classes, or one a descriptor "
-    "produced — or a ServingModel holding a prepared one "
-    "(snapshot-class-backed-model-required); a bare accepted Metamodel is a form no "
-    "application holds"
+    "produced — or a ServingModel holding a prepared one; a bare accepted Metamodel is a "
+    "form no application holds"
 )
 
 _CONSTRUCTOR_REFUSAL = (
     "a Database connects to a Domain Model — one composed from Entity Classes, or one a "
     "descriptor produced — or to a ServingModel holding a prepared one; a bare accepted "
-    "Metamodel names no model a connection can serve (snapshot-class-backed-model-required)"
+    "Metamodel names no model a connection can serve"
 )
 
 
@@ -58,7 +58,7 @@ def served_model(model: DomainModel | ServingModel, refusal: str) -> ServingMode
     if isinstance(model, ServingModel):
         return model
     if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise SnapshotConnectionError(refusal)
+        raise UsageError(SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED, refusal)
     return ServingModel(prepare_model(model, edition=f"static-{uuid4().hex}"))
 
 

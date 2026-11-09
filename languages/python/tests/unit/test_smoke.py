@@ -45,7 +45,6 @@ def test_top_package_public_surfaces() -> None:
         "SnapshotStream",
         "ScopedDatabase",
         "SharingScope",
-        "SnapshotConnectionError",
         "SnapshotInspectionError",
         "SnapshotMaterializationError",
         "SnapshotConsistencyError",

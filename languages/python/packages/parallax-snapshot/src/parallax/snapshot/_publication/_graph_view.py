@@ -4,7 +4,9 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import cast
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.entity import UNLOADED, GraphConstructionError
+from parallax.core.base import InternalError
+from parallax.core.entity import UNLOADED
+from parallax.core.entity._errors import ENTITY_GRAPH_INVALID_MEMBER
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -732,18 +734,14 @@ def _unloaded(width: int) -> tuple[object, ...]:
 
 def _undeclared_direction(
     entity: EntityIdentity, relationship: RelationshipIdentity, node: int
-) -> GraphConstructionError:
+) -> InternalError:
     """The refusal for a loaded view naming a direction ``entity`` does not declare,
     in Entity Graph Construction's vocabulary because it is that graph's
     relationship row being refused."""
-    return GraphConstructionError(
-        code="entity-graph-invalid-member",
-        message=(
-            f"{entity.canonical} declares no relationship {relationship!r}, "
-            "and a loaded view carries one"
-        ),
-        index=node,
-        identity=relationship,
+    return InternalError(
+        ENTITY_GRAPH_INVALID_MEMBER,
+        f"node {node}: {entity.canonical} declares no relationship {relationship!r}, and a "
+        "loaded view carries one",
     )
 
 

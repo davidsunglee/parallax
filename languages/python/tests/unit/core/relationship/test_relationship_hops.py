@@ -17,8 +17,6 @@ declare two Entities that share the canonical name ``Customer``.
 
 from typing import Any
 
-import pytest
-
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -27,7 +25,6 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    QueryDefinitionError,
     Rel,
     TablePerHierarchy,
     attr,
@@ -156,9 +153,8 @@ def test_an_inherited_deeper_member_spells_its_declaring_ancestor() -> None:
 
 def test_a_hop_naming_an_attribute_of_the_target_is_refused_at_binding() -> None:
     # `id` is a declared member of the hop's target, but not a relationship.
-    with pytest.raises(QueryDefinitionError, match="SalesCustomer declares no") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="SalesCustomer declares no"):
         _preflight(LEDGER, SalesOrder, SalesOrder.customer.id)
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_first_hop_reference_names_its_owner_exactly_and_its_declared_member() -> None:
@@ -191,9 +187,8 @@ def test_a_hop_narrow_to_no_subtype_is_refused_rather_than_erased() -> None:
     # refuses as `narrow-empty-effective-set`; this one lowers to no node, so the
     # arity is its own rule: every Python narrowing form requires at least one
     # subtype alternative.
-    with pytest.raises(QueryDefinitionError, match="at least one subtype") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="at least one subtype"):
         Root.branches.narrow()
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_second_narrow_on_one_hop_is_refused_rather_than_replacing_the_first() -> None:
@@ -202,9 +197,8 @@ def test_a_second_narrow_on_one_hop_is_refused_rather_than_replacing_the_first()
     # the first, and either silently answers something neither call asked for.
     # The receiver's own target is all its parameter states, so nothing about the
     # first narrow is typed and this is the whole rule.
-    with pytest.raises(QueryDefinitionError, match="single-shot") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="single-shot"):
         Root.branches.narrow(Branch).narrow(Branch)
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
@@ -257,15 +251,13 @@ def test_a_narrow_to_several_subtypes_continues_through_what_the_hop_points_at()
     assert _bound(both.toys)[-1] == (f"{deep.FAMILY_NS}.Animal.playthings", ())
     # No single subtype is reached, so a subtype's own member answers nothing,
     # even one both alternatives happen to declare under one Python name.
-    with pytest.raises(QueryDefinitionError, match="Animal declares no relationship") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="Animal declares no relationship"):
         _bound(both.gear)
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_subtypes_relationship_is_unreachable_past_the_broad_hop() -> None:
-    with pytest.raises(QueryDefinitionError, match="Animal declares no relationship") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="Animal declares no relationship"):
         _bound(deep.Keeper.animals.gear)
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_narrow_outside_the_hops_target_keeps_its_portable_refusal_when_continued() -> None:

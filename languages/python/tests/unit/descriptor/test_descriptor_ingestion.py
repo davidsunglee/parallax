@@ -21,13 +21,7 @@ from jsonschema.protocols import Validator
 
 from parallax.conformance import case_format
 from parallax.descriptor import _ingest
-from parallax.descriptor._errors import (
-    DescriptorError,
-    DescriptorSchemaError,
-    DescriptorSyntaxError,
-    DescriptorValueError,
-    DescriptorViolation,
-)
+from parallax.descriptor._errors import DescriptorError, DescriptorViolation
 from parallax.descriptor._ingest import parse_json, parse_yaml
 
 _REPO = case_format.find_repo_root()
@@ -107,24 +101,21 @@ def test_descriptor_ingestion_matches_the_corpus_expectation(fixture: _Fixture) 
         # loses the parser's own diagnostic: this is the only phase whose
         # sidecar carries no `violations` key.
         assert "violations" not in fixture.expected
-        assert isinstance(error, DescriptorSyntaxError)
-        assert not isinstance(error, (DescriptorSchemaError, DescriptorValueError))
+        assert error.violations == ()
         assert error.format == fixture.format
-        assert error.cause is not None
+        assert error.__cause__ is not None
         assert error.line is not None
         assert error.column is not None
         return
 
     if phase == "schema":
-        assert isinstance(error, DescriptorSchemaError)
         _assert_violations(error.violations, fixture.expected["violations"])
         return
 
     if phase == "value":
-        assert isinstance(error, DescriptorValueError)
         _assert_violations(error.violations, fixture.expected["violations"])
         # An earlier phase's own success is a separate, positive fact: assert
-        # independently (not just via the raised type) that the document is
+        # independently (not just via the raised code) that the document is
         # schema-valid, so a value-phase fixture can never be silently masking
         # a schema violation the adapter mis-happening to shove into phase 3.
         document = (
@@ -149,16 +140,6 @@ def _assert_violations(
     # Canonical (path, rule) order and duplicate-freedom, message excluded.
     assert actual_keys == expected_keys
     assert len(set(actual_keys)) == len(actual_keys)
-
-
-def test_a_schema_error_naming_no_violation_is_not_a_report() -> None:
-    with pytest.raises(ValueError, match="at least one violation"):
-        DescriptorSchemaError([])
-
-
-def test_a_value_error_naming_no_violation_is_not_a_report() -> None:
-    with pytest.raises(ValueError, match="at least one violation"):
-        DescriptorValueError([])
 
 
 def test_the_schema_phase_validates_against_the_packaged_authoritative_schema() -> None:

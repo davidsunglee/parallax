@@ -26,6 +26,7 @@ from parallax.core.base._neutral import (
     utc_instant,
 )
 from tests._support.binary32 import rounded_once, rounding_witnesses
+from tests._support.errors import raises_code
 
 
 class _MutableTuple(tuple[object, ...]):
@@ -298,7 +299,7 @@ def test_utc_instant_converts_any_other_aware_datetime_to_a_base_utc_value(
 
 
 def test_normalize_instant_rejects_naive() -> None:
-    with pytest.raises(base.InstantError):
+    with raises_code(base.UsageError, "instant-invalid"):
         base.normalize_instant(dt.datetime(2026, 7, 12, 8, 30, 0))
 
 
@@ -331,7 +332,7 @@ def test_normalize_instant_rejects_a_datetime_naming_no_instant(unusable: dt.dat
     # offset beyond a day is refused by the offset accessor before any
     # conversion runs. The boundary is total over `datetime`, so all three are
     # `timestamp` verdicts rather than arithmetic accidents reaching the caller.
-    with pytest.raises(base.InstantError):
+    with raises_code(base.UsageError, "instant-invalid"):
         base.normalize_instant(unusable)
 
 
@@ -696,10 +697,12 @@ def test_a_typed_converter_answers_coercion_then_membership_as_one_call(
             # Owned Json content keeps each scalar in its built-in carrier.
             assert type(converted) is type(managed) or declared == base.JSON
         else:
-            with pytest.raises(base.NeutralTypeMismatch) as refused:
+            with raises_code(base.UsageError, "neutral-type-mismatch") as refused:
                 convert(candidate)
-            assert refused.value.declared == declared
-            assert repr(refused.value.managed) == repr(managed)
+            coerced = base.coerce_neutral_input(candidate, declared)
+            assert refused.value.args[1] == (
+                f"value {coerced!r} does not match the declared type {declared!r}"
+            )
 
 
 def test_a_typed_float32_converter_names_the_spelled_number_rounded_once() -> None:

@@ -17,15 +17,17 @@ from typing import Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import UsageError
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._unit_work import preparation as preparation_module
 from parallax.core.entity import DomainModel
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
 from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.snapshot import Database, SnapshotConnectionError, TxnContext, connect
+from parallax.snapshot import Database, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import FIXED, NEW_ROW, new_account
 
@@ -86,7 +88,11 @@ def test_a_descriptor_backed_connection_still_refuses_a_typed_read_before_io() -
     db = own_root(
         Database.connect(ScriptedAdapter(), _descriptor_backed(), clock=FixedClock(FIXED))
     ).using_database_login()
-    with pytest.raises(SnapshotConnectionError, match="snapshot-class-backed-model-required"):
+    with raises_code(
+        UsageError,
+        "snapshot-class-backed-model-required",
+        match="snapshot-class-backed-model-required",
+    ):
         db.find(mm.Account.where(mm.Account.id == 7))
 
 

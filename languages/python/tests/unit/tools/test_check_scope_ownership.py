@@ -595,9 +595,7 @@ def _write_probe(statement: str, bound: str) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("statement", "bound", "escaped"), _spellings("_errors", "EntityDefinitionError")
-)
+@pytest.mark.parametrize(("statement", "bound", "escaped"), _spellings("_errors", "EditError"))
 def test_a_sealed_scope_reaching_what_its_row_already_permits_fails(
     statement: str,
     bound: str,

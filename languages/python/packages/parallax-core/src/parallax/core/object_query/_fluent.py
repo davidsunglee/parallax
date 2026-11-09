@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
-from parallax.core.base import TIMESTAMP, normalize_instant
+from parallax.core.base import TIMESTAMP, UsageError, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata, EntityIdentity
 from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query._canonical import subtype_spelling
@@ -21,7 +21,12 @@ from parallax.core.object_query._nodes import (
     TemporalDimensionConstant,
     TemporalSelection,
 )
-from parallax.core.predicate import QueryDefinitionError, canonical_subtype_selection
+from parallax.core.predicate import (
+    QUERY_CLAUSE_INVALID,
+    QUERY_NOT_MUTATION_COMPATIBLE,
+    QUERY_PATH_INVALID,
+    canonical_subtype_selection,
+)
 from parallax.core.wire import encode_wire
 
 if TYPE_CHECKING:
@@ -131,9 +136,7 @@ class ObjectQuery[E, S]:
         and never two views.
         """
         if not paths:
-            raise QueryDefinitionError(
-                code="query-clause-invalid", message="include requires at least one path"
-            )
+            raise UsageError(QUERY_CLAUSE_INVALID, "include requires at least one path")
         from parallax.core.entity._expressions import authored_include_path
 
         added = tuple(authored_include_path(path) for path in paths)
@@ -161,20 +164,16 @@ class ObjectQuery[E, S]:
         and is refused rather than silently dropped.
         """
         if not keys:
-            raise QueryDefinitionError(
-                code="query-clause-invalid", message="order_by requires at least one key"
-            )
+            raise UsageError(QUERY_CLAUSE_INVALID, "order_by requires at least one key")
         accumulated = self._query.order_by + tuple(key.key for key in keys)
         seen: set[str] = set()
         for key in accumulated:
             if key.attr in seen:
-                raise QueryDefinitionError(
-                    code="query-clause-invalid",
-                    message=(
-                        f"{key.attr} already orders this query; one attribute occurs once "
-                        "across the whole accumulated ordering, whatever direction each "
-                        "occurrence carries"
-                    ),
+                raise UsageError(
+                    QUERY_CLAUSE_INVALID,
+                    f"{key.attr} already orders this query; one attribute occurs once "
+                    "across the whole accumulated ordering, whatever direction each "
+                    "occurrence carries",
                 )
             seen.add(key.attr)
         return self._with(order_by=accumulated)
@@ -188,14 +187,13 @@ class ObjectQuery[E, S]:
         are refused rather than coerced — ``True`` is not the limit 1.
         """
         if self._query.limit is not None:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message="a limit clause is single-shot; derive from the unbounded base",
+            raise UsageError(
+                QUERY_CLAUSE_INVALID,
+                "a limit clause is single-shot; derive from the unbounded base",
             )
         if type(count) is not int or count < 1:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message=f"limit requires a positive built-in int (got {count!r})",
+            raise UsageError(
+                QUERY_CLAUSE_INVALID, f"limit requires a positive built-in int (got {count!r})"
             )
         return self._with(limit=count)
 
@@ -232,19 +230,16 @@ class ObjectQuery[E, S]:
         question of which concrete subtypes the named classes resolve to.
         """
         if self._query.narrow_to is not None:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message="a narrow clause is single-shot; derive from the un-narrowed base",
+            raise UsageError(
+                QUERY_CLAUSE_INVALID,
+                "a narrow clause is single-shot; derive from the un-narrowed base",
             )
         if not subtypes:
-            raise QueryDefinitionError(
-                code="query-clause-invalid", message="narrow requires at least one subtype"
-            )
+            raise UsageError(QUERY_CLAUSE_INVALID, "narrow requires at least one subtype")
         alternatives = tuple(subtype_spelling(subtype) for subtype in subtypes)
         if len(set(alternatives)) != len(alternatives):
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message="narrow alternatives must not repeat the same subtype",
+            raise UsageError(
+                QUERY_PATH_INVALID, "narrow alternatives must not repeat the same subtype"
             )
         return self._with(narrow_to=canonical_subtype_selection(alternatives))
 
@@ -303,12 +298,10 @@ class ObjectQuery[E, S]:
         is rejected here, at query build.
         """
         if dimension is not VALID_TIME and dimension is not TX_TIME:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message=(
-                    "history() takes its dimension as the exported VALID_TIME / TX_TIME "
-                    f"constant; a string dimension spelling is rejected (got {dimension!r})"
-                ),
+            raise UsageError(
+                QUERY_CLAUSE_INVALID,
+                "history() takes its dimension as the exported VALID_TIME / TX_TIME "
+                f"constant; a string dimension spelling is rejected (got {dimension!r})",
             )
         name: _DimensionName = "valid_time" if dimension.dimension == "valid-time" else "tx_time"
         return self._with_temporal({self._dimension(name): History()})
@@ -317,20 +310,16 @@ class ObjectQuery[E, S]:
         self, selections: Mapping[TemporalDimension, TemporalSelection]
     ) -> ObjectQuery[E, S]:
         if not selections:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message=(
-                    "a temporal clause requires at least one dimension (valid_time= / tx_time=)"
-                ),
+            raise UsageError(
+                QUERY_CLAUSE_INVALID,
+                "a temporal clause requires at least one dimension (valid_time= / tx_time=)",
             )
         for dimension in selections:
             if dimension in self._query.temporal:
-                raise QueryDefinitionError(
-                    code="query-clause-invalid",
-                    message=(
-                        f"the {dimension} dimension is single-shot; derive from a "
-                        "query that has not selected that dimension"
-                    ),
+                raise UsageError(
+                    QUERY_CLAUSE_INVALID,
+                    f"the {dimension} dimension is single-shot; derive from a "
+                    "query that has not selected that dimension",
                 )
         return self._with(temporal={**self._query.temporal, **selections})
 
@@ -360,9 +349,7 @@ class ObjectQuery[E, S]:
             if not self._as_of_axes
             else f"declares no {name} dimension"
         )
-        raise QueryDefinitionError(
-            code="query-clause-invalid", message=f"{self._query.target.name} {detail}"
-        )
+        raise UsageError(QUERY_CLAUSE_INVALID, f"{self._query.target.name} {detail}")
 
     def __bool__(self) -> bool:
         raise TypeError(
@@ -378,12 +365,10 @@ class ObjectQuery[E, S]:
         }
         selected = self._query.temporal
         if "valid-time" in declared and "valid-time" not in selected:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message=(
-                    f"{self._query.target.name} is bitemporal and requires an explicit "
-                    "Valid-Time selection through valid_time= or history(VALID_TIME)"
-                ),
+            raise UsageError(
+                QUERY_CLAUSE_INVALID,
+                f"{self._query.target.name} is bitemporal and requires an explicit "
+                "Valid-Time selection through valid_time= or history(VALID_TIME)",
             )
         if "transaction-time" in declared and "transaction-time" not in selected:
             completed: dict[TemporalDimension, TemporalSelection] = {
@@ -408,12 +393,10 @@ class ObjectQuery[E, S]:
             if present
         ]
         if carried:
-            raise QueryDefinitionError(
-                code="query-not-mutation-compatible",
-                message=(
-                    f"{node.target.name}: a set-based write target carries nothing but a "
-                    f"predicate, and this query carries {', '.join(carried)}"
-                ),
+            raise UsageError(
+                QUERY_NOT_MUTATION_COMPATIBLE,
+                f"{node.target.name}: a set-based write target carries nothing but a "
+                f"predicate, and this query carries {', '.join(carried)}",
             )
         return MutationSelection(target=node.target, predicate=node.predicate)
 
@@ -461,38 +444,30 @@ def _window(value: object, axis: _DimensionName) -> tuple[str, str]:
     and an ``asOfRange`` bound is finite.
     """
     if type(value) is not tuple:
-        raise QueryDefinitionError(
-            code="query-clause-invalid",
-            message=(
-                f"{axis}= takes an exact built-in tuple; a list, a tuple subclass, and "
-                f"any other iterable are refused rather than coerced (got {value!r})"
-            ),
+        raise UsageError(
+            QUERY_CLAUSE_INVALID,
+            f"{axis}= takes an exact built-in tuple; a list, a tuple subclass, and "
+            f"any other iterable are refused rather than coerced (got {value!r})",
         )
     endpoints = cast("tuple[object, ...]", value)
     if len(endpoints) != 2:
-        raise QueryDefinitionError(
-            code="query-clause-invalid",
-            message=(
-                f"{axis}= takes a two-item window, the (start, end) edge points (got {value!r})"
-            ),
+        raise UsageError(
+            QUERY_CLAUSE_INVALID,
+            f"{axis}= takes a two-item window, the (start, end) edge points (got {value!r})",
         )
     start, end = endpoints
     if not isinstance(start, dt.datetime) or not isinstance(end, dt.datetime):
-        raise QueryDefinitionError(
-            code="query-clause-invalid",
-            message=(
-                f"{axis}= takes two finite instants; LATEST pins a dimension rather than "
-                f"scanning one, and nothing else is coerced (got {value!r})"
-            ),
+        raise UsageError(
+            QUERY_CLAUSE_INVALID,
+            f"{axis}= takes two finite instants; LATEST pins a dimension rather than "
+            f"scanning one, and nothing else is coerced (got {value!r})",
         )
     first, last = normalize_instant(start), normalize_instant(end)
     if first >= last:
-        raise QueryDefinitionError(
-            code="query-clause-invalid",
-            message=(
-                f"{axis}= scans the half-open window [start, end), so start < end; "
-                f"{first.isoformat()} does not precede {last.isoformat()}"
-            ),
+        raise UsageError(
+            QUERY_CLAUSE_INVALID,
+            f"{axis}= scans the half-open window [start, end), so start < end; "
+            f"{first.isoformat()} does not precede {last.isoformat()}",
         )
     return (
         cast("str", encode_wire(TIMESTAMP, first)),

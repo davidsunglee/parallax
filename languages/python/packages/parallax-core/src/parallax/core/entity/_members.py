@@ -4,9 +4,13 @@ from collections.abc import Sequence as _Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, overload
 
-from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType
+from parallax.core.base import FLOAT32, INT32, Float32, Int32, NeutralType, UsageError
 from parallax.core.entity._construction_input import UNLOADED
-from parallax.core.entity._errors import EntityDefinitionError, UnloadedRelationshipError
+from parallax.core.entity._errors import (
+    ENTITY_OPTION_CONTEXT_INVALID,
+    ENTITY_OPTION_INVALID_VALUE,
+    UnloadedRelationshipError,
+)
 from parallax.core.entity._expressions import (
     AssignableManyScalarExpr,
     AssignableManyValueObjectExpr,
@@ -117,9 +121,9 @@ class ConcreteSubtype:
 
     def __post_init__(self) -> None:
         if self.tag_value is not None and not self.tag_value:
-            raise EntityDefinitionError(
-                code="entity-option-invalid-value",
-                message="a concrete-subtype tag value is either absent or nonempty",
+            raise UsageError(
+                ENTITY_OPTION_INVALID_VALUE,
+                "a concrete-subtype tag value is either absent or nonempty",
             )
 
 
@@ -160,7 +164,7 @@ class OrderTerm:
     placement composition raises a plain :class:`ValueError` and stays outside the
     query-definition error family. An Object Query Sort Key
     (``object_query.OrderKey``) carries the same single-shot rule and does belong
-    to that family, so it raises ``QueryDefinitionError`` instead; the two
+    to that family, so it raises ``query-expression-invalid`` instead; the two
     spellings differ because the surfaces do, not by accident.
     """
 
@@ -238,12 +242,12 @@ class IndexSpec:
     unique: bool = False
 
 
-def _invalid(message: str) -> EntityDefinitionError:
-    return EntityDefinitionError(code="entity-option-invalid-value", message=message)
+def _invalid(message: str) -> UsageError:
+    return UsageError(ENTITY_OPTION_INVALID_VALUE, message)
 
 
-def _context(message: str) -> EntityDefinitionError:
-    return EntityDefinitionError(code="entity-option-context-invalid", message=message)
+def _context(message: str) -> UsageError:
+    return UsageError(ENTITY_OPTION_CONTEXT_INVALID, message)
 
 
 def _optional_name(value: object, option: str) -> str | None:

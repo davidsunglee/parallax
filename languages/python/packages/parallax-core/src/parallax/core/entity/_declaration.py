@@ -31,6 +31,7 @@ from parallax.core.base import (
     Float32,
     Int32,
     NeutralType,
+    UsageError,
     coerce_neutral_input,
     matches_typed_carrier,
     typed_converter,
@@ -42,7 +43,18 @@ from parallax.core.document_codec._plan import (
     AuthoringLane,
 )
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._errors import EntityDefinitionError
+from parallax.core.entity._errors import (
+    ENTITY_ANNOTATION_INVALID,
+    ENTITY_BASE_INVALID,
+    ENTITY_CANONICAL_NAME_COLLISION,
+    ENTITY_HEADER_INVALID_VALUE,
+    ENTITY_HEADER_MISSING_OPTION,
+    ENTITY_HEADER_UNKNOWN_OPTION,
+    ENTITY_MEMBER_VALUE_INVALID,
+    ENTITY_OPTION_CONTEXT_INVALID,
+    ENTITY_OPTION_INVALID_VALUE,
+    ENTITY_RESERVED_MEMBER_NAME,
+)
 from parallax.core.entity._expressions import (
     EXPRESSION_OPERATION_NAMES,
     AttributeRef,
@@ -540,10 +552,7 @@ def declaration_of(cls: type) -> EntityDeclaration:
     """``cls``'s own Entity declaration, or a loud rejection when it has none."""
     declaration = cls.__dict__.get(_DECLARATION)
     if not isinstance(declaration, EntityDeclaration):
-        raise EntityDefinitionError(
-            code="entity-base-invalid",
-            message=f"{cls.__name__} is not a Parallax Entity Class",
-        )
+        raise UsageError(ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity Class")
     return declaration
 
 
@@ -551,10 +560,7 @@ def members_of(cls: type) -> MemberNames:
     """``cls``'s own declared member correspondences (never an ancestor's)."""
     names = cls.__dict__.get(_MEMBERS)
     if not isinstance(names, MemberNames):
-        raise EntityDefinitionError(
-            code="entity-base-invalid",
-            message=f"{cls.__name__} is not a Parallax Entity Class",
-        )
+        raise UsageError(ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity Class")
     return names
 
 
@@ -562,10 +568,7 @@ def wire_names_of(cls: type) -> WireNames:
     """``cls``'s family-merged member correspondences, stamped at class creation."""
     names = cls.__dict__.get(_WIRE_NAMES)
     if not isinstance(names, WireNames):
-        raise EntityDefinitionError(
-            code="entity-base-invalid",
-            message=f"{cls.__name__} is not a Parallax Entity Class",
-        )
+        raise UsageError(ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity Class")
     return names
 
 
@@ -573,9 +576,8 @@ def shape_of(cls: type) -> ValueObjectShape:
     """``cls``'s reusable Value Object shape, or a loud rejection when it has none."""
     shape = cls.__dict__.get(_SHAPE)
     if not isinstance(shape, ValueObjectShape):
-        raise EntityDefinitionError(
-            code="entity-annotation-invalid",
-            message=f"{cls.__name__} is not a Parallax Value Object Class",
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{cls.__name__} is not a Parallax Value Object Class"
         )
     return shape
 
@@ -603,9 +605,8 @@ def member_validation(cls: type) -> MemberValidation:
     """The member judgment ``cls``'s edits and assignments share."""
     validation = getattr(cls, _VALIDATION, None)
     if not isinstance(validation, MemberValidation):
-        raise EntityDefinitionError(
-            code="entity-base-invalid",
-            message=f"{cls.__name__} is not a Parallax Entity or Value Object Class",
+        raise UsageError(
+            ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity or Value Object Class"
         )
     return validation
 
@@ -682,9 +683,8 @@ def build_class(
     ns["model_config"] = ConfigDict(frozen=True, ignored_types=frontend_types)
     if mint is not None:
         if mint is not FRAMEWORK_MINT:
-            raise EntityDefinitionError(
-                code="entity-header-unknown-option",
-                message=f"{cls_name}: '_mint' is not a declaration option",
+            raise UsageError(
+                ENTITY_HEADER_UNKNOWN_OPTION, f"{cls_name}: '_mint' is not a declaration option"
             )
         ns[_KIND] = kind
         ns[_AXES] = axes
@@ -903,9 +903,8 @@ def _resolved(
 ) -> object:
     resolved = _resolve(text, globalns, localns)
     if resolved is None:
-        raise EntityDefinitionError(
-            code="entity-annotation-invalid",
-            message=f"{where}: cannot resolve the annotation {text!r}",
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{where}: cannot resolve the annotation {text!r}"
         )
     return resolved
 
@@ -924,9 +923,9 @@ def _live_shape(
     if origin is UnionType or origin is Union:
         members = [arg for arg in get_args(inner) if arg is not NoneType]
         if len(members) != 1 or len(get_args(inner)) != 2:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: only an `X | None` union is a declarable annotation",
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: only an `X | None` union is a declarable annotation",
             )
         inner = members[0]
         nullable = True
@@ -934,9 +933,8 @@ def _live_shape(
     if origin is tuple:
         args = get_args(inner)
         if len(args) != 2 or args[1] is not Ellipsis:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a many member is spelled `tuple[X, ...]`",
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID, f"{where}: a many member is spelled `tuple[X, ...]`"
             )
         inner = args[0]
         multiplicity = Multiplicity.MANY
@@ -963,9 +961,9 @@ def _text_shape(text: str, *, where: str) -> _Shape:
         members = [part.strip() for part in body.split("|")]
         named = [part for part in members if part != "None"]
         if len(members) != 2 or len(named) != 1:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: only an `X | None` union is a declarable annotation",
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: only an `X | None` union is a declarable annotation",
             )
         body = _unquote(named[0])
         nullable = True
@@ -973,9 +971,9 @@ def _text_shape(text: str, *, where: str) -> _Shape:
     if (match := _TUPLE_TEXT.match(body)) is not None:
         head, _, tail = match.group("inner").rpartition(",")
         if tail.strip() != "...":
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a many relationship is spelled `tuple[Target, ...]`",
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: a many relationship is spelled `tuple[Target, ...]`",
             )
         body = _unquote(head)
         multiplicity = Multiplicity.MANY
@@ -1005,35 +1003,30 @@ def _scalar_type(base: object, spec: AttrSpec, where: str) -> NeutralType:
             return INT32
         if isinstance(spec.type, Float32) and base is float:
             return FLOAT32
-        raise EntityDefinitionError(
-            code="entity-option-context-invalid",
-            message=(
-                f"{where}: type= narrows an `Attr[int]` to Int32 or an `Attr[float]` to "
-                "Float32 and applies to no other annotation"
-            ),
+        raise UsageError(
+            ENTITY_OPTION_CONTEXT_INVALID,
+            f"{where}: type= narrows an `Attr[int]` to Int32 or an `Attr[float]` to "
+            "Float32 and applies to no other annotation",
         )
     if base is _decimal.Decimal:
         if spec.precision is None or spec.scale is None:
-            raise EntityDefinitionError(
-                code="entity-option-context-invalid",
-                message=f"{where}: a decimal member declares precision= and scale=",
+            raise UsageError(
+                ENTITY_OPTION_CONTEXT_INVALID,
+                f"{where}: a decimal member declares precision= and scale=",
             )
         try:
             return Decimal(spec.precision, spec.scale)
         except ValueError as error:
-            raise EntityDefinitionError(
-                code="entity-option-invalid-value", message=f"{where}: {error}"
-            ) from error
+            raise UsageError(ENTITY_OPTION_INVALID_VALUE, f"{where}: {error}") from error
     if spec.precision is not None:
-        raise EntityDefinitionError(
-            code="entity-option-context-invalid",
-            message=f"{where}: precision= and scale= apply only to a decimal member",
+        raise UsageError(
+            ENTITY_OPTION_CONTEXT_INVALID,
+            f"{where}: precision= and scale= apply only to a decimal member",
         )
     neutral = _infer_neutral_type(base)
     if neutral is None:
-        raise EntityDefinitionError(
-            code="entity-annotation-invalid",
-            message=f"{where}: {base!r} is not a declarable member type",
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{where}: {base!r} is not a declarable member type"
         )
     return neutral
 
@@ -1041,12 +1034,10 @@ def _scalar_type(base: object, spec: AttrSpec, where: str) -> NeutralType:
 def _reject_nullable_collection(shape: _Shape, where: str) -> None:
     """Refuse a nullable scalar collection, whose empty tuple is its only zero."""
     if shape.multiplicity is Multiplicity.MANY and shape.nullable:
-        raise EntityDefinitionError(
-            code="entity-annotation-invalid",
-            message=(
-                f"{where}: a scalar collection is never nullable — spell it `tuple[X, ...]`, "
-                "whose empty tuple is the empty collection"
-            ),
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID,
+            f"{where}: a scalar collection is never nullable — spell it `tuple[X, ...]`, "
+            "whose empty tuple is the empty collection",
         )
 
 
@@ -1069,9 +1060,9 @@ def _reject_entity_only_options(spec: AttrSpec, where: str, *, allow_column: boo
         if present
     ]
     if offending:
-        raise EntityDefinitionError(
-            code="entity-option-context-invalid",
-            message=f"{where}: {', '.join(offending)} is an Entity-only option",
+        raise UsageError(
+            ENTITY_OPTION_CONTEXT_INVALID,
+            f"{where}: {', '.join(offending)} is an Entity-only option",
         )
 
 
@@ -1082,9 +1073,9 @@ def _build_value_object(
     mcs: type, cls_name: str, bases: tuple[type, ...], ns: dict[str, object]
 ) -> type:
     if len(bases) != 1 or not is_declared_class(bases[0], DeclarationKind.VALUE_OBJECT):
-        raise EntityDefinitionError(
-            code="entity-base-invalid",
-            message=f"{cls_name}: a Value Object Class extends exactly one ValueObject base",
+        raise UsageError(
+            ENTITY_BASE_INVALID,
+            f"{cls_name}: a Value Object Class extends exactly one ValueObject base",
         )
     annotations = _class_body_annotations(ns)
     attributes: list[ValueObjectAttributeDeclaration] = []
@@ -1103,9 +1094,9 @@ def _build_value_object(
 
         if is_declared_class(shape.base, DeclarationKind.VALUE_OBJECT):
             if spec.type is not None or spec.precision is not None:
-                raise EntityDefinitionError(
-                    code="entity-option-context-invalid",
-                    message=f"{where}: a Value Object occurrence declares no scalar type",
+                raise UsageError(
+                    ENTITY_OPTION_CONTEXT_INVALID,
+                    f"{where}: a Value Object occurrence declares no scalar type",
                 )
             nested_class = cast("type", shape.base)
             nested_classes[py_name] = nested_class
@@ -1240,9 +1231,9 @@ def _build_entity(
 
         if is_declared_class(shape.base, DeclarationKind.VALUE_OBJECT):
             if attr_spec.primary_key is not NOT_PRIMARY_KEY or attr_spec.optimistic_locking:
-                raise EntityDefinitionError(
-                    code="entity-option-context-invalid",
-                    message=f"{where}: a Value Object occurrence carries no key or version",
+                raise UsageError(
+                    ENTITY_OPTION_CONTEXT_INVALID,
+                    f"{where}: a Value Object occurrence carries no key or version",
                 )
             vo_class = cast("type", shape.base)
             vo_classes[py_name] = vo_class
@@ -1394,18 +1385,14 @@ def _body_members(
         if classified is not None and classified[0] == "class_var":
             continue
         if classified is None or classified[0] not in admitted:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid", message=f"{where}: {refusal}"
-            )
+            raise UsageError(ENTITY_ANNOTATION_INVALID, f"{where}: {refusal}")
         member_kind, inner = classified
         if py_name in EXPRESSION_OPERATION_NAMES:
-            raise EntityDefinitionError(
-                code="entity-reserved-member-name",
-                message=(
-                    f"{where}: reuses `{py_name}`, an operation every member expression offers, "
-                    "so dotted access could never reach the member; give it another Python "
-                    f"name and keep the canonical one with name={py_name!r}"
-                ),
+            raise UsageError(
+                ENTITY_RESERVED_MEMBER_NAME,
+                f"{where}: reuses `{py_name}`, an operation every member expression offers, "
+                "so dotted access could never reach the member; give it another Python "
+                f"name and keep the canonical one with name={py_name!r}",
             )
         spec = _member_spec(ns.get(py_name), where, expect=member_kind)
         shape = _shape_of_annotation(
@@ -1417,9 +1404,9 @@ def _body_members(
         )
         canonical = _declared_name(spec, py_name)
         if canonical in canonical_seen:
-            raise EntityDefinitionError(
-                code="entity-canonical-name-collision",
-                message=f"{cls_name}: two members resolve to the canonical name {canonical!r}",
+            raise UsageError(
+                ENTITY_CANONICAL_NAME_COLLISION,
+                f"{cls_name}: two members resolve to the canonical name {canonical!r}",
             )
         canonical_seen.add(canonical)
         yield _BodyMember(py_name, where, member_kind, spec, shape, canonical)
@@ -1552,9 +1539,8 @@ def _declaring_descriptor(cls: type, py_name: str) -> Attr[Any] | Rel[Any]:
         bound = ancestor.__dict__.get(py_name)
         if isinstance(bound, Attr | Rel):
             return cast("Attr[Any] | Rel[Any]", bound)
-    raise EntityDefinitionError(  # pragma: no cover - every inherited member declares one
-        code="entity-base-invalid",
-        message=f"{cls.__name__}.{py_name} is inherited from no Parallax declaration",
+    raise UsageError(  # pragma: no cover - every inherited member declares one
+        ENTITY_BASE_INVALID, f"{cls.__name__}.{py_name} is inherited from no Parallax declaration"
     )
 
 
@@ -1580,9 +1566,7 @@ def _attribute(
             multiplicity=shape.multiplicity,
         )
     except ValueError as error:
-        raise EntityDefinitionError(
-            code="entity-option-context-invalid", message=f"{where}: {error}"
-        ) from error
+        raise UsageError(ENTITY_OPTION_CONTEXT_INVALID, f"{where}: {error}") from error
 
 
 def _domain_parent(cls_name: str, bases: tuple[type, ...]) -> type | None:
@@ -1591,12 +1575,10 @@ def _domain_parent(cls_name: str, bases: tuple[type, ...]) -> type | None:
     Exactly one Parallax base is legal and a non-Parallax mixin is outside the
     grammar, so both the count and the shape of ``bases`` are checked here.
     """
-    invalid = EntityDefinitionError(
-        code="entity-base-invalid",
-        message=(
-            f"{cls_name}: an Entity Class extends exactly one Parallax base — a framework "
-            "root (Entity, TxTemporal, Bitemporal) or one domain Entity parent"
-        ),
+    invalid = UsageError(
+        ENTITY_BASE_INVALID,
+        f"{cls_name}: an Entity Class extends exactly one Parallax base — a framework "
+        "root (Entity, TxTemporal, Bitemporal) or one domain Entity parent",
     )
     if len(bases) != 1 or not is_declared_class(bases[0], DeclarationKind.ENTITY):
         raise invalid
@@ -1607,9 +1589,9 @@ def _container(cls_name: str, header: EntityHeader) -> StorageContainer | None:
     if header.table is None:
         return None
     if not isinstance(header.table, str) or not header.table:
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{cls_name}: table= takes a nonempty string, got {header.table!r}",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: table= takes a nonempty string, got {header.table!r}",
         )
     return Table(header.table)
 
@@ -1617,9 +1599,9 @@ def _container(cls_name: str, header: EntityHeader) -> StorageContainer | None:
 def _persistence(cls_name: str, header: EntityHeader) -> PersistenceMode | None:
     if header.persistence is None or isinstance(header.persistence, PersistenceMode):
         return header.persistence
-    raise EntityDefinitionError(
-        code="entity-header-invalid-value",
-        message=f"{cls_name}: persistence= takes READ_ONLY, got {header.persistence!r}",
+    raise UsageError(
+        ENTITY_HEADER_INVALID_VALUE,
+        f"{cls_name}: persistence= takes READ_ONLY, got {header.persistence!r}",
     )
 
 
@@ -1638,18 +1620,18 @@ def _layout(cls_name: str, header: EntityHeader) -> StorageLayout | None:
     if declared is None:
         return None
     if not isinstance(declared, Document):
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{cls_name}: layout= takes Document or Document(column=...), got {declared!r}",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: layout= takes Document or Document(column=...), got {declared!r}",
         )
     # A frozen dataclass records its payload without checking it, so the declared
     # field type is a promise to the type checker rather than a fact about what a
     # header actually passed.
     column = cast("object", declared.column)
     if not isinstance(column, str) or not column:
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{cls_name}: Document(column=) takes a nonempty string, got {column!r}",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: Document(column=) takes a nonempty string, got {column!r}",
         )
     return AcceptedDocument(Column(column))
 
@@ -1658,9 +1640,9 @@ def _entity_name(cls_name: str, header: EntityHeader) -> str:
     if header.name is None:
         return cls_name
     if not isinstance(header.name, str) or not header.name or "." in header.name:
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{cls_name}: name= takes a nonempty dot-free string, got {header.name!r}",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: name= takes a nonempty dot-free string, got {header.name!r}",
         )
     return header.name
 
@@ -1669,9 +1651,9 @@ def _namespace(cls_name: str, header: EntityHeader) -> str | None:
     if header.namespace is None:
         return None
     if not isinstance(header.namespace, str) or not header.namespace:
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{cls_name}: namespace= takes a nonempty string, got {header.namespace!r}",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: namespace= takes a nonempty string, got {header.namespace!r}",
         )
     return header.namespace
 
@@ -1692,12 +1674,10 @@ def _inheritance_role(
     elif role is ConcreteSubtype:
         role = ConcreteSubtype()
     if role is not None and not isinstance(role, (AbstractRoot, AbstractSubtype, ConcreteSubtype)):
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=(
-                f"{cls_name}: inheritance= takes AbstractRoot(...), AbstractSubtype, or "
-                f"ConcreteSubtype(...), got {role!r}"
-            ),
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: inheritance= takes AbstractRoot(...), AbstractSubtype, or "
+            f"ConcreteSubtype(...), got {role!r}",
         )
     if isinstance(role, AbstractRoot):
         # A frozen dataclass records its payload without checking it, so the
@@ -1705,34 +1685,26 @@ def _inheritance_role(
         # fact about what a header actually passed.
         strategy = cast("object", role.strategy)
         if not isinstance(strategy, (TablePerHierarchy, TablePerConcreteSubtype)):
-            raise EntityDefinitionError(
-                code="entity-header-invalid-value",
-                message=(
-                    f"{cls_name}: AbstractRoot(...) takes TablePerHierarchy(...) or "
-                    f"TABLE_PER_CONCRETE_SUBTYPE, got {strategy!r}"
-                ),
+            raise UsageError(
+                ENTITY_HEADER_INVALID_VALUE,
+                f"{cls_name}: AbstractRoot(...) takes TablePerHierarchy(...) or "
+                f"TABLE_PER_CONCRETE_SUBTYPE, got {strategy!r}",
             )
     if parent is None:
         if isinstance(role, (AbstractSubtype, ConcreteSubtype)):
-            raise EntityDefinitionError(
-                code="entity-header-invalid-value",
-                message=(
-                    f"{cls_name}: a subtype role needs a domain Entity parent; subclass the "
-                    "family's root"
-                ),
+            raise UsageError(
+                ENTITY_HEADER_INVALID_VALUE,
+                f"{cls_name}: a subtype role needs a domain Entity parent; subclass the "
+                "family's root",
             )
         if role is None and header.table is None:
-            raise EntityDefinitionError(
-                code="entity-header-missing-option",
-                message=f"{cls_name}: a standalone Entity declares table=",
+            raise UsageError(
+                ENTITY_HEADER_MISSING_OPTION, f"{cls_name}: a standalone Entity declares table="
             )
     elif role is None:
-        raise EntityDefinitionError(
-            code="entity-base-invalid",
-            message=(
-                f"{cls_name}: a domain-Entity subclass declares inheritance=; a role is never "
-                "implicit"
-            ),
+        raise UsageError(
+            ENTITY_BASE_INVALID,
+            f"{cls_name}: a domain-Entity subclass declares inheritance=; a role is never implicit",
         )
     return role
 
@@ -1754,9 +1726,7 @@ def _accepted_inheritance(
 
 def _parent_reference(parent: type | None) -> EntityReference:
     if parent is None:  # pragma: no cover - a subtype role without a parent is rejected earlier
-        raise EntityDefinitionError(
-            code="entity-base-invalid", message="a subtype role needs a domain Entity parent"
-        )
+        raise UsageError(ENTITY_BASE_INVALID, "a subtype role needs a domain Entity parent")
     return ExactEntityReference(declaration_of(parent).identity)
 
 
@@ -1785,15 +1755,15 @@ def _declared_indices(
     identity: EntityIdentity, declared: object, py_to_name: dict[str, str]
 ) -> tuple[IndexMetadata, ...]:
     if not isinstance(declared, tuple):
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{identity.name}: indices= takes a tuple of index(...) values",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{identity.name}: indices= takes a tuple of index(...) values",
         )
     entries = cast("tuple[object, ...]", declared)
     if any(not isinstance(entry, IndexSpec) for entry in entries):
-        raise EntityDefinitionError(
-            code="entity-header-invalid-value",
-            message=f"{identity.name}: indices= takes a tuple of index(...) values",
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{identity.name}: indices= takes a tuple of index(...) values",
         )
     specs = cast("tuple[IndexSpec, ...]", entries)
     return tuple(
@@ -1825,33 +1795,30 @@ def _member_spec(value: object, where: str, *, expect: str) -> AttrSpec | RelSpe
         if isinstance(value, AttrSpec):
             return value
         if isinstance(value, (DefiningRelSpec, ReverseRelSpec)):
-            raise EntityDefinitionError(
-                code="entity-member-value-invalid",
-                message=f"{where}: a rel(...) value under an Attr[...] annotation",
+            raise UsageError(
+                ENTITY_MEMBER_VALUE_INVALID,
+                f"{where}: a rel(...) value under an Attr[...] annotation",
             )
-        raise EntityDefinitionError(
-            code="entity-member-value-invalid",
-            message=f"{where}: an Attr[...] member holds at most one attr(...) value",
+        raise UsageError(
+            ENTITY_MEMBER_VALUE_INVALID,
+            f"{where}: an Attr[...] member holds at most one attr(...) value",
         )
     if isinstance(value, (DefiningRelSpec, ReverseRelSpec)):
         return value
     if isinstance(value, AttrSpec):
-        raise EntityDefinitionError(
-            code="entity-member-value-invalid",
-            message=f"{where}: an attr(...) value under a Rel[...] annotation",
+        raise UsageError(
+            ENTITY_MEMBER_VALUE_INVALID, f"{where}: an attr(...) value under a Rel[...] annotation"
         )
-    raise EntityDefinitionError(
-        code="entity-member-value-invalid",
-        message=f"{where}: a Rel[...] member declares exactly one rel(...) value",
+    raise UsageError(
+        ENTITY_MEMBER_VALUE_INVALID,
+        f"{where}: a Rel[...] member declares exactly one rel(...) value",
     )
 
 
 def _reject_reserved(where: str, py_name: str, kind: DeclarationKind) -> None:
     reason = _reserved_name_reason(py_name, kind)
     if reason is not None:
-        raise EntityDefinitionError(
-            code="entity-reserved-member-name", message=f"{where}: {reason}"
-        )
+        raise UsageError(ENTITY_RESERVED_MEMBER_NAME, f"{where}: {reason}")
 
 
 def _reject_shadowed_class_names(
@@ -1883,9 +1850,7 @@ def _reject_shadowed_class_names(
     for name in sorted(ns):
         reason = _reserved_name_reason(name, kind)
         if reason is not None:
-            raise EntityDefinitionError(
-                code="entity-reserved-member-name", message=f"{cls_name}.{name}: {reason}"
-            )
+            raise UsageError(ENTITY_RESERVED_MEMBER_NAME, f"{cls_name}.{name}: {reason}")
 
 
 def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
@@ -1978,12 +1943,10 @@ def _reject_temporal_redeclaration(
         if _body_canonical_name(py_name, ns.get(py_name)) in _RESERVED_TEMPORAL_NAMES
     )
     if declared:
-        raise EntityDefinitionError(
-            code="entity-reserved-member-name",
-            message=(
-                f"{cls_name}.{declared[0]}: the framework temporal base supplies the standard "
-                "temporal members family-wide"
-            ),
+        raise UsageError(
+            ENTITY_RESERVED_MEMBER_NAME,
+            f"{cls_name}.{declared[0]}: the framework temporal base supplies the standard "
+            "temporal members family-wide",
         )
 
 
@@ -2036,9 +1999,9 @@ def _relationship(
     identity: EntityIdentity, canonical: str, spec: RelSpec, shape: _Shape, where: str
 ) -> UnresolvedRelationshipDeclaration:
     if shape.multiplicity is Multiplicity.MANY and shape.nullable:
-        raise EntityDefinitionError(
-            code="entity-annotation-invalid",
-            message=f"{where}: a to-many relationship is never `| None` — loaded-empty is `()`",
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID,
+            f"{where}: a to-many relationship is never `| None` — loaded-empty is `()`",
         )
     target = _entity_reference(shape, where)
     relationship = RelationshipIdentity(identity, canonical)
@@ -2077,16 +2040,15 @@ def _entity_reference(shape: _Shape, where: str) -> EntityReference:
     """
     if shape.base is not None:
         if not isinstance(shape.base, type) or _DECLARATION not in shape.base.__dict__:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a relationship target is an Entity Class or its name",
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: a relationship target is an Entity Class or its name",
             )
         return ExactEntityReference(declaration_of(shape.base).identity)
     namespace, dot, name = (shape.spelling or "").rpartition(".")
     if not name:
-        raise EntityDefinitionError(
-            code="entity-annotation-invalid",
-            message=f"{where}: a relationship target names a nonempty Entity",
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{where}: a relationship target names a nonempty Entity"
         )
     if not dot:
         return RelativeEntityReference(name)

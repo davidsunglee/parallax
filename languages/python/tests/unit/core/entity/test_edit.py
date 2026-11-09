@@ -28,6 +28,7 @@ from parallax.core import (
     ConcreteSubtype,
     Entity,
     TablePerHierarchy,
+    UsageError,
     attr,
 )
 from parallax.core.base import INFINITY
@@ -35,7 +36,6 @@ from parallax.core.entity import (
     UNLOADED,
     EditError,
     EditViolation,
-    EntityDefinitionError,
     UnloadedRelationshipError,
     lifecycle_state_of,
     relationship_value_of,
@@ -70,6 +70,7 @@ from parallax.core.metamodel import (
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
+from tests._support.errors import raises_code
 from tests.unit._indexed_graph_support import published
 from tests.unit.core.entity._compact_support import layout_slots
 
@@ -157,7 +158,7 @@ def test_a_dotted_name_is_refused_as_a_path_rather_than_as_an_unknown_member() -
 
 
 def test_wire_names_of_rejects_a_class_that_declares_nothing() -> None:
-    with pytest.raises(EntityDefinitionError, match="not a Parallax Entity Class"):
+    with raises_code(UsageError, "entity-base-invalid", match="not a Parallax Entity Class"):
         wire_names_of(int)
 
 
@@ -525,14 +526,13 @@ def test_a_declared_class_lays_out_no_slot_of_its_own() -> None:
     # shared backing root's, plus the lifecycle slot only an Entity is ever
     # handed state for. Reopening either route puts author-owned state in the
     # layout the carry sweeps, which is the reason both are refused.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class _Slotted(Entity, table="slotted", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             __slots__ = ("token",)
 
             id: Attr[int] = attr(primary_key=True)
 
-    assert caught.value.code == "entity-reserved-member-name"
     assert set(layout_slots(_Marked)) == set(layout_slots(BackedModel)) | {LIFECYCLE_STATE_SLOT}
 
 
@@ -856,7 +856,7 @@ def test_no_class_may_declare_a_framework_slot_a_derived_cache() -> None:
     # answer in place of the state the edit dropped — a materialized node's
     # lifecycle state among them, taking snapshot inspection and pin provenance
     # with it. The collision is refused where it is authored instead.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class _Colliding(Entity, table="colliding", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             id: Attr[int] = attr(primary_key=True)
@@ -864,8 +864,6 @@ def test_no_class_may_declare_a_framework_slot_a_derived_cache() -> None:
             @cached_property
             def __parallax_lifecycle__(self) -> str:
                 return "shadow"
-
-    assert caught.value.code == "entity-reserved-member-name"
 
 
 def test_every_slot_the_edit_surface_owns_falls_under_the_reserved_prefix() -> None:

@@ -3,28 +3,24 @@ from __future__ import annotations
 from typing import Final
 
 __all__ = [
-    "SnapshotConnectionError",
+    "SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED",
     "SnapshotMaterializationError",
 ]
 
 
-class SnapshotConnectionError(ValueError):
-    """A modeled read was asked of a Database over a model that names no class.
+SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED: Final = "snapshot-class-backed-model-required"
+"""A modeled read was asked of a Database over a model that names no class.
 
-    A Snapshot answers Entity Class instances, so serving one needs a
-    class-backed :class:`~parallax.core.DomainModel` — one that composed Entity
-    Classes and therefore holds the index deciding which class a returned row
-    instantiates. Both connection doors refuse a value that is no Domain Model
-    at all, before the adapter is touched; a descriptor-backed model connects
-    and is refused here instead, at the read it cannot serve and still before
-    any SQL.
+A Snapshot answers Entity Class instances, so serving one needs a class-backed
+:class:`~parallax.core.DomainModel` — one that composed Entity Classes and
+therefore holds the index deciding which class a returned row instantiates.
+Both connection doors refuse a value that is no Domain Model at all, before the
+adapter is touched; a descriptor-backed model connects and is refused instead at
+the read it cannot serve, still before any SQL.
 
-    The refusal is about materialization capability and never about identity or
-    ownership: any class-backed model serves, however many other Databases
-    already serve it. :data:`code` and the message are its whole public state.
-    """
-
-    code: Final[str] = "snapshot-class-backed-model-required"
+The refusal is about materialization capability and never about identity or
+ownership: any class-backed model serves, however many other Databases already
+serve it."""
 
 
 class SnapshotMaterializationError(RuntimeError):
