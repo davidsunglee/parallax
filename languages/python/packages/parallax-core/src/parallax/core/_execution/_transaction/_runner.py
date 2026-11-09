@@ -484,9 +484,10 @@ class TransactionRunner:
                 return run_with_retry(attempt, policy=retry)
 
         # Noted around the whole invocation and outside the root scope: the
-        # classifier saw every failure before any edition note, the lifecycle
-        # reported it under the attempt it came from, and the note names the
-        # edition of the attempt that failed last, after any exhaustion note.
+        # classifier saw every failure before this transaction's edition note,
+        # the lifecycle reported it under the attempt it came from, and the note
+        # names the edition of the attempt that failed last, after any
+        # exhaustion note.
         return execution.noting_edition("transaction", invoke)
 
 
