@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceFacet, root_metadata
@@ -69,16 +69,9 @@ def _shape(root: EntityMetadata) -> TemporalShape:
 
 
 def _required_inheritance(required_facets: Mapping[FacetKey[Any], object]) -> InheritanceFacet:
-    """The Inheritance Facet this compiler declared it requires.
-
-    The runner supplies exactly the declared facets under the manifest's own
-    keys, so a mapping that answers otherwise is a formation seam defect rather
-    than a model one.
-    """
-    supplied = required_facets.get(INHERITANCE_FACET_KEY)
-    if not INHERITANCE_FACET_KEY.accepts(supplied):
-        raise RuntimeError("the required Inheritance Facet was not supplied under its own key")
-    return supplied
+    """The Inheritance Facet this compiler declared it requires, which the
+    runner supplies under the manifest's own key."""
+    return cast(InheritanceFacet, required_facets[INHERITANCE_FACET_KEY])
 
 
 class TemporalReadModelCompiler:

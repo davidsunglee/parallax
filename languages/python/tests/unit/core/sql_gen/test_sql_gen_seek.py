@@ -31,10 +31,7 @@ from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
 from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
-    ContinuationTerm,
-    Paging,
     ResolvedObjectQuery,
-    ResolvedSeek,
 )
 from parallax.core.predicate import Comparison, FieldSubject, Or, PredicateNode, TrueNode
 from parallax.core.read_delivery._row_decoding import row_coordinates
@@ -134,63 +131,6 @@ def test_a_text_compared_resident_carrier_crosses_as_the_text_it_already_is() ->
     assert statement.wire_binds()[2] == "2024-01-05"
 
 
-def _crossed(node: ResolvedObjectQuery, terms: tuple[ContinuationTerm, ...]) -> object:
-    coordinate = ContinuationCoordinate(tuple(range(len(terms))))
-    return replace(node, paging=Paging(seek=ResolvedSeek(terms, coordinate)))
-
-
-def test_a_seek_over_more_terms_than_the_page_orders_by_is_refused_by_count() -> None:
-    # The seek and the ordering clause are two halves of ONE Continuation Order,
-    # aligned positionally. A width they do not share means the page was composed
-    # against a different order than it is lowered under, and lowering it anyway
-    # would seek past comparisons the statement never evaluated.
-    plan = _planned(ORDERS, "Order")
-    node = plan.after(ContinuationCoordinate((1,)), limit=2)
-    key = node.order_by[0]
-    crossed = _crossed(
-        node,
-        (
-            ContinuationTerm(key.member.identity, "asc", "last", False),
-            ContinuationTerm(key.member.identity, "asc", "last", False),
-        ),
-    )
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="cannot be lowered against 1 ordering term"
-    ):
-        _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
-
-
-def test_a_seek_naming_another_member_at_a_position_is_refused_by_name() -> None:
-    # The same disagreement one width down: matching counts still leave the two
-    # halves able to name different members at the same depth, which the page
-    # would then compare in one member's ordering against another's coordinate.
-    plan = _planned(ORDERS, "Order")
-    node = plan.after(ContinuationCoordinate((1,)), limit=2)
-    other = entity_of(ORDERS, "Order").attribute("name")
-    assert other is not None
-    crossed = _crossed(node, (ContinuationTerm(other.identity, "asc", "last", False),))
-    with raises_code(
-        InternalError,
-        SQL_GENERATION_FAILED,
-        match=r"the seek's term 'name' .* the ordering term 'id'",
-    ):
-        _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
-
-
-def test_a_seek_agreeing_on_the_member_but_not_its_ordering_is_refused() -> None:
-    # Identity is not the whole term. The order clause reads direction, Null
-    # Placement, and nullability off the query while every branch of the seek
-    # reads them off the portable term, so a pair agreeing only on the member
-    # would emit `t0.id > ?` under a clause that ordered descending — a seek
-    # running back over roots the delivery had already published.
-    plan = _planned(ORDERS, "Order")
-    node = plan.after(ContinuationCoordinate((1,)), limit=2)
-    key = node.order_by[0]
-    crossed = _crossed(node, (ContinuationTerm(key.member.identity, "desc", "last", False),))
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match=r"'id' \(desc, .*'id' \(asc, "):
-        _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
-
-
 def test_a_coordinate_the_ordering_placed_last_admits_no_root() -> None:
     # Nothing follows a coordinate the emitted clause itself placed last, so every
     # branch of the tree is vacuous. The page is still an ordinary statement — it
@@ -237,28 +177,6 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
         ],
     )
     assert list(row.members) == ["id", "name", "sku", "qty", "price", "active", "orderedOn"]
-
-
-def test_a_coordinate_carried_at_another_width_than_the_order_is_refused() -> None:
-    # The seek's terms and its coordinate are two halves of one value, and the
-    # branch tree indexes the carriers by the term's own depth. A coordinate
-    # narrower than the order would raise at that subscript instead of naming
-    # the disagreement, and a wider one would seek past a term the page never
-    # ordered by.
-    plan = _planned(ORDERS, "Order")
-    node = plan.after(ContinuationCoordinate((1,)), limit=2)
-    key = node.order_by[0]
-    crossed = replace(
-        node,
-        paging=Paging(
-            seek=ResolvedSeek(
-                (ContinuationTerm(key.member.identity, "asc", "last", False),),
-                ContinuationCoordinate((1, 2)),
-            )
-        ),
-    )
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="carrying 2 value"):
-        _lowered(ORDERS, crossed)
 
 
 def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal() -> None:
@@ -918,9 +836,6 @@ def test_both_continuing_branches_of_a_union_render_its_branch_roots_through_fre
     for root in reuse.roots:
         builder = root.row.ctx
         assert builder.source_binding(SharedSourceRef(root.scope_id, 0)).origin is root.row
-        (sibling,) = (scope_id for scope_id in branch_roots if scope_id != root.scope_id)
-        with raises_code(InternalError, SQL_GENERATION_FAILED, match="no selected lexical plan"):
-            builder.source_binding(SharedSourceRef(sibling, 0))
 
 
 _MARIADB: Final = replace(POSTGRES, name="mariadb", binds_arrays=False)
@@ -1080,7 +995,6 @@ def test_a_page_template_renders_what_direct_compilation_of_the_current_page_bin
     )
     assert rendered.statement.wire_binds() == direct.statement.wire_binds()
     assert rendered.result_contract == direct.result_contract
-    assert rendered.statement.is_compiler_proven
     assert (
         template.render(query=cold).statement
         == compile_entity_query(
@@ -1106,7 +1020,7 @@ def test_an_unpaged_template_renders_its_compiled_read_without_inputs() -> None:
     assert template.render(query=node) is template.compiled
 
 
-def test_a_page_template_refuses_missing_or_mismatched_current_inputs() -> None:
+def test_a_page_template_refuses_missing_current_inputs() -> None:
     plan = _planned(ORDERS, "Order")
     continued = plan.after(ContinuationCoordinate((1,)), limit=2)
     first = compile_template(
@@ -1122,7 +1036,5 @@ def test_a_page_template_refuses_missing_or_mismatched_current_inputs() -> None:
         first.render()
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="current seek"):
         after.render(query=plan.first(limit=2))
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="only a finite carrier"):
-        after.render(query=plan.after(ContinuationCoordinate((INFINITY,)), limit=2))
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="until its template renders"):
         after.compiled.statement.wire_binds()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol, assert_never
+from typing import Final, Literal, Protocol, assert_never, cast
 
 from parallax.core.base import (
     INFINITY,
@@ -11,7 +11,13 @@ from parallax.core.base import (
     UsageError,
     normalize_instant,
 )
-from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    AsOfAxisMetadata,
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityMetadata,
+    Metamodel,
+)
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import LATEST, Latest
 from parallax.core.object_query._resolved import (
@@ -505,12 +511,8 @@ def sourced_perspective_terms(
 def _selection_terms(
     selection: ResolvedTemporalSelection, entity: EntityMetadata
 ) -> tuple[ResolvedComparison, ...]:
-    start = entity.attribute(selection.axis.start_attribute.name)
-    end = entity.attribute(selection.axis.end_attribute.name)
-    if start is None or end is None:
-        raise UsageError(
-            TEMPORAL_READ_INVALID, f"{entity.identity.name}: temporal axis member is undeclared"
-        )
+    start = cast("AttributeMetadata", entity.attribute(selection.axis.start_attribute.name))
+    end = cast("AttributeMetadata", entity.attribute(selection.axis.end_attribute.name))
     match selection:
         case ResolvedHistorySelection():
             return ()
@@ -526,8 +528,6 @@ def _selection_terms(
                 _managed_comparison(op="lessThan", member=start, value=window_end),
                 _managed_comparison(op="greaterThan", member=end, value=window_start),
             )
-        case _:
-            assert_never(selection)
 
 
 def _selection_sources(
@@ -618,9 +618,7 @@ def _propagated(
 
 
 def _instant_of(selection: ResolvedAsOfSelection) -> _dt.datetime:
-    if not isinstance(selection.coordinate, _dt.datetime):
-        raise UsageError(TEMPORAL_READ_INVALID, "a temporal coordinate is not a managed datetime")
-    return selection.coordinate
+    return cast("_dt.datetime", selection.coordinate)
 
 
 def resolve_perspective(

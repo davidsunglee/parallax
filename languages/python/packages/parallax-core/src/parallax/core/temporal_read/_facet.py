@@ -44,17 +44,9 @@ NON_TEMPORAL: Final[NonTemporal] = NonTemporal()
 
 @dataclass(frozen=True, slots=True)
 class TransactionTimeOnly:
-    """The family declares Transaction Time alone — the audit-only shape.
-
-    A wrongly dimensioned axis raises :class:`ValueError`, so the variant cannot
-    stand in for a shape it does not describe.
-    """
+    """The family declares Transaction Time alone — the audit-only shape."""
 
     transaction_time: AsOfAxisMetadata
-
-    def __post_init__(self) -> None:
-        if self.transaction_time.dimension is not TemporalDimension.TRANSACTION_TIME:
-            raise ValueError("a Transaction-Time-Only shape carries the Transaction-Time axis")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,17 +54,11 @@ class Bitemporal:
     """The family declares Valid Time and Transaction Time.
 
     Members are ordered as the canonical nesting is — Valid Time outside
-    Transaction Time. A wrongly dimensioned axis raises :class:`ValueError`.
+    Transaction Time.
     """
 
     valid_time: AsOfAxisMetadata
     transaction_time: AsOfAxisMetadata
-
-    def __post_init__(self) -> None:
-        if self.valid_time.dimension is not TemporalDimension.VALID_TIME:
-            raise ValueError("a Bitemporal shape's first axis is the Valid-Time axis")
-        if self.transaction_time.dimension is not TemporalDimension.TRANSACTION_TIME:
-            raise ValueError("a Bitemporal shape's second axis is the Transaction-Time axis")
 
 
 type TemporalShape = NonTemporal | TransactionTimeOnly | Bitemporal

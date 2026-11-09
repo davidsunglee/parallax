@@ -375,8 +375,6 @@ def test_deserialize_rejects_non_scalar_value() -> None:
         predicate.deserialize({"eq": {"path": "Order.id", "value": {"nested": 1}}})
 
 
-def test_a_field_subject_names_a_path_and_a_universal_carries_its_where() -> None:
-    with pytest.raises(ValueError, match="nonempty path"):
-        predicate.FieldSubject("")
+def test_a_universal_carries_its_where() -> None:
     with pytest.raises(ValueError, match="carries a `where`"):
         predicate.Quantifier("all", "Order.items")

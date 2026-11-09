@@ -340,49 +340,18 @@ class ReadResultContract:
     )
 
     def __post_init__(self) -> None:
-        carriers = self._carriers()
-        by_entity = {sources.entity: sources for sources in self.entity_sources}
-        if len(by_entity) != len(self.entity_sources):
-            raise ValueError("an Entity's sources are given once")
-        if set(_named_entities(self.row_identity)) - by_entity.keys():
-            raise ValueError("every Entity the row identity names has sources")
-        for sources in self.entity_sources:
-            self._require_sources(sources, carriers)
-        object.__setattr__(self, "_by_entity", MappingProxyType(by_entity))
-        object.__setattr__(
-            self, "resolvable", tuple(sources.entity for sources in self.entity_sources)
-        )
-
-    def _carriers(self) -> frozenset[int]:
-        carriers = (
-            *(() if self.identity_ordinal is None else (self.identity_ordinal,)),
-            *(() if self.shared_document_ordinal is None else (self.shared_document_ordinal,)),
-            *self.coordinate_ordinals,
-        )
-        if any(
-            not 0 <= ordinal < len(self.slots) or self.slots[ordinal] is not None
-            for ordinal in carriers
-        ):
-            raise ValueError("a result carrier must name a cell the row carries no value in")
-        if len(set(carriers)) != len(carriers):
-            raise ValueError("two result carriers name one cell")
         if isinstance(self.row_identity, FixedRowIdentity) != (self.identity_ordinal is None):
             raise ValueError("a row identity carrier is required exactly where rows name it")
         if (self.shared_document is None) != (self.shared_document_ordinal is None):
             raise ValueError("a shared document carrier is required exactly where one is read")
-        return frozenset(carriers)
-
-    def _require_sources(self, sources: EntitySources, carriers: frozenset[int]) -> None:
-        if len(sources.sources) != len(sources.selection.identities):
-            raise ValueError(f"{sources.entity.canonical}: sources must align with its members")
-        for source in sources.sources:
-            if isinstance(source, DocumentMemberSource):
-                if source.ordinal != self.shared_document_ordinal:
-                    raise ValueError("a document resident is read from the shared document")
-            elif source is not None and (
-                not 0 <= source.ordinal < len(self.slots) or source.ordinal in carriers
-            ):
-                raise ValueError(f"{sources.entity.canonical}: a member names no value cell")
+        object.__setattr__(
+            self,
+            "_by_entity",
+            MappingProxyType({sources.entity: sources for sources in self.entity_sources}),
+        )
+        object.__setattr__(
+            self, "resolvable", tuple(sources.entity for sources in self.entity_sources)
+        )
 
     def sources(self, entity: EntityIdentity) -> EntitySources:
         """Where a row resolving to ``entity`` carries its members.

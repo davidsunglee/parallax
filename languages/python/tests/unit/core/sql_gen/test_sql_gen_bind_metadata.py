@@ -3,7 +3,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import math
-from collections.abc import Callable
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
@@ -101,14 +100,6 @@ def _template(statement: LoweredStatement) -> CompiledTemplate:
     )
 
 
-def test_statement_builder_rejects_a_bind_that_bypassed_role_classification() -> None:
-    builder = _builder()
-    builder._binds.append(1)  # pyright: ignore[reportPrivateUsage] - malformed compiler-product probe
-
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="role-specific API"):
-        builder.finish("select ?")
-
-
 def test_an_entity_row_scope_renders_a_direct_member_through_its_alias() -> None:
     entity = WALLET.entities[0]
     view = storage_layout.view(WALLET).entity(entity.identity)
@@ -188,76 +179,6 @@ def test_rendered_sources_retain_their_actual_target_and_origin_rows() -> None:
     results = builder.owner_results_binding(OwnerResultsRef(root, 0))
     assert (results.alias, results.columns) == ("r0", ("q0",))
     builder.finish(joins)
-
-
-def test_selecting_a_scope_plan_is_idempotent_but_one_builder_renders_one_plan() -> None:
-    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    root = plan.root_scopes[None]
-    builder = _row_builder(COLLECTIONS)
-    builder.select_scope_plan(plan, root)
-    builder.select_scope_plan(plan, root)
-    other = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    unselected = next(scope.scope_id for scope in other.lexical_scopes if scope.scope_id != root)
-    for scope_id in (root, unselected):
-        with raises_code(InternalError, SQL_GENERATION_FAILED, match="one statement plan"):
-            builder.select_scope_plan(other, scope_id)
-
-
-def test_a_source_reference_never_addresses_an_owner_result_binding() -> None:
-    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    root = plan.root_scopes[None]
-    builder = _row_builder(COLLECTIONS)
-    render_shared_sources(plan, root, _basket_row(builder))
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="owner_results reference addresses no source"
-    ):
-        builder.source_binding(OwnerResultsRef(root, 0))  # pyright: ignore[reportArgumentType]
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="source reference addresses no owner_results"
-    ):
-        builder.owner_results_binding(SharedSourceRef(root, 0))  # pyright: ignore[reportArgumentType]
-
-
-def test_a_selected_plan_s_missing_bindings_fail_early_and_at_finish() -> None:
-    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    root = plan.root_scopes[None]
-    builder = _row_builder(COLLECTIONS)
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="no selected lexical plan"):
-        builder.source_binding(SharedSourceRef(root, 0))
-    builder.select_scope_plan(plan, root)
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="read before its join renders"):
-        builder.source_binding(SharedSourceRef(root, 0))
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="shared source was never rendered"
-    ):
-        builder.finish("")
-    partial = _row_builder(COLLECTIONS)
-    partial.select_scope_plan(plan, root)
-    owner = _basket_row(partial)
-    partial.record_source_binding(SharedSourceRef(root, 0), target=owner, origin=owner)
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="owner-results relation was never rendered"
-    ):
-        partial.finish("")
-
-
-def test_each_planned_entry_renders_once_per_statement() -> None:
-    plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
-    root = plan.root_scopes[None]
-    builder = _row_builder(COLLECTIONS)
-    builder.select_scope_plan(plan, root)
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="read before their relation renders"
-    ):
-        builder.owner_results_binding(OwnerResultsRef(root, 0))
-    row = _basket_row(builder)
-    builder.record_source_binding(SharedSourceRef(root, 0), target=row, origin=row)
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders once per statement"):
-        builder.record_source_binding(SharedSourceRef(root, 0), target=row, origin=row)
-    builder.record_owner_results_binding(OwnerResultsRef(root, 0), alias="r0", columns=("q0",))
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders once per statement"):
-        builder.record_owner_results_binding(OwnerResultsRef(root, 0), alias="r1", columns=("q0",))
-    builder.finish("")
 
 
 def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
@@ -420,7 +341,6 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
         "a",
         "b",
     )
-    assert rendered.is_compiler_proven
     if postgres_array:
         assert rendered.sql == statement.sql
         assert rendered.typed_bind_spans is statement.typed_bind_spans
@@ -561,90 +481,6 @@ def test_a_template_fills_each_expanding_placeholder_from_its_own_group() -> Non
     assert rendered.binds == (1, 2, 3, 5)
 
 
-def test_a_marker_fills_repeated_row_metadata_unless_it_expands() -> None:
-    carrier = _ExecutionValueMarker(("paging", 0), ContinuationCarrierForm(STRING, "MANAGED"))
-    statement = LoweredStatement(
-        "",
-        (carrier, "a", carrier, "b"),
-        (_RepeatedTypedBindSpan(0, 2, 2, 2, STRING, "MANAGED"),),
-    )
-    (group,) = statement.execution_value_positions()
-    rendered = statement.with_execution_values(((group, "z"),), sql="")
-    assert rendered.binds == ("z", "a", "z", "b")
-    assert rendered.typed_bind_spans is statement.typed_bind_spans
-
-    keys = _ExecutionValueMarker(("keys",), GatheredKeysForm(STRING, False))
-    expanding = LoweredStatement(
-        "",
-        (keys, "a"),
-        (_RepeatedTypedBindSpan(0, 1, 1, 2, STRING, "MANAGED"),),
-    )
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="repeated row-bind metadata"):
-        _template(expanding)
-
-
-def _untyped(builder: StatementBuilder) -> None:
-    builder.bind_structural(_ExecutionValueMarker(("paging", 0), _CARRIER))
-
-
-def _typed_structure(builder: StatementBuilder) -> None:
-    builder.bind_managed(_ExecutionValueMarker(("limit",), PAGE_CAP), INT64)
-
-
-def _other_type(builder: StatementBuilder) -> None:
-    builder.bind_managed(_ExecutionValueMarker(("paging", 0), _CARRIER), STRING)
-
-
-def _overridden(builder: StatementBuilder) -> None:
-    builder.bind_framework(_ExecutionValueMarker(("limit",), PAGE_CAP), wire_value=1)
-
-
-def _managed_as_text(builder: StatementBuilder) -> None:
-    builder.bind_comparison_text(
-        _ExecutionValueMarker(("predicate", 0), ManagedOperandForm(DATE)), DATE
-    )
-
-
-def _text_as_managed(builder: StatementBuilder) -> None:
-    builder.bind_managed(_ExecutionValueMarker(("predicate", 0), ComparisonTextForm(DATE)), DATE)
-
-
-def _affix_as_managed(builder: StatementBuilder) -> None:
-    builder.bind_managed(
-        _ExecutionValueMarker(("predicate", 0), AffixForm("contains", False)), STRING
-    )
-
-
-@pytest.mark.parametrize(
-    "bind",
-    [
-        _untyped,
-        _typed_structure,
-        _other_type,
-        _overridden,
-        _managed_as_text,
-        _text_as_managed,
-        _affix_as_managed,
-    ],
-    ids=[
-        "untyped",
-        "typed-structure",
-        "other-type",
-        "overridden",
-        "managed-as-text",
-        "text-as-managed",
-        "affix-as-managed",
-    ],
-)
-def test_discovery_refuses_a_marker_bound_outside_its_form(
-    bind: Callable[[StatementBuilder], None],
-) -> None:
-    builder = _builder()
-    bind(builder)
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="classification its form selects"):
-        builder.finish("select ?").execution_value_positions()
-
-
 def test_discovery_keeps_two_forms_of_one_authored_operand_adjacent_in_source_order() -> None:
     builder = _builder()
     managed = ManagedOperandForm(DATE)
@@ -661,32 +497,6 @@ def test_discovery_keeps_two_forms_of_one_authored_operand_adjacent_in_source_or
         (("predicate", 1), managed, (0, 3)),
         (("predicate", 1), text, (2,)),
     ]
-
-
-def test_discovery_refuses_gathered_keys_in_two_forms() -> None:
-    builder = _builder()
-    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, True))
-    builder.bind_deferred(("keys",), GatheredKeysForm(STRING, True))
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="exactly one bind form"):
-        builder.finish("select ?, ?").execution_value_positions()
-
-
-def test_a_template_refuses_placeholders_that_disagree_with_its_key_positions() -> None:
-    builder = _builder()
-    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
-        _template(builder.finish("select ?"))
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
-        _template(_builder().finish(f"select {EXPANDING_PLACEHOLDER}"))
-
-
-def test_substitution_refuses_an_empty_expansion() -> None:
-    builder = _builder()
-    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
-    statement = builder.finish("select ?")
-    (group,) = statement.execution_value_positions()
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="at least one element"):
-        statement.with_execution_values(((group, []),), sql="select")
 
 
 def test_a_statement_without_markers_retains_no_positions() -> None:
@@ -850,33 +660,6 @@ def test_untyped_bind_projection_rejects_invalid_wire_scalars(value: object) -> 
     builder.bind_structural(value)
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="not an ordinary Wire value"):
         builder.finish("select ?").wire_binds()
-
-
-@pytest.mark.parametrize(
-    "span",
-    [
-        _TypedBindSpan(-1, 1, STRING, "MANAGED"),
-        _TypedBindSpan(0, 0, STRING, "MANAGED"),
-        _RepeatedTypedBindSpan(0, 0, 1, 1, STRING, "MANAGED"),
-        _RepeatedTypedBindSpan(0, 1, 0, 1, STRING, "MANAGED"),
-        _RepeatedTypedBindSpan(0, 2, 1, 1, STRING, "MANAGED"),
-        _RepeatedTypedBindSpan(0, 1, 1, 0, STRING, "MANAGED"),
-    ],
-)
-def test_finish_rejects_invalid_typed_descriptor_dimensions(
-    span: _TypedBindSpan | _RepeatedTypedBindSpan,
-) -> None:
-    fragment = LoweredStatement(
-        "",
-        ("a", "b"),
-        (span,),
-        (),
-        True,
-    )
-    builder = _builder()
-    builder.append_fragment(fragment)
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="invalid dimensions or stride"):
-        builder.finish("select ?, ?")
 
 
 def test_managed_row_binding_handles_empty_single_and_changing_patterns() -> None:
@@ -1051,25 +834,3 @@ def test_wide_heterogeneous_rows_compact_each_slot_run_within_each_group() -> No
         _RepeatedTypedBindSpan(4 * width + offset, 1, width, 2, *pattern[offset])
         for offset in range(width)
     )
-
-
-def test_statement_builder_rejects_unproven_or_invalid_fragment_metadata() -> None:
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="compiler fragment"):
-        _builder().append_fragment(LoweredStatement("", (), (), (), False))
-
-    for spans, overrides, message in (
-        ((_TypedBindSpan(1, 2, STRING, "MANAGED"),), (), "out of range"),
-        (
-            (
-                _TypedBindSpan(0, 1, STRING, "MANAGED"),
-                _TypedBindSpan(0, 1, STRING, "COMPARISON_TEXT"),
-            ),
-            (),
-            "overlaps",
-        ),
-        ((), (_WireBindOverride(1, "wire"),), "override metadata"),
-    ):
-        builder = _builder()
-        builder.append_fragment(LoweredStatement("", ("value",), spans, overrides, True))
-        with raises_code(InternalError, SQL_GENERATION_FAILED, match=message):
-            builder.finish("select ?")

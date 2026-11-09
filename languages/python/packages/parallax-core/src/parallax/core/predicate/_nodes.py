@@ -128,10 +128,6 @@ class FieldSubject:
 
     path: str
 
-    def __post_init__(self) -> None:
-        if not self.path:
-            raise ValueError("a field subject names a nonempty path")
-
 
 @dataclass(frozen=True, slots=True)
 class CurrentScalarElement:

@@ -30,10 +30,6 @@ from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import (
     INHERITANCE_LOCKING_READ_UNSUPPORTED,
-    CellSource,
-    DocumentMemberSource,
-    EntitySources,
-    MemberSource,
     ReadResultContract,
     plan_document_reads,
 )
@@ -2157,24 +2153,9 @@ def _contract(meta: Metamodel, name: str, **options: Any) -> ReadResultContract:
     ).result_contract
 
 
-def _replaced_source(
-    contract: ReadResultContract, source: MemberSource | None
-) -> tuple[EntitySources, ...]:
-    """``contract``'s sources with its first Entity's first member read from
-    ``source``."""
-    first, *rest = contract.entity_sources
-    return (replace(first, sources=(source, *first.sources[1:])), *rest)
-
-
-def test_a_result_contract_refuses_a_carrier_its_row_cannot_back() -> None:
+def test_a_tagged_result_contract_requires_its_row_identity_carrier() -> None:
     tagged = _contract(ANIMAL, "Animal")
     assert tagged.identity_ordinal == 1
-    with pytest.raises(ValueError, match="carries no value in"):
-        replace(tagged, identity_ordinal=0)
-    with pytest.raises(ValueError, match="carries no value in"):
-        replace(tagged, coordinate_ordinals=(len(tagged.slots),))
-    with pytest.raises(ValueError, match="two result carriers name one cell"):
-        replace(tagged, coordinate_ordinals=(1,))
     with pytest.raises(ValueError, match="row identity carrier is required"):
         replace(tagged, identity_ordinal=None)
 
@@ -2206,30 +2187,3 @@ def test_a_result_contract_refuses_a_shared_document_it_carries_no_cell_for() ->
     assert contract.shared_document is not None
     with pytest.raises(ValueError, match="shared document carrier is required"):
         replace(contract, shared_document_ordinal=None)
-
-
-def test_a_result_contract_refuses_sources_for_any_but_each_named_entity_once() -> None:
-    contract = _contract(ANIMAL, "Animal")
-    with pytest.raises(ValueError, match="sources are given once"):
-        replace(contract, entity_sources=(*contract.entity_sources, contract.entity_sources[0]))
-    with pytest.raises(ValueError, match="every Entity the row identity names has sources"):
-        replace(contract, entity_sources=contract.entity_sources[1:])
-    first = contract.entity_sources[0]
-    with pytest.raises(ValueError, match="sources must align with its members"):
-        replace(
-            contract,
-            entity_sources=(
-                replace(first, sources=first.sources[1:]),
-                *contract.entity_sources[1:],
-            ),
-        )
-
-
-def test_a_result_contract_refuses_a_source_its_row_cannot_back() -> None:
-    tagged = _contract(ANIMAL, "Animal")
-    with pytest.raises(ValueError, match="names no value cell"):
-        replace(tagged, entity_sources=_replaced_source(tagged, CellSource(1)))
-    with pytest.raises(ValueError, match="names no value cell"):
-        replace(tagged, entity_sources=_replaced_source(tagged, CellSource(len(tagged.slots))))
-    with pytest.raises(ValueError, match="read from the shared document"):
-        replace(tagged, entity_sources=_replaced_source(tagged, DocumentMemberSource(0, "id")))

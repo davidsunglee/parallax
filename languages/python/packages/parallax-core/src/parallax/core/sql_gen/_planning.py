@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Literal
@@ -235,20 +235,14 @@ type LexicalScopeId = int
 class SharedSourceRef:
     scope_id: LexicalScopeId
     index: int
-
-    @property
-    def kind(self) -> Literal["source"]:
-        return "source"
+    kind: Literal["source"] = field(default="source", init=False)
 
 
 @dataclass(frozen=True, slots=True)
 class OwnerResultsRef:
     scope_id: LexicalScopeId
     index: int
-
-    @property
-    def kind(self) -> Literal["owner_results"]:
-        return "owner_results"
+    kind: Literal["owner_results"] = field(default="owner_results", init=False)
 
 
 @dataclass(frozen=True, slots=True)

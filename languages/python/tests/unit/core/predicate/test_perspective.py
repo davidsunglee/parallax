@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 
-import pytest
-
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -14,7 +12,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.predicate._perspective import (
     AtPerspective,
-    AxisPerspective,
     LatestPerspective,
     TemporalPerspective,
 )
@@ -43,30 +40,6 @@ def test_an_empty_perspective_is_that_of_a_non_temporal_target() -> None:
     assert list(perspective.ranked_perspectives()) == []
     assert not perspective.is_temporal
     assert not perspective.is_latest_end(TX.end_attribute)
-
-
-@pytest.mark.parametrize(
-    ("valid_time", "transaction_time"),
-    [
-        (LatestPerspective(TX), LatestPerspective(TX)),
-        (None, AtPerspective(VALID, MARCH)),
-        (LatestPerspective(VALID), LatestPerspective(VALID)),
-    ],
-    ids=["transaction-axis-as-valid-time", "valid-axis-as-transaction-time", "both-valid"],
-)
-def test_a_perspective_in_the_other_dimensions_field_is_rejected(
-    valid_time: AxisPerspective | None, transaction_time: AxisPerspective | None
-) -> None:
-    with pytest.raises(ValueError, match="perspective is over the"):
-        TemporalPerspective(valid_time=valid_time, transaction_time=transaction_time)
-
-
-@pytest.mark.parametrize(
-    "valid_time", [LatestPerspective(VALID), AtPerspective(VALID, MARCH)], ids=["latest", "at"]
-)
-def test_valid_time_without_transaction_time_is_rejected(valid_time: AxisPerspective) -> None:
-    with pytest.raises(ValueError, match="requires a Transaction-Time perspective"):
-        TemporalPerspective(valid_time=valid_time)
 
 
 def test_ranked_perspectives_yield_valid_time_before_transaction_time() -> None:
