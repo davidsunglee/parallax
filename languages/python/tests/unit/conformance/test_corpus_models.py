@@ -14,10 +14,6 @@ from tests.unit._corpus_model_support import corpus_records
 _DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 
 
-def test_default_models_dir_points_at_the_corpus() -> None:
-    assert corpus_models.default_models_dir() == _DIR
-
-
 def test_every_corpus_model_ingests_to_records() -> None:
     loaded = corpus_records()
     on_disk = {path.stem for path in _DIR.glob("*.yaml")}

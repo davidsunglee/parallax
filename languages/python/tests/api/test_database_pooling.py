@@ -570,6 +570,19 @@ def test_a_provider_observes_the_pool_across_the_whole_life_of_a_handle(
     assert reading.registration_closed
 
 
+def test_a_watch_reads_nothing_once_its_handle_has_closed(profile_run: Any) -> None:
+    # A detached source is no reading to an exporter, never a measured zero it
+    # should publish.
+    _seeded(profile_run)
+    provider = database_pooling_stories.PoolWatchingProvider()
+    with connect(profile_run.configured(), _ACCOUNT, lifecycle_provider=provider):
+        pass
+
+    assert provider.watch is not None
+    assert provider.watch.detached()
+    assert provider.watch.read() is None
+
+
 def test_every_documented_retention_form_opens_against_a_real_server(profile_run: Any) -> None:
     # The guide's construction block builds four configurations over one
     # connection string. What a real server adds to the unit proof of their

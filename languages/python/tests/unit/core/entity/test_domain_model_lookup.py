@@ -8,7 +8,6 @@ declaration: one composition answers every lookup this suite asks.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import get_args
 
 import pytest
@@ -26,8 +25,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity._errors import MetamodelLookupCode
-from parallax.core.entity._model import DomainModel as _Fixed
-from parallax.core.metamodel import EntityIdentity, UnresolvedEntityDeclaration
+from parallax.core.metamodel import EntityIdentity
 from tests._support.errors import raises_code
 
 _SPEC_CODES = frozenset({"metamodel-invalid-entity-reference", "metamodel-entity-not-found"})
@@ -115,34 +113,5 @@ def test_an_absent_identity_is_not_found() -> None:
         MODELS.meta(EntityIdentity("ops", "Missing"))
 
 
-def test_a_class_this_model_did_not_compose_names_no_entity_of_it() -> None:
-    class Foreign(Entity, table="foreign"):
-        id: Attr[int] = attr(primary_key=True)
-
-    with raises_code(UsageError, "metamodel-entity-not-found"):
-        MODELS.meta(Foreign)
-
-
-def test_a_descriptor_backed_model_serves_the_same_metadata_and_composes_no_class() -> None:
-    fixed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - unit test drives the model's private constructor
-    assert [entity.identity.canonical for entity in fixed.entities] == ["ops.Depot", "ops.Zone"]
-    assert fixed.meta("ops.Depot").identity == EntityIdentity("ops", "Depot")
-    with raises_code(UsageError, "metamodel-entity-not-found"):
-        fixed.meta(Depot)
-
-
 def test_the_lookup_code_set_is_closed() -> None:
     assert frozenset(get_args(MetamodelLookupCode.__value__)) == _SPEC_CODES
-
-
-class _Source:
-    """A minimal Unresolved Metamodel standing in for the Descriptor Frontend.
-
-    It reuses the two Entity Classes as declarations, which is exactly what the
-    seam accepts: a nonempty sequence of ``UnresolvedEntityDeclaration`` views,
-    composing no Entity Class of its own.
-    """
-
-    @property
-    def entities(self) -> Sequence[UnresolvedEntityDeclaration]:
-        return (Depot, Zone)

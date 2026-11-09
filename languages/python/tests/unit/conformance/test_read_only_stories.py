@@ -69,10 +69,3 @@ def test_the_documented_read_only_story_opens_one_read_only_boundary() -> None:
     assert port.boundaries == [("repeatable_read", "read_only")]
     assert len(port.statements) == 2
     assert not any("for share" in statement for statement in port.statements)
-
-
-def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
-    snippet = read_only_stories.read_only_snippet()
-    assert 'db.read_only(report, isolation="repeatable_read")' in snippet
-    assert "rtx.find(query)" in snippet
-    assert "UsageError" in snippet

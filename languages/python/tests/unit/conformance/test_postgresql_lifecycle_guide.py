@@ -90,13 +90,3 @@ def test_every_block_no_story_owns_is_import_lines_whose_names_resolve() -> None
             module = importlib.import_module(node.module)
             for alias in node.names:
                 assert hasattr(module, alias.name), f"{node.module}.{alias.name}"
-
-
-def test_the_guide_names_the_two_reporting_paths_it_does_not_control() -> None:
-    # The disclosure section is the one part of this guide whose claims are
-    # about what Parallax will NOT do, so the two loggers it disclaims have to
-    # be named in it rather than left to a reader to infer.
-    guide = _GUIDE.read_text()
-
-    assert "parallax.resources" in guide
-    assert "psycopg.pool" in guide

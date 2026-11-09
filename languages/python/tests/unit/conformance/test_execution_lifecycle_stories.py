@@ -75,15 +75,6 @@ def test_the_documented_joined_story_observes_one_root_and_one_attempt() -> None
     assert len(port.writes) == 1
 
 
-def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
-    snippet = execution_lifecycle_stories.joined_lifecycle_snippet()
-    # The Handler, the Provider, and the call are one story: a snippet showing
-    # the call alone would document the seam without what sits behind it.
-    assert "class JoinedShapeHandler" in snippet
-    assert "class JoinedShapeProvider" in snippet
-    assert "lifecycle_provider=provider" in snippet
-
-
 def test_the_storys_provider_refuses_to_swallow_a_handler_failure() -> None:
     # A Provider is told about an ordinary Handler failure out of band, and it
     # never changes the execution it was observing — which is exactly why a

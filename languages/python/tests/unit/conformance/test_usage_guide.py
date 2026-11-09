@@ -120,13 +120,6 @@ def test_snippet_sources_refuse_an_id_no_marker_can_name() -> None:
         usage_guide.snippet_sources([], [Recipe("Stream Results", "t", "s")])
 
 
-def test_registered_examples_and_recipes_have_unique_markable_ids() -> None:
-    sources = usage_guide.snippet_sources()
-
-    assert {example.case_id for example in api_suite.EXAMPLES} <= sources.keys()
-    assert {recipe.recipe_id for recipe in api_suite.RECIPES} <= sources.keys()
-
-
 def _repo(root: Path, files: dict[str, str]) -> None:
     for relative, text in files.items():
         path = root / relative

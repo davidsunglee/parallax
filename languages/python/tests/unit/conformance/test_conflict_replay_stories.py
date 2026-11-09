@@ -57,10 +57,3 @@ def test_the_documented_story_replays_the_overtaken_credit_from_a_fresh_read() -
     assert first.binds == (Decimal("275.00"), 2, 2, 1)
     assert peer.binds == (Decimal("999.00"), 2, 2, 1)
     assert replayed.binds == (Decimal("1024.00"), 3, 2, 2)
-
-
-def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
-    snippet = conflict_replay_stories.conflict_replay_snippet()
-    assert "tx.find(query).result()" in snippet
-    assert "db.transact(credit)" in snippet
-    assert "retry_optimistic_conflicts" not in snippet

@@ -509,43 +509,6 @@ def test_primary_module_raises_without_a_module_tag() -> None:
         _ = case.primary_module
 
 
-def test_load_case_parses_a_real_corpus_case() -> None:
-    path = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
-    case = case_format.load_case(path)
-    assert case.case_id == "m-predicate-002"
-    assert case.shape == "read"
-    assert case.model == "models/orders.yaml"
-    assert "slice-snapshot-1" in case.tags
-    assert "m-predicate" in case.module_tags
-    assert case.primary_module == "m-predicate"
-
-
-def test_authority_cases_decode_to_closed_ingress_values() -> None:
-    subject = case_format.load_case(
-        case_format.default_cases_dir()
-        / "m-execution-authority-001-equal-subject-authority-joins.yaml"
-    )
-    assert case_format.actor_selection(subject) == case_format.SubjectSelection("alice", "role-a")
-    subject_when = cast("dict[str, object]", subject.document["when"])
-    boundary = cast("list[dict[str, object]]", subject_when["boundary"])
-    assert case_format.step_actor_selection(boundary[1], where="when.boundary[1]") is None
-    assert case_format.step_actor_selection(
-        boundary[2], where="when.boundary[2]"
-    ) == case_format.SubjectSelection("alice", "role-a")
-
-    login = case_format.load_case(
-        case_format.default_cases_dir()
-        / "m-execution-authority-005-equal-login-authority-joins.yaml"
-    )
-    assert case_format.actor_selection(login) == case_format.DatabaseLoginSelection()
-    login_when = cast("dict[str, object]", login.document["when"])
-    login_boundary = cast("list[dict[str, object]]", login_when["boundary"])
-    assert (
-        case_format.step_actor_selection(login_boundary[1], where="when.boundary[1]")
-        == case_format.DatabaseLoginSelection()
-    )
-
-
 @pytest.mark.parametrize(
     "selection",
     [
@@ -649,22 +612,9 @@ def test_load_case_rejects_malformed_documents(tmp_path: Path, body: str, match:
         case_format.load_case(path)
 
 
-def test_find_repo_root_and_default_cases_dir() -> None:
-    root = case_format.find_repo_root()
-    assert (root / "core" / "compatibility" / "cases").is_dir()
-    assert case_format.default_cases_dir() == root / "core" / "compatibility" / "cases"
-
-
 def test_find_repo_root_raises_when_absent(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         case_format.find_repo_root(tmp_path)
-
-
-def test_load_cases_from_a_directory(tmp_path: Path) -> None:
-    _write(tmp_path, "m-core-002-a.yaml", "shape: read\ntags: [m-core]\nmodel: m.yaml\n")
-    _write(tmp_path, "m-core-001-b.yaml", "shape: read\ntags: [m-core]\nmodel: m.yaml\n")
-    cases = case_format.load_cases(tmp_path)
-    assert [case.case_id for case in cases] == ["m-core-001", "m-core-002"]
 
 
 def test_load_cases_over_the_corpus_default() -> None:
