@@ -245,6 +245,35 @@ def test_a_refused_amendment_after_a_deletion_of_its_state_leaves_the_deletion_e
     ]
 
 
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_an_amendment_expressing_nothing_after_a_deletion_of_its_state_buffers_nothing(
+    representation: str,
+) -> None:
+    # An amendment stating no member is dropped as the empty set it is, so it
+    # claims nothing the deletion already holds.
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
+
+    def fn(tx: TxnContext) -> None:
+        if representation == "typed":
+            node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+            tx.delete(node)
+            tx.amend(node)
+        else:
+            source = tx.wire.find(
+                {"target": "Account", "predicate": {"eq": {"path": "Account.id", "value": 1}}}
+            ).result()
+            assert source is not None
+            tx.wire.delete(source)
+            tx.wire.amend(source, {})
+
+    account_db(port).transact(fn)
+    assert _writes(port) == [
+        WriteCall(
+            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), (1, 4)
+        )
+    ]
+
+
 def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
 
