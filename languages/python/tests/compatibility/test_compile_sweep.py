@@ -108,6 +108,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
                 "(test_provider_contract) drives the barrier-synchronized sessions, "
                 "not the single-connection adapter lanes"
             )
+        assert envelope["status"] == "error", envelope
         return (
             "error-shape trigger DML is authored, not compiled (m-case-format); graded "
             "end-to-end by the error run lane (test_run_sweep.test_error_run_sweep)"
@@ -166,6 +167,8 @@ def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) ->
 def test_compile_sweep(case: case_format.Case) -> None:
     envelope = adapter.compile_case(case.path, "postgres")
     validate_adapter_envelope(envelope)
+    if envelope["status"] in ("ok", "run-only"):
+        assert envelope["caseShape"] == case.shape, envelope
 
     if case.shape == "rejected":
         # A rejected case carries no golden SQL by construction (m-case-format);
@@ -260,6 +263,8 @@ def test_error_and_boundary_lane_partition() -> None:
     for case in boundaries:
         assert case_document(case).get("lane") == "api-conformance", case.case_id
         assert engine.eligibility(case) is not None, case.case_id
+        run_envelope = adapter.run_case(case.path, _PROFILE.on_stand_in(_RefusingPort()))
+        assert run_envelope["status"] == "error", (case.case_id, run_envelope)
 
 
 def _actions_all_mutate(case: case_format.Case) -> bool:

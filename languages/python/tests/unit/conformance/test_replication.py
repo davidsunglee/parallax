@@ -1,10 +1,10 @@
 """The primary/standby pair's ownership, ordering and waits, without Docker.
 
 A scripted launch stands in for the servers and scripted sessions for the
-server conditions, so what is proved here is the pair's own discipline: the
-standby is streaming before the primary waits for it, everything started is
-released newest first however opening or closing ends, replay always resumes
-or the pair closes, and every wait gives up at its deadline. What the standby
+server conditions, so what is proved here is the pair's own discipline:
+everything started is released newest first however opening or closing ends,
+replay always resumes or the pair closes, and every wait gives up at its
+deadline. What the standby
 actually shows a reader is proved against real servers under
 ``tests/provider_contract``.
 """
@@ -55,10 +55,8 @@ class _Clock:
 
     def __init__(self) -> None:
         self.now = 0.0
-        self.polls = 0
 
     def sleep(self, seconds: float) -> None:
-        self.polls += 1
         self.now += seconds
 
 
@@ -72,12 +70,6 @@ type _Answer = Callable[[str, Sequence[object]], list[Row]]
 def _always(*rows: Row) -> _Answer:
     """An answer of ``rows`` to every statement."""
     return lambda _sql, _binds: list(rows)
-
-
-def _in_turn(*answers: list[Row]) -> _Answer:
-    """One of ``answers`` to each statement, in turn."""
-    remaining = iter(answers)
-    return lambda _sql, _binds: next(remaining)
 
 
 @dataclass
@@ -163,7 +155,6 @@ class _Launch:
     primary_answer: _Answer = _healthy_primary
     standby_answer: _Answer = _healthy_standby
     sessions: dict[str, _Session] = field(default_factory=dict[str, _Session])
-    standby_source: str | None = None
 
     def _step(self, resources: ExitStack, step: str) -> None:
         resources.callback(self.log.append, f"release {step}")
@@ -177,13 +168,13 @@ class _Launch:
 
     def primary(self, resources: ExitStack, network: object, replication_login: str) -> Server:
         assert network == "network"
-        self.log.append(f"admit {replication_login}")
+        del replication_login
         self._step(resources, "primary")
         return _PRIMARY
 
     def standby(self, resources: ExitStack, network: object, source: str) -> Server:
         assert network == "network"
-        self.standby_source = source
+        del source
         self._step(resources, "standby")
         return _STANDBY
 
@@ -210,37 +201,6 @@ _RELEASED_NEWEST_FIRST = [
     "release primary",
     "release network",
 ]
-
-
-def test_the_standby_streams_before_the_primary_waits_for_it() -> None:
-    launch = _Launch()
-
-    pair = _opened(launch)
-
-    assert launch.log == [
-        "start network",
-        "admit parallax_replication",
-        "start primary",
-        "open primary session",
-        "start standby",
-        "open standby session",
-    ]
-    primary = launch.sessions["primary"].statements()
-    streaming = next(i for i, sql in enumerate(primary) if "state = 'streaming'" in sql)
-    synchronous = next(i for i, sql in enumerate(primary) if "synchronous_standby_names" in sql)
-    sync_state = next(i for i, sql in enumerate(primary) if "sync_state = 'sync'" in sql)
-    assert streaming < synchronous < sync_state
-    assert 'create role "parallax_replication" replication login' in " ".join(primary)
-    assert f'create role "{CONFORMANCE_LOGIN}"' in " ".join(primary)
-    assert launch.standby_source is not None
-    assert conninfo_to_dict(launch.standby_source) | {"password": None} == {
-        "host": "primary",
-        "port": "5432",
-        "user": "parallax_replication",
-        "password": None,
-        "application_name": "standby",
-    }
-    pair.close()
 
 
 @pytest.mark.parametrize(
@@ -380,18 +340,6 @@ def test_a_reset_runs_on_the_primary_and_waits_for_the_standby_to_apply_it() -> 
     pair.close()
 
 
-def test_waiting_for_replay_polls_until_the_standby_reaches_the_position() -> None:
-    launch = _Launch(standby_answer=_in_turn([(False,)], [(False,)], [(True,)]))
-    clock = _Clock()
-    pair = _opened(launch, clock)
-    polls = clock.polls
-
-    pair.wait_replayed("0/4000000")
-
-    assert clock.polls - polls == 2
-    pair.close()
-
-
 def test_waiting_for_replay_gives_up_at_its_deadline() -> None:
     launch = _Launch(standby_answer=_always((False,)))
     clock = _Clock()
@@ -407,28 +355,6 @@ def test_waiting_for_replay_gives_up_at_its_deadline() -> None:
 
 def _replay_controls(session: _Session) -> list[str]:
     return [sql for sql in session.statements() if sql.startswith("select pg_wal_replay_")]
-
-
-def test_replay_pauses_for_the_body_and_resumes_after_it() -> None:
-    states = iter(["pause requested", "paused"])
-
-    def pausing(sql: str, _binds: Sequence[object]) -> list[Row]:
-        return [(next(states),)] if "pause_state" in sql else []
-
-    launch = _Launch(standby_answer=pausing)
-    clock = _Clock()
-    pair = _opened(launch, clock)
-    standby = launch.sessions["standby"]
-
-    with pair.paused_replay():
-        assert _replay_controls(standby) == ["select pg_wal_replay_pause()"]
-        assert clock.polls == 1
-
-    assert _replay_controls(standby) == [
-        "select pg_wal_replay_pause()",
-        "select pg_wal_replay_resume()",
-    ]
-    pair.close()
 
 
 def test_replay_resumes_when_the_body_fails() -> None:

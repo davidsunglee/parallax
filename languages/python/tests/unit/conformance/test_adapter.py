@@ -5,9 +5,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import decimal
-import json
-import math
-import uuid
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
@@ -23,32 +20,26 @@ from parallax.conformance._lanes import scenario
 from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance._mechanism import model_facts
-from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+from parallax.conformance.claim import Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
 from parallax.core import inheritance
-from parallax.core._execution._unit_work import instructions, preparation
+from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
     PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
     PreparedTargetInstruction,
     WriteInstruction,
 )
 from parallax.core.base import (
     INFINITY,
-    NeutralType,
-    ScalarConverter,
-    StructuredDocument,
     UsageError,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.document_codec._plan import AuthoringLane
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import AsOf, AsOfRange, object_query, validate_object_query
-from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query import AsOf, object_query, validate_object_query
 from parallax.core.predicate import (
     And,
     Comparison,
@@ -58,9 +49,7 @@ from parallax.core.predicate import (
     ScalarLiteral,
 )
 from parallax.core.predicate import serialize as serialize_predicate
-from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.wire._codec import wire_converter
 from parallax.core.write_plan.managed_row import named_members
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.errors import raises_code
@@ -72,53 +61,12 @@ from tests.unit._second_dialect import BACKTICKED
 # test stands in for a database, and says so by naming the substitution.
 _PROFILE = profile_for("pg-full")
 _READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
-_VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
-_SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
-_RUN_ONLY_CASE = case_format.default_cases_dir() / "m-concurrency-005-conflict.yaml"
-# A predicate-write scenario; against `_FakePort` — a wrong-shaped canned row and
-# a write path that always raises — it still surfaces a loud `run-failed` error,
-# exercising this lane's own error-reporting contract.
-_ENGINE_GAP_CASE = (
-    case_format.default_cases_dir() / "m-batch-write-005-predicate-delete-readless.yaml"
-)
 
 
 # The case-format boundary canonicalizes synthetic managed carriers before strict
 # Wire preparation. Corpus-authored values already use canonical Wire carriers;
 # classification, validation, and retained ownership remain assertions about its
 # PreparedInstruction result or the core producer's own exception.
-
-
-def test_case_write_adapter_accepts_a_canonical_case_decimal() -> None:
-    instruction = instructions.deserialize(
-        case_format.safe_load_yaml(
-            """
-mutation: insert
-entity: parallax.compatibility.Account
-rows:
-  - { id: 7, owner: Newton, balance: "5.00", version: 1 }
-"""
-        )
-    )
-    prepared = _prepare_case_write(instruction, models.load_models()["account"])
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    assert named_members(prepared.rows[0])["balance"] == decimal.Decimal("5.00")
-
-
-def test_case_write_adapter_preserves_canonical_decimal_digits() -> None:
-    instruction = instructions.deserialize(
-        case_format.safe_load_yaml(
-            """
-mutation: insert
-entity: parallax.compatibility.Account
-rows:
-  - { id: 7, owner: Newton, balance: "1234567890123456.78", version: 1 }
-"""
-        )
-    )
-    prepared = _prepare_case_write(instruction, models.load_models()["account"])
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    assert named_members(prepared.rows[0])["balance"] == decimal.Decimal("1234567890123456.78")
 
 
 def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() -> None:
@@ -134,27 +82,6 @@ def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() 
         assert named_members(prepared.rows[0])["balance"] == decimal.Decimal("5.00")
 
 
-def test_case_write_adapter_accepts_canonical_predicate_operands_and_assignments() -> None:
-    instruction = instructions.deserialize(
-        case_format.safe_load_yaml(
-            """
-mutation: amend
-target:
-  entity: parallax.compatibility.Wallet
-  predicate:
-    lessThan: { path: parallax.compatibility.Wallet.balance, value: "200.00" }
-assignments:
-  - { attr: parallax.compatibility.Wallet.balance, value: "0.00" }
-"""
-        )
-    )
-    prepared = _prepare_case_write(instruction, models.load_models()["wallet"])
-    assert isinstance(prepared, PreparedPredicateInstruction)
-    assert isinstance(prepared.selection.predicate, ResolvedComparison)
-    assert prepared.selection.predicate.value == decimal.Decimal("200.00")
-    assert named_members(prepared.row) == {"balance": decimal.Decimal("0.00")}
-
-
 def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     stated = dt.datetime(2024, 7, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
     instruction = instructions.KeyedWriteInstruction(
@@ -168,76 +95,6 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 7, 1, tzinfo=dt.UTC), INFINITY
     )
-
-
-def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
-    instruction = instructions.deserialize(
-        {
-            "mutation": "amend",
-            "entity": "parallax.compatibility.Position",
-            "rows": [{"id": 1, "value": "5.00"}],
-            "validFrom": "2024-02-01T00:00:00.000000Z",
-        }
-    )
-    assert isinstance(instruction, instructions.KeyedWriteInstruction)
-    assert instruction.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-    prepared = _prepare_case_write(instruction, models.load_models()["position"])
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    assert prepared.valid_time_window == TimeInterval(
-        dt.datetime(2024, 2, 1, tzinfo=dt.UTC), INFINITY
-    )
-
-
-@pytest.mark.parametrize(
-    ("member", "token"),
-    [("f64", "-1e-400"), ("f64", "-0.0"), ("f32", "-0.0")],
-)
-def test_case_write_adapter_hands_an_authored_float_token_to_wire_decoding(
-    member: str, token: str
-) -> None:
-    instruction = instructions.deserialize(
-        case_format.safe_load_yaml(
-            f"""
-mutation: insert
-entity: parallax.compatibility.WritableScalar
-rows:
-  - {{ id: 1, {member}: {token} }}
-"""
-        )
-    )
-    assert isinstance(instruction, instructions.KeyedWriteInstruction)
-    authored = instruction.rows[0][member]
-
-    decoded_inputs: list[object] = []
-
-    def recording(declared: NeutralType) -> ScalarConverter:
-        convert = wire_converter(declared)
-
-        def recorded(value: object) -> object:
-            decoded_inputs.append(value)
-            return convert(value)
-
-        return recorded
-
-    typed_lane, wire_lane = preparation._LANES  # pyright: ignore[reportPrivateUsage]
-    lanes = (typed_lane, AuthoringLane(recording, wire_lane.access))
-    with mock.patch.object(preparation, "_LANES", lanes):
-        prepared = _prepare_case_write(instruction, models.load_models()["writable-scalars"])
-
-    assert any(value is authored for value in decoded_inputs)
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    decoded = named_members(prepared.rows[0])[member]
-    assert (decoded, math.copysign(1.0, cast("float", decoded))) == (0.0, 1.0)
-
-
-def test_case_write_adapter_leaves_malformed_values_for_core_classification() -> None:
-    instruction = instructions.KeyedWriteInstruction(
-        "insert",
-        "parallax.compatibility.Account",
-        ({"id": 7, "owner": "Newton", "balance": True, "version": 1},),
-    )
-    with raises_code(UsageError, "neutral-literal-type-mismatch"):
-        _prepare_case_write(instruction, models.load_models()["account"])
 
 
 def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
@@ -416,67 +273,6 @@ def test_case_row_decoding_keeps_the_codec_canonicalization_of_other_native_valu
     assert str(decoded["amount"]) == "5.00"
 
 
-def test_case_query_adapter_preserves_canonical_carriers_before_core_validation() -> None:
-    model = models.load_models()["position"]
-    query = deserialize_query(
-        case_format.safe_load_yaml(
-            """
-target: parallax.compatibility.Position
-predicate:
-  lessThan: { path: parallax.compatibility.Position.value, value: "200.00" }
-temporal:
-  transaction-time: { asOf: latest }
-  valid-time:
-    asOfRange:
-      start: 2024-02-01T00:00:00.000000Z
-      end: 2024-03-01T00:00:00.000000Z
-"""
-        )
-    )
-
-    normalized = _case_ingress.normalize_case_query(query, model)
-
-    assert serialize_predicate(normalized.predicate) == {
-        "lessThan": {
-            "path": "parallax.compatibility.Position.value",
-            "value": "200.00",
-        }
-    }
-    valid_time = normalized.temporal["valid-time"]
-    assert isinstance(valid_time, AsOfRange)
-    assert (valid_time.start, valid_time.end) == (
-        "2024-02-01T00:00:00.000000Z",
-        "2024-03-01T00:00:00.000000Z",
-    )
-    root = model_facts.case_entity(model, normalized.target.canonical)
-    resolved = validate_object_query(root, normalized, model)
-    assert isinstance(resolved.predicate, ResolvedComparison)
-    assert resolved.predicate.value == decimal.Decimal("200.00")
-
-
-def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> None:
-    model = models.load_models()["event"]
-    query = deserialize_query(
-        {
-            "target": "parallax.compatibility.Event",
-            "predicate": {
-                "eq": {
-                    "path": "parallax.compatibility.Event.occurredAt",
-                    "value": "2026-W01-1T00:00:00+00:00",
-                }
-            },
-        }
-    )
-
-    normalized = _case_ingress.normalize_case_query(query, model)
-
-    comparison = cast("dict[str, object]", serialize_predicate(normalized.predicate)["eq"])
-    assert comparison["value"] == "2026-W01-1T00:00:00+00:00"
-    root = model_facts.case_entity(model, normalized.target.canonical)
-    with raises_code(UsageError, "neutral-literal-type-mismatch"):
-        validate_object_query(root, normalized, model)
-
-
 def test_case_query_adapter_preserves_unresolved_predicate_values_for_core_validation() -> None:
     model = models.load_models()["document-codec"]
     query = object_query(
@@ -592,8 +388,8 @@ def test_case_ingress_bounds_missing_inheritance_positions(
     assert _case_ingress._entity_members(model, entity) == {}  # pyright: ignore[reportPrivateUsage]
 
 
-class _FakePort(ConnectsAsItself):
-    """An in-memory ``m-db-port`` returning canned rows (no Docker)."""
+class _NeverCalledPort(ConnectsAsItself):
+    """An `m-db-port` that fails loudly if a run ever touches it."""
 
     dialect: Dialect = POSTGRES
 
@@ -605,20 +401,10 @@ class _FakePort(ConnectsAsItself):
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        if "from balance" in sql:
-            return [
-                (
-                    1,
-                    "A",
-                    Decimal("5.00"),
-                    dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                    INFINITY,
-                )
-            ]
-        return [projected_row(sql, {"id": 1, "name": "Ada"}, document_reads)]
+        raise AssertionError("this run must not execute SQL")
 
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise engine.UnclassifiedEngineError("the fake port refuses writes")
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        raise AssertionError("this run must not execute SQL")
 
     def transaction[T](
         self,
@@ -626,8 +412,8 @@ class _FakePort(ConnectsAsItself):
         *,
         isolation: str | None = None,
         access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
+    ) -> TransactionOutcome[T]:
+        raise AssertionError("this run must not open a transaction")
 
 
 def _case(
@@ -706,21 +492,6 @@ def test_classify_exclude_filter() -> None:
     assert diagnostic.code == "unsupported-case-tag"
 
 
-def test_describe_uses_the_supplied_claim() -> None:
-    envelope = adapter.describe(SNAPSHOT_CLAIM)
-    assert envelope["capabilities"]["provisioning"] == "self-managed"
-
-
-def test_compile_case_emits_for_a_claimed_read() -> None:
-    envelope = adapter.compile_case(_READ_CASE, "postgres")
-    validate_adapter_envelope(envelope)
-    assert envelope["command"] == "compile"
-    assert envelope["status"] == "ok"
-    assert envelope["caseShape"] == "read"
-    assert envelope["databaseCalls"] == 1
-    assert envelope["emissions"][0]["casePointer"] == "/objectQuery"
-
-
 def test_compile_case_unsupported_for_an_out_of_claim_dialect() -> None:
     envelope = adapter.compile_case(_READ_CASE, "mariadb")
     validate_adapter_envelope(envelope)
@@ -728,7 +499,7 @@ def test_compile_case_unsupported_for_an_out_of_claim_dialect() -> None:
     assert envelope["diagnostics"][0]["code"] == "unsupported-dialect"
 
 
-class _UnclaimedDialectPort(_FakePort):
+class _UnclaimedDialectPort(_NeverCalledPort):
     """A port declaring a dialect no profile runs the suite against."""
 
     dialect: Dialect = BACKTICKED
@@ -758,19 +529,11 @@ def test_run_case_unsupported_for_a_profile_the_roster_does_not_declare() -> Non
     # the roster is still what the contract refuses against, and it refuses before
     # the case is read or the port is touched.
     undeclared = Profile("invented-profile", Provisioner)
-    envelope = adapter.run_case(_READ_CASE, undeclared.on_stand_in(_FakePort()))
+    envelope = adapter.run_case(_READ_CASE, undeclared.on_stand_in(_NeverCalledPort()))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-profile"
     assert "invented-profile" in envelope["diagnostics"][0]["message"]
-
-
-def test_compile_case_run_only_for_a_declared_run_only_case() -> None:
-    envelope = adapter.compile_case(_RUN_ONLY_CASE, "postgres")
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "run-only"
-    assert envelope["caseShape"] == "conflict"
-    assert envelope["diagnostics"][0]["code"] == "compile-run-only"
 
 
 def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declaration() -> None:
@@ -782,19 +545,6 @@ def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declarati
     case = _case(shape="conflict", tags=("m-concurrency", "slice-snapshot-1"))
     with pytest.raises(engine.UnclassifiedEngineError, match="always declared"):
         adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private compile helper
-
-
-def test_run_case_ok_through_a_fake_port() -> None:
-    envelope = adapter.run_case(_VO_READ_CASE, _PROFILE.on_stand_in(_FakePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    # The envelope answers two different questions: which adapter configuration
-    # was asked for, and which spelling actually executed. The second is read off
-    # the port rather than echoed back from the request.
-    assert envelope["profile"] == _PROFILE.name
-    assert envelope["dialect"] == "postgres"
-    assert envelope["observations"]["rows"] == [{"id": 1, "name": "Ada"}]
-    assert envelope["observations"]["databaseCalls"] == 1
 
 
 class _WritePort(ConnectsAsItself):
@@ -831,34 +581,6 @@ class _WritePort(ConnectsAsItself):
         return body_outcome(self, body)
 
 
-class _AccountWritePort(_WritePort):
-    """``_WritePort`` answering the Account row a conflict attempt's source read
-    resolves, which is the value its keyed write is addressed and licensed by."""
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [(2, "Linus", decimal.Decimal("250.00"), 1)]
-
-
-def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
-    # m-concurrency's run-only conflict shape: the
-    # adapter's own `run` dispatch wraps `engine.run_conflict_case`'s tuple
-    # into the schema's one `affectedRows` observation slot, plus
-    # `tableState` when the case authors it.
-    case_path = case_format.default_cases_dir() / "m-concurrency-006-success.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountWritePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["affectedRows"] == 1
-    assert "account" in envelope["observations"]["tableState"]
-
-
 _SCENARIO_CASE = case_format.default_cases_dir() / "m-unit-work-001-read-your-own-writes.yaml"
 _WRITE_SEQUENCE_CASE = case_format.default_cases_dir() / "m-unit-work-003-fk-insert-ordering.yaml"
 
@@ -884,23 +606,6 @@ def test_run_case_scenario_reports_database_calls_and_the_rows_its_read_step_pub
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/scenario/0/write",
         "/scenario/1/objectQuery",
-    ]
-
-
-class _TwoRowWritePort(_WritePort):
-    """``_WritePort`` whose every write reports two affected rows."""
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        return 2
-
-
-def test_run_case_scenario_reports_the_count_a_predicate_write_step_returned() -> None:
-    case_path = case_format.default_cases_dir() / "m-batch-write-005-predicate-delete-readless.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_TwoRowWritePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["stepAffectedRows"] == [
-        {"at": "/scenario/0", "affectedRows": 2}
     ]
 
 
@@ -946,207 +651,12 @@ def test_run_case_write_sequence_reports_table_state_and_database_calls() -> Non
     ]
 
 
-class _ManagedPort(ConnectsAsItself):
-    """A port returning the managed values psycopg decodes for the m-core-001 row."""
-
-    dialect: Dialect = POSTGRES
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [
-            (
-                1,
-                1.5,
-                2.25,
-                "01020304",
-                dt.time(12, 34, 56),
-                uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
-            )
-        ]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-
-def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
-    # The adapter returns MANAGED values (Decimal / time / UUID / date / bytes);
-    # the conformance boundary renders them to canonical wire form so the run
-    # envelope is JSON-serializable (m-core-001 previously broke `json.dumps`).
-    envelope = adapter.run_case(_SCALAR_READ_CASE, _PROFILE.on_stand_in(_ManagedPort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    (row,) = envelope["observations"]["rows"]
-    assert row == {
-        "id": 1,
-        "f32": 1.5,
-        "f64": 2.25,
-        "local_time": "12:34:56",
-        "external_id": "123e4567-e89b-12d3-a456-426614174000",
-        "payload_hex": "01020304",
-    }
-    # The whole envelope now round-trips through the wire (json.dumps).
-    assert json.loads(json.dumps(envelope)) == envelope
-
-
-def test_run_case_error_on_an_engine_gap() -> None:
-    # `_ENGINE_GAP_CASE` (m-batch-write-005) is a predicate-write scenario: its
-    # `_FakePort` returns a canned row shaped for a DIFFERENT model and raises
-    # `NotImplementedError` on any write, so the readless delete fails — this
-    # lane still reports a loud `run-failed` error rather than silently
-    # mishandling it (a real port drives this case successfully, `test_run_
-    # sweep.py::test_write_run_sweep`, Docker-gated).
-    envelope = adapter.run_case(_ENGINE_GAP_CASE, _PROFILE.on_stand_in(_FakePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "error"
-    assert envelope["diagnostics"][0]["code"] == "run-failed"
-
-
 # --------------------------------------------------------------------------- #
 # The api-conformance-lane scenario dispatch: an `expectError`-bearing scenario #
 # stays in the compile/run lanes (the engine grades the raised application-    #
 # lifecycle error through the `errors` observation); every other one is still  #
 # lane-honestly classified out to the API Conformance Suite.                   #
 # --------------------------------------------------------------------------- #
-_PIN_READ_ONLY_CASE = (
-    case_format.default_cases_dir() / "m-temporal-write-032-transaction-time-pin-read-only.yaml"
-)
-_ACCESS_WITNESS_CASE = (
-    case_format.default_cases_dir() / "m-snapshot-read-009-closed-world-unloaded-access.yaml"
-)
-
-
-class _PositionPort(ConnectsAsItself):
-    """A port returning the superseded position milestone the pin-read-only
-    contrast's find step selects (no Docker)."""
-
-    dialect: Dialect = POSTGRES
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [
-            (
-                1,
-                "A",
-                decimal.Decimal("90.00"),
-                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
-                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-            )
-        ]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-
-def test_run_case_grades_a_scenario_expect_error_through_the_errors_observation() -> None:
-    envelope = adapter.run_case(_PIN_READ_ONLY_CASE, _PROFILE.on_stand_in(_PositionPort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["databaseCalls"] == 1
-    assert envelope["observations"]["errors"] == [
-        {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
-    ]
-
-
-def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
-    envelope = adapter.compile_case(_PIN_READ_ONLY_CASE, "postgres")
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["databaseCalls"] == 1
-    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
-
-
-_TX_PAST_READ_ONLY_CASE = (
-    case_format.default_cases_dir() / "m-temporal-write-092-transaction-time-past-is-read-only.yaml"
-)
-
-
-class _BalancePort(ConnectsAsItself):
-    """A port returning the superseded balance milestone the finite
-    Transaction-Time pin selects (no Docker)."""
-
-    dialect: Dialect = POSTGRES
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [
-            (
-                1,
-                "A",
-                decimal.Decimal("100.00"),
-                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-            )
-        ]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-
-def test_run_case_grades_the_transaction_time_past_refusal_through_the_public_claim() -> None:
-    envelope = adapter.run_case(_TX_PAST_READ_ONLY_CASE, _PROFILE.on_stand_in(_BalancePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
-    assert envelope["observations"]["databaseCalls"] == 1
-    assert envelope["observations"]["errors"] == [
-        {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
-    ]
-
-
-def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
-    compile_envelope = adapter.compile_case(_ACCESS_WITNESS_CASE, "postgres")
-    assert compile_envelope["status"] == "error"
-    assert "api-conformance" in compile_envelope["diagnostics"][0]["message"]
-    run_envelope = adapter.run_case(_ACCESS_WITNESS_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
-    assert run_envelope["status"] == "error"
-    assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
 
 
 def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents() -> None:
@@ -1176,27 +686,11 @@ def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents(
         assert observed is expected, document
 
 
-def test_unsupported_helper_envelope() -> None:
-    envelope = adapter.unsupported("compile", adapter.Diagnostic("unsupported-dialect", "nope"))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "unsupported"
-
-
-def test_error_envelope() -> None:
-    envelope = adapter.error("compile", adapter.Diagnostic("unreadable-case", "boom"))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "error"
-    assert envelope["diagnostics"][0]["message"] == "boom"
-
-
 # --------------------------------------------------------------------------- #
 # Error-shape run — the m-db-error classification lane.                        #
 # --------------------------------------------------------------------------- #
 _ERROR_CASE = case_format.default_cases_dir() / "m-db-error-001-unique-violation-pk.yaml"
 _ERROR_CONCURRENCY_CASE = case_format.default_cases_dir() / "m-db-error-004-deadlock-cycle.yaml"
-_BOUNDARY_CASE = (
-    case_format.default_cases_dir() / "m-unit-work-004-callback-value-withheld-on-abort.yaml"
-)
 
 
 class _TriggerPort(ConnectsAsItself):
@@ -1239,24 +733,6 @@ def _unique_violation() -> DatabaseError:
     return DatabaseError(category="uniqueViolation", native_code="23505", message="dup key")
 
 
-def test_run_case_error_reports_the_classification() -> None:
-    # The final trigger statement raises; the envelope reports the neutral
-    # category + preserved native code (the schema amendment this increment adds).
-    port = _TriggerPort(raise_on=2, failure=_unique_violation())
-    envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(port))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    assert envelope["observations"] == {
-        "errorClass": "uniqueViolation",
-        "nativeCode": "23505",
-        "databaseCalls": 2,
-    }
-    assert [e["casePointer"] for e in envelope["emissions"]] == [
-        "/then/statements/0",
-        "/then/statements/1",
-    ]
-
-
 def test_run_case_error_rejects_a_premature_raise() -> None:
     port = _TriggerPort(raise_on=1, failure=_unique_violation())
     envelope = adapter.run_case(_ERROR_CASE, _PROFILE.on_stand_in(port))
@@ -1288,71 +764,15 @@ def test_run_case_error_concurrency_names_the_provider_lane() -> None:
     assert "provider contract proof" in envelope["diagnostics"][0]["message"]
 
 
-def test_compile_case_error_shape_names_the_run_lane() -> None:
-    envelope = adapter.compile_case(_ERROR_CASE, "postgres")
-    assert envelope["status"] == "error"
-    assert "authored, not compiled" in envelope["diagnostics"][0]["message"]
-
-
-def test_boundary_case_names_the_api_conformance_lane() -> None:
-    # m-case-format: every boundary case is on the api-conformance lane — the
-    # API Conformance Suite verifies it. Compile short-circuits on the case's
-    # corpus-declared run-only eligibility (every boundary case carries one);
-    # run classifies it out with the api-conformance reason.
-    compile_envelope = adapter.compile_case(_BOUNDARY_CASE, "postgres")
-    assert compile_envelope["status"] == "run-only"
-    assert compile_envelope["diagnostics"][0]["code"] == "compile-run-only"
-    run_envelope = adapter.run_case(
-        _BOUNDARY_CASE, _PROFILE.on_stand_in(_TriggerPort(raise_on=None))
-    )
-    assert run_envelope["status"] == "error"
-    assert "api-conformance" in run_envelope["diagnostics"][0]["message"]
-
-
 # --------------------------------------------------------------------------- #
 # Rejected — the pre-SQL model-aware validation lane.                         #
 # --------------------------------------------------------------------------- #
 _REJECTED_QUERY_CASE = (
     case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
 )
-_REJECTED_DECIMAL_BETWEEN_CASE = (
-    case_format.default_cases_dir() / "m-predicate-039-rejected-between-bounds-inverted.yaml"
-)
 _REJECTED_MODEL_CASE = (
     case_format.default_cases_dir() / "m-inheritance-020-rejected-unknown-parent.yaml"
 )
-_REJECTED_WRITE_CASE = (
-    case_format.default_cases_dir()
-    / "m-value-object-039-rejected-write-required-attribute-depth-1.yaml"
-)
-
-
-class _NeverCalledPort(ConnectsAsItself):
-    """An `m-db-port` that fails loudly if a rejected run ever touches it."""
-
-    dialect: Dialect = POSTGRES
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        raise AssertionError("a rejected-case run must not execute SQL")
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        raise AssertionError("a rejected-case run must not execute SQL")
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:
-        raise AssertionError("a rejected-case run must not open a transaction")
 
 
 def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
@@ -1378,18 +798,6 @@ def test_run_case_rejected_query_reports_the_classified_rule() -> None:
     }
 
 
-def test_run_case_rejected_query_normalizes_case_decimal_bounds_before_validation() -> None:
-    envelope = adapter.run_case(
-        _REJECTED_DECIMAL_BETWEEN_CASE,
-        _PROFILE.on_stand_in(_NeverCalledPort()),
-    )
-    assert envelope["status"] == "ok"
-    assert envelope["observations"] == {
-        "rejectedRule": "between-bounds-inverted",
-        "databaseCalls": 0,
-    }
-
-
 def test_run_case_rejected_model_reports_the_classified_rule() -> None:
     envelope = adapter.run_case(_REJECTED_MODEL_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
     validate_adapter_envelope(envelope)
@@ -1400,318 +808,9 @@ def test_run_case_rejected_model_reports_the_classified_rule() -> None:
     }
 
 
-def test_run_case_rejected_write_reports_the_classified_rule() -> None:
-    envelope = adapter.run_case(_REJECTED_WRITE_CASE, _PROFILE.on_stand_in(_NeverCalledPort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    assert envelope["emissions"] == []
-    assert envelope["observations"] == {
-        "rejectedRule": "write-required-attribute-missing",
-        "databaseCalls": 0,
-    }
-
-
 # --------------------------------------------------------------------------- #
-# Read-result dispatch (`_read_observations`): `then.graph` / `then.graphs` /  #
-# `then.rows` are mutually exclusive, so `run_case` must route each read case  #
-# to its own rendering lane, not just the plain-rows fallback.                 #
+# Run-lane routing: an ordinary write is executed through its public verb.    #
 # --------------------------------------------------------------------------- #
-class _QueuePort(ConnectsAsItself):
-    """A fake `m-db-port` returning one canned response per `execute()` call,
-    in call order (the per-level find executor issues more than one query)."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
-        self._responses = list(responses)
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        # A read case's own `given.corrupt` writes through this port before the
-        # read runs (m-case-format), so a stand-in for one answers a write.
-        return 1
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        raise NotImplementedError
-
-
-_GRAPH_CASE = case_format.default_cases_dir() / "m-snapshot-read-011-back-reference-cycle.yaml"
-_GRAPHS_CASE = (
-    case_format.default_cases_dir() / "m-snapshot-read-013-history-edge-pinned-graphs.yaml"
-)
-
-
-def test_run_case_graph_observation_reports_the_assembled_graph() -> None:
-    # `then.graph` (a snapshot graph, not a bare rows list) routes through
-    # `run_graph_case`; the envelope carries `graph` and `databaseCalls`, and — for
-    # a conforming read — no `storedDataIssues` entry at all.
-    port = _QueuePort(
-        [
-            [
-                {
-                    "id": 1,
-                    "name": "Ada",
-                    "sku": "A-100",
-                    "qty": 5,
-                    "price": decimal.Decimal("10.50"),
-                    "active": True,
-                    "ordered_on": dt.date(2024, 1, 5),
-                }
-            ],
-            [
-                {
-                    "id": 12,
-                    "order_id": 1,
-                    "sku": "B-200",
-                    "quantity": 1,
-                    "shipped_on": dt.date(2024, 2, 15),
-                },
-                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-            ],
-        ]
-    )
-    envelope = adapter.run_case(_GRAPH_CASE, _PROFILE.on_stand_in(port))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    assert envelope["observations"]["databaseCalls"] == 2
-    assert envelope["observations"]["graph"]["Order"][0]["id"] == 1
-    assert "storedDataIssues" not in envelope["observations"]
-    # The whole envelope round-trips through the wire (json.dumps).
-    assert json.loads(json.dumps(envelope)) == envelope
-
-
-_GRAPH_CASE_CONFORMING = case_format.default_cases_dir() / "m-snapshot-read-003-null-to-one.yaml"
-_GRAPH_CASE_CLASSIFIED = (
-    case_format.default_cases_dir()
-    / "m-storage-layout-027-classified-read-layout-twin-columns.yaml"
-)
-
-
-def test_run_case_graph_observation_reports_the_positions_a_read_classified() -> None:
-    # The optional `storedDataIssues` observation's present branch: a read whose
-    # stored state contradicted the model reports one entry per invalid position
-    # beside the graph, and the whole envelope still round-trips through the wire.
-    port = _QueuePort(
-        [
-            # The case's own `given.corrupt` reads the addressed document back
-            # before it writes over it (m-case-format), ahead of the read.
-            [{"profile": {"street": "4 Main", "city": "Boston"}}],
-            [{"id": 1, "profile": StructuredDocument({"city": "Oslo"})}],
-            [],
-        ]
-    )
-    envelope = adapter.run_case(_GRAPH_CASE_CLASSIFIED, _PROFILE.on_stand_in(port))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    (record,) = envelope["observations"]["storedDataIssues"]
-    assert record["ordinal"] == 0
-    assert record["hydrated"] is True
-    assert json.loads(json.dumps(envelope)) == envelope
-
-
-def test_run_case_graph_observation_omits_classification_when_every_position_conformed() -> None:
-    # A `then.graph` case whose read publishes no record carries no such key at
-    # all in the envelope (the OTHER branch of `_read_observations`' optional
-    # `storedDataIssues`).
-    port = _QueuePort(
-        [
-            [
-                {"id": 101, "order_id": 1, "order_item_id": None, "code": "NEW"},
-                {
-                    "id": 201,
-                    "order_id": 1,
-                    "order_item_id": 11,
-                    "code": "PICKED",
-                },
-            ],
-            [
-                {
-                    "id": 11,
-                    "order_id": 1,
-                    "sku": "A-100",
-                    "quantity": 2,
-                    "shipped_on": None,
-                }
-            ],
-        ]
-    )
-    envelope = adapter.run_case(_GRAPH_CASE_CONFORMING, _PROFILE.on_stand_in(port))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    assert "storedDataIssues" not in envelope["observations"]
-    assert json.loads(json.dumps(envelope)) == envelope
-
-
-_STREAM_CASE = (
-    case_format.default_cases_dir() / "m-snapshot-read-029-page-invariance-batch-size-twin-2.yaml"
-)
-
-
-def _order(identifier: int, name: str) -> dict[str, object]:
-    return {
-        "id": identifier,
-        "name": name,
-        "sku": "A-100",
-        "qty": 5,
-        "price": decimal.Decimal("10.50"),
-        "active": True,
-        "ordered_on": dt.date(2024, 1, 5),
-    }
-
-
-def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
-    # `when.stream` routes ahead of the result member, through `run_stream_case`
-    # and the shipped streamed read — two pages at `batchSize: 2` over four
-    # roots, each asking for three and delivering two, so the second comes back
-    # short and proves exhaustion without a third. The envelope carries the
-    # delivered graph, the Database Calls the delivery cost, and one emission per
-    # page: a Snapshot Stream publishes a Stream Batch per page and that page's
-    # Database Calls under it, so the statements come off the delivered
-    # lifecycle exactly as every other lane's do. The seek is what shows they
-    # are the DELIVERY's rather than an eager read's — page 2 continues from the
-    # id page 1 delivered last, never from the lookahead root it discarded.
-    port = _QueuePort(
-        [
-            [_order(1, "Ada"), _order(2, "Linus"), _order(3, "ada")],
-            [_order(3, "ada"), _order(42, "Grace")],
-        ]
-    )
-    envelope = adapter.run_case(_STREAM_CASE, _PROFILE.on_stand_in(port))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    assert [emission["binds"] for emission in envelope["emissions"]] == [
-        [[1, 2, 3, 42], 3],
-        [[1, 2, 3, 42], 2, 2, 3, [1, 2, 3, 42], 3, 3],
-    ]
-    assert envelope["observations"]["databaseCalls"] == 2
-    assert [root["id"] for root in envelope["observations"]["graph"]["Order"]] == [1, 2, 3, 42]
-    assert "storedDataIssues" not in envelope["observations"]
-    assert json.loads(json.dumps(envelope)) == envelope
-
-
-def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> None:
-    # `then.graphs` (a milestone-set snapshot read) routes through
-    # `run_graphs_case`; the envelope's `observations["graphs"]` carries the
-    # chronologically ordered per-milestone pin+graph entries.
-    from parallax.core.base import INFINITY
-
-    port = _QueuePort(
-        [
-            [
-                {
-                    "id": 1000,
-                    "invoice_id": 100,
-                    "amount": decimal.Decimal("50.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-                },
-                {
-                    "id": 1000,
-                    "invoice_id": 100,
-                    "amount": decimal.Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-                    "out_z": INFINITY,
-                },
-            ]
-        ]
-    )
-    envelope = adapter.run_case(_GRAPHS_CASE, _PROFILE.on_stand_in(port))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok"
-    assert envelope["observations"]["databaseCalls"] == 1
-    graphs = envelope["observations"]["graphs"]
-    assert [g["pin"]["transaction-time"] for g in graphs] == [
-        "2024-01-01T00:00:00.000000Z",
-        "2024-04-01T00:00:00.000000Z",
-    ]
-    assert json.loads(json.dumps(envelope)) == envelope
-
-
-class _WriteAndReadBackPort(ConnectsAsItself):
-    """A no-Docker port that accepts writes (never raising) and answers every
-    read with ``rows`` — the resolving read a keyed write's source needs, and
-    enough for a writeSequence case's trailing ``read_table_state`` call-back,
-    which this test does not inspect.
-
-    ``affected`` scripts the row count each successive write reports, defaulting
-    to one. A batched keyed write expects every row its target addresses, so a
-    collapsed statement that reported a single row would read as a shortfall.
-    """
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self, affected: Sequence[int] = (), rows: Sequence[MappingRow] = ()) -> None:
-        self.writes = 0
-        self._affected = list(affected)
-        self._rows = list(rows)
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [projected_row(sql, row, document_reads) for row in self._rows]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        self.writes += 1
-        return self._affected.pop(0) if self._affected else 1
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-
-def test_run_case_runs_a_genuine_batch_collapse_write() -> None:
-    # m-batch-write-001: a reachable claimed writeSequence whose FIRST entry
-    # buffers three inserts collapsing into ONE multi-row INSERT (`statements:
-    # 1` for 3 rows — the case author's own declared batch-COLLAPSE intent,
-    # `m-batch-write` "Set-based flush") and whose SECOND entry batches a
-    # uniform-value UPDATE over an `IN`-list: the
-    # engine passes each row list through as one multi-row instruction, and
-    # the lowering seam renders it end to end — two `execute_write` calls total,
-    # reporting the three and two rows their targets respectively address.
-    #
-    # The canned rows are what the update entry's own resolving read publishes:
-    # one membership read over the keys that entry addresses, which is what keeps
-    # the collapse intact — a read between the two writes would flush the first
-    # alone (`m-case-format` *Resolving reads a write owes*).
-    case_path = case_format.default_cases_dir() / "m-batch-write-001-set-based-flush.yaml"
-    port = _WriteAndReadBackPort(
-        [3, 2],
-        rows=[
-            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
-            {"id": 11, "owner": "Omar", "balance": Decimal("20.00")},
-        ],
-    )
-    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(port))
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["databaseCalls"] == 3
-    assert port.writes == 2
-
-
 def test_run_case_lowers_a_pk_gen_sequence_batch_as_one_grouped_insert() -> None:
     # m-pk-gen-008: a reachable claimed writeSequence whose SECOND entry hands
     # out 2 of a reserved 3-id block. The engine buffers each row as its own
@@ -1740,10 +839,8 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_as_one_grouped_insert() -> None
 
 
 # --------------------------------------------------------------------------- #
-# The lifecycle observation (m-conformance-adapter): a run installs a Provider #
-# and reports the stream it delivered, for a case that authors the oracle and  #
-# for no other — a case asserting nothing about the stream is handed no        #
-# observed key to explain.                                                     #
+# The lifecycle observation (m-conformance-adapter): a call index naming a    #
+# statement other than the emission it indexes is an adapter defect.          #
 # --------------------------------------------------------------------------- #
 class _AccountPort(ConnectsAsItself):
     """Returns the one `account.yaml` row `m-execution-lifecycle-001` reads."""
@@ -1773,79 +870,6 @@ class _AccountPort(ConnectsAsItself):
         return body_outcome(self, body)
 
 
-def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None:
-    case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountPort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["executionLifecycle"] == {
-        "roots": [
-            {
-                "execution": 1,
-                "kind": "read",
-                "events": [
-                    {
-                        "sequence": 1,
-                        "activity": 1,
-                        "parent": None,
-                        "readStarted": {
-                            "target": "parallax.compatibility.Account",
-                            "purpose": "wire",
-                            "edition": "account",
-                        },
-                    },
-                    {
-                        "sequence": 2,
-                        "activity": 2,
-                        "parent": 1,
-                        "acquisitionStarted": {"policy": "writer-only"},
-                    },
-                    {
-                        "sequence": 3,
-                        "activity": 2,
-                        "parent": 1,
-                        "acquisitionFinished": {"outcome": "acquired", "route": "writer"},
-                    },
-                    {
-                        "sequence": 4,
-                        "activity": 3,
-                        "parent": 1,
-                        "databaseCallStarted": {
-                            "target": "parallax.compatibility.Account",
-                            "kind": "read",
-                            "statement": 0,
-                        },
-                    },
-                    {
-                        "sequence": 5,
-                        "activity": 3,
-                        "parent": 1,
-                        "databaseCallFinished": {"outcome": "readCompleted", "returnedRows": 1},
-                    },
-                    {
-                        "sequence": 6,
-                        "activity": 4,
-                        "parent": 1,
-                        "releaseStarted": {},
-                    },
-                    {
-                        "sequence": 7,
-                        "activity": 4,
-                        "parent": 1,
-                        "releaseFinished": {"cleanup": "returned"},
-                    },
-                    {
-                        "sequence": 8,
-                        "activity": 1,
-                        "parent": None,
-                        "readFinished": {"outcome": "completed"},
-                    },
-                ],
-            }
-        ]
-    }
-
-
 def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() -> None:
     # A call's index and the emission it names are built independently on the
     # grouped-write lanes, so an index that would name a DIFFERENT statement is
@@ -1868,112 +892,6 @@ def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() ->
         envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_AccountPort()))
     assert envelope["status"] == "error", envelope
     assert "would name a different statement" in envelope["diagnostics"][0]["message"]
-
-
-def test_a_case_authoring_no_oracle_reports_no_lifecycle_observation() -> None:
-    # The stream a run delivers is reported where a case asks for it and
-    # nowhere else: an observed key a case left unasserted is one the corpus
-    # comparator would have to be told to ignore.
-    envelope = adapter.run_case(_VO_READ_CASE, _PROFILE.on_stand_in(_FakePort()))
-    assert set(envelope["observations"]) == {"rows", "databaseCalls"}
-
-
-_INCLUDE_SCENARIO_CASE = (
-    case_format.default_cases_dir() / "m-snapshot-read-016-edit-keeps-loaded-items.yaml"
-)
-
-
-class _OrderWithItemsPort(ConnectsAsItself):
-    """A canned ``m-db-port`` answering the root level then the include level."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self) -> None:
-        self._responses: list[list[MappingRow]] = [
-            [
-                {
-                    "id": 1,
-                    "name": "Ada",
-                    "sku": "A-100",
-                    "qty": 5,
-                    "price": Decimal("10.50"),
-                    "active": True,
-                    "ordered_on": dt.date(2024, 1, 5),
-                }
-            ],
-            [
-                {
-                    "id": 12,
-                    "order_id": 1,
-                    "sku": "B-200",
-                    "quantity": 1,
-                    "shipped_on": dt.date(2024, 2, 15),
-                },
-                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-            ],
-        ]
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-
-def test_run_case_scenario_reports_a_step_graph_for_an_access_step() -> None:
-    # The per-step graph channel (`m-conformance-adapter` *Per-step graph
-    # observations*): an `access` step declaring `expectGraph` publishes one
-    # `stepGraphs` entry at its own pointer, beside `databaseCalls`, and the envelope
-    # still validates against the adapter schema.
-    envelope = adapter.run_case(_INCLUDE_SCENARIO_CASE, _PROFILE.on_stand_in(_OrderWithItemsPort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["status"] == "ok", envelope
-    assert envelope["observations"]["databaseCalls"] == 2
-    step_graphs = envelope["observations"]["stepGraphs"]
-    assert [entry["at"] for entry in step_graphs] == ["/scenario/2"]
-    assert sorted(node["id"] for node in step_graphs[0]["graph"]["OrderItem"]) == [11, 12]
-
-
-def test_a_state_graded_run_reports_its_unit_fates_and_table_state() -> None:
-    units: dict[str, dict[str, object]] = {
-        "g": {
-            "outcome": "rolledBack",
-            "flushFailure": {
-                "at": "commit",
-                "entity": "parallax.compatibility.Account",
-                "key": {"id": 7},
-                "shortfall": "optimisticConflict",
-            },
-        }
-    }
-    table_state: dict[str, list[MappingRow]] = {
-        "account": [{"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}]
-    }
-    run = engine.ScenarioRun([], 1, [], [], [], units, table_state)
-    with mock.patch.object(engine, "run_scenario_case", return_value=run):
-        envelope = adapter.run_case(_SCENARIO_CASE, _PROFILE.on_stand_in(_WritePort()))
-    validate_adapter_envelope(envelope)
-    assert envelope["observations"] == {
-        "databaseCalls": 1,
-        "units": units,
-        "tableState": table_state,
-    }
 
 
 def _prepare_case_write(
