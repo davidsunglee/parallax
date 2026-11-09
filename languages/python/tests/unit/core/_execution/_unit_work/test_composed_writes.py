@@ -24,7 +24,7 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     TargetWrite,
 )
-from parallax.core.base import INFINITY, UsageError
+from parallax.core.base import INFINITY, InternalError, UsageError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     AdmittedWrite,
@@ -44,7 +44,6 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
-    WritePlanningError,
 )
 from parallax.core.write_plan.keys import (
     TemporalObjectStateKey,
@@ -59,6 +58,7 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
@@ -269,7 +269,9 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     )
     write = admitted_write(prepared, unobserved, position)
     assert isinstance(write, StateObservedWrite)
-    with pytest.raises(WritePlanningError, match="requires the Temporal Observation"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="requires the Temporal Observation"
+    ):
         build_write_planner(model).finalize(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,

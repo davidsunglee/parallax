@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
+import pkgutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -43,6 +46,29 @@ TOP_PACKAGE_NAMES: tuple[str, ...] = (
     "parallax.aws",
     "parallax.conformance",
 )
+
+
+def needs_an_absent_driver_build(module: str) -> bool:
+    """Whether ``module`` is a compiled loader variant whose psycopg build is not installed.
+
+    Each variant extends one psycopg build's C loader, so it imports only beside
+    that build; the adapter imports the one psycopg selected.
+    """
+    prefix = "parallax.postgres._cloaders_"
+    return (
+        module.startswith(prefix)
+        and importlib.util.find_spec(f"psycopg_{module.removeprefix(prefix)}") is None
+    )
+
+
+def importable_submodules(package: str) -> Iterator[str]:
+    """Every submodule under ``package`` this environment can import."""
+    spec = importlib.util.find_spec(package)
+    assert spec is not None
+    assert spec.submodule_search_locations is not None
+    for info in pkgutil.walk_packages(list(spec.submodule_search_locations), prefix=f"{package}."):
+        if not needs_an_absent_driver_build(info.name):
+            yield info.name
 
 
 @dataclass(frozen=True)

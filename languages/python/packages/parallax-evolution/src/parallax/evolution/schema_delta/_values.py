@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 
+from parallax.core.base import UnsupportedError
 from parallax.core.dialect import PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, IndexIdentity, Table
 from parallax.evolution.model_evolution import EvolutionOperation
@@ -14,7 +15,6 @@ __all__ = [
     "CollisionGroup",
     "CreatedIndex",
     "IndexPresence",
-    "PhysicalIndexNameCollisionError",
     "PhysicalLocation",
     "SchemaDelta",
     "UnsupportedSchemaEvolutionError",
@@ -73,7 +73,10 @@ class UnsupportedSchemaOperation:
     caused_by: tuple[EvolutionOperation, ...]
 
 
-class UnsupportedSchemaEvolutionError(Exception):
+SCHEMA_EVOLUTION_UNSUPPORTED: Final = "schema-evolution-unsupported"
+
+
+class UnsupportedSchemaEvolutionError(UnsupportedError):
     """No statement for this Dialect: every operation it cannot render, at once.
 
     Renderer support is a deployment capability rather than a model-semantic
@@ -84,12 +87,13 @@ class UnsupportedSchemaEvolutionError(Exception):
     def __init__(
         self, dialect_identity: str, operations: tuple[UnsupportedSchemaOperation, ...]
     ) -> None:
-        self.dialect_identity = dialect_identity
-        self.operations = operations
         spelled = ", ".join(operation.kind for operation in operations)
         super().__init__(
-            f"{dialect_identity} cannot render {len(operations)} operation(s): {spelled}"
+            SCHEMA_EVOLUTION_UNSUPPORTED,
+            f"{dialect_identity} cannot render {len(operations)} operation(s): {spelled}",
         )
+        self.dialect_identity = dialect_identity
+        self.operations = operations
 
 
 class IndexPresence(enum.Enum):
@@ -137,18 +141,3 @@ class CollisionGroup:
     name: PhysicalIndexName
     definitions: tuple[CollidingIndex, ...]
     temporal_constraints: tuple[CollidingTemporalConstraint, ...] = ()
-
-
-class PhysicalIndexNameCollisionError(Exception):
-    """Distinct Index definitions derived one name; neither was silently renamed.
-
-    A defensive backstop for an unexpected 128-bit fingerprint collision, not an
-    ordinary control path: a definition's name is derived from its own facts
-    alone, so it is stable independently of every other Index in the model.
-    """
-
-    def __init__(self, dialect_identity: str, groups: tuple[CollisionGroup, ...]) -> None:
-        self.dialect_identity = dialect_identity
-        self.groups = groups
-        spelled = ", ".join(group.name.value for group in groups)
-        super().__init__(f"{dialect_identity} derived colliding Physical Index Names: {spelled}")

@@ -21,7 +21,7 @@ from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMN
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, read_planning
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY, INT64, TemporalBound
+from parallax.core.base import INFINITY, INT64, InternalError, TemporalBound
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
@@ -49,12 +49,13 @@ from parallax.core.sql_gen._compile import (
     compile_read,
     compile_write_predicate,
 )
-from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database
 from tests._support.db_port import Read, ScriptedAdapter, Transact
+from tests._support.errors import raises_code
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
@@ -2111,9 +2112,13 @@ def test_a_temporal_template_refuses_a_query_without_its_finite_selection() -> N
     latest = _policy_read({"asOf": "latest"}, {"asOf": "latest"})
 
     for query in (None, latest):
-        with pytest.raises(SqlGenError, match="requires its current finite coordinate"):
+        with raises_code(
+            InternalError, SQL_GENERATION_FAILED, match="requires its current finite coordinate"
+        ):
             prepared[0].render([1], query=query)
-    with pytest.raises(SqlGenError, match="requires its current finite coordinate"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="requires its current finite coordinate"
+    ):
         entry.root_template.render(query=latest)
 
 

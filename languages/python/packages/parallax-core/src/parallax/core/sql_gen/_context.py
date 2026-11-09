@@ -12,6 +12,7 @@ from parallax.core.base import (
     INFINITY_LITERAL,
     JSON,
     STRING,
+    InternalError,
     Json,
     ManagedValue,
     NeutralType,
@@ -146,17 +147,21 @@ class LoweredStatement:
             form = marker.form
             for index in indices:
                 if slots.get(index) != form.typed_slot or index in overridden:
-                    raise SqlGenError(
+                    raise InternalError(
+                        SQL_GENERATION_FAILED,
                         "a deferred execution value's bind metadata is not the "
-                        "classification its form selects"
+                        "classification its form selects",
                     )
                 if form.expands and index in repeated:
-                    raise SqlGenError(
-                        "an expanding execution value cannot occupy repeated row-bind metadata"
+                    raise InternalError(
+                        SQL_GENERATION_FAILED,
+                        "an expanding execution value cannot occupy repeated row-bind metadata",
                     )
             groups.append(ExecutionValuePositions(marker, tuple(indices)))
         if sum(1 for group in groups if group.source == _KEYS) > 1:
-            raise SqlGenError("a statement's gathered keys take exactly one bind form")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a statement's gathered keys take exactly one bind form"
+            )
         groups.sort(key=lambda group: (source_order(group.source), group.indices[0]))
         return tuple(groups)
 
@@ -194,7 +199,10 @@ class LoweredStatement:
             if positions.form.expands:
                 elements = cast("Sequence[object]", value)
                 if not elements:
-                    raise SqlGenError("an expanding execution value requires at least one element")
+                    raise InternalError(
+                        SQL_GENERATION_FAILED,
+                        "an expanding execution value requires at least one element",
+                    )
                 expansions.extend((index, elements) for index in positions.indices)
             else:
                 for index in positions.indices:
@@ -421,7 +429,7 @@ class ExecutionValuePositions:
 
 def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) -> WireValue:
     if isinstance(value, _ExecutionValueMarker):
-        raise SqlGenError(_UNRENDERED)
+        raise InternalError(SQL_GENERATION_FAILED, _UNRENDERED)
     if form == "MANAGED":
         return encode_wire(neutral_type, cast("ManagedValue", value))
     return cast("str", value)
@@ -429,7 +437,7 @@ def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) 
 
 def _wire_bind(value: object) -> WireValue:
     if isinstance(value, _ExecutionValueMarker):
-        raise SqlGenError(_UNRENDERED)
+        raise InternalError(SQL_GENERATION_FAILED, _UNRENDERED)
     if isinstance(value, ArrayBind):
         return _array_wire_bind(value)
     if isinstance(value, StructuredDocument):
@@ -444,8 +452,9 @@ def _document_wire_bind(value: object) -> WireValue:
         managed = decode_wire(JSON, cast("WireValue", value))
         return encode_wire(JSON, managed)
     except UsageError as error:
-        raise SqlGenError(
-            f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}"
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}",
         ) from error
 
 
@@ -467,8 +476,10 @@ def _array_wire_bind(array: ArrayBind) -> WireValue:
     ]
 
 
-class SqlGenError(ValueError):
-    """A query cannot be lowered to SQL (unsupported node or unbound reference)."""
+SQL_GENERATION_FAILED: Final = "sql-generation-failed"
+"""The code of the :class:`~parallax.core.base.InternalError` lowering raises
+where the plan it was handed breaks an invariant lowering relies on: a node
+or reference no accepted plan produces."""
 
 
 def table_layout(
@@ -485,10 +496,15 @@ def table_layout(
     view = facet.entity(entity)
     container = None if view is None else view.container
     if container is None:  # pragma: no cover - an abstract position never reads one table
-        raise SqlGenError(f"{entity.canonical}: this inheritance position has no Table Layout")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{entity.canonical}: this inheritance position has no Table Layout",
+        )
     layout = storage.table(container)
     if layout is None:  # pragma: no cover - every accepted Table compiles exactly one layout
-        raise SqlGenError(f"{container.name}: the model compiles no layout for this table")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{container.name}: the model compiles no layout for this table"
+        )
     return layout
 
 
@@ -658,7 +674,9 @@ class StatementBuilder[RowScope = object]:
         if self._statement_plan is None:
             self._statement_plan = statement
         elif self._statement_plan is not statement:
-            raise SqlGenError("a statement renders the lexical plans of one statement plan")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a statement renders the lexical plans of one statement plan"
+            )
         if scope_id in self._source_bindings:
             return
         plan = statement.lexical_scopes[scope_id]
@@ -670,7 +688,7 @@ class StatementBuilder[RowScope = object]:
     ) -> None:
         slots = _entry_slots(self._source_bindings, ref, "source")
         if slots[ref.index] is not None:
-            raise SqlGenError("a shared source renders once per statement")
+            raise InternalError(SQL_GENERATION_FAILED, "a shared source renders once per statement")
         slots[ref.index] = RenderedSourceBinding(target, origin)
 
     def source_binding(
@@ -678,7 +696,9 @@ class StatementBuilder[RowScope = object]:
     ) -> RenderedSourceBinding[RowScope]:
         binding = _entry_slots(self._source_bindings, ref, "source")[ref.index]
         if binding is None:
-            raise SqlGenError("a shared source is read before its join renders")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a shared source is read before its join renders"
+            )
         return binding
 
     def record_owner_results_binding(
@@ -690,7 +710,9 @@ class StatementBuilder[RowScope = object]:
     ) -> None:
         slots = _entry_slots(self._owner_results_bindings, ref, "owner_results")
         if slots[ref.index] is not None:
-            raise SqlGenError("an owner-results relation renders once per statement")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "an owner-results relation renders once per statement"
+            )
         slots[ref.index] = RenderedOwnerResultsBinding(alias, columns)
 
     def owner_results_binding(
@@ -698,7 +720,9 @@ class StatementBuilder[RowScope = object]:
     ) -> RenderedOwnerResultsBinding:
         binding = _entry_slots(self._owner_results_bindings, ref, "owner_results")[ref.index]
         if binding is None:
-            raise SqlGenError("owner results are read before their relation renders")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "owner results are read before their relation renders"
+            )
         return binding
 
     def bind_structural(self, value: object) -> None:
@@ -777,7 +801,9 @@ class StatementBuilder[RowScope = object]:
         value is null or the open upper bound, which binds outside every span.
         """
         if len(row) != len(pattern):
-            raise SqlGenError("a repeated bind pattern has inconsistent row widths")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a repeated bind pattern has inconsistent row widths"
+            )
         signature = tuple(
             [
                 None if value is None or value is INFINITY else slot
@@ -834,7 +860,9 @@ class StatementBuilder[RowScope = object]:
     def append_fragment(self, statement: LoweredStatement) -> None:
         """Append a compiler-proven fragment without discarding bind provenance."""
         if not statement.is_compiler_proven:
-            raise SqlGenError("only a finished compiler fragment may be appended")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "only a finished compiler fragment may be appended"
+            )
         self._seal_typed_rows()
         offset = len(self._binds)
         self._binds.extend(statement.binds)
@@ -848,11 +876,16 @@ class StatementBuilder[RowScope = object]:
         """Validate bind metadata and seal a compiler-proven statement."""
         self._seal_typed_rows()
         if self._classified != len(self._binds):
-            raise SqlGenError("every compiler bind must be supplied through one role-specific API")
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                "every compiler bind must be supplied through one role-specific API",
+            )
         if any(None in bindings for bindings in self._source_bindings.values()):
-            raise SqlGenError("a planned shared source was never rendered")
+            raise InternalError(SQL_GENERATION_FAILED, "a planned shared source was never rendered")
         if any(None in bindings for bindings in self._owner_results_bindings.values()):
-            raise SqlGenError("a planned owner-results relation was never rendered")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a planned owner-results relation was never rendered"
+            )
         occupied: set[int] = set()
         spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
         for span in spans:
@@ -866,16 +899,22 @@ class StatementBuilder[RowScope = object]:
                     and span.repetitions > 0
                 )
             if not valid_shape:
-                raise SqlGenError("typed bind metadata has invalid dimensions or stride")
+                raise InternalError(
+                    SQL_GENERATION_FAILED, "typed bind metadata has invalid dimensions or stride"
+                )
             for index in span.indices():
                 if not 0 <= index < len(self._binds) or index in occupied:
-                    raise SqlGenError("typed bind metadata is out of range or overlaps")
+                    raise InternalError(
+                        SQL_GENERATION_FAILED, "typed bind metadata is out of range or overlaps"
+                    )
                 occupied.add(index)
         overrides = tuple(
             _WireBindOverride(index, value) for index, value in sorted(self._wire_overrides.items())
         )
         if any(not 0 <= override.index < len(self._binds) for override in overrides):
-            raise SqlGenError("Wire bind override metadata is out of range")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "Wire bind override metadata is out of range"
+            )
         return LoweredStatement(sql, tuple(self._binds), spans, overrides, True)
 
     def _append(self, value: object) -> None:
@@ -912,8 +951,13 @@ def _entry_slots[Binding](
     """The binding slots of ``ref``'s selected lexical plan, refusing a
     reference of another kind or to an entry no selected plan holds."""
     if ref.kind != kind:
-        raise SqlGenError(f"a {ref.kind} reference addresses no {kind} binding")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"a {ref.kind} reference addresses no {kind} binding"
+        )
     slots = store.get(ref.scope_id)
     if slots is None or not 0 <= ref.index < len(slots):
-        raise SqlGenError(f"no selected lexical plan holds {kind} {ref.scope_id}.{ref.index}")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"no selected lexical plan holds {kind} {ref.scope_id}.{ref.index}",
+        )
     return slots

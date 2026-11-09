@@ -5,11 +5,11 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.core import read_delivery
-from parallax.core.base import InternalError, UsageError
+from parallax.core.base import InternalError, UnsupportedError, UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import entity_by_name
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
 
 __all__ = [
     "READ_ERRORS",
@@ -29,8 +29,8 @@ class UnclassifiedEngineError(ValueError):
 
 
 READ_ERRORS = (
-    SqlGenError,
     UsageError,
+    UnsupportedError,
     InternalError,
     KeyError,
     ValueError,

@@ -53,6 +53,7 @@ from parallax.core.base import (
     UUID,
     DocumentValue,
     FrozenMap,
+    InternalError,
     NeutralType,
     StructuredDocument,
 )
@@ -61,6 +62,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
     JSON_NULL,
+    WRITE_RESULT_INTEGRITY_VIOLATED,
     ArrayBind,
     BeginFailed,
     CallbackRaised,
@@ -76,7 +78,6 @@ from parallax.core.db_port import (
     RolledBack,
     StatementFailed,
     StatementNotExecuted,
-    WriteResultIntegrityError,
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
@@ -92,6 +93,7 @@ from parallax.postgres._connection import (
 )
 from parallax.postgres._context import PostgresConnectionContext
 from parallax.postgres._route import PostgresRoute
+from tests._support.errors import raises_code
 from tests.unit.postgres._native_pipeline_support import (
     Result,
     Server,
@@ -1178,7 +1180,7 @@ def test_a_result_no_count_only_statement_produces_is_an_integrity_failure(
     server = Server(script([counted(1)], answered, [counted(1)]))
     with native_session(monkeypatch, server) as native:
         facade = PostgresConnection(native)
-        with pytest.raises(WriteResultIntegrityError) as refused:
+        with raises_code(InternalError, WRITE_RESULT_INTEGRITY_VIOLATED) as refused:
             _ordered_writes(facade)
 
     message = str(refused.value)

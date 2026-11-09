@@ -6,6 +6,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Literal
 
+from parallax.core.base import InternalError
 from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
@@ -46,7 +47,7 @@ from parallax.core.predicate._resolved import (
     ScalarCollection,
     ScalarElement,
 )
-from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._context import table_layout as _table_layout
 from parallax.core.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
@@ -79,7 +80,9 @@ class RelationshipCandidatePlan:
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = model.entity(identity)
     if entity is None:  # pragma: no cover - validated positions name accepted entities
-        raise SqlGenError(f"{identity.canonical!r} names no declared entity")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{identity.canonical!r} names no declared entity"
+        )
     return entity
 
 
@@ -137,7 +140,10 @@ def temporal_visibility(relationship: ResolvedRelationship) -> TemporalPerspecti
     """The perspective ``relationship``'s candidates are visible under."""
     visibility = relationship.temporal_visibility
     if visibility is None:  # pragma: no cover - temporal resolution reaches every relationship
-        raise SqlGenError(f"{relationship.identity}: the relationship's visibility is unresolved")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{relationship.identity}: the relationship's visibility is unresolved",
+        )
     return visibility
 
 
@@ -624,7 +630,9 @@ class _StatementPlanner:
         scopes: list[LexicalScopePlan] = []
         for scope in self._scopes:
             if scope is None:  # pragma: no cover - every reserved scope is planned
-                raise SqlGenError("a reserved lexical scope was never planned")
+                raise InternalError(
+                    SQL_GENERATION_FAILED, "a reserved lexical scope was never planned"
+                )
             scopes.append(scope)
         return StatementPlan(
             predicate,
@@ -752,7 +760,9 @@ class _ScopeConstruction:
             cells: list[OwnerResultCell] = []
             for path, scope_id in zip(open_results.paths, open_results.scopes, strict=True):
                 if scope_id is None:  # pragma: no cover - every collected occurrence is placed
-                    raise SqlGenError("an owner-result cell was never planned")
+                    raise InternalError(
+                        SQL_GENERATION_FAILED, "an owner-result cell was never planned"
+                    )
                 cells.append(OwnerResultCell(path, scope_id))
             results.append(OwnerResultsPlan(self._source_refs[open_results.owner], tuple(cells)))
         return LexicalScopePlan(
@@ -1374,7 +1384,9 @@ class _ScopeConstruction:
             planner.facet, planner.storage, self._row.entity, narrow.selection
         ).tag
         if tag is None:  # pragma: no cover - TPCS union branches always fix a concrete
-            raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a TPCS branch narrow requires a concrete branch scope"
+            )
         return tag
 
     def _candidates(
@@ -1430,7 +1442,9 @@ def _here(terminal: Terminal) -> UnsharedEvaluation:
 def _narrowed_relationship(narrow: ResolvedNarrow) -> ResolvedRelationship:
     target = narrow.target
     if not isinstance(target, RelatedObject):  # pragma: no cover - a reached target narrows here
-        raise SqlGenError("a narrowing of the current row reaches no relationship")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a narrowing of the current row reaches no relationship"
+        )
     return target.relationship
 
 

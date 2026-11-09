@@ -4,7 +4,7 @@ from collections.abc import Hashable, Iterator, Mapping
 from itertools import chain
 from typing import cast
 
-from parallax.core.base import Json, ManagedValue, NeutralType
+from parallax.core.base import InternalError, Json, ManagedValue, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -38,7 +38,7 @@ from parallax.core.write_plan.payload import (
     RowPayload,
     RowSlots,
 )
-from parallax.core.write_plan.planned_rows import WritePlanningError
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     MaxPlusOne,
     PlannedAssignments,
@@ -76,8 +76,9 @@ class LayoutPayloadPreparer:
 
     def effect_slots(self, entity: EntityIdentity, shape: Hashable) -> EffectSlots:
         if not isinstance(shape, EffectShape) or shape.entity != entity:
-            raise WritePlanningError(
-                f"{entity.canonical}: an effect shape names the Effect Slots of its own Entity"
+            raise InternalError(
+                WRITE_PLANNING_FAILED,
+                f"{entity.canonical}: an effect shape names the Effect Slots of its own Entity",
             )
         return self._storage.entity(entity).effect_slots(shape)
 
@@ -173,9 +174,10 @@ class LayoutPayloadPreparer:
                 for (position, cell), other in zip(before.stated_cells(), row.cells, strict=True)
             )
         ):
-            raise WritePlanningError(
+            raise InternalError(
+                WRITE_PLANNING_FAILED,
                 f"{entity.name!r}: prepared cells rebind only to a row stating what they were "
-                "prepared from outside its temporal interval"
+                "prepared from outside its temporal interval",
             )
         return RowPayload(
             slots=payload.slots,
@@ -263,9 +265,10 @@ def _assignment_cells(
         slots |= 1 << index
         values.append(value)
     if matched != len(attributes) + len(value_objects):  # pragma: no cover - planning places it
-        raise WritePlanningError(
+        raise InternalError(
+            WRITE_PLANNING_FAILED,
             f"{storage.entity.canonical}: a planned member occupies no Column of the target's "
-            "Table Layout"
+            "Table Layout",
         )
     return slots, tuple(values)
 

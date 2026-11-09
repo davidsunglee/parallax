@@ -16,19 +16,25 @@ from decimal import Decimal
 
 import pytest
 
-from parallax.core._execution._write_lowering import LoweringCursor, stream_physical
-from parallax.core.base import INFINITY, INT32, INT64, JSON, STRING, TIMESTAMP
+from parallax.core._execution._write_lowering import (
+    STORED_DOCUMENT_NOT_OBJECT,
+    LoweringCursor,
+    stream_physical,
+)
+from parallax.core.base import INFINITY, INT32, INT64, JSON, STRING, TIMESTAMP, InternalError
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JSON_NULL, ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.read_delivery import InvalidDataError
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._write import GroupedEffectBuilder
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape
 from parallax.core.write_plan.payload import AssignmentPayload
 from parallax.core.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
-from parallax.core.write_plan.planned_rows import WritePlanningError
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
     UNVERSIONED,
@@ -40,6 +46,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
     SelfIncrement,
 )
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._grouped_effect_support import (
     ACCOUNT,
@@ -461,7 +468,7 @@ def test_a_grouped_effect_refuses_a_dialect_binding_no_arrays() -> None:
     assert shape is not None
     slots = preparer.effect_slots(step.entity, shape)
     arrayless = dataclasses.replace(POSTGRES, binds_arrays=False)
-    with pytest.raises(SqlGenError, match="binds no arrays"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="binds no arrays"):
         GroupedEffectBuilder(slots, WALLET, arrayless)
 
 
@@ -473,7 +480,7 @@ def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
     assert shape is not None
     builder = GroupedEffectBuilder(preparer.effect_slots(balance.entity, shape), WALLET, POSTGRES)
     builder.append(balance, preparer.assignments(balance.entity, balance.assignments))
-    with pytest.raises(SqlGenError, match="does not place"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="does not place"):
         builder.append(owner, preparer.assignments(owner.entity, owner.assignments))
     deletion = PlannedDelete(
         entity=balance.entity,
@@ -481,7 +488,9 @@ def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(1, MISSING_TARGET),
     )
-    with pytest.raises(SqlGenError, match="holds effects of its shape's kind"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="holds effects of its shape's kind"
+    ):
         builder.append(deletion, None)
     assert arrays(builder.finish())[0] == (INT64, [1])
 
@@ -493,7 +502,11 @@ def test_a_grouped_effect_refuses_an_effect_gated_otherwise_than_its_shape() -> 
     assert shape is not None
     builder = GroupedEffectBuilder(preparer.effect_slots(ungated.entity, shape), ACCOUNT, POSTGRES)
     builder.append(ungated, None)
-    with pytest.raises(SqlGenError, match="addresses or gates its row otherwise than its shape"):
+    with raises_code(
+        InternalError,
+        SQL_GENERATION_FAILED,
+        match="addresses or gates its row otherwise than its shape",
+    ):
         builder.append(delete(ACCOUNT, "Account", 2, observed=1), None)
     assert arrays(builder.finish()) == [(INT64, [1])]
 
@@ -524,7 +537,7 @@ def test_effect_slots_gather_a_whole_row_or_nothing() -> None:
     slots = preparer.effect_slots(step.entity, shape)
     payload = preparer.assignments(step.entity, step.assignments)
     narrow: list[list[object]] = [[] for _ in slots.element_types[:-1]]
-    with pytest.raises(WritePlanningError, match="one cell per source column"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="one cell per source column"):
         slots.gather(narrow, step, payload)
     assert narrow == [[] for _ in narrow]
     columns: list[list[object]] = [[] for _ in slots.element_types]
@@ -538,13 +551,13 @@ def test_a_grouped_effect_holding_no_effect_has_no_statement() -> None:
     shape = preparer.effect_shape(step)
     assert shape is not None
     builder = GroupedEffectBuilder(preparer.effect_slots(step.entity, shape), WALLET, POSTGRES)
-    with pytest.raises(SqlGenError, match="holds an effect"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="holds an effect"):
         builder.finish()
 
 
 def test_effect_slots_answer_only_a_shape_of_their_own_entity() -> None:
     preparer = LayoutPayloadPreparer(PAYMENT)
-    with pytest.raises(WritePlanningError, match="Effect Slots of its own Entity"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="Effect Slots of its own Entity"):
         preparer.effect_slots(entity_identity(PAYMENT, "CardPayment"), "not a shape")
 
 
@@ -556,7 +569,7 @@ def test_a_grouped_effect_opens_only_at_its_own_span() -> None:
     cursor = LoweringCursor(tuple(steps), preparer, WALLET, POSTGRES)
     first = cursor.take()
     assert first is not None
-    with pytest.raises(SqlGenError, match="opens at its own span"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="opens at its own span"):
         cursor.lowered_grouped_effect(first, EffectSpan(0, 3, shape))
 
 
@@ -776,7 +789,8 @@ def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefi
     assert first is not None and cursor.grouped_effect_start(first) is span
     statement, held, raised = cursor.lowered_grouped_effect(first, span)
     assert held == tuple(steps[:2])
-    assert isinstance(raised, SqlGenError) and "not known to be an object" in str(raised)
+    assert isinstance(raised, InvalidDataError) and raised.code == STORED_DOCUMENT_NOT_OBJECT
+    assert "not known to be an object" in str(raised)
     assert arrays(statement)[1] == (INT64, [1, 2])
 
 

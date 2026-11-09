@@ -389,8 +389,8 @@ are already published into Wire form in memory, with no further read.
 - `parallax.core._execution._planning:wire_model_facts`
 - `parallax.snapshot._publication._wire:WireEntity`
 - `parallax.snapshot._publication._wire:wire_scalar_cache`
-- `parallax.core.read_delivery._page._stored_data:InvalidData`
-- `parallax.core.read_delivery._page._stored_data:InvalidDataError`
+- `parallax.core._stored_data:InvalidData`
+- `parallax.core._stored_data:InvalidDataError`
 - `parallax.snapshot._handle._read:Snapshot`
 - `parallax.snapshot._handle._read:Snapshot.result`
 - `parallax.snapshot._handle._read:Snapshot.results`

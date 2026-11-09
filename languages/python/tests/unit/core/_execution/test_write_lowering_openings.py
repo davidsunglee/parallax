@@ -32,6 +32,7 @@ from parallax.core._execution._write_lowering import (
     stream_physical,
 )
 from parallax.core.base import INFINITY as OPEN
+from parallax.core.base import InternalError
 from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
@@ -42,7 +43,8 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
@@ -431,7 +433,8 @@ def test_a_later_entry_storing_other_cells_than_its_shape_promised_ends_the_run(
     )
     broken = replace(steps[2], entries=(replace(steps[2].entries[0], prepared=promise_broken),))
     opening = _prefix_after((*steps[:2], broken), _cursor((*steps[:2], broken)))
-    assert isinstance(opening.failure, SqlGenError)
+    assert isinstance(opening.failure, InternalError)
+    assert opening.failure.code == SQL_GENERATION_FAILED
     assert "same cells" in str(opening.failure)
 
 

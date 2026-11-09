@@ -6,9 +6,10 @@ import uuid
 from array import array
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Final, Literal, NamedTuple, Protocol, cast
+from typing import Final, NamedTuple, Protocol, cast
 
 from parallax.core import concurrency
+from parallax.core._stored_data import StoredDataIssueCode
 from parallax.core.base import UnknownFamilyTag
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._construction_input import ABSENT
@@ -34,7 +35,6 @@ __all__ = [
     "PageRows",
     "PageSchedule",
     "RowKey",
-    "StoredDataIssueCode",
     "StoredDataIssueInput",
     "attribute_state",
     "dedupe_issues",
@@ -69,20 +69,6 @@ _ATOMIC_STORED_TYPES: Final = (
     dt.datetime,
     uuid.UUID,
 )
-
-
-type StoredDataIssueCode = Literal[
-    "stored-data-required-member-absent",
-    "stored-data-required-member-null",
-    "stored-data-one-wrong-kind",
-    "stored-data-many-wrong-kind",
-    "stored-data-leaf-undecodable",
-    "stored-data-attribute-null",
-    "stored-data-family-tag-unknown",
-    "stored-data-primary-key-null",
-    "stored-data-primary-key-undecodable",
-]
-"""The closed internal stored-data issue vocabulary for read delivery."""
 
 
 @dataclass(frozen=True, slots=True)

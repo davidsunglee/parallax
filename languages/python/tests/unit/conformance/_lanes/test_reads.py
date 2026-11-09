@@ -22,7 +22,8 @@ from parallax.conformance import case_format
 from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.base import INFINITY, DocumentValue, StructuredDocument, UsageError
+from parallax.core import UnsupportedError
+from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
@@ -220,7 +221,7 @@ def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
     with pytest.raises(UnclassifiedEngineError) as caught:
         reads.compile_read_case(case, "postgres")
     refusal = caught.value.__cause__
-    assert isinstance(refusal, UsageError)
+    assert isinstance(refusal, UnsupportedError)
     assert refusal.code == "execution-feature-deferred"
     assert "has deferred snapshot-history-includes and" in refusal.args[1]
 

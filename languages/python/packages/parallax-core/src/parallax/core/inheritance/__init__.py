@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final, Literal
 
-from parallax.core.base import UsageError
+from parallax.core.base import UnsupportedError, UsageError
 from parallax.core.inheritance._compile import MODEL_COMPILER, root_metadata
 from parallax.core.inheritance._facet import (
     FACET_KEY,
@@ -70,8 +70,10 @@ type SubtypeWriteCode = Literal[
     "abstract-write-target",
 ]
 """The concrete-subtype write-payload rules an inheritance-family write breaks,
-raised as a :class:`~parallax.core.base.UsageError` under their core
-``rejectedRule`` spellings."""
+raised under their core ``rejectedRule`` spellings: a set-based write as an
+:class:`~parallax.core.base.UnsupportedError`, since such writes are out of
+scope rather than meaningless, and every other rule as a
+:class:`~parallax.core.base.UsageError`."""
 
 SUBTYPE_WRITE_SET_BASED_UNSUPPORTED: Final = "subtype-write-set-based-unsupported"
 SUBTYPE_WRITE_METADATA_FIELD: Final = "subtype-write-metadata-field"
@@ -100,8 +102,8 @@ _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", WIRE_TY
 def validate_subtype_write(
     model: AcceptedMetamodel, entity: EntityMetadata, row: Mapping[str, object]
 ) -> None:
-    """Validate a concrete-subtype write payload's SHAPE, raising a
-    :class:`~parallax.core.base.UsageError` coded with the rule it breaks.
+    """Validate a concrete-subtype write payload's SHAPE, raising the refusal
+    coded with the rule it breaks.
 
     A no-op for a non-participant ``entity`` (every entity outside an inheritance
     family accepts any well-formed row shape here). For a participant, checks in
@@ -127,7 +129,7 @@ def validate_subtype_write(
     key = position.primary_key.identity.name
     name = entity.identity.name
     if key not in row:
-        raise UsageError(
+        raise UnsupportedError(
             SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
             f"{name}: write carries none of the family's primary-key attribute(s) "
             f"{[key]} -- a keyless payload denotes an unsupported set-based "
@@ -214,7 +216,7 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     if entity.inheritance is None:
         return
     name = entity.identity.name
-    raise UsageError(
+    raise UnsupportedError(
         SUBTYPE_WRITE_SET_BASED_UNSUPPORTED,
         f"{name}: a predicate-selected (set-based) write on an inheritance-family "
         "entity is unsupported (subtype-write-set-based-unsupported) — per-object writes "

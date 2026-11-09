@@ -44,7 +44,7 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
 )
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, UsageError
+from parallax.core.base import INFINITY, InternalError, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -80,10 +80,10 @@ from parallax.core.write_plan import (
     TemporalObservation,
     VersionObservation,
     WritePlan,
-    WritePlanningError,
 )
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.core.write_plan.managed_row import ManagedRow, projected_row
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -99,6 +99,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     object_source,
@@ -835,7 +836,9 @@ def test_an_observation_on_an_unversioned_non_temporal_update_is_refused() -> No
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("7.00")},))
     key_ = object_key(update, _WALLET)
     assert key_ is not None
-    with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'amend'"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="unversioned Non-Temporal 'amend'"
+    ):
         _plan([update], _WALLET, observations={key_: VersionObservation(observed_version=3)})
 
 
@@ -843,7 +846,9 @@ def test_an_observation_on_an_unversioned_non_temporal_delete_is_refused() -> No
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1},))
     key_ = object_key(delete, _WALLET)
     assert key_ is not None
-    with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'delete'"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="unversioned Non-Temporal 'delete'"
+    ):
         _plan([delete], _WALLET, observations={key_: VersionObservation(observed_version=3)})
 
 
@@ -1475,7 +1480,9 @@ def test_audit_may_not_state_a_temporal_rows_key_or_bounds(
     )
     key_ = object_key(update, _POSITION)
     assert key_ is not None
-    with pytest.raises(WritePlanningError, match="state no primary key, temporal bound"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="state no primary key, temporal bound"
+    ):
         _plan(
             [update],
             _POSITION,
@@ -1488,7 +1495,7 @@ def test_audit_may_not_state_an_updated_rows_key(monkeypatch: pytest.MonkeyPatch
     stamp = AttributeIdentity(corpus_entity("Wallet"), "id")
     monkeypatch.setattr(planning_composition, "NO_AUDIT", RecordingAudit(stamps={stamp: 999}))
     model = _wallet_and_account()
-    with pytest.raises(WritePlanningError, match="an update's decoration"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="an update's decoration"):
         _plan(_wallet_update(), model)
 
 

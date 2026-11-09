@@ -12,7 +12,9 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import MAX, Attr, DomainModel, Entity, TxTemporal, attr
+from parallax.core._execution._unit_work.effects import WRITE_RESULT_INVALID
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
+from parallax.core.base import InternalError
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
@@ -20,7 +22,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
 )
-from parallax.core.unit_work import KeyedWriteInstruction, WriteResultError, admitted_write
+from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -122,6 +124,6 @@ def test_an_answer_the_insert_cannot_produce_fails_the_write_and_rolls_it_back(
     answered: list[dict[str, object]],
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=answered)))
-    with raises_contextualized(WriteResultError):
+    with raises_contextualized(InternalError, code=WRITE_RESULT_INVALID):
         db_for(_MODEL, port).transact(lambda tx: _insert_allocated(tx, Ledger, 100))
     assert isinstance(port.calls[-1], RollbackCall)

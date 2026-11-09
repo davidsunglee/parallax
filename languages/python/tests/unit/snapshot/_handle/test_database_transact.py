@@ -31,10 +31,10 @@ from parallax.core import (
     attr,
     index,
 )
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution import RetryPolicy, ServingModel, TxnOptions, prepare_model
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,

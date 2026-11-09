@@ -36,7 +36,7 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     target_write,
 )
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, InternalError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -53,7 +53,6 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
-    WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.plan import (
@@ -66,6 +65,7 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
     TERMINATED,
@@ -78,6 +78,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import CountingClock, instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
@@ -415,7 +416,7 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
         ),
     )
     clock = CountingClock([_PLANNED_AT])
-    with pytest.raises(WritePlanningError, match="closes the current milestone"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="closes the current milestone"):
         _plan(item, instant=TransactionInstant(clock))
     assert clock.calls == 0
 

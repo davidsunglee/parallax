@@ -36,7 +36,7 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import DATE as DATE_TYPE
-from parallax.core.base import INFINITY, INT64, STRING, ManagedValue, UsageError
+from parallax.core.base import INFINITY, INT64, STRING, InternalError, ManagedValue, UsageError
 from parallax.core.concurrency import _compile as concurrency_compile
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
@@ -70,7 +70,7 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.read_delivery._row_decoding import row_coordinates
 from parallax.core.relationship import _compile as relationship_compile
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import (
     CompiledPredicate,
@@ -79,6 +79,7 @@ from parallax.core.sql_gen._compile import (
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
+    SQL_GENERATION_FAILED,
     AffixForm,
     ComparisonTextForm,
     ExecutionValueForm,
@@ -92,6 +93,7 @@ from parallax.descriptor._records import Attribute, Entity, Inheritance
 from parallax.descriptor._records import Metamodel as Records
 from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read, read_position, resolved_as_stated
 from tests.unit._corpus_model_support import formed, model, records, target
 from tests.unit.core.sql_gen._delivery_support import deliver
@@ -137,7 +139,9 @@ def test_an_element_scope_admits_constants_and_refuses_attribute_subjects() -> N
         ResolvedQuantifier("any", phones, ResolvedConstant(True)), CUSTOMER
     )
     assert constant.statement.sql.endswith("else cast(? as jsonb) end) t1)")
-    with pytest.raises(SqlGenError, match="is not read from a Value Object element"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="is not read from a Value Object element"
+    ):
         _compile_resolved_product(
             ResolvedQuantifier("any", phones, ResolvedComparison("eq", name, "Ada")), CUSTOMER
         )
@@ -163,7 +167,7 @@ def test_sql_lowering_rejects_inconsistent_resolved_value_object_products() -> N
             ),
         ),
     )
-    with pytest.raises(SqlGenError, match="outside its resolved container"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="outside its resolved container"):
         _compile_resolved_product(
             ResolvedQuantifier("any", phones, ResolvedComparison("eq", outside_leaf, "Berlin")),
             CUSTOMER,
@@ -178,7 +182,9 @@ def test_sql_lowering_rejects_inconsistent_resolved_value_object_products() -> N
             ),
         ),
     )
-    with pytest.raises(SqlGenError, match="is absent from the active position"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="is absent from the active position"
+    ):
         _compile_resolved_product(ResolvedComparison("eq", absent_leaf, "Berlin"), CUSTOMER)
 
     absent_container = cast(
@@ -188,7 +194,9 @@ def test_sql_lowering_rejects_inconsistent_resolved_value_object_products() -> N
             identity=ValueObjectIdentity(customer.identity, ("missing", "phones")),
         ),
     )
-    with pytest.raises(SqlGenError, match="is absent from the active position"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="is absent from the active position"
+    ):
         _compile_resolved_product(ResolvedQuantifier("any", absent_container), CUSTOMER)
 
 
@@ -301,20 +309,19 @@ def test_statement_is_frozen_value() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The supported interface itself. `parallax.core.sql_gen` exports exactly two   #
-# names; every compiler operation and compiler product is private implementation. #
+# The supported interface itself. `parallax.core.sql_gen` exports exactly one    #
+# name; every compiler operation and compiler product is private implementation. #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
 # hashing, and copying are all structural — no stored callable, nothing to keep #
 # in sync by hand.                                                              #
 # --------------------------------------------------------------------------- #
-def test_the_package_exports_only_statement_and_error_values() -> None:
+def test_the_package_exports_only_the_statement_value() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
     # regression this guards, and a superset assertion would not see it. Canonical
     # column order is `m-inheritance`'s export, so its absence here is the point.
     import parallax.core.sql_gen as sql_gen
 
-    assert set(sql_gen.__all__) == {"LoweredStatement", "SqlGenError"}
-    assert sql_gen.SqlGenError is SqlGenError
+    assert set(sql_gen.__all__) == {"LoweredStatement"}
     assert sql_gen.LoweredStatement is LoweredStatement
     assert not hasattr(sql_gen, "ReadResultContract")
     assert not hasattr(sql_gen, "SelectListBuilder")
@@ -642,12 +649,12 @@ def test_child_template_projects_each_float32_key_to_its_canonical_wire_value(
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 def test_an_unrendered_child_template_has_no_wire_projection(dialect: Dialect) -> None:
-    with pytest.raises(SqlGenError, match="until its template renders"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="until its template renders"):
         _child_template(dialect).compiled.statement.wire_binds()
 
 
 def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() -> None:
-    with pytest.raises(SqlGenError, match="at least one gathered key"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="at least one gathered key"):
         _child_template(POSTGRES).render([])
 
 
@@ -747,7 +754,7 @@ def test_a_template_renders_every_key_occurrence_of_one_form_from_one_gathered_s
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 def test_a_template_refuses_gathered_keys_of_two_forms(dialect: Dialect) -> None:
-    with pytest.raises(SqlGenError, match="exactly one bind form"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="exactly one bind form"):
         sql_compile.compile_template(_two_key_sets(("orderId", "sku")), ORDERS, dialect)
 
 
@@ -1181,9 +1188,9 @@ def test_a_template_of_authored_operands_requires_a_query_holding_each_of_them()
     )
     fewer = _traveler_query({"eq": {"path": "Traveler.displayName", "value": "Ada"}})
 
-    with pytest.raises(SqlGenError, match="requires its query"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="requires its query"):
         template.render()
-    with pytest.raises(SqlGenError, match="lacks an operand"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="lacks an operand"):
         template.render(query=fewer)
 
 

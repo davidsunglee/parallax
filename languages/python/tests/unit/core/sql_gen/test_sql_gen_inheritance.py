@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 import pytest
 
-from parallax.core import continuation, inheritance, read_planning, storage_layout
+from parallax.core import UnsupportedError, continuation, inheritance, read_planning, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import StructuredDocument, UsageError
@@ -27,9 +27,9 @@ from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.read_delivery._page import MISSING_STORED_VALUE
 from parallax.core.read_planning import ResolvedReadProjection
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import (
+    INHERITANCE_LOCKING_READ_UNSUPPORTED,
     CellSource,
     DocumentMemberSource,
     EntitySources,
@@ -1809,10 +1809,15 @@ def test_tpcs_union_refuses_only_a_requested_shared_lock() -> None:
     )
     assert " union all " in compiled.statement.sql
     assert "for share" not in compiled.statement.sql
-    with pytest.raises(SqlGenError, match="shared-lock suffix over a table-per-concrete-subtype"):
+    with raises_code(UnsupportedError, INHERITANCE_LOCKING_READ_UNSUPPORTED) as refused:
         compile_read(
             oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), preference="locking"
         )
+    # The refusal names a current limitation and the ways around it, never a defect.
+    assert "this version of Parallax cannot lock" in str(refused.value)
+    assert "Version the family root, read one concrete subtype, or read without the lock" in str(
+        refused.value
+    )
 
 
 def test_tpcs_union_orders_by_the_collision_safe_result_alias() -> None:

@@ -35,6 +35,7 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
+    UnsupportedError,
     ValueObject,
     attr,
 )
@@ -1103,7 +1104,7 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
             .include(Policy.coverages)
         )
 
-    with raises_contextualized(UsageError, code="execution-feature-deferred") as caught:
+    with raises_contextualized(UnsupportedError, code="execution-feature-deferred") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)

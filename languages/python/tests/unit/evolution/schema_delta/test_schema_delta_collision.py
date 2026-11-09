@@ -15,7 +15,7 @@ from typing import Literal
 
 import pytest
 
-from parallax.core import storage_layout
+from parallax.core import InternalError, storage_layout
 from parallax.core.base import STRING
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
@@ -23,13 +23,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import _temporal as temporal_naming
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
 from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
-from parallax.evolution.schema_delta import (
-    CollidingTemporalConstraint,
-    CollisionGroup,
-    IndexPresence,
-    PhysicalIndexNameCollisionError,
-    schema_delta,
-)
+from parallax.evolution.schema_delta import PHYSICAL_INDEX_NAME_COLLISION, schema_delta
 from parallax.evolution.schema_delta import _naming as naming
 from parallax.evolution.schema_delta._naming import NamedIndex, census, collision_groups
 from parallax.evolution.schema_delta._physical import (
@@ -38,6 +32,12 @@ from parallax.evolution.schema_delta._physical import (
     TemporalBackingIndex,
 )
 from parallax.evolution.schema_delta._plan import temporal_backing_indices
+from parallax.evolution.schema_delta._values import (
+    CollidingTemporalConstraint,
+    CollisionGroup,
+    IndexPresence,
+)
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
@@ -211,16 +211,14 @@ def test_a_generated_delta_refuses_a_collision_rather_than_renaming(
     # only a stub can do. What the generator must then NOT do is pick a different
     # name for one of them: a definition's name is its own.
     monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
-    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
         schema_delta(evolve(ABSENT, entity_with_two_indices_over_one_column()), POSTGRES)
-    error = raised.value
-    assert error.dialect_identity == "postgres"
-    (group,) = error.groups
-    assert [definition.index.name for definition in group.definitions] == [
-        "widget_code_uq",
-        "widget_code_uq_dup",
-    ]
-    assert all(definition.presence is IndexPresence.LATER for definition in group.definitions)
+    assert raised.value.args[1] == (
+        "postgres derived colliding Physical Index Names: "
+        "pxi_widget_widget_widget_code_00000000000000000000000000000000 is derived by "
+        "unique Index Widget.widget_code_uq on widget (code) [later], "
+        "unique Index Widget.widget_code_uq_dup on widget (code) [later]"
+    )
 
 
 def test_a_temporal_collision_reports_the_authored_components_without_the_axis_ends(
@@ -228,17 +226,14 @@ def test_a_temporal_collision_reports_the_authored_components_without_the_axis_e
 ) -> None:
     monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
     model = corpus()["temporal-authored-index"]
-    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
         schema_delta(evolve(ABSENT, model), POSTGRES)
-    reported = {
-        (definition.table.name, definition.index.name): definition.components
-        for group in raised.value.groups
-        for definition in group.definitions
-    }
-    assignment = EntityIdentity("parallax.compatibility", "Assignment")
-    handle = EntityIdentity("parallax.compatibility", "Handle")
-    assert reported[("assignment", "assignment_code")] == (AttributeIdentity(assignment, "code"),)
-    assert reported[("handle", "handle_label")] == (AttributeIdentity(handle, "label"),)
+    message = str(raised.value)
+    assert (
+        "Index parallax.compatibility.Assignment.assignment_code on assignment (code) " in message
+    )
+    assert "Index parallax.compatibility.Handle.handle_label on handle (label) " in message
+    assert "in_z" not in message and "out_z" not in message
 
 
 def test_a_collision_with_an_index_the_delta_never_touches_is_refused(
@@ -249,13 +244,12 @@ def test_a_collision_with_an_index_the_delta_never_touches_is_refused(
     # an object in the database while the new one is created beside it, so a name
     # it already holds is a name the delta cannot take.
     monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
-    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
         schema_delta(_gaining_a_second_index(), POSTGRES)
-    (group,) = raised.value.groups
-    assert [(entry.index.name, entry.presence) for entry in group.definitions] == [
-        ("widget_code_uq", IndexPresence.BOTH),
-        ("widget_code_uq_dup", IndexPresence.LATER),
-    ]
+    assert raised.value.args[1].endswith(
+        "unique Index Widget.widget_code_uq on widget (code) [both], "
+        "unique Index Widget.widget_code_uq_dup on widget (code) [later]"
+    )
 
 
 def test_a_delta_that_frees_a_name_before_taking_it_is_generated(
@@ -279,13 +273,13 @@ def test_a_delta_that_takes_a_name_before_freeing_it_is_refused(
     # first and the name is still held, so the delta is not executable and is
     # refused instead of emitted.
     monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
-    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
         schema_delta(_moving_an_index("z", "a"), _ONE_NAME)
-    (group,) = raised.value.groups
-    assert [(entry.table.name, entry.presence) for entry in group.definitions] == [
-        ("a", IndexPresence.LATER),
-        ("z", IndexPresence.EARLIER),
-    ]
+    assert raised.value.args[1] == (
+        "postgres derived colliding Physical Index Names: "
+        "pxi_index_00000000000000000000000000000000 is derived by "
+        "Index Anvil.code_ix on a (code) [later], Index Zither.code_ix on z (code) [earlier]"
+    )
 
 
 _ONE_NAME: Dialect = dataclasses.replace(POSTGRES, max_identifier_bytes=37)
@@ -417,11 +411,10 @@ def test_a_generated_delta_counts_temporal_constraints_in_the_census(
         return _SHARED.value
 
     monkeypatch.setattr(temporal_naming, "constraint_name", shared)
-    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
         schema_delta(evolve(ABSENT, formed(_RECORDS_BALANCE)), POSTGRES)
-    (group,) = raised.value.groups
-    assert group.definitions == ()
-    assert [(entry.kind, entry.presence) for entry in group.temporal_constraints] == [
-        ("exclusion", IndexPresence.LATER),
-        ("primaryKey", IndexPresence.LATER),
-    ]
+    assert raised.value.args[1] == (
+        f"postgres derived colliding Physical Index Names: {_SHARED.value} is derived by "
+        "temporal exclusion on balance (bal_id, in_z, out_z) [later], "
+        "temporal primaryKey on balance (bal_id, out_z) [later]"
+    )

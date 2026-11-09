@@ -48,7 +48,7 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
 )
-from parallax.core._execution._unit_work.effects import WRITE_RESULT_INVALID
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION, WRITE_RESULT_INVALID
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
@@ -69,7 +69,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     TRANSACTION_ROLLBACK_ONLY,
     KeyedWriteInstruction,
     PredicateSelection,

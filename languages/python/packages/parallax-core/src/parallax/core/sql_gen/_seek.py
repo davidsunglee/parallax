@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence, Set
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, InternalError
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import AttributeMetadata
 from parallax.core.object_query._resolved import (
@@ -13,7 +13,11 @@ from parallax.core.object_query._resolved import (
     ResolvedOrderTerm,
     ResolvedSeek,
 )
-from parallax.core.sql_gen._context import SqlGenError, StatementBuilder, continuation_carrier_form
+from parallax.core.sql_gen._context import (
+    SQL_GENERATION_FAILED,
+    StatementBuilder,
+    continuation_carrier_form,
+)
 from parallax.core.sql_gen._predicate import MemberSubject
 
 __all__ = [
@@ -171,15 +175,17 @@ def lower_seek[RowScope](
     its template renders the current coordinate's carrier into.
     """
     if len(seek.terms) != len(terms):
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"a seek over {len(seek.terms)} term(s) cannot be lowered against "
-            f"{len(terms)} ordering term(s)"
+            f"{len(terms)} ordering term(s)",
         )
     carriers = seek.coordinate.carriers
     if len(carriers) != len(terms):
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"a coordinate carrying {len(carriers)} value(s) cannot be lowered against "
-            f"{len(terms)} ordering term(s)"
+            f"{len(terms)} ordering term(s)",
         )
     for term, lowered in zip(seek.terms, terms, strict=True):
         _refuse_a_crossed_term(term, lowered)
@@ -242,14 +248,15 @@ def _refuse_a_crossed_term(term: ContinuationTerm, lowered: LoweredTerm) -> None
         or term.nulls != lowered.term.nulls
         or term.nullable != lowered.member.nullable
     ):
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"the seek's term {term.identity.name!r} "
             f"({term.direction}, nulls {term.nulls}, "
             f"{'nullable' if term.nullable else 'non-nullable'}) is not the ordering term "
             f"{lowered.member.identity.name!r} "
             f"({lowered.term.direction}, nulls {lowered.term.nulls}, "
             f"{'nullable' if lowered.member.nullable else 'non-nullable'}) "
-            f"at the same position"
+            f"at the same position",
         )
 
 
@@ -385,5 +392,7 @@ def _compared[RowScope](
             else:
                 ctx.bind_concrete(carrier, form)
         case "null":  # pragma: no cover - a NULL carrier lowers to a NULL test
-            raise SqlGenError("a NULL continuation carrier is never compared")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a NULL continuation carrier is never compared"
+            )
     return f"{resolved.compared} {comparator} ?"

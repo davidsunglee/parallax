@@ -29,7 +29,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import UsageError
+from parallax.core.base import UnsupportedError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ServingModel,
@@ -413,10 +413,10 @@ def test_a_family_predicate_update_is_refused_before_any_position_is_resolved(
     served = _served(profile_run, spies)
     db = served.db
     spies.clear()
-    refusals: list[UsageError] = []
+    refusals: list[UnsupportedError] = []
 
     def update(tx: TxnContext) -> None:
-        with pytest.raises(UsageError) as caught:
+        with pytest.raises(UnsupportedError) as caught:
             if representation == "typed":
                 typed(tx)
             else:

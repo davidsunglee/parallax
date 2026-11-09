@@ -14,10 +14,12 @@ operation carries; a refusal is simply the one place a caller can read it.
 from __future__ import annotations
 
 import dataclasses
+import pickle
 from collections.abc import Sequence
 
 import pytest
 
+from parallax.core import UnsupportedError
 from parallax.core.dialect import (
     POSTGRES,
     ColumnDdl,
@@ -35,6 +37,8 @@ from parallax.evolution.schema_delta import (
     UnsupportedSchemaEvolutionError,
     schema_delta,
 )
+from parallax.evolution.schema_delta._values import SCHEMA_EVOLUTION_UNSUPPORTED
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
@@ -103,9 +107,14 @@ def test_every_operation_a_dialect_refuses_is_reported_at_once() -> None:
     # No partial delta escapes: the whole plan is rendered and inspected before
     # anything is returned, so both refusals arrive in one error rather than the
     # first one arriving alone.
-    with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
+    with raises_code(UnsupportedSchemaEvolutionError, SCHEMA_EVOLUTION_UNSUPPORTED) as raised:
         schema_delta(evolve(ABSENT, entity_with_two_indices_over_one_column()), _refusing())
     error = raised.value
+    assert isinstance(error, UnsupportedError) and not error.is_transient
+    assert str(error) == (
+        "schema-evolution-unsupported: refusing cannot render 2 operation(s): "
+        "CreateIndex, CreateIndex"
+    )
     assert error.dialect_identity == "refusing"
     assert [operation.kind for operation in error.operations] == ["CreateIndex", "CreateIndex"]
     assert {operation.location.table for operation in error.operations} == {Table(name="widget")}
@@ -186,3 +195,14 @@ def test_an_unsupported_prerequisite_is_reported_at_a_database_wide_location() -
     assert refusal.kind == "CreateExtension"
     assert refusal.location == PhysicalLocation(extension="btree_gist")
     assert refusal.caused_by
+
+
+def test_a_refusal_keeps_its_dialect_and_operations_across_pickling() -> None:
+    with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
+        schema_delta(_widened_and_indexed(), _refusing())
+    restored = pickle.loads(pickle.dumps(raised.value))
+    assert type(restored) is UnsupportedSchemaEvolutionError
+    assert restored.code == SCHEMA_EVOLUTION_UNSUPPORTED
+    assert str(restored) == str(raised.value)
+    assert restored.dialect_identity == "refusing"
+    assert restored.operations == raised.value.operations

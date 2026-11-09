@@ -13,9 +13,10 @@ from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
 )
+from parallax.core.base import InternalError
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import NO_AUDIT, TransactionInstant
-from parallax.core.write_plan import WritePlanningError
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
@@ -35,6 +36,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import CountingClock, inert_instant
+from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model as corpus_model
@@ -133,7 +135,9 @@ def test_an_audit_answer_that_breaks_its_contract_is_refused(breach: str) -> Non
 
     audited = stated if breach == "dropped" else write_row
     bound = AuditDecoration(cast("Any", _Breaking()), TEST_ACTOR_IDENTITY, inert_instant(), ())
-    with pytest.raises(WritePlanningError, match="must state every value it adds or changes"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="must state every value it adds or changes"
+    ):
         bound.finalize_row(audited)
 
 
@@ -151,7 +155,7 @@ def test_an_update_decoration_may_not_move_what_the_update_addresses() -> None:
             )
 
     bound = AuditDecoration(cast("Any", _Retargeting()), TEST_ACTOR_IDENTITY, inert_instant(), ())
-    with pytest.raises(WritePlanningError, match="an update's decoration"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="an update's decoration"):
         bound.decorate_update(update)
 
 
@@ -168,7 +172,7 @@ def test_a_close_decoration_may_not_change_why_the_milestone_closed() -> None:
     neutral = AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ())
     assert neutral.decorate_close(close) is close
     bound = AuditDecoration(cast("Any", _Recausing()), TEST_ACTOR_IDENTITY, inert_instant(), ())
-    with pytest.raises(WritePlanningError, match="a close's decoration"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="a close's decoration"):
         bound.decorate_close(close)
 
 
@@ -181,9 +185,9 @@ def test_no_hook_may_state_an_attribute_settlement_decides() -> None:
     unsettled = AuditDecoration(audit, TEST_ACTOR_IDENTITY, inert_instant(), ())
 
     assert unsettled.finalize_row(write_row).row.attributes[key] == 999
-    with pytest.raises(WritePlanningError, match="a row's finalization"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="a row's finalization"):
         bound.finalize_row(write_row)
-    with pytest.raises(WritePlanningError, match="an update's decoration"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="an update's decoration"):
         bound.decorate_update(_account_update())
-    with pytest.raises(WritePlanningError, match="a close's decoration"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="a close's decoration"):
         bound.decorate_close(_account_close())

@@ -32,6 +32,7 @@ from parallax.core import (
     storage_layout,
 )
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
@@ -47,13 +48,12 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     KeyedWriteInstruction,
     WritePlanningRequest,
     admitted_write,
 )
-from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import (

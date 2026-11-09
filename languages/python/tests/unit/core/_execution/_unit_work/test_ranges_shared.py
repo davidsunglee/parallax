@@ -25,13 +25,13 @@ from parallax.core._execution._unit_work.acquisition import (
     RowConsumer,
     RowRequest,
 )
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.write_items import AdmittedWrite
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     KeyedWriteInstruction,
     admitted_write,
 )

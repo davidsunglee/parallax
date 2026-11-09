@@ -33,9 +33,11 @@ from parallax.core._execution._write_lowering import (
     ordered_parameter_ceiling,
 )
 from parallax.core.base import INFINITY as OPEN
+from parallax.core.base import InternalError
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._write import (
     StepPayload,
     compile_write_step,
@@ -75,6 +77,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import inert_instant
+from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, unobserved_write
 from tests._support.sweep_goldens import WRITE_EXERCISED
@@ -218,7 +221,11 @@ def test_a_statement_exceeding_the_ceiling_it_promised_is_a_lowering_failure() -
     entity = entity_of(meta, "Position").identity
     close, *_ = _effects(entity, entity, {AttributeIdentity(entity, "value"): Decimal("1")})
     payloads = build_write_planner(meta).payloads
-    with pytest.raises(SqlGenError, match="carrying 4 binds exceeds the 3 its shape promised"):
+    with raises_code(
+        InternalError,
+        SQL_GENERATION_FAILED,
+        match="carrying 4 binds exceeds the 3 its shape promised",
+    ):
         lowered_within(close, 3, payloads, meta, POSTGRES)
 
 
@@ -334,7 +341,7 @@ def test_a_multi_key_or_predicate_selected_effect_runs_alone() -> None:
     )
     assert isinstance(predicate, PlannedDelete)
     assert ordered_parameter_ceiling(predicate, POSTGRES) is None
-    with pytest.raises(SqlGenError, match="not bounded by its shape"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="not bounded by its shape"):
         non_insert_parameter_ceiling(predicate)
 
 

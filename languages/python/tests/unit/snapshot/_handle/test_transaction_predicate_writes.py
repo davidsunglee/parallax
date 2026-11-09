@@ -36,8 +36,10 @@ from parallax.core import (
     DomainModel,
     Entity,
     Int32,
+    ParallaxError,
     Predicate,
     TxTemporal,
+    UnsupportedError,
     ValueObject,
     attr,
 )
@@ -934,7 +936,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(UsageError, match="subtype-write-set-based-unsupported"):
+        with raises_code(UnsupportedError, "subtype-write-set-based-unsupported"):
             tx.wire.delete_where(target)
         assert port.calls == [BeginCall()]
         raise _Abandon
@@ -949,15 +951,15 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 # prepared writes refuses it, so no seam re-judges the family. A family that
 # needs an observation hears that refusal first.
 @pytest.mark.parametrize(
-    ("model", "entity", "rule"),
+    ("model", "entity", "kind", "rule"),
     [
-        (PAYMENT, "CardPayment", "subtype-write-set-based-unsupported"),
-        (RATE, "DepositRate", instructions.SET_BASED_WRITE_TARGET_UNSUPPORTED),
+        (PAYMENT, "CardPayment", UnsupportedError, "subtype-write-set-based-unsupported"),
+        (RATE, "DepositRate", UsageError, instructions.SET_BASED_WRITE_TARGET_UNSUPPORTED),
     ],
     ids=["unversioned-family", "bitemporal-family"],
 )
 def test_preparation_refuses_an_inheritance_family_predicate_instruction(
-    model: DomainModel, entity: str, rule: str
+    model: DomainModel, entity: str, kind: type[ParallaxError], rule: str
 ) -> None:
     instruction = instructions.deserialize(
         {
@@ -969,7 +971,7 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction(
         }
     )
     assert isinstance(instruction, PredicateWriteInstruction)
-    with raises_code(UsageError, rule):
+    with raises_code(kind, rule):
         instructions.prepare_wire_write(instruction, write_preparation_of(model_of(model)))
 
 

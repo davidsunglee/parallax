@@ -33,7 +33,6 @@ __all__ = [
     "ShortfallCode",
     "WriteEffectCode",
     "WritePreconditionError",
-    "WriteResultError",
     "allocated_keys",
     "cardinality_corruption",
     "enforce_affected_rows",
@@ -50,17 +49,9 @@ type WriteEffectCode = Literal[
     "stale-write",
     "optimistic-lock-conflict",
     "write-precondition-failed",
-    "cardinality-corruption",
-    "write-result-invalid",
 ]
-"""The codes a write's effect is refused by.
-
-The first four are the :class:`~parallax.core.base.ConflictError` shortfall
-classifications, of which only an Optimistic Lock Conflict is transient; the
-last two are :class:`~parallax.core.base.InternalError` invariant failures: more
-rows affected than the target addresses, and a row-producing write answering
-rows its statements cannot produce.
-"""
+"""The :class:`~parallax.core.base.ConflictError` codes a write's effect is
+refused by, of which only an Optimistic Lock Conflict is transient."""
 
 MISSING_TARGET: Final = "missing-target"
 STALE_WRITE: Final = "stale-write"
@@ -170,23 +161,17 @@ class WritePreconditionError(ConflictError):
         return self._expected
 
 
-class WriteResultError(RuntimeError):
-    """A row-producing write answered rows its statement cannot produce: a row
-    missing or in excess of the rows it opened, a row of another width, a cell
-    of another type, or one key answered twice.
-
-    Like an excess count, this is an invariant failure rather than a
-    concurrency outcome, and it is never retriable. ``expected`` and ``actual``
-    count rows; the rows themselves are not retained.
-    """
-
-    def __init__(self, entity: EntityIdentity, expected: int, actual: int, reason: str) -> None:
-        self.entity = entity
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"{entity.name}: the write answered {actual} row(s) for {expected} it opened — {reason}"
-        )
+def _write_result_refusal(
+    entity: EntityIdentity, expected: int, actual: int, reason: str
+) -> InternalError:
+    """The invariant failure a row-producing write is refused by where it
+    answered rows its statement cannot produce: a row missing or in excess of
+    the rows it opened, a row of another width, a cell of another type, or one
+    key answered twice. The rows themselves are not retained."""
+    return InternalError(
+        WRITE_RESULT_INVALID,
+        f"{entity.name}: the write answered {actual} row(s) for {expected} it opened — {reason}",
+    )
 
 
 def returns_allocated_keys(step: PlannedStep) -> TypeGuard[PlannedInsert]:
@@ -207,12 +192,12 @@ def allocated_keys(step: PlannedInsert, rows: Sequence[Sequence[object]]) -> tup
 
     The statement answers one row per entry, each holding exactly the
     allocated key: an integer, distinct from every other the statement
-    answered. Anything else raises :class:`WriteResultError` before any key is
-    used.
+    answered. Anything else raises the ``write-result-invalid``
+    :class:`~parallax.core.base.InternalError` before any key is used.
     """
     expected = len(step.entries)
     if len(rows) != expected:
-        raise WriteResultError(
+        raise _write_result_refusal(
             step.entity,
             expected,
             len(rows),
@@ -221,16 +206,16 @@ def allocated_keys(step: PlannedInsert, rows: Sequence[Sequence[object]]) -> tup
     keys: list[object] = []
     for row in rows:
         if len(row) != 1:
-            raise WriteResultError(
+            raise _write_result_refusal(
                 step.entity, expected, len(rows), f"a row of {len(row)} cell(s), not the key alone"
             )
         (key,) = row
         if not isinstance(key, int) or isinstance(key, bool):
-            raise WriteResultError(
+            raise _write_result_refusal(
                 step.entity, expected, len(rows), f"a key of type {type(key).__name__}"
             )
         if key in keys:
-            raise WriteResultError(step.entity, expected, len(rows), f"the key {key} twice")
+            raise _write_result_refusal(step.entity, expected, len(rows), f"the key {key} twice")
         keys.append(key)
     return tuple(keys)
 

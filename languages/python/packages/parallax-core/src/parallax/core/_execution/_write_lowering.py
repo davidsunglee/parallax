@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import NamedTuple, cast
+from typing import Final, NamedTuple, cast
 
+from parallax.core._stored_data import InvalidDataError
+from parallax.core.base import InternalError
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
     EntityIdentity,
     Metamodel,
 )
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._write import (
     GroupedEffectBuilder,
     InsertStatementBuilder,
@@ -41,6 +44,7 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = [
+    "STORED_DOCUMENT_NOT_OBJECT",
     "GroupedEffect",
     "GroupedInsert",
     "LoweringCursor",
@@ -187,7 +191,10 @@ class LoweringCursor:
         """
         slots = self._span_slots
         if slots is None or self._span is not span:
-            raise SqlGenError(f"{first.entity.canonical}: a grouped effect opens at its own span")
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                f"{first.entity.canonical}: a grouped effect opens at its own span",
+            )
         builder = GroupedEffectBuilder(slots, self._meta, self._dialect)
         builder.append(first, self._demanded_payload(first))
         steps = [first]
@@ -377,9 +384,10 @@ def _within(
 ) -> LoweredStatement:
     binds = len(statement.binds)
     if binds > parameter_ceiling:
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"{step.entity.canonical}: a statement carrying {binds} binds exceeds the "
-            f"{parameter_ceiling} its shape promised before its payload was prepared"
+            f"{parameter_ceiling} its shape promised before its payload was prepared",
         )
     return statement
 
@@ -405,11 +413,23 @@ def _predictable_revision(
     if not step.predecessor_document_is_object and any(
         isinstance(value, PatchedDocument) for value in payload.values
     ):
-        raise SqlGenError(
-            f"{step.entity.canonical}: a revision patches the Structured Column of a row "
-            "whose stored document is not known to be an object"
-        )
+        raise _non_object_revision_refusal(step)
     return payload
+
+
+STORED_DOCUMENT_NOT_OBJECT: Final = "stored-document-not-object"
+"""The code of the :class:`~parallax.core.InvalidDataError` a
+temporal revision is refused by where it patches the Structured Column of a
+predecessor not read holding an object there (`m-temporal-write` *Ownership
+disposal*): the stored document is external state no governed write produces."""
+
+
+def _non_object_revision_refusal(step: PlannedTemporalRevision) -> InvalidDataError:
+    return InvalidDataError(
+        STORED_DOCUMENT_NOT_OBJECT,
+        f"{step.entity.canonical}: a revision patches the Structured Column of a row "
+        "whose stored document is not known to be an object",
+    )
 
 
 def _entry_slots(
@@ -434,9 +454,15 @@ def _entry_cells(entity: EntityIdentity, slots: RowSlots, entry: WriteRow) -> tu
     if prepared is None:
         return slots.cells(entry)
     if not prepared.prepared_from(entry) or prepared.entity != entity:
-        raise SqlGenError(f"{entity.canonical}: a prepared Row Payload belongs to another entry")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{entity.canonical}: a prepared Row Payload belongs to another entry",
+        )
     if prepared.slots is not slots and prepared.slots.contributors != slots.contributors:
-        raise SqlGenError(f"{entity.name!r}: every entry of one insert stores the same cells")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{entity.name!r}: every entry of one insert stores the same cells",
+        )
     return prepared.values
 
 
