@@ -48,10 +48,11 @@ from parallax.core import (
     NoResultFound,
     TemporalBound,
     TxTemporal,
+    UnsupportedError,
     UsageError,
+    WritePreconditionError,
     attr,
 )
-from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 ```
 <!-- /example -->
@@ -735,7 +736,10 @@ Because nothing is read, there is no version to check and no milestone to close.
 predicate write accepts only an entity with no version and no history, such as
 `Customer` and `Shipment` here. Over `Order` or `CreditLimit` it is refused with a
 `UsageError` whose `code` is `"set-based-write-target-unsupported"` before anything runs. Read those objects and write each one,
-or state each revision in a target write.
+or state each revision in a target write. Over an
+[inheritance family](02-modeling.md#inheritance-families) such as `Payment`, this version
+doesn't run predicate writes yet, and refuses one with an `UnsupportedError` whose `code`
+is `"subtype-write-set-based-unsupported"`; write each object with a keyed verb instead.
 
 Values this transaction read before a predicate write keep the values they were read
 with: the predicate write doesn't refresh them, and doesn't take away their licence.

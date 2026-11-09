@@ -175,6 +175,7 @@ RECIPES: Final[list[Recipe]] = [
             "    Rel,\n"
             "    TablePerHierarchy,\n"
             "    TxTemporal,\n"
+            "    UnloadedRelationshipError,\n"
             "    UsageError,\n"
             "    ValueObject,\n"
             "    attr,\n"
@@ -182,7 +183,6 @@ RECIPES: Final[list[Recipe]] = [
             "    index,\n"
             "    rel,\n"
             ")\n"
-            "from parallax.core.entity import UnloadedRelationshipError\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext\n"
         ),
     ),
@@ -200,16 +200,18 @@ RECIPES: Final[list[Recipe]] = [
             "    TX_TIME,\n"
             "    VALID_TIME,\n"
             "    Attr,\n"
+            "    InvalidDataError,\n"
             "    NoResultFound,\n"
             "    Pin,\n"
             "    TemporalBound,\n"
             "    TooManyResultsFound,\n"
             "    TxTemporal,\n"
+            "    UnloadedRelationshipError,\n"
+            "    UnsupportedError,\n"
             "    UsageError,\n"
             "    attr,\n"
             ")\n"
-            "from parallax.core.entity import UnloadedRelationshipError\n"
-            "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
+            "from parallax.core.read_delivery import InvalidData\n"
             "from parallax.snapshot import (\n"
             "    ReadOnlyTxnContext,\n"
             "    ScopedDatabase,\n"
@@ -239,10 +241,11 @@ RECIPES: Final[list[Recipe]] = [
             "    NoResultFound,\n"
             "    TemporalBound,\n"
             "    TxTemporal,\n"
+            "    UnsupportedError,\n"
             "    UsageError,\n"
+            "    WritePreconditionError,\n"
             "    attr,\n"
             ")\n"
-            "from parallax.core.unit_work import WritePreconditionError\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of\n"
         ),
     ),
@@ -498,14 +501,14 @@ RECIPES: Final[list[Recipe]] = [
         snippet=(
             "from decimal import Decimal\n"
             "\n"
-            "from parallax.core import ConflictError, DomainModel, UsageError\n"
+            "from parallax.core import ConflictError, DomainModel, UsageError, "
+            "WritePreconditionError\n"
             "from parallax.core.execution import (\n"
             "    AdaptiveBackoff,\n"
             "    ReadOnlyTxnOptions,\n"
             "    RetryPolicy,\n"
             "    TxnOptions,\n"
             ")\n"
-            "from parallax.core.unit_work import WritePreconditionError\n"
             "from parallax.postgres import PostgresAdapter, PostgresRole\n"
             "from parallax.snapshot import (\n"
             "    Database,\n"
@@ -633,13 +636,8 @@ RECIPES: Final[list[Recipe]] = [
             "from dataclasses import dataclass\n"
             "from pathlib import Path\n"
             "\n"
-            "from parallax.core import UsageError\n"
-            "from parallax.core.db_port import (\n"
-            "    DRIVER_MANAGED,\n"
-            "    ConnectionAcquisitionError,\n"
-            "    CredentialSource,\n"
-            "    Password,\n"
-            ")\n"
+            "from parallax.core import ConnectionAcquisitionError, UsageError\n"
+            "from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, Password\n"
             "from parallax.core.execution import TRANSACTION_AUTHORITY_MISMATCH\n"
             "from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole\n"
             "from parallax.snapshot import Database, ScopedDatabase, TxnContext\n"
@@ -679,16 +677,18 @@ RECIPES: Final[list[Recipe]] = [
         snippet=(
             "from collections.abc import Callable\n"
             "\n"
-            "from parallax.core import Attr, ConcreteSubtype, DomainModel, attr\n"
+            "from parallax.core import (\n"
+            "    Attr,\n"
+            "    ConcreteSubtype,\n"
+            "    DomainModel,\n"
+            "    InvalidDataError,\n"
+            "    PublicationConflictError,\n"
+            "    attr,\n"
+            ")\n"
             "from parallax.core.dialect import POSTGRES\n"
             "from parallax.core.entity import model_of\n"
-            "from parallax.core.execution import (\n"
-            "    ModelSelection,\n"
-            "    PublicationConflictError,\n"
-            "    ServingModel,\n"
-            "    prepare_model,\n"
-            ")\n"
-            "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
+            "from parallax.core.execution import ModelSelection, ServingModel, prepare_model\n"
+            "from parallax.core.read_delivery import InvalidData\n"
             "from parallax.descriptor import domain_model_from_yaml, export_yaml\n"
             "from parallax.evolution import (\n"
             "    ABSENT,\n"
@@ -740,32 +740,38 @@ RECIPES: Final[list[Recipe]] = [
         title="Import what Errors uses",
         snippet=(
             "import datetime as dt\n"
-            "from collections.abc import Mapping\n"
+            "from collections.abc import Callable, Mapping\n"
             "\n"
             "from pydantic import ValidationError\n"
             "\n"
             "from parallax.core import (\n"
             "    ConflictError,\n"
+            "    ConnectionAcquisitionError,\n"
+            "    CredentialResolutionError,\n"
+            "    DatabaseError,\n"
+            "    DatabaseStartupError,\n"
             "    DomainModel,\n"
             "    EditError,\n"
             "    Entity,\n"
+            "    InternalError,\n"
+            "    InvalidDataError,\n"
             "    MetamodelValidationError,\n"
             "    NoResultFound,\n"
-            "    TooManyResultsFound,\n"
-            "    UsageError,\n"
-            ")\n"
-            "from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName\n"
-            "from parallax.core.db_port import ConnectionAcquisitionError\n"
-            "from parallax.core.entity import UnloadedRelationshipError\n"
-            "from parallax.core.execution import (\n"
+            "    ParallaxError,\n"
             "    PublicationConflictError,\n"
+            "    TooManyResultsFound,\n"
             "    TransactionRollbackError,\n"
+            "    UnloadedRelationshipError,\n"
+            "    UnsupportedError,\n"
+            "    UsageError,\n"
+            "    WritePreconditionError,\n"
             ")\n"
+            "from parallax.core.db_error import Category, PhysicalIndexName\n"
             "from parallax.core.metamodel import MetamodelIssue\n"
-            "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
-            "from parallax.core.unit_work import WritePreconditionError\n"
-            "from parallax.evolution import SchemaDelta\n"
-            "from parallax.snapshot import ScopedDatabase, TxnContext, is_view_loaded\n"
+            "from parallax.core.read_delivery import InvalidData\n"
+            "from parallax.descriptor import DescriptorError\n"
+            "from parallax.evolution import SchemaDelta, UnsupportedSchemaEvolutionError\n"
+            "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, is_view_loaded\n"
         ),
     ),
     Recipe(
@@ -795,6 +801,21 @@ RECIPES: Final[list[Recipe]] = [
             guide_error_recipes.created_index_name,
             guide_error_recipes.add_a_shipment_unless_its_tracking_number_is_taken,
         ),
+    ),
+    Recipe(
+        recipe_id="retry-a-job-later",
+        title="Run a job again later only when a later run may succeed",
+        snippet=_sources(guide_error_recipes.run_or_retry_later),
+    ),
+    Recipe(
+        recipe_id="answer-a-client-query",
+        title="Answer a client's mistake in a query document with a 400",
+        snippet=_sources(guide_error_recipes.find_with_a_client_query),
+    ),
+    Recipe(
+        recipe_id="map-an-error-to-an-http-status",
+        title="Map an error that escapes a request to an HTTP status",
+        snippet=_sources(guide_error_recipes.http_status_for),
     ),
     Recipe(
         recipe_id="operations-imports",

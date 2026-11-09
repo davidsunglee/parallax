@@ -36,6 +36,7 @@ from parallax.core import (
     Rel,
     TablePerHierarchy,
     TxTemporal,
+    UnloadedRelationshipError,
     UsageError,
     ValueObject,
     attr,
@@ -43,7 +44,6 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.entity import UnloadedRelationshipError
 from parallax.snapshot import ScopedDatabase, TxnContext
 ```
 <!-- /example -->

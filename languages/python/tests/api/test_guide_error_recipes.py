@@ -11,21 +11,25 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from parallax.conformance import guide_error_recipes
+from parallax.conformance import case_format, guide_error_recipes
+from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.guide_error_recipes import (
     add_a_customer_unless_the_id_is_taken,
     add_a_shipment_unless_its_tracking_number_is_taken,
     change_a_customer_from_a_form,
     created_index_name,
+    find_with_a_client_query,
+    http_status_for,
     open_the_shop_database,
     price_a_window_unless_it_is_priced,
     problems_in_a_model,
+    run_or_retry_later,
 )
 from parallax.conformance.guide_models import (
     SHOP_MODEL,
@@ -40,16 +44,29 @@ from parallax.conformance.guide_models import (
     Product,
     Shipment,
 )
+from parallax.conformance.guide_recipes import Delivery
 from parallax.conformance.scripted_clock import ScriptedClock
+from parallax.core import (
+    ConflictError,
+    ConnectionAcquisitionError,
+    EditError,
+    InternalError,
+    NoResultFound,
+    ParallaxError,
+    UnsupportedError,
+    UsageError,
+    WritePreconditionError,
+)
 from parallax.core.base import INFINITY
 from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
+from parallax.core.execution import RetryPolicy
 from parallax.evolution import ABSENT, SchemaDelta, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
-from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
+from tests._support.db_port import Read, RefusingAdapter, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root
 
 
@@ -318,6 +335,208 @@ def test_an_unrelated_failure_passes_through_the_tracking_number_handler(
     assert (cause.category, cause.native_code) == (None, "42P01")
 
 
+_ORDER_TEN = Order(id=10, customer_id=1, placed_on=dt.date(2024, 4, 1), total=Decimal("150.00"))
+
+
+def _ordered(profile_run: Any) -> ScopedDatabase:
+    db = _shop(profile_run)
+    db.transact(lambda tx: tx.insert(_ORDER_TEN))
+    return db
+
+
+def _find_a_missing_customer(_: Any, db: ScopedDatabase) -> object:
+    return db.find(Customer.where(Customer.id == 99)).result()
+
+
+def _delete_at_a_stale_version(_: Any, db: ScopedDatabase) -> object:
+    return db.transact(lambda tx: tx.delete_if(Order, key=10, version=7))
+
+
+def _amend_once_after_another_writer(profile_run: Any, db: ScopedDatabase) -> object:
+    def add(tx: TxnContext) -> None:
+        order = tx.find(Order.where(Order.id == 10)).result()
+        with contextlib.closing(profile_run.control()) as control:
+            control.execute_write("update orders set version = version + 1 where id = 10", ())
+        tx.amend(order, Order.total.set(order.total + 1))
+
+    return db.transact(add, retry=RetryPolicy(max_retries=0))
+
+
+def _edit_a_name_away(_: Any, db: ScopedDatabase) -> object:
+    return db.find(Customer.where(Customer.id == 1)).result().edit(name=None)
+
+
+def _delete_payments_by_predicate(_: Any, db: ScopedDatabase) -> object:
+    return db.transact(lambda tx: tx.delete_where(Payment.where(Payment.order_id == 10)))
+
+
+def _find_an_entity_the_model_lacks(_: Any, db: ScopedDatabase) -> object:
+    return db.find(Delivery.where(Delivery.all)).results()
+
+
+def _insert_a_taken_key(_: Any, db: ScopedDatabase) -> object:
+    return db.transact(lambda tx: tx.insert(_ORDER_TEN))
+
+
+@pytest.mark.parametrize(
+    ("failing", "kind", "status"),
+    [
+        pytest.param(_find_a_missing_customer, NoResultFound, 404, id="no-result"),
+        pytest.param(_delete_at_a_stale_version, WritePreconditionError, 412, id="precondition"),
+        pytest.param(_amend_once_after_another_writer, ConflictError, 409, id="conflict"),
+        pytest.param(_edit_a_name_away, EditError, 422, id="refused-edit"),
+        pytest.param(_delete_payments_by_predicate, UnsupportedError, 501, id="unsupported"),
+        pytest.param(_find_an_entity_the_model_lacks, UsageError, 500, id="usage"),
+        pytest.param(_insert_a_taken_key, DatabaseError, 500, id="duplicate-key"),
+    ],
+)
+def test_each_failure_a_request_meets_answers_the_status_its_class_names(
+    profile_run: Any,
+    failing: Callable[[Any, ScopedDatabase], object],
+    kind: type[ParallaxError],
+    status: int,
+) -> None:
+    db = _ordered(profile_run)
+
+    with pytest.raises(kind) as failed:
+        failing(profile_run, db)
+
+    assert type(failed.value) is kind
+    assert http_status_for(failed.value) == status
+
+
+def test_a_conflict_that_outlasts_the_retries_answers_409_although_it_is_transient(
+    profile_run: Any,
+) -> None:
+    db = _ordered(profile_run)
+
+    with pytest.raises(ConflictError) as failed:
+        _amend_once_after_another_writer(profile_run, db)
+
+    assert failed.value.is_transient
+    assert http_status_for(failed.value) == 409
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(InternalError("sql-generation-failed", "scripted"), id="defect"),
+        pytest.param(ValueError("scripted"), id="not-parallax"),
+    ],
+)
+def test_a_defect_or_a_foreign_failure_answers_500(error: Exception) -> None:
+    assert http_status_for(error) == 500
+
+
+def test_a_client_query_answers_200_with_its_results(profile_run: Any) -> None:
+    db = _shop(profile_run)
+
+    status, body = find_with_a_client_query(
+        db, {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
+    )
+
+    assert status == 200
+    assert isinstance(body, list)
+    assert [node["name"] for node in body] == ["Ada"]
+
+
+@pytest.mark.parametrize(
+    ("predicate", "code"),
+    [
+        pytest.param(
+            {"eq": {"path": "Customer.nickname", "value": "Ada"}},
+            "path-unknown-member",
+            id="unknown-member",
+        ),
+        pytest.param(
+            {"eq": {"path": "Customer.id", "value": "one"}},
+            "neutral-literal-type-mismatch",
+            id="wrong-type",
+        ),
+    ],
+)
+def test_a_refused_client_query_answers_400_with_its_rejected_rule(
+    profile_run: Any, predicate: Mapping[str, object], code: str
+) -> None:
+    db = _shop(profile_run)
+
+    status, body = find_with_a_client_query(db, {"target": "Customer", "predicate": predicate})
+
+    assert status == 400
+    assert isinstance(body, dict)
+    assert body["code"] == code
+    assert code in case_format.rejected_rules()
+    assert body["detail"].startswith(f"{code}: ")
+
+
+def test_a_client_query_naming_an_entity_the_model_lacks_answers_400(profile_run: Any) -> None:
+    db = _shop(profile_run)
+
+    status, body = find_with_a_client_query(db, {"target": "Delivery", "predicate": {"true": {}}})
+
+    assert status == 400
+    assert isinstance(body, dict)
+    assert body["code"] == "query-target-not-in-model"
+
+
+def test_a_client_query_this_version_cannot_serve_escapes_to_answer_501() -> None:
+    db = own_root(Database.connect(RefusingAdapter(), POLICY_MODEL)).using_database_login()
+    history_with_includes: Mapping[str, object] = {
+        "target": "Policy",
+        "predicate": {"true": {}},
+        "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
+        "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
+    }
+
+    with pytest.raises(UnsupportedError) as failed:
+        find_with_a_client_query(db, history_with_includes)
+
+    assert failed.value.code == "execution-feature-deferred"
+    assert http_status_for(failed.value) == 501
+
+
+def test_a_job_that_commits_is_not_retried(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    later: list[None] = []
+
+    run_or_retry_later(
+        db,
+        lambda tx: tx.insert(Customer(id=3, name="Grace", email=None)),
+        lambda: later.append(None),
+    )
+
+    assert later == []
+    assert _customer(db, 3) == Customer(id=3, name="Grace", email=None)
+
+
+def test_a_job_failing_for_good_escapes_instead_of_being_retried(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    later: list[None] = []
+
+    with pytest.raises(DatabaseError) as failed:
+        run_or_retry_later(
+            db,
+            lambda tx: tx.insert(Customer(id=1, name="Grace", email=None)),
+            lambda: later.append(None),
+        )
+
+    assert (failed.value.category, failed.value.is_transient) == ("uniqueViolation", False)
+    assert later == []
+
+
+def test_a_jobs_own_exception_escapes_instead_of_being_retried(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    later: list[None] = []
+
+    def refuse(_: TxnContext) -> None:
+        raise LookupError("no such account")
+
+    with pytest.raises(LookupError):
+        run_or_retry_later(db, refuse, lambda: later.append(None))
+
+    assert later == []
+
+
 def test_the_shop_root_serves_reads_and_logs_each_operation(
     profile_run: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -498,6 +717,58 @@ def test_a_unique_violation_naming_no_index_surfaces_without_one() -> None:
     assert (cause.category, cause.violated_index) == ("uniqueViolation", None)
 
 
+def _transient_failures() -> list[Any]:
+    return [
+        pytest.param(
+            lambda: ScriptedAdapter(Transact(Write(raises=_database_error("deadlock", "40P01")))),
+            id="deadlock",
+        ),
+        pytest.param(
+            lambda: ScriptedAdapter(
+                Transact(Write(raises=_database_error("lockWaitTimeout", "55P03")))
+            ),
+            id="lock-timeout",
+        ),
+        pytest.param(
+            lambda: ScriptedAdapter(
+                acquisition_failures=[
+                    ConnectionAcquisitionError("no connection in time", reason="timeout")
+                ]
+            ),
+            id="pool-timeout",
+        ),
+    ]
+
+
+def _single_attempt(adapter: ScriptedAdapter) -> ScopedDatabase:
+    return _scripted(adapter).with_options(retry=RetryPolicy(max_retries=0))
+
+
+@pytest.mark.parametrize("adapter", _transient_failures())
+def test_a_failure_a_later_run_may_get_past_is_handed_back_to_run_later(
+    adapter: Callable[[], ScriptedAdapter],
+) -> None:
+    later: list[None] = []
+
+    with adapter() as scripted:
+        run_or_retry_later(
+            _single_attempt(scripted), lambda tx: tx.insert(_GRACE), lambda: later.append(None)
+        )
+
+    assert later == [None]
+
+
+@pytest.mark.parametrize("adapter", _transient_failures())
+def test_a_failure_a_later_run_may_get_past_answers_503(
+    adapter: Callable[[], ScriptedAdapter],
+) -> None:
+    with adapter() as scripted, pytest.raises(ParallaxError) as failed:
+        _single_attempt(scripted).transact(lambda tx: tx.insert(_GRACE))
+
+    assert failed.value.is_transient
+    assert http_status_for(failed.value) == 503
+
+
 def test_the_shop_root_composes_through_the_shipped_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -525,8 +796,11 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             add_a_shipment_unless_its_tracking_number_is_taken,
             change_a_customer_from_a_form,
             created_index_name,
+            find_with_a_client_query,
+            http_status_for,
             open_the_shop_database,
             price_a_window_unless_it_is_priced,
             problems_in_a_model,
+            run_or_retry_later,
         )
     )

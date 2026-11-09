@@ -4,53 +4,135 @@ Parallax refuses a problem as early as it can. A mistake in a class, a model, a 
 or an edit is refused where you make it, before anything reaches the database. Stored
 data that breaks the model is refused when you ask for the result that holds it.
 Conflicts and database failures come out of a transaction once Parallax has decided
-whether running it again could help. Each error carries structured fields, such as a
-code, a location or a category, so your code can branch on them rather than on the
-wording of a message.
+whether running it again could help.
 
-This chapter starts with where an error reaches you. It then takes each kind in turn:
-mistakes in what you wrote, stored data that breaks the model, conflicts and failed
-preconditions, and failures the database reports. It ends with what each error asks you
-to do.
+Every error Parallax raises for what you ask of it is a `ParallaxError`. Its class says
+what kind of problem it is, and so what you can do about it. Its `code` names the problem exactly, and
+`is_transient` says whether running the same work again later could succeed. A handler
+branches on the class, on a field that class carries, such as a database failure's
+`category`, or on `is_transient`. It never needs the wording of a message.
 
-Parallax has no common base exception, so catch the specific class. Each error is
-exported by the module of the part of Parallax that raises it, so they are spread over
-several modules. The imports below give the path of every error this chapter names, and
-the [Python binding](../../spec/python.md#8-deployable-artifact-topology) lists every
-module's exports. The examples use the shop model from [Modeling](02-modeling.md) and
-these imports:
+This chapter starts with the classes and with where an error reaches you. It then takes
+each kind in turn: mistakes in what you wrote, requests this version can't serve,
+defects, stored data that breaks the model, conflicts and failed preconditions, and
+failures the database reports. It ends with the handlers a job queue and a web API need,
+and with what each error asks you to do. The examples use the shop model from
+[Modeling](02-modeling.md) and these imports:
 
 <!-- example: errors-imports -->
 ```python
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from pydantic import ValidationError
 
 from parallax.core import (
     ConflictError,
+    ConnectionAcquisitionError,
+    CredentialResolutionError,
+    DatabaseError,
+    DatabaseStartupError,
     DomainModel,
     EditError,
     Entity,
+    InternalError,
+    InvalidDataError,
     MetamodelValidationError,
     NoResultFound,
-    TooManyResultsFound,
-    UsageError,
-)
-from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
-from parallax.core.db_port import ConnectionAcquisitionError
-from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.execution import (
+    ParallaxError,
     PublicationConflictError,
+    TooManyResultsFound,
     TransactionRollbackError,
+    UnloadedRelationshipError,
+    UnsupportedError,
+    UsageError,
+    WritePreconditionError,
 )
+from parallax.core.db_error import Category, PhysicalIndexName
 from parallax.core.metamodel import MetamodelIssue
-from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.unit_work import WritePreconditionError
-from parallax.evolution import SchemaDelta
-from parallax.snapshot import ScopedDatabase, TxnContext, is_view_loaded
+from parallax.core.read_delivery import InvalidData
+from parallax.descriptor import DescriptorError
+from parallax.evolution import SchemaDelta, UnsupportedSchemaEvolutionError
+from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, is_view_loaded
 ```
 <!-- /example -->
+
+## One root and a few classes
+
+Twenty classes cover every error Parallax raises for what you ask of it. Only an
+argument of the wrong kind, such as `None` where a transaction option belongs, raises
+Python's own `TypeError` or `ValueError`, and constructing an entity validates its
+values with Pydantic, whose `ValidationError` it raises.
+
+```text
+ParallaxError
+├── UsageError                       the calling code must change
+│   ├── EditError
+│   ├── MetamodelValidationError
+│   ├── DescriptorError
+│   └── UnloadedRelationshipError    also an AttributeError
+├── UnsupportedError                 a reasonable request this version can't serve
+│   └── UnsupportedSchemaEvolutionError
+├── InternalError                    a defect in Parallax
+├── InvalidDataError                 stored data breaks the model
+├── ConflictError                    another writer changed the rows first
+│   ├── WritePreconditionError
+│   └── PublicationConflictError
+├── NoResultFound
+├── TooManyResultsFound
+├── DatabaseError                    the database refused a statement
+├── ConnectionAcquisitionError
+├── DatabaseStartupError
+├── CredentialResolutionError
+└── TransactionRollbackError
+```
+
+Import each one from `parallax.core`, except two that only one package's operations
+raise: `DescriptorError` comes from `parallax.descriptor`, and
+`UnsupportedSchemaEvolutionError` from `parallax.evolution`. A class exists only where a
+handler would treat it differently from its parent, or where it carries fields of its
+own. Everything finer is a `code`.
+
+Every error has a `code`: a stable name in lowercase words joined by hyphens, such as
+`query-target-not-in-model`. Its text is the code, a colon and a message, so a log line
+says what went wrong before it says anything else. A class whose own fields carry the
+reason has a single code: a `DatabaseError` is always `database-statement-failed`, and
+its `category` says which failure it was. Codes are what a log search, an alert or a
+support ticket names. None of the handlers in this chapter branches on one.
+
+`UsageError`, `UnsupportedError` and `InternalError` can each refuse a request before
+anything is read or written, but each one points somewhere else:
+
+- A **`UsageError`** means the request contradicts how Parallax works: a query that
+  compares text with a number, a write the entity can't take, a value the transaction
+  can't write. The calling code, or the input it passed on, has to change, and the same
+  request fails the same way every time.
+- An **`UnsupportedError`** means the request is reasonable and Parallax defines what it
+  means, but this version, or the database's Dialect, can't serve it yet. It isn't your
+  mistake. A later release can serve the same request without changing what it does, so
+  until then you avoid the gap another way.
+- An **`InternalError`** means one of Parallax's own invariants failed. No change to your
+  code avoids it.
+
+### What an unhandled error tells you
+
+Most errors need no handler. Left alone, one ends the request or the job, and the last
+lines of its traceback say what happened. Here every one of a transaction's eleven
+attempts found that another transaction had changed order 42 between reading it and
+writing it:
+
+```text
+Traceback (most recent call last):
+  ...
+parallax.core.base._errors.ConflictError: optimistic-lock-conflict: Order: a concurrent write changed the gated rows first — affected 0 row(s), expected 1 (keys=[{'id': 42}])
+bounded retry exhausted after 11 attempts (max_retries=10)
+raised in a transaction under model edition '2026-09-b'
+```
+
+The first line names the class, the code, the entity, the row's key and the row counts.
+Python spells the class by the module that defines it; you import it from
+`parallax.core`. The lines after it are notes Parallax added on the way out: the retries
+it made, and the model edition the transaction ran under.
 
 ## Where an error reaches you
 
@@ -69,33 +151,41 @@ carries a note naming the edition**, such as
 raises its own error where you call it, and you can catch it there. Once the error
 leaves the callback, `transact` adds its note and raises the same error. So a handler
 around `transact`, `read_only` or a standalone read catches the original class, as the
-examples below do.
+examples below do. A standalone read made inside a callback notes its own edition first,
+and the transaction adds its note after it. The notes are for people. Code that needs
+the edition reads `tx.edition`, as [Model evolution](07-model-evolution.md) shows.
 
 Catching an error inside the callback doesn't always leave the transaction usable. A
 refusal a verb raises before anything is sent, such as a `UsageError` with a
-`write-evidence-*` code, does. A
-failure while the transaction sends its writes, or a failure that escapes a joined call,
-makes the transaction rollback-only: every later read or write raises a `UsageError`
-whose `code` is `"transaction-rollback-only"`, and the transaction rolls back however
-the callback returns.
+`write-evidence-*` code, does. A failure while the transaction sends its writes, or a
+failure that escapes a joined call, makes the transaction rollback-only: every later
+read or write raises a `UsageError` whose `code` is `"transaction-rollback-only"`, and
+the transaction rolls back however the callback returns.
 [Transactions](05-transactions.md#a-failed-joined-call-dooms-the-transaction) shows both
 cases.
 
 ## Mistakes in what you wrote
 
-Most errors you meet while developing refuse something you wrote. Parallax checks each
-thing when you make it. Where one check can find several problems, it reports them all
-at once, each with a stable code and a location, so you can fix them in one pass and a
-tool can report them without parsing messages.
+Most errors you meet while developing are a `UsageError` or one of its subclasses,
+refusing something you wrote. Parallax checks each thing when you make it. Where one
+check can find several problems, it reports them all at once, each with a stable code
+and a location, so you can fix them in one pass and a tool can report them without
+parsing messages.
 
 - **A class.** Creating an entity class checks its declaration. An unknown class-header
   option or a reserved member name raises a `UsageError`, whose `code` names the rule,
-  such as `entity-reserved-member-name`. Constructing an instance validates its values as any Pydantic model does,
-  and raises Pydantic's own `ValidationError`.
+  such as `entity-reserved-member-name`. Constructing an instance validates its values
+  as any Pydantic model does, and raises Pydantic's own `ValidationError`.
 - **A model.** `DomainModel(...)` checks the classes as a whole. As
   [Modeling](02-modeling.md) explains, a model that breaks a rule raises
   `MetamodelValidationError`, which lists every problem in its `issues`. Each one is a
   `MetamodelIssue` with a `code`, a `location` in the model and a `message`.
+- **A descriptor.** Building a model from a YAML or JSON descriptor raises
+  `DescriptorError`, whose `code` names the phase that refused it:
+  `descriptor-invalid-syntax` for text that doesn't parse, with its `format`, `line`
+  and `column`, and `descriptor-schema-invalid` or `descriptor-value-invalid` for a
+  document that parses but breaks the descriptor's rules, with each broken rule in
+  `violations`.
 - **A query.** Building a query checks each expression and clause, and refuses one it
   can't accept with a `UsageError` whose `code` names the rule, such as
   `query-expression-invalid`.
@@ -116,7 +206,8 @@ tool can report them without parsing messages.
   a write its target can't mean, such as `tx.delete` on a temporal entity, whose message
   names `terminate`, or a target write on an entity with no revision;
   `"set-based-write-target-unsupported"` for a
-  [predicate write](04-writing.md#predicate-writes) on a versioned entity; and
+  [predicate write](04-writing.md#predicate-writes) on a versioned entity, which has to
+  read each object before it writes it; and
   `"read-only-write-target"` for any write to an entity
   [declared read-only](02-modeling.md#entities-and-keys). Caught inside the callback,
   that refusal leaves the transaction usable, and the writes buffered before and after
@@ -175,9 +266,60 @@ messages, keyed by `"name"` and `"email"`: a name is required, and an email is t
 Given valid values, it amends the customer and returns an empty mapping. `edit` raises
 before anything is written, so catching its error leaves the transaction usable.
 
+### Unloaded relationships
+
+Touching a relationship the read didn't include raises `UnloadedRelationshipError`, whose
+`path` names the relationship and whose message names the `include` that loads it.
+Parallax never loads it behind your back with another query.
+
+`UnloadedRelationshipError` is also an `AttributeError`, so Python's own probes treat
+an unloaded relationship as absent: `hasattr(order, "customer")` answers `False` and
+`getattr(order, "customer", None)` answers `None`. That has a cost. A library that
+takes any `AttributeError` to mean "no such attribute", as the template engines of
+Jinja2 and Django do, renders an unloaded relationship as blank instead of failing.
+Before handing a value to such a library, include every relationship it reads, or check
+each one with `is_view_loaded`, as [Reading](03-reading.md#loading-a-graph) shows.
+
 **What to do:** fix the code that built the request, or, when the values came from a
 user, report the issues back to them. The same request fails the same way every time,
 so Parallax never retries one.
+
+## Requests this version can't serve
+
+An `UnsupportedError` refuses a request that Parallax defines and could serve, but that
+this version, or the database's Dialect, can't run yet. Nothing about the request is
+wrong, so it isn't a `UsageError`, and a later release can run it unchanged. Its `code`
+names the gap:
+
+- `execution-feature-deferred`: a read whose execution this version defers, such as a
+  history or range read that includes relationships. The message names the feature.
+- `subtype-write-set-based-unsupported`: a [predicate write](04-writing.md#predicate-writes)
+  over an inheritance family such as `Payment`.
+- `inheritance-locking-read-unsupported`: a read under
+  [locking](05-transactions.md#optimistic-and-locking-concurrency) of a family stored
+  table per concrete subtype, through a type that spans several of its tables, such as
+  `Delivery` in [Modeling](02-modeling.md#inheritance-families).
+- `schema-evolution-unsupported`: `schema_delta` was asked for a schema change the
+  Dialect can't render. That refusal is an `UnsupportedSchemaEvolutionError`, whose
+  `dialect_identity` names the Dialect and whose `operations` lists every operation it
+  can't render.
+
+**What to do:** go around the gap. Read the history without its includes and read the
+related objects separately, write each object of a family in turn, or read without a
+lock. The request fails the same way every time until a release serves it, so Parallax
+never retries one, and neither should you.
+
+## Defects in Parallax
+
+An `InternalError` means Parallax found that one of its own invariants doesn't hold, such
+as generated SQL it can't build, or a database answer that contradicts the statements
+it sent. Its `code` names the invariant. One of them, `cardinality-corruption`, usually
+points at the database rather than at Parallax: a write changed more rows than it
+addressed, so the table doesn't hold the key the model declares unique.
+
+**What to do:** report it with its code, message and traceback. No change to your code
+avoids it, and running the work again fails the same way. For `cardinality-corruption`,
+also check the table's key against the model.
 
 ## Stored data that breaks the model
 
@@ -188,12 +330,34 @@ when a result it would return breaks the model. The error's `invalid_data` holds
 `InvalidData` record for each affected result, in result order. Each record has the
 `issues` found, and as much of the value as Parallax could build without inventing
 anything. `checked()` hands you the same records in their place among the results
-instead of raising.
+instead of raising, so a report can carry on past damaged rows:
+
+<!-- example: read-rows-that-break-the-model -->
+```python
+def products_and_unreadable_rows(
+    db: ScopedDatabase,
+) -> tuple[list[Product], list[InvalidData[Product]]]:
+    """Every product, with rows whose stored data breaks the model set aside."""
+    readable: list[Product] = []
+    unreadable: list[InvalidData[Product]] = []
+    for item in db.find(Product.where(Product.all)).checked().results():
+        if isinstance(item, InvalidData):
+            unreadable.append(item)
+        else:
+            readable.append(item)
+    return readable, unreadable
+```
+<!-- /example -->
 
 The accessor raises after the read has finished, so outside a transaction its
 `InvalidDataError` carries no note; inside a callback that lets it escape, it gains the
 transaction's note like any other error. Its own `edition` still names the edition the
 result was read under.
+
+Stored data can also stop work that has no result to hand back: a write whose stored row
+can't be decoded, two fetched rows of one object that disagree, or a stream whose order
+finds two rows it can't tell apart. Each raises an `InvalidDataError` whose
+`invalid_data` is empty and whose message names what it found.
 
 **What to do:** repair the stored data. The request isn't at fault, and reading again
 returns the same verdict until the data changes. Where a report or a batch job should
@@ -201,7 +365,8 @@ carry on past damaged rows, read with `checked()` and set the records aside.
 
 ## Conflicts, failed preconditions and exhausted retries
 
-These errors arise when other transactions change the rows yours depends on.
+These errors arise when other transactions change the rows yours depends on. Each is a
+`ConflictError`, whose `entity` and `key` name the row it hit where there is one.
 [Retries](05-transactions.md#retries) explains which of them Parallax retries; this
 section covers the ones that reach you.
 
@@ -216,9 +381,8 @@ section covers the ones that reach you.
   `tx_start` of a milestone it would close: clocks that repeat or run behind, or an
   instant taken before another transaction committed the version this one changes.
   Parallax retries it at a fresh instant, so a `ConflictError` whose `code` is
-  `"temporal-conflict"` reaches you only when retries are off or used up. Its `entity`
-  and `key` name the object, and its message names the instant and the start it failed
-  to follow
+  `"temporal-conflict"` reaches you only when retries are off or used up. Its message
+  names the instant and the start it failed to follow
   ([Writing](04-writing.md#transaction-time-only-entities)).
 - **Retries run out** when every attempt fails with something retryable. You then get the
   last attempt's failure, with a note naming the count, such as
@@ -227,6 +391,9 @@ section covers the ones that reach you.
   so the write raises `WritePreconditionError`. Its `expected` holds the revision you
   stated. Parallax never retries it, because a re-run would state the same revision
   again.
+- **A publication conflict** means `publish` found another model selection held than the
+  one it expected, as [Model evolution](07-model-evolution.md) describes. The
+  `PublicationConflictError` holds both, as `expected` and `held`.
 
 A failed precondition is the one a caller most often handles. This function from
 [Writing](04-writing.md#target-writes) cancels the orders a user reviewed and reports
@@ -400,27 +567,140 @@ doesn't match the model (see [Model evolution](07-model-evolution.md)), and a re
 privilege belongs to the role the work runs as (see
 [Execution authority](06-execution-authority.md)).
 
-Two more failures fall outside the categories, and each also reaches you as itself:
+The other failures around the database fall outside the categories, and each also
+reaches you as itself:
 
 - **No connection.** `ConnectionAcquisitionError` means Parallax couldn't get a
-  connection, and its `reason` says why, such as `"timeout"` or `"closed"`. It isn't
-  retried, because no attempt began. The
+  connection, and its `reason` says why, such as `"timeout"`, `"closed"` or
+  `"credentials_refused"`. It isn't retried, because no attempt began. The
   [PostgreSQL lifecycle guide](../postgresql-lifecycle.md#timeouts) covers the pool and
   the timeouts behind it.
+- **No database to start with.** `connect` raises `DatabaseStartupError` when the
+  database doesn't become ready to serve, and its `route` and `phase` say which route
+  failed and where.
+- **No credential.** A [credential source](06-execution-authority.md) that can't
+  produce a credential raises `CredentialResolutionError`. You meet it as the cause of
+  the `ConnectionAcquisitionError` or `DatabaseStartupError` it led to, as
+  [the PostgreSQL lifecycle guide](../postgresql-lifecycle.md#where-the-password-lives)
+  tabulates.
 - **A failed rollback.** When rolling back after a failure fails too, you get
   `TransactionRollbackError`, which holds both as `triggering_error` and
   `rollback_error`.
+
+## Trying again later
+
+Parallax's own retries are narrow: they re-run a transaction a few times, within one
+call, for failures that a re-run can fix at once. Once they're spent, a caller can
+still ask whether running the same work again later could succeed. `is_transient`
+answers that, on every error. It is `True` for:
+
+- a `ConflictError` whose `code` is `"optimistic-lock-conflict"` or
+  `"temporal-conflict"`, once Parallax's retries are spent;
+- a `DatabaseError` whose `category` is `"deadlock"` or `"lockWaitTimeout"`;
+- a `ConnectionAcquisitionError` whose `reason` is `"timeout"`, `"queue_rejected"` or
+  `"unavailable"`.
+
+It is `False` for everything else, including a failed precondition, whose caller has to
+read again and decide, and every `UsageError`, `UnsupportedError` and `InternalError`.
+`is_transient` is broader than what Parallax retries itself: a lock wait that timed out
+and a pool that had no connection to spare aren't retried within the call, because
+retrying at once rarely helps, but a later run may well succeed.
+
+A job queue that redelivers failed work uses it to decide which failures to run again:
+
+<!-- example: retry-a-job-later -->
+```python
+def run_or_retry_later(
+    db: ScopedDatabase, job: Callable[[TxnContext], object], retry_later: Callable[[], object]
+) -> None:
+    """Run ``job`` in a transaction, or hand it to ``retry_later`` when a later run may succeed."""
+    try:
+        db.transact(job)
+    except ParallaxError as failure:
+        if not failure.is_transient:
+            raise
+        retry_later()
+```
+<!-- /example -->
+
+A deadlock that outlasts every retry, a lock timeout or an exhausted pool hands the job
+back to run later. A duplicate key, a refused write or your own exception escapes, so
+the queue reports it rather than running it again and failing the same way.
+
+## Errors at the edge of a web API
+
+A web API answers each request with a status. `http_status_for` picks one for an error
+that escapes a request, for the web framework's error handler to answer with:
+
+<!-- example: map-an-error-to-an-http-status -->
+```python
+def http_status_for(error: Exception) -> int:
+    """The HTTP status a web API answers with when ``error`` escapes a request."""
+    match error:
+        case NoResultFound():
+            return 404
+        case WritePreconditionError():
+            return 412
+        case ConflictError():
+            return 409
+        case EditError():
+            return 422
+        case UnsupportedError():
+            return 501
+        case ParallaxError(is_transient=True):
+            return 503
+        case _:
+            return 500
+```
+<!-- /example -->
+
+Every branch is a class or `is_transient`. A result that isn't there is 404. A target
+write whose precondition failed is 412, and the response can name the `key` and the
+`expected` revision that no longer holds. Any other conflict that survived Parallax's
+retries is 409, and an edit the model refused is 422, with each field's problem in
+`violations`. A request this version can't serve is 501, and a failure a later attempt
+may get past is 503, which a client can retry. The order matters: a `WritePreconditionError` is a `ConflictError`,
+and a conflict can be transient, so the more specific cases come first.
+
+Everything else is 500, including a `UsageError`. Once it has escaped the request, it is
+a mistake in your application's code rather than in what the client sent. Where client
+input can cause one, catch it around the one call that consumes the input. This handler
+takes a client's [query document](03-reading.md#the-wire-api) and answers a refusal
+with 400:
+
+<!-- example: answer-a-client-query -->
+```python
+def find_with_a_client_query(
+    db: ScopedDatabase, document: Mapping[str, object]
+) -> tuple[int, list[WireEntity] | dict[str, str]]:
+    """Answer a query document a client sent: its results, or why it was refused."""
+    try:
+        return 200, db.wire.find(document).results()
+    except UsageError as refused:
+        return 400, {"code": refused.code, "detail": str(refused)}
+```
+<!-- /example -->
+
+The `try` covers only the read of the client's document, so a `UsageError` there is the
+client's mistake. Its `code` passes through unchanged, and for a refused query it is the
+same rule name every Parallax implementation refuses that query with, such as
+`path-unknown-member` for a path naming no member of its entity, or
+`neutral-literal-type-mismatch` for a value of the wrong type. An `UnsupportedError`
+isn't caught: the client asked for something reasonable, so it reaches
+`http_status_for` and answers 501.
 
 ## What each error asks of you
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, query, edit or write, such as a class's, query's or write's `UsageError`, `MetamodelValidationError` or `EditError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, descriptor, query, edit or write, such as a class's, query's or write's `UsageError`, `MetamodelValidationError`, `DescriptorError` or `EditError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
 | A `UsageError` whose `code` is `"read-only-write-target"` | by the write verb, before anything is buffered | No | Leave the entity's rows to the system that owns them, or drop `persistence=READ_ONLY` if your application owns them |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |
 | A `UsageError` whose `code` is `"stream-state-invalid"` | when a stream is used outside its `with` block, entered twice or iterated twice | No | Consume each stream once, inside its `with` block |
-| `InvalidDataError` | by the accessor, after the read | No | Repair the stored data; read with `checked()` to carry on past it |
+| `UnsupportedError` | where you make the request, before anything is read or written | No | Go around the gap the `code` names, or wait for a release that serves it |
+| `InternalError` | wherever Parallax finds the invariant broken | No | Report it; for `"cardinality-corruption"`, check the table's key |
+| `InvalidDataError` | by the accessor, after the read, or by the work that met the data | No | Repair the stored data; read with `checked()` to carry on past it |
 | A `UsageError` whose `code` is `"transaction-access-mode-mismatch"`, `"transaction-option-conflict"` or `"transaction-authority-mismatch"` | when a nested call can't join the running transaction, before its callback runs | No | Call the matching kind of transaction, name the same options or none, or run as the same actor |
 | A `UsageError` whose `code` is `"principal-invalid"` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
 | A `UsageError` whose `code` is `"transaction-rollback-only"` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
@@ -431,12 +711,17 @@ Two more failures fall outside the categories, and each also reaches you as itse
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
 | A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out, the row overlaps current coverage, or closed history a clock stayed behind: read the coverage before writing over it, and synchronize the clocks of the servers that write the database |
 | Any other `DatabaseError` whose `category` is `"constraintViolation"` | at the statement | No | Read `constraint_name` to find the constraint, and correct the row that broke it |
-| A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
-| `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |
+| A `DatabaseError` whose `category` is `"lockWaitTimeout"` | at the statement | No | Try later, or find what holds the lock |
+| A `DatabaseError` whose `category` is `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege |
+| `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool; try later when it `is_transient` |
+| `DatabaseStartupError` | by `connect` | No | Check the route its `route` and `phase` name, and its cause |
 | `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |
 
 ## How it works →
 
+- [ADR 0015](../adr/0015-parallax-errors-share-one-root-and-carry-a-code.md) records why
+  every error shares one root and carries a code, and why an error leaving an execution
+  gains a note rather than a wrapper.
 - [Transactions, concurrency and retry](../../../../docs/concepts/transactions.md)
   explains, in domain terms, [retry](../../../../docs/concepts/transactions.md#retry) and
   [joining and rollback-only](../../../../docs/concepts/transactions.md#joining-and-rollback-only),

@@ -28,6 +28,7 @@ from parallax.core import (
     Entity,
     Pin,
     TemporalBound,
+    WritePreconditionError,
     attr,
 )
 from parallax.core.db_port import Password
@@ -35,7 +36,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WritePreconditionError
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import (
