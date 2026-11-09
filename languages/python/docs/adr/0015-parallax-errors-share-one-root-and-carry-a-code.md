@@ -4,7 +4,11 @@ Every exception Parallax raises descends from `ParallaxError`, which derives
 from `Exception`. Its constructor takes `(code, message)`, which is exactly
 `args`; `str()` renders `"{code}: {message}"`. `code` is a read-only view of
 `args[0]`, so `except ParallaxError as error: error.code` is always safe, and an
-error pickles from its state whatever its subclass's constructor takes.
+error pickles from its state whatever its subclass's constructor takes. That
+state pickles only where its values do: a `PublicationConflictError` carries the
+exact process-local Model Selections it compared by identity
+([ADR 0062](../../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)),
+so it does not leave its process.
 `is_transient` answers whether a later attempt of the same work may succeed once
 Parallax's own retries are spent; it is `False` unless the owner of a class
 knows better from facts it already holds. Below the root stand `UsageError`

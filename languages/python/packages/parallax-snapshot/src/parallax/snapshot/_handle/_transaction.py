@@ -130,7 +130,7 @@ class TxnContext:
         An object whose insertion still stands is not opened twice: a repeated
         insert of it — the same instance again, or another instance of the same
         primary key, through either interface — is refused at the verb
-        (:class:`~parallax.core.execution.KeyedWriteValueError`,
+        (:class:`~parallax.core.base.UsageError`,
         ``write-value-already-stored``) rather than left for the database to
         refuse at commit. Once everything the insertion opened has been removed,
         or a pending write removes it, the object may be inserted again: the new
@@ -172,7 +172,7 @@ class TxnContext:
 
         ``source`` supplies the write's authority, and the method takes no
         condition of its own: a value no read of this store produced is
-        refused (:class:`~parallax.core.execution.KeyedWriteValueError`,
+        refused (:class:`~parallax.core.base.UsageError`,
         ``write-value-not-stored``) unless THIS transaction admitted its insert.
         The version column, if any, is never authored here — it is
         framework-owned end to end (`m-concurrency`; ADR 0013): the write seam
@@ -363,8 +363,9 @@ class TxnContext:
         key (a frozen ``Snapshot`` node, a fresh instance, or an edited copy —
         all carry valid primary-key values). A source view pinned at a
         finite Transaction-Time instant is read-only and raises
-        :class:`~parallax.core.execution.TransactionTimePinReadOnlyError`
-        before any buffering, exactly as every other keyed verb does.
+        :class:`~parallax.core.base.UsageError`
+        (``transaction-time-pin-read-only``) before any buffering, exactly as
+        every other keyed verb does.
 
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
