@@ -2,25 +2,40 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from parallax.conformance.guide_models import Customer, Price, Shipment
-from parallax.core import DomainModel, EditError, Entity, MetamodelValidationError
-from parallax.core.db_error import DatabaseError, PhysicalIndexName
+from parallax.core import (
+    ConflictError,
+    DatabaseError,
+    DomainModel,
+    EditError,
+    Entity,
+    MetamodelValidationError,
+    NoResultFound,
+    ParallaxError,
+    UnsupportedError,
+    UsageError,
+    WritePreconditionError,
+)
+from parallax.core.db_error import PhysicalIndexName
 from parallax.core.db_port import CredentialSource
 from parallax.core.execution_lifecycle import LoggingLifecycleProvider
 from parallax.evolution import SchemaDelta
 from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint, PostgresRole
-from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity, connect
 
 __all__ = [
     "add_a_customer_unless_the_id_is_taken",
     "add_a_shipment_unless_its_tracking_number_is_taken",
     "change_a_customer_from_a_form",
     "created_index_name",
+    "find_with_a_client_query",
+    "http_status_for",
     "open_the_shop_database",
     "price_a_window_unless_it_is_priced",
     "problems_in_a_model",
+    "run_or_retry_later",
 ]
 
 
@@ -103,6 +118,47 @@ def add_a_shipment_unless_its_tracking_number_is_taken(
             raise
         return False
     return True
+
+
+def http_status_for(error: Exception) -> int:
+    """The HTTP status a web API answers with when ``error`` escapes a request."""
+    match error:
+        case NoResultFound():
+            return 404
+        case WritePreconditionError():
+            return 412
+        case ConflictError():
+            return 409
+        case EditError():
+            return 422
+        case UnsupportedError():
+            return 501
+        case ParallaxError(is_transient=True):
+            return 503
+        case _:
+            return 500
+
+
+def find_with_a_client_query(
+    db: ScopedDatabase, document: Mapping[str, object]
+) -> tuple[int, list[WireEntity] | dict[str, str]]:
+    """Answer a query document a client sent: its results, or why it was refused."""
+    try:
+        return 200, db.wire.find(document).results()
+    except UsageError as refused:
+        return 400, {"code": refused.code, "detail": str(refused)}
+
+
+def run_or_retry_later(
+    db: ScopedDatabase, job: Callable[[TxnContext], object], retry_later: Callable[[], object]
+) -> None:
+    """Run ``job`` in a transaction, or hand it to ``retry_later`` when a later run may succeed."""
+    try:
+        db.transact(job)
+    except ParallaxError as failure:
+        if not failure.is_transient:
+            raise
+        retry_later()
 
 
 def open_the_shop_database(

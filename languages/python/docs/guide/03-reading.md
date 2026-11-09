@@ -23,16 +23,18 @@ from parallax.core import (
     TX_TIME,
     VALID_TIME,
     Attr,
+    InvalidDataError,
     NoResultFound,
     Pin,
     TemporalBound,
     TooManyResultsFound,
     TxTemporal,
+    UnloadedRelationshipError,
+    UnsupportedError,
     UsageError,
     attr,
 )
-from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.read_delivery import InvalidData, InvalidDataError
+from parallax.core.read_delivery import InvalidData
 from parallax.snapshot import (
     ReadOnlyTxnContext,
     ScopedDatabase,
@@ -674,7 +676,9 @@ started and stopped holding it. The current one has no end yet, so its `tx_end` 
 `TemporalBound.INFINITY` rather than a `datetime`. History arrives in primary-key order
 and, within one key, oldest first. `as_of_range(tx_time=(start, end))` returns only the
 milestones the database held at some point in that range. Neither history nor a range
-read can license a write.
+read can license a write. Neither can include relationships yet: such a read raises an
+`UnsupportedError` whose `code` is `"execution-feature-deferred"` before it reads
+anything, so read the related objects separately.
 
 A temporal read carries its instant through the whole graph it loads: a temporal entity
 reached through an include is read at the same instant as the root. An entity reached

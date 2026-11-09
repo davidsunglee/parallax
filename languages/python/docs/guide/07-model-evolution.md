@@ -14,16 +14,18 @@ The examples use the shop model from [Modeling](02-modeling.md) and these import
 ```python
 from collections.abc import Callable
 
-from parallax.core import Attr, ConcreteSubtype, DomainModel, attr
+from parallax.core import (
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    InvalidDataError,
+    PublicationConflictError,
+    attr,
+)
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import (
-    ModelSelection,
-    PublicationConflictError,
-    ServingModel,
-    prepare_model,
-)
-from parallax.core.read_delivery import InvalidData, InvalidDataError
+from parallax.core.execution import ModelSelection, ServingModel, prepare_model
+from parallax.core.read_delivery import InvalidData
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import (
     ABSENT,
