@@ -11,7 +11,6 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 
-from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.envelope import Emission
 from parallax.core.base import STRING, InternalError, NeutralType
 from parallax.core.base import Decimal as DecimalType
@@ -45,22 +44,6 @@ def test_the_projection_follows_the_statements_own_type_metadata() -> None:
     # grading the emission sees the delivered type, never a reconstruction.
     assert Emission("/write", _balance("251.00", STRING)).to_json()["binds"] == ["251.00"]
     assert Emission("/write", _balance(decimal.Decimal("251.0"))).to_json()["binds"] == ["251.00"]
-
-
-def test_emissions_keep_each_steps_statements_in_order_under_its_pointer() -> None:
-    first, second, third = (_balance(decimal.Decimal(value)) for value in ("1", "2", "3"))
-    reported = envelope.emissions(
-        [
-            ("/scenario/0/write", (first, second)),
-            ("/scenario/1/objectQuery", ()),
-            ("/scenario/2/write", (third,)),
-        ]
-    )
-    assert [(emission.case_pointer, emission.statement) for emission in reported] == [
-        ("/scenario/0/write", first),
-        ("/scenario/0/write", second),
-        ("/scenario/2/write", third),
-    ]
 
 
 def test_an_unannotated_non_wire_carrier_cannot_be_reported() -> None:

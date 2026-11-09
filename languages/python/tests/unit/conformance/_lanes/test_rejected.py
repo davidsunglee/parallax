@@ -1,8 +1,9 @@
-"""The rejected lane, driven database-free: the three-way ``when`` dispatch
-and the four-form ``when.write`` inside it, the rule each classified corpus
-input returns, and every refusal the lane translates into an ``UnclassifiedEngineError``
-naming the case — an input the validators accept, a malformed input, and a
-``when`` carrying none or several of the three inputs.
+"""The rejected lane, driven database-free over inputs no corpus case authors:
+the three-way ``when`` dispatch and the four-form ``when.write`` inside it, and
+every refusal the lane translates into an ``UnclassifiedEngineError`` naming the
+case — an input the validators accept, a malformed input, and a ``when``
+carrying none or several of the three inputs. The rule each corpus case
+classifies to is graded by the rejected-case sweep.
 """
 
 from __future__ import annotations
@@ -15,16 +16,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._lanes import rejected
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.base import UnsupportedError, UsageError
-from tests._support.case_corpus import case as corpus_case
-
-
-def _load_case(case_id: str) -> case_format.Case:
-    # Loads by id directly from the corpus, independent of `sweep.
-    # IMPLEMENTED_MODULES` reachability: these lane-level tests exercise
-    # `run_rejected_case` on its own terms, never gated on whether the case has
-    # ALSO been flipped visible in the sweep.
-    return corpus_case(case_id)
+from parallax.core.base import UsageError
 
 
 def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
@@ -36,25 +28,6 @@ def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
         model="models/animal.yaml",
         document={"model": "models/animal.yaml", "when": when, "then": {"rejectedRule": "x"}},
     )
-
-
-def test_a_refusal_whose_code_the_schema_names_a_rule_by_is_that_rule() -> None:
-    case = _synthetic_rejected({})
-    refusal = UsageError("narrow-outside-position", "a narrow broadens its position")
-    assert rejected.rejected_rule(refusal, case) == "narrow-outside-position"
-
-
-def test_a_rule_raised_as_a_capability_gap_is_that_rule() -> None:
-    refusal = UnsupportedError("subtype-write-set-based-unsupported", "a set-based family write")
-    assert (
-        rejected.rejected_rule(refusal, _synthetic_rejected({}))
-        == "subtype-write-set-based-unsupported"
-    )
-
-
-def test_run_rejected_case_write_dispatch_classifies_a_capability_gap_rule() -> None:
-    case = _load_case("m-inheritance-089")
-    assert rejected.run_rejected_case(case) == "subtype-write-set-based-unsupported"
 
 
 @pytest.mark.parametrize(
@@ -71,31 +44,6 @@ def test_a_refusal_whose_code_names_no_schema_rule_fails_the_case(code: str) -> 
     with pytest.raises(UnclassifiedEngineError, match=rf"m-predicate-998.*{code}") as caught:
         rejected.rejected_rule(refusal, _synthetic_rejected({}))
     assert caught.value.__cause__ is refusal
-
-
-def test_run_rejected_case_query_dispatch_classifies_the_rule() -> None:
-    case = _load_case("m-inheritance-040")
-    assert rejected.run_rejected_case(case) == "narrow-outside-position"
-
-
-def test_run_rejected_case_query_dispatch_over_a_value_object_model() -> None:
-    case = _load_case("m-value-object-034")
-    assert rejected.run_rejected_case(case) == "path-unknown-member"
-
-
-def test_run_rejected_case_model_dispatch_reuses_the_phase_3_validator() -> None:
-    case = _load_case("m-inheritance-020")
-    assert rejected.run_rejected_case(case) == "inheritance-unknown-parent"
-
-
-def test_run_rejected_case_write_dispatch_classifies_the_rule() -> None:
-    case = _load_case("m-value-object-039")
-    assert rejected.run_rejected_case(case) == "write-required-attribute-missing"
-
-
-def test_run_rejected_case_write_dispatch_over_an_inheritance_model() -> None:
-    case = _load_case("m-inheritance-088")
-    assert rejected.run_rejected_case(case) == "abstract-write-target"
 
 
 def test_run_rejected_case_refuses_a_bare_row_naming_an_undeclared_member() -> None:
@@ -126,30 +74,6 @@ def test_a_bare_row_carries_the_shared_observation_control_key() -> None:
     )
 
 
-def test_a_write_authoring_the_type_key_is_refused_as_family_metadata() -> None:
-    row: dict[str, object] = {
-        "id": 1,
-        "amount": "10.00",
-        "_type": "parallax.compatibility.CardPayment",
-    }
-    assert (
-        rejected.run_rejected_case(_synthetic_bare_row(row, "models/payment.yaml"))
-        == "subtype-write-metadata-field"
-    )
-
-
-def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_claim() -> None:
-    # `tagValue` names no declared member either, but `m-inheritance` orders the
-    # payload-shape rules first and gives it a rule of its own. Asking member honesty
-    # before them would report an authoring failure for an input the corpus grades as
-    # `subtype-write-metadata-field` (m-inheritance-087).
-    row: dict[str, object] = {"id": 1, "amount": "10.00", "tagValue": "card"}
-    assert (
-        rejected.run_rejected_case(_synthetic_bare_row(row, "models/payment.yaml"))
-        == "subtype-write-metadata-field"
-    )
-
-
 def _synthetic_bare_row(row: dict[str, object], model: str) -> case_format.Case:
     return case_format.Case(
         path=Path("m-value-object-996-synthetic-rejected.yaml"),
@@ -170,11 +94,6 @@ def _synthetic_keyed_rejected(write: dict[str, object], model: str) -> case_form
         model=model,
         document={"model": model, "when": {"write": write}, "then": {"rejectedRule": "x"}},
     )
-
-
-def test_run_rejected_case_keyed_write_dispatch_classifies_the_rule() -> None:
-    case = _load_case("m-unit-work-016")
-    assert rejected.run_rejected_case(case) == "temporal-keyed-write-multi-row"
 
 
 def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_target() -> None:
@@ -393,44 +312,6 @@ def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
     when: dict[str, object] = {"model": {"entities": []}, "write": {}}
     with pytest.raises(UnclassifiedEngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected(when))
-
-
-def test_run_rejected_case_predicate_write_dispatch_classifies_the_rule() -> None:
-    # A predicate-selected amendment's assignment decodes every collection element
-    # before buffering, so an undecodable one is the Wire literal rule.
-    document: dict[str, object] = {
-        "model": "models/scalar-collection-layout-twin-columns.yaml",
-        "when": {
-            "write": {
-                "mutation": "amend",
-                "target": {
-                    "entity": "parallax.compatibility.CollectionTwinItem",
-                    "predicate": {"true": {}},
-                },
-                "assignments": [
-                    {"attr": "parallax.compatibility.CollectionTwinItem.counts", "value": [5, "6"]}
-                ],
-            }
-        },
-        "then": {"rejectedRule": "neutral-literal-type-mismatch"},
-    }
-    case = case_format.Case(
-        path=Path("m-batch-write-998-synthetic-rejected.yaml"),
-        case_id="m-batch-write-998",
-        shape="rejected",
-        tags=("m-batch-write", "rejected", "slice-snapshot-1"),
-        model="models/scalar-collection-layout-twin-columns.yaml",
-        document=document,
-    )
-    assert rejected.run_rejected_case(case) == "neutral-literal-type-mismatch"
-
-
-@pytest.mark.parametrize(
-    "case_id",
-    ["m-unit-work-066", "m-unit-work-067", "m-unit-work-068", "m-unit-work-069", "m-unit-work-070"],
-)
-def test_a_write_to_a_read_only_entity_is_classified_by_its_persistence(case_id: str) -> None:
-    assert rejected.run_rejected_case(_load_case(case_id)) == "read-only-write-target"
 
 
 _SCALAR_THING = "parallax.compatibility.ScalarThing"

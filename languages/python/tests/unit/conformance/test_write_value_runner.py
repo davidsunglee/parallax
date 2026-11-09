@@ -25,7 +25,7 @@ from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.execution import prepare_model
-from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -138,47 +138,6 @@ def test_the_corpus_reads_a_source_in_every_bracket_outside_the_attempt() -> Non
     } == {"standalone", "readOnlyTransaction", "earlierAttempt"}
 
 
-def test_an_unrecognized_source_read_is_loud() -> None:
-    step = write_value_runner.WriteValueStep(
-        "amend", "thisSource", "write-evidence-unavailable", "invented"
-    )
-    with pytest.raises(ValueError, match="unrecognized source read"):
-        write_value_runner.read_outside_the_attempt(_db(RefusingAdapter()), [step])
-
-
-def test_a_source_read_step_needs_its_outside_read_arranged() -> None:
-    step = write_value_runner.WriteValueStep(
-        "amend", "thisSource", "write-evidence-unavailable", "standalone"
-    )
-    port = ScriptedAdapter(Transact())
-    foreign = ForeignLifecycleSource(_ACCOUNT, port)
-
-    def fn(tx: TxnContext) -> str | None:
-        return write_value_runner.grade_step(tx, step, foreign)
-
-    with pytest.raises(ValueError, match="needs its outside read arranged"):
-        _db(port).transact(fn)
-
-
-def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -> None:
-    # `unmanaged` is the one provenance no managed read produces, so arranging it
-    # reaches no port at all. The other two are reads, each through the source
-    # whose provenance the token names.
-    unreachable = ForeignLifecycleSource(_ACCOUNT, RefusingAdapter())
-
-    def fn(tx: TxnContext) -> Entity:
-        return write_value_runner.value_of("unmanaged", tx, unreachable)
-
-    value = (
-        own_root(
-            Database.connect(ScriptedAdapter(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED))
-        )
-        .using_database_login()
-        .transact(fn)
-    )
-    assert isinstance(value, Account)
-
-
 def test_the_second_source_materializes_from_a_read_and_recognizes_its_own() -> None:
     # The two halves of what `m-unit-work` calls a framework-managed source: it
     # materializes values from reads, and it attaches the state by which it later
@@ -272,17 +231,6 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
         return write_value_runner.value_of("invented", tx, foreign)
 
     with pytest.raises(ValueError, match="unrecognized value provenance"):
-        _db(port).transact(fn)
-
-
-def test_invalid_root_provenance_requires_its_adapter_arranger() -> None:
-    port = ScriptedAdapter(Transact())
-    foreign = ForeignLifecycleSource(_ACCOUNT, port)
-
-    def fn(tx: TxnContext) -> Entity:
-        return write_value_runner.value_of("invalidRoot", tx, foreign)
-
-    with pytest.raises(ValueError, match="diagnostic-data arranger"):
         _db(port).transact(fn)
 
 

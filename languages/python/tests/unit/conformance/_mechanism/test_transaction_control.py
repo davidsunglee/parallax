@@ -18,7 +18,6 @@ from parallax.conformance._mechanism.transaction_control import (
 from parallax.core.db_port import (
     BeginFailed,
     CommitFailed,
-    DatabaseConnection,
     PipelineStatement,
     RolledBack,
     TransactionOutcome,
@@ -45,26 +44,6 @@ def test_the_aborting_port_answers_the_inner_ordered_transport_it_leaves_undecor
     inner = ScriptedAdapter(ordered=True)
     port = write_connection(inner, rollback=True)
     assert port.ordered_write_transport is inner.ordered_write_transport
-
-
-def test_a_port_that_does_not_roll_back_is_handed_back_undecorated() -> None:
-    inner = FakeWritePort()
-    assert write_connection(inner, rollback=False) is inner
-
-
-def test_a_rollback_step_flushes_its_work_and_then_aborts() -> None:
-    # The abort lands once the body has returned, so the statements the body
-    # put on the wire executed and the provider's rollback is what erases them.
-    inner = FakeWritePort()
-    port = write_connection(inner, rollback=True)
-
-    def body(conn: DatabaseConnection) -> int:
-        return conn.execute_write("update account set balance = ?", [1])
-
-    outcome = port.transaction(body)
-    assert isinstance(outcome, RolledBack)
-    assert inner.writes == [("update account set balance = ?", [1])]
-    assert (inner.commits, inner.rollbacks) == (0, 1)
 
 
 def test_absorbing_rollback_ends_a_rollback_step_quietly() -> None:

@@ -1,12 +1,10 @@
 """``parallax.conformance.boundary_runner`` unit tests (Docker-free fake ports).
 
-Pins the pure pieces the real-database suite (`tests/api/test_boundary_run.py`)
-composes against real Postgres: `when.boundary`/`given.fault` parsing (the
-`when.uow` projection is `case_format`'s own, pinned beside it), the action ->
-verb mapping (incl. its
-branches no reachable corpus case reaches — `create`/`delete`/`terminate`),
-the fault-injecting port decorator's firing/attempt-counting behavior, and
-the attempt-count formula.
+Pins what the real-database suite (`tests/api/test_boundary_run.py`) composes
+but cannot observe: the `given.sessionDefault` reading no case's outcome
+reveals, the `then.outcome` map, the action -> verb branches no reachable corpus
+case reaches (`create`/`delete`/`terminate`), the fault-injecting decorators'
+firing at every seam, and the attempt-count formula.
 """
 
 from __future__ import annotations
@@ -34,7 +32,6 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
-    Committed,
     ConnectionAcquisitionError,
     DatabaseAdapter,
     DatabaseConnection,
@@ -43,7 +40,6 @@ from parallax.core.db_port import (
     MappingRow,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
-    PipelineStatement,
     ReleaseUnconfirmed,
     Returned,
     RouteCapabilities,
@@ -60,7 +56,7 @@ from parallax.core.execution import (
     TxnOptions,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -74,7 +70,6 @@ from tests._support.db_port import (
 )
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
-from tests.unit._transact_support import balance_row
 
 _ACCOUNT = MODELS["account"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -106,72 +101,8 @@ _BALANCE_TARGET = boundary_runner.boundary_target(_case({}, model="models/balanc
 
 
 # --------------------------------------------------------------------------- #
-# when.uow / when.boundary / given.fault / then.outcome parsing.              #
+# given.sessionDefault / then.outcome reading.                                #
 # --------------------------------------------------------------------------- #
-def test_boundary_steps_reads_the_ordered_list() -> None:
-    case = _case({"when": {"boundary": [{"action": "read"}, {"action": "amend"}]}})
-    assert boundary_runner.boundary_steps(case) == [
-        boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("amend", {}),
-    ]
-
-
-def test_boundary_steps_reads_a_joins_own_options() -> None:
-    # A join step projects exactly the fields it authors, through the same
-    # decoder the outer `when.uow` uses: the level arrives as the Python
-    # literal, and an omitted field stays absent so production inherits it.
-    case = _case(
-        {
-            "when": {
-                "boundary": [
-                    {"action": "join", "isolation": "serializable"},
-                    {"action": "join", "retry": {"maxRetries": 0}, "concurrency": "locking"},
-                    {"action": "join", "note": "inherits everything"},
-                ]
-            }
-        }
-    )
-    assert boundary_runner.boundary_steps(case) == [
-        boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
-        boundary_runner.BoundaryStep(
-            "join", {"retry": RetryPolicy(max_retries=0), "concurrency": "locking"}
-        ),
-        boundary_runner.BoundaryStep("join", {}),
-    ]
-
-
-def test_boundary_steps_reads_a_joins_own_access_mode() -> None:
-    case = _case(
-        {
-            "when": {
-                "boundary": [
-                    {"action": "join", "accessMode": "read-only", "retry": {"maxRetries": 1}},
-                    {"action": "join"},
-                ]
-            }
-        }
-    )
-    assert boundary_runner.boundary_steps(case) == [
-        boundary_runner.BoundaryStep(
-            "join", {"retry": RetryPolicy(max_retries=1)}, None, "read_only"
-        ),
-        boundary_runner.BoundaryStep("join", {}),
-    ]
-
-
-def test_boundary_steps_refuses_a_null_option_on_a_join() -> None:
-    case = _case({"when": {"boundary": [{"action": "join", "isolation": None}]}})
-    with pytest.raises(ValueError, match=r"when\.boundary\[0\]\.isolation"):
-        boundary_runner.boundary_steps(case)
-
-
-def test_fault_kind_absent_is_none() -> None:
-    assert boundary_runner.fault_kind(_case({})) is None
-
-
-def test_fault_kind_reads_the_declared_fault() -> None:
-    case = _case({"given": {"fault": "deadlock"}})
-    assert boundary_runner.fault_kind(case) == "deadlock"
 
 
 def test_session_default_absent_is_none() -> None:
@@ -295,172 +226,6 @@ def _context(runtime: Any) -> Any:
     return runtime.login_source().new_context("writer_only")
 
 
-def test_run_boundary_actions_read_then_update() -> None:
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _ACCOUNT_TARGET)
-
-    result = _db(port).transact(fn)
-    assert result is not None
-    assert result.balance == Decimal("251.00")
-    assert len(port.writes) == 1
-
-
-def test_a_join_naming_a_second_level_is_refused_by_production() -> None:
-    # The refusal under test is `db.transact`'s own: a joining call may not
-    # renegotiate the boundary, so the runner passes the step's level through and
-    # grades what production does with it (`m-unit-work-035`).
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-    db = _db(port)
-    steps = [
-        boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
-    ]
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
-
-    with raises_code(UsageError, "transaction-option-conflict"):
-        db.transact(fn, isolation="repeatable_read")
-
-
-def test_a_join_repeating_the_boundarys_level_is_accepted() -> None:
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-    db = _db(port)
-    steps = [
-        boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("join", {"isolation": "repeatable_read"}),
-        boundary_runner.BoundaryStep("amend", {}),
-    ]
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
-
-    result = db.transact(fn, isolation="repeatable_read")
-    assert result is not None
-    assert result.balance == Decimal("251.00")
-
-
-def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() -> None:
-    # A joined call shares the outer transaction (`m-unit-work`), so the write
-    # after the `join` buffers onto the SAME unit of work and reaches the
-    # database under the OUTER boundary's pre-commit flush —
-    # `m-execution-lifecycle-006`.
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-    db = _db(port)
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(
-            tx, _steps("read", "join", "amend"), _ACCOUNT_TARGET, database=db
-        )
-
-    result = db.transact(fn)
-    assert result is not None
-    assert result.balance == Decimal("251.00")
-    assert len(port.writes) == 1
-    # One boundary: the join opened no second transaction, and its buffered
-    # write reached the database after the read, under the outer boundary.
-    assert port.boundaries == 1
-    assert port.ops == ["read", "write"]
-
-
-def test_a_join_through_the_outer_read_only_entrypoint_reads_in_the_same_attempt() -> None:
-    # A join naming no access mode is made through the enclosing call's own
-    # entrypoint, so inside a read-only invocation it is a read-only join, and
-    # the read after it runs on the one read-only boundary.
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-    db = _db(port)
-    steps = [
-        boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("join", {"retry": RetryPolicy()}),
-        boundary_runner.BoundaryStep("read", {}),
-    ]
-
-    def fn(rtx: ReadOnlyTxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(rtx, steps, _ACCOUNT_TARGET, database=db)
-
-    result = db.read_only(fn)
-    assert result is not None
-    assert result.balance == Decimal("250.00")
-    assert port.boundaries == 1
-    assert port.ops == ["read", "read"]
-
-
-def test_a_join_naming_the_other_access_mode_is_refused_by_production() -> None:
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-    db = _db(port)
-    steps = [
-        boundary_runner.BoundaryStep("read", {}),
-        boundary_runner.BoundaryStep("join", {}, None, "read_only"),
-    ]
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
-
-    with raises_code(UsageError, "transaction-access-mode-mismatch"):
-        db.transact(fn)
-
-
-def test_a_writing_action_in_a_read_only_invocation_is_refused() -> None:
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-
-    def fn(rtx: ReadOnlyTxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(rtx, _steps("read", "amend"), _ACCOUNT_TARGET)
-
-    with pytest.raises(AssertionError, match="`amend` action needs a writable"):
-        _db(port).read_only(fn)
-
-
-def test_a_join_without_the_owning_database_is_refused() -> None:
-    port = _FakePort(rows=[])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("join"), _ACCOUNT_TARGET)
-
-    with pytest.raises(AssertionError, match="needs the ScopedDatabase running the boundary"):
-        _db(port).transact(fn)
-
-
-def test_a_qualified_join_without_an_authority_scope_selector_is_refused() -> None:
-    port = _FakePort(rows=[])
-    db = _db(port)
-    steps = [
-        boundary_runner.BoundaryStep("join", {}, case_format.DatabaseLoginSelection()),
-    ]
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
-
-    with pytest.raises(AssertionError, match="needs an authority scope selector"):
-        db.transact(fn)
-
-
-def test_a_qualified_join_uses_the_independently_selected_scope() -> None:
-    port = _FakePort(rows=[])
-    db = _db(port)
-    selection = case_format.DatabaseLoginSelection()
-    steps = [
-        boundary_runner.BoundaryStep("join", {}, selection),
-        boundary_runner.BoundaryStep("create", {}),
-    ]
-    selected: list[case_format.ActorSelection] = []
-
-    def scope_for(actor: case_format.ActorSelection) -> ScopedDatabase:
-        selected.append(actor)
-        return db
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(
-            tx, steps, _ACCOUNT_TARGET, database=db, scope_for=scope_for
-        )
-
-    result = db.transact(fn)
-    assert result is not None
-    assert result.id == 90
-    assert selected == [selection]
-
-
 def test_run_boundary_actions_create() -> None:
     port = _FakePort(rows=[])
 
@@ -494,26 +259,6 @@ def test_run_boundary_actions_terminate_refuses() -> None:
         _db(port).transact(fn)
 
 
-def test_a_balance_case_reads_and_advances_the_current_milestone() -> None:
-    # A Transaction-Time-Only update chains rather than overwrites: the close of
-    # the observed milestone, then the insert carrying the advanced value.
-    in_z = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-    port = _FakePort(rows=[{**balance_row(in_z=in_z), "bal_id": 2, "val": Decimal("200.00")}])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _BALANCE_TARGET)
-
-    result = _db(port, MODELS["balance"]).transact(fn)
-    assert result is not None
-    assert _BALANCE_TARGET.amount(result) == _BALANCE_TARGET.committed == Decimal("201.00")
-    assert len(port.writes) == 2
-
-
-def test_a_model_no_target_is_declared_for_is_refused() -> None:
-    with pytest.raises(AssertionError, match="no boundary target is declared"):
-        boundary_runner.boundary_target(_case({}, model="models/position.yaml"))
-
-
 @pytest.mark.parametrize("action", ["create", "delete"])
 def test_an_account_only_action_on_another_target_is_refused(action: str) -> None:
     port = _FakePort(rows=[])
@@ -524,16 +269,6 @@ def test_an_account_only_action_on_another_target_is_refused(action: str) -> Non
     with pytest.raises(AssertionError, match=r"declared only on the account\.yaml target"):
         _db(port, MODELS["balance"]).transact(fn)
     assert port.writes == []
-
-
-def test_run_boundary_actions_update_without_a_prior_read_raises() -> None:
-    port = _FakePort(rows=[])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("amend"), _ACCOUNT_TARGET)
-
-    with pytest.raises(AssertionError, match="prior `read`"):
-        _db(port).transact(fn)
 
 
 def test_run_boundary_actions_delete_without_a_prior_read_raises() -> None:
@@ -658,27 +393,6 @@ def _ordered_port(
     return FaultInjectingPort(inner, fault=fault, persistent=False), inner
 
 
-def test_fault_injecting_port_has_ordered_transport_exactly_where_its_inner_port_does() -> None:
-    assert (
-        FaultInjectingPort(_FakePort(rows=[]), fault=None, persistent=False).ordered_write_transport
-        is None
-    )
-    port, inner = _ordered_port(None)
-    # Its own operation, stored once, so interception is never bypassed.
-    assert port.ordered_write_transport is not None
-    assert port.ordered_write_transport is not inner.ordered_write_transport
-    assert port.ordered_write_transport is port.ordered_write_transport
-
-
-def test_fault_injecting_port_forwards_an_unfaulted_invocation_unchanged() -> None:
-    answered = OrderedWriteResultComplete((1, 1, 1))
-    port, inner = _ordered_port(None, Ordered(answered))
-    transport = port.ordered_write_transport
-    assert transport is not None
-    assert transport(_PRESENTED) is answered
-    assert inner.calls == [_presented(*_PRESENTED)]
-
-
 def test_a_raised_fault_fails_the_first_statement_and_executes_none_after_it() -> None:
     port, inner = _ordered_port("deadlock")
     transport = port.ordered_write_transport
@@ -739,45 +453,6 @@ def test_the_transaction_callbacks_connection_keeps_the_ordered_interception() -
     result = transport(_PRESENTED[:1])
     assert isinstance(result, OrderedWriteResultComplete)
     assert isinstance(result.outcomes[0], StatementFailed)
-
-
-def test_fault_injecting_port_no_fault_passes_reads_and_writes_through() -> None:
-    inner = _FakePort(rows=[{"id": 1}])
-    port = FaultInjectingPort(inner, fault=None, persistent=False)
-    assert port.execute("select 1", []) == [(1,)]
-    assert port.execute_pipeline((PipelineStatement("select 1"),)) == [[(1,)]]
-    assert port.execute_write("update x set y = 1", []) == 1
-
-
-def test_fault_injecting_port_delegates_every_transaction_call() -> None:
-    inner = _FakePort(rows=[])
-    port = FaultInjectingPort(inner, fault=None, persistent=False)
-
-    def body(_conn: DatabaseConnection) -> str:
-        return "ok"
-
-    assert port.transaction(body) == Committed("ok")
-    assert port.transaction(body) == Committed("ok")
-
-
-def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> None:
-    # `_db(port).transact(...)`'s own retry loop calls `.transaction()` fresh
-    # per attempt on the TOP-LEVEL port; each call wraps a NESTED copy sharing
-    # the SAME `_state` — a deadlock on attempt 1 (one-shot) is retried away.
-    inner = _FakePort(
-        rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
-    )
-    db = _db(_faulted(inner, fault="deadlock", persistent=False))
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "amend"), _ACCOUNT_TARGET)
-
-    result = db.transact(fn)
-    assert result is not None
-    assert result.balance == Decimal("251.00")
-    # The faulted attempt, then the retried (successful) one — counted at the
-    # boundary each attempt opens, which is what the retry loop produced.
-    assert inner.boundaries == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -1066,28 +741,6 @@ def test_a_resource_faulting_adapter_stands_in_for_the_configuration_it_decorate
         runtime.principal_source(object()).new_context("writer_only"), ResourceFaultingContext
     )
     runtime.close()
-
-
-# --------------------------------------------------------------------------- #
-# reachable_boundary_cases: shape filtering.                                  #
-# --------------------------------------------------------------------------- #
-def test_reachable_boundary_cases_filters_by_shape() -> None:
-    boundary = _case({}, case_id="m-auto-retry-901")
-    other = case_format.Case(
-        path=Path("m-core-001.yaml"),
-        case_id="m-core-001",
-        shape="read",
-        tags=("m-core", "slice-snapshot-1"),
-        model="models/grade.yaml",
-        document={},
-    )
-    assert boundary_runner.reachable_boundary_cases([boundary, other]) == [boundary]
-
-
-def test_reachable_boundary_cases_defaults_to_the_loaded_corpus() -> None:
-    cases = boundary_runner.reachable_boundary_cases()
-    assert cases
-    assert all(case.shape == "boundary" for case in cases)
 
 
 def test_a_fault_injecting_adapter_stands_in_for_the_configuration_it_decorates() -> None:

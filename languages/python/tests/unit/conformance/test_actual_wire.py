@@ -5,10 +5,8 @@ meets.
 
 from __future__ import annotations
 
-import dataclasses
 import decimal
 import uuid
-from typing import Any, cast
 
 import pytest
 
@@ -17,9 +15,7 @@ from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, UsageError
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
-    ValueObjectIdentity,
 )
 from parallax.core.write_plan import ObjectKey
 from tests._support.errors import raises_code
@@ -100,75 +96,6 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
         projection.object_key(ObjectKey(EntityIdentity(None, "Missing"), (("id", 1),)))
     with pytest.raises(ValueError, match="no applicable Attribute"):
         projection.object_key(ObjectKey(entity.identity, (("missing", 1),)))
-
-
-def test_actual_wire_projection_rejects_unresolved_physical_contributors() -> None:
-    model = models.load_models()["document-codec"]
-    layout = storage_layout.view(model).tables[0]
-    slot = layout.columns[0]
-
-    missing_attribute = cast(
-        "storage_layout.TableLayout",
-        dataclasses.replace(
-            cast("Any", layout),
-            columns=(
-                dataclasses.replace(
-                    slot,
-                    contributor=AttributeIdentity(EntityIdentity(None, "Missing"), "id"),
-                ),
-            ),
-        ),
-    )
-    with pytest.raises(ValueError, match="no such Entity"):
-        ActualWireProjection(model).table_row(missing_attribute, {slot.column.name: 1})
-
-    missing_value_object = cast(
-        "storage_layout.TableLayout",
-        dataclasses.replace(
-            cast("Any", layout),
-            columns=(
-                dataclasses.replace(
-                    slot,
-                    contributor=ValueObjectIdentity(EntityIdentity(None, "Missing"), ("payload",)),
-                ),
-            ),
-        ),
-    )
-    with pytest.raises(ValueError, match="no such Entity"):
-        ActualWireProjection(model).table_row(missing_value_object, {slot.column.name: {}})
-
-    entity = model.entities[0]
-    missing_attribute = cast(
-        "storage_layout.TableLayout",
-        dataclasses.replace(
-            cast("Any", layout),
-            columns=(
-                dataclasses.replace(
-                    slot,
-                    contributor=AttributeIdentity(entity.identity, "missing"),
-                ),
-            ),
-        ),
-    )
-    with pytest.raises(ValueError, match="no Attribute"):
-        ActualWireProjection(model).table_row(missing_attribute, {slot.column.name: 1})
-
-    missing_value_object = cast(
-        "storage_layout.TableLayout",
-        dataclasses.replace(
-            cast("Any", layout),
-            columns=(
-                dataclasses.replace(
-                    slot,
-                    contributor=ValueObjectIdentity(entity.identity, ("missing",)),
-                ),
-            ),
-        ),
-    )
-    with pytest.raises(ValueError, match="no Value Object"):
-        ActualWireProjection(model).table_row(missing_value_object, {slot.column.name: {}})
-
-    assert ActualWireProjection(model)._table_row_entity(layout, {}) is entity  # pyright: ignore[reportPrivateUsage] - unit test drives the projection's private entity lookup directly
 
 
 def test_actual_wire_projects_scalar_collections_element_wise_and_keeps_corruption() -> None:

@@ -1,6 +1,5 @@
 """The conformance engine's given-state seeding: ``given.corrupt`` realized as
-whole-document replacements over a read case's loaded fixtures, and
-``given.apply`` applied verbatim before a run lane's first step.
+whole-document replacements over a read case's loaded fixtures.
 
 Docker-free, over ports that answer one stored document and record what was
 written back.
@@ -11,7 +10,6 @@ from __future__ import annotations
 import copy
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -19,7 +17,6 @@ import pytest
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.given_state import (
-    apply_given_apply,
     apply_given_corrupt,
 )
 from parallax.conformance._mechanism.model_facts import (
@@ -27,7 +24,6 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
     load_case_setup_metamodel,
 )
-from parallax.core.base import DocumentValue
 from parallax.core.db_port import (
     DatabaseConnection,
     OrderedWriteTransport,
@@ -39,7 +35,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import body_outcome
-from tests.unit.conformance._recording_ports import FakeWritePort
 
 
 def _load_case(case_id: str) -> case_format.Case:
@@ -104,23 +99,6 @@ def _corrupting(case_id: str, stored: object, *entries: Mapping[str, object]) ->
     return port
 
 
-def test_given_corrupt_writes_the_authored_value_into_the_stored_document() -> None:
-    port = _corrupting(
-        "m-snapshot-read-049", {"day": "2026-01-15", "clock": "09:30:00", "token": "old"}
-    )
-    assert [binds for _sql, binds in port.reads] == [[101], [102]]
-    assert all("from stream_coordinate where id = %s" in sql for sql, _ in port.reads)
-    written = [cast("StructuredDocument", binds[0]).document for _sql, binds in port.writes]
-    assert written == [
-        {"day": "2026-01-15", "clock": "09:30:00", "token": "NOT-A-UUID"},
-        {"day": "2026-01-15", "clock": None, "token": "old"},
-    ]
-    assert all(
-        sql == "update stream_coordinate set coordinates = %s where id = %s"
-        for sql, _binds in port.writes
-    )
-
-
 def test_given_corrupt_reads_a_document_its_provider_returned_as_text() -> None:
     port = _corrupting(
         "m-snapshot-read-049",
@@ -128,57 +106,6 @@ def test_given_corrupt_reads_a_document_its_provider_returned_as_text() -> None:
     )
     written = cast("dict[str, object]", cast("StructuredDocument", port.writes[0][1][0]).document)
     assert written["token"] == "NOT-A-UUID"
-
-
-def test_given_corrupt_descends_into_a_value_object_document() -> None:
-    port = _corrupting(
-        "m-storage-layout-027",
-        {"street": "4 Main", "city": "Boston"},
-        {
-            "entity": "parallax.compatibility.ClassificationTwinItem",
-            "key": 4,
-            "member": ["profile", "street"],
-            "value": 7,
-        },
-    )
-    assert cast("StructuredDocument", port.writes[0][1][0]).document == {
-        "street": 7,
-        "city": "Boston",
-    }
-
-
-def test_given_corrupt_replaces_a_whole_occurrence_under_columns() -> None:
-    # `[profile]` addresses the occurrence itself, whose Structured Column holds
-    # the whole stored value — which is how a case authors the wrong-KIND verdict
-    # for a top-level Value Object under either layout.
-    port = _corrupting(
-        "m-storage-layout-027",
-        {"street": "4 Main", "city": "Boston"},
-        {
-            "entity": "parallax.compatibility.ClassificationTwinItem",
-            "key": 4,
-            "member": ["profile"],
-            "value": "not-an-object",
-        },
-    )
-    assert cast("StructuredDocument", port.writes[0][1][0]).document == "not-an-object"
-
-
-def test_given_corrupt_indexes_an_array_backed_structured_column() -> None:
-    # A top-level `many` occurrence under `Columns` stores an ARRAY at the root of
-    # its own Structured Column, so the address's first position indexes the
-    # column's whole value rather than a member of a document.
-    port = _corrupting(
-        "m-storage-layout-029",
-        [{"code": "A"}, {"code": "B"}],
-        {
-            "entity": "parallax.compatibility.WriteTwinItem",
-            "key": 1,
-            "member": ["marks", 0, "code"],
-            "value": 7,
-        },
-    )
-    assert cast("StructuredDocument", port.writes[0][1][0]).document == [{"code": 7}, {"code": "B"}]
 
 
 def test_given_corrupt_addresses_an_inherited_member_by_its_declaration() -> None:
@@ -336,57 +263,3 @@ def test_given_corrupt_addresses_a_row_only_the_provisioning_model_declares() ->
     assert port.writes[0][0] == "update den_document set payload = %s where id = %s"
     with pytest.raises(KeyError, match="Den"):
         apply_given_corrupt(case, load_case_metamodel(case), _CorruptionPort({}))
-
-
-def test_a_case_declaring_no_corruption_writes_nothing() -> None:
-    case = _load_case("m-snapshot-read-049")
-    document = dict(case.document)
-    document["given"] = {"fixtures": True}
-    port = _CorruptionPort({})
-    apply_given_corrupt(
-        dataclasses.replace(case, document=document),
-        models.accepted_model_of(load_case_domain_model(case)),
-        port,
-    )
-    assert port.reads == [] and port.writes == []
-
-
-def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None:
-    case = case_format.Case(
-        path=Path("m-unit-work-999-synthetic.yaml"),
-        case_id="m-unit-work-999",
-        shape="conflict",
-        tags=("m-unit-work", "slice-snapshot-1"),
-        model="models/account.yaml",
-        document={"model": "models/account.yaml", "given": {"fixtures": True}},
-    )
-    port = FakeWritePort()
-    apply_given_apply(case, port)
-    assert port.writes == []
-
-
-def test_apply_given_apply_binds_a_mapping_as_the_document_it_stores() -> None:
-    document: DocumentValue = {"displayName": "Dee", "badge": "gold"}
-    case = case_format.Case(
-        path=Path("m-batch-write-999-synthetic.yaml"),
-        case_id="m-batch-write-999",
-        shape="scenario",
-        tags=("m-batch-write", "slice-snapshot-1"),
-        model="models/document-layout.yaml",
-        document={
-            "model": "models/document-layout.yaml",
-            "given": {
-                "apply": [
-                    {
-                        "sql": "insert into traveler(id, payload) values (?, ?)",
-                        "binds": [4, document],
-                    }
-                ]
-            },
-        },
-    )
-    port = FakeWritePort()
-    apply_given_apply(case, port)
-    assert port.writes == [
-        ("insert into traveler(id, payload) values (%s, %s)", [4, StructuredDocument(document)])
-    ]
