@@ -21,7 +21,6 @@ from parallax.evolution.model_evolution._values import (
     CALLER_INPUT_ORDER,
     COORDINATION_REASON_ORDER,
     AsOfAxisAdded,
-    AsOfAxisAltered,
     AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
@@ -186,7 +185,7 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
             return _relationship_alteration(
                 matching.relationships.surviving[operation.relationship]
             )
-        case AsOfAxisAdded() | AsOfAxisAltered() | AsOfAxisRemoved():
+        case AsOfAxisAdded() | AsOfAxisRemoved():
             # An axis on an Entity that already stores rows changes the temporal
             # operation surface and the framework ownership of its endpoints, and
             # it moves the derived physical key and the bounds existing rows must

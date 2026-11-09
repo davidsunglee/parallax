@@ -90,7 +90,6 @@ RelationshipRemoved
 RelationshipAltered
 AsOfAxisAdded
 AsOfAxisRemoved
-AsOfAxisAltered
 IndexAdded
 IndexRemoved
 IndexAltered
@@ -108,9 +107,11 @@ An As-Of Axis is a first-class location identified by its Entity and Temporal
 Dimension, because its endpoint Attributes, framework ownership, and
 physical-key consequences belong to the axis declaration rather than to an Entity
 alteration. The dimension participates in axis identity, so changing it is a
-removal and an addition. Derived primary-key Indices never receive Index
-operations: they are not independently authored, and their changes are reported
-through the causal primary-key Attribute or As-Of Axis operation.
+removal and an addition. An axis has no alteration: `m-metamodel` fixes both
+endpoint Attributes by the axis's Entity and dimension, so two accepted models
+declaring one axis declare the same endpoints. Derived primary-key Indices never
+receive Index operations: they are not independently authored, and their changes
+are reported through the causal primary-key Attribute or As-Of Axis operation.
 
 `DeclarationOrderChanged` describes one local collection whose surviving
 declarations changed relative order. Its `earlier` and `later` sequences contain
@@ -159,8 +160,6 @@ JoinChanged
 ReverseOfChanged
 DependencyChanged
 OrderingChanged
-StartAttributeChanged
-EndAttributeChanged
 ComponentsChanged
 UniquenessChanged
 ```
@@ -175,7 +174,6 @@ in the fixed order below.
 | `ValueObjectOccurrenceAltered` | `StorageChanged`, `MultiplicityChanged`, `NullabilityChanged` |
 | `ValueObjectAttributeAltered` | `TypeChanged`, `MultiplicityChanged`, `NullabilityChanged` |
 | `RelationshipAltered` | `DeclarationFormChanged`, `CardinalityChanged`, `JoinChanged`, `ReverseOfChanged`, `DependencyChanged`, `OrderingChanged` |
-| `AsOfAxisAltered` | `StartAttributeChanged`, `EndAttributeChanged` |
 | `IndexAltered` | `ComponentsChanged`, `UniquenessChanged` |
 
 Four of those deltas retain a **whole** accepted value rather than a fragment, so
@@ -341,10 +339,10 @@ ancestry makes applicable.
   Index is unilateral, including component and uniqueness changes: it affects
   only a rebuildable access path or enforcement rule, destroys no stored data,
   and invalidates no authored operation. It may change whether a write succeeds.
-- **As-Of Axes.** Adding, altering, or removing an axis on an existing Entity
-  requires coordination for both reasons: it changes the temporal operation
-  surface, framework ownership of its endpoints, the derived physical primary
-  key, or the bounds required of existing rows. Removal is not the mirror of a
+- **As-Of Axes.** Adding or removing an axis on an existing Entity requires
+  coordination for both reasons: it changes the temporal operation surface,
+  framework ownership of its endpoints, the derived physical primary key, or the
+  bounds required of existing rows. Removal is not the mirror of a
   member removal that leaves a Column behind — the axis end Attributes leave the
   derived physical key, so the later logical identity is narrower than the one
   the surviving history was written under and that history collides beneath it.

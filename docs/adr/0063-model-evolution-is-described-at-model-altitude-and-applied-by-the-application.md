@@ -391,6 +391,10 @@ earlier and later Attribute Identity. Changing both endpoints emits both deltas
 in that order; changing the Temporal Dimension cannot be an alteration because
 the dimension participates in axis identity.
 
+*Superseded in part (2026-11, [ADR 0091](0091-an-as-of-axis-has-no-alteration.md)):*
+an As-Of Axis has no alteration, so `AsOfAxisAltered` and its two deltas are no
+longer in the vocabulary.
+
 Removing any model-facing declaration requires Coordinated Evolution because it
 invalidates a previously valid authored operation. This includes an Entity,
 Concrete Subtype, Attribute, Value Object occurrence or member, Relationship
@@ -607,6 +611,11 @@ framework-fixed endpoint Attributes, so two descriptors agreeing on an axis
 position agree on its endpoints too. They stay in the closed vocabulary because
 the accepted Metamodel admits endpoints no descriptor can spell, and a total
 description of two such models needs the name.
+
+*Superseded in part (2026-11, [ADR 0091](0091-an-as-of-axis-has-no-alteration.md)):*
+an As-Of Axis has no alteration, so `AsOfAxisAltered` and its two deltas are no
+longer in the vocabulary.
+
 Directional boundaries exercise both directions where classification differs,
 including nullability, maximum length, persistence, effective caller write
 ownership, Value Object occurrence nullability, and member removal from a

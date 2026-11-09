@@ -57,7 +57,6 @@ from parallax.evolution.model_evolution import (
     LOCKING_FALLBACK,
     WRITES_DISABLED,
     AsOfAxisAdded,
-    AsOfAxisAltered,
     AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
@@ -76,7 +75,6 @@ from parallax.evolution.model_evolution import (
     DeletePropagation,
     DeletePropagationChanged,
     DependencyChanged,
-    EndAttributeChanged,
     EntityAdded,
     EntityAltered,
     EntityRemoved,
@@ -101,7 +99,6 @@ from parallax.evolution.model_evolution import (
     RelationshipSelectionFacts,
     ReverseOfChanged,
     ScalarAdmissibility,
-    StartAttributeChanged,
     StorageChanged,
     StorageContainerChanged,
     TemporalAxisFacts,
@@ -341,11 +338,6 @@ def test_the_encoder_spells_every_axis_and_index_operation() -> None:
     assert _spelled(
         AsOfAxisAdded(_ORDER, TemporalDimension.VALID_TIME),
         AsOfAxisRemoved(_ORDER, TemporalDimension.TRANSACTION_TIME),
-        AsOfAxisAltered(
-            _ORDER,
-            TemporalDimension.VALID_TIME,
-            (StartAttributeChanged(_FROM, _ID), EndAttributeChanged(_THRU, _SKU)),
-        ),
         IndexAdded(_INDEX),
         IndexRemoved(_INDEX),
         IndexAltered(
@@ -358,23 +350,6 @@ def test_the_encoder_spells_every_axis_and_index_operation() -> None:
             "kind": "AsOfAxisRemoved",
             "entity": _ORDER_SPELLING,
             "dimension": "transaction-time",
-        },
-        {
-            "kind": "AsOfAxisAltered",
-            "entity": _ORDER_SPELLING,
-            "dimension": "valid-time",
-            "deltas": [
-                {
-                    "kind": "StartAttributeChanged",
-                    "earlier": f"{_ORDER_SPELLING}.fromZ",
-                    "later": f"{_ORDER_SPELLING}.id",
-                },
-                {
-                    "kind": "EndAttributeChanged",
-                    "earlier": f"{_ORDER_SPELLING}.thruZ",
-                    "later": f"{_ORDER_SPELLING}.sku",
-                },
-            ],
         },
         {"kind": "IndexAdded", "index": f"{_ORDER_SPELLING}.orderSku"},
         {"kind": "IndexRemoved", "index": f"{_ORDER_SPELLING}.orderSku"},

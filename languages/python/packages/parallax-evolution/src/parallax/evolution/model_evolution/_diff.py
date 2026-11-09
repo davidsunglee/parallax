@@ -4,7 +4,6 @@ from collections.abc import Iterable, Iterator
 from typing import cast
 
 from parallax.core.metamodel import (
-    AsOfAxisMetadata,
     AttributeMetadata,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
@@ -21,8 +20,6 @@ from parallax.core.metamodel import (
 from parallax.evolution.model_evolution._matching import Matching
 from parallax.evolution.model_evolution._values import (
     AsOfAxisAdded,
-    AsOfAxisAltered,
-    AsOfAxisDelta,
     AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
@@ -35,7 +32,6 @@ from parallax.evolution.model_evolution._values import (
     DeclarationFormChanged,
     DeclarationOrderChanged,
     DependencyChanged,
-    EndAttributeChanged,
     EntityAdded,
     EntityAltered,
     EntityDelta,
@@ -60,7 +56,6 @@ from parallax.evolution.model_evolution._values import (
     RelationshipDelta,
     RelationshipRemoved,
     ReverseOfChanged,
-    StartAttributeChanged,
     StorageChanged,
     StorageContainerChanged,
     StorageLayoutChanged,
@@ -191,16 +186,14 @@ def _relationship_operations(matching: Matching) -> Iterator[EvolutionOperation]
 
 
 def _as_of_axis_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+    """Arriving and departing axes. A surviving axis never differs: formation
+    fixes both endpoints by the axis's Entity and dimension."""
     for entity, dimension in matching.as_of_axes.added:
         if not _entity_covers(matching, entity, added=True):
             yield AsOfAxisAdded(entity, dimension)
     for entity, dimension in matching.as_of_axes.removed:
         if not _entity_covers(matching, entity, added=False):
             yield AsOfAxisRemoved(entity, dimension)
-    for (entity, dimension), (earlier, later) in matching.as_of_axes.surviving.items():
-        deltas = _axis_deltas(earlier, later)
-        if deltas:
-            yield AsOfAxisAltered(entity, dimension, deltas)
 
 
 def _index_operations(matching: Matching) -> Iterator[EvolutionOperation]:
@@ -355,16 +348,6 @@ def _relationship_deltas(
             return (DeclarationFormChanged(earlier, later),)
     if earlier.order_by != later.order_by:
         deltas.append(OrderingChanged(earlier.order_by, later.order_by))
-    return tuple(deltas)
-
-
-def _axis_deltas(earlier: AsOfAxisMetadata, later: AsOfAxisMetadata) -> tuple[AsOfAxisDelta, ...]:
-    """The surviving axis's changed endpoints; its dimension is its identity."""
-    deltas: list[AsOfAxisDelta] = []
-    if earlier.start_attribute != later.start_attribute:
-        deltas.append(StartAttributeChanged(earlier.start_attribute, later.start_attribute))
-    if earlier.end_attribute != later.end_attribute:
-        deltas.append(EndAttributeChanged(earlier.end_attribute, later.end_attribute))
     return tuple(deltas)
 
 

@@ -46,7 +46,6 @@ from parallax.evolution.model_evolution._values import (
     LOCKING_FALLBACK,
     WRITES_DISABLED,
     AsOfAxisAdded,
-    AsOfAxisAltered,
     AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
@@ -425,7 +424,7 @@ def _moves_the_version_source(
             return operation.attribute.entity in family and _carries(
                 operation.deltas, OptimisticLockingChanged
             )
-        case AsOfAxisAdded() | AsOfAxisRemoved() | AsOfAxisAltered():
+        case AsOfAxisAdded() | AsOfAxisRemoved():
             # A Transaction-Time family derives its version from the milestone
             # start; a Valid-Time axis alone moves no gate.
             return (
@@ -531,7 +530,7 @@ def _moves_the_denoted_rows(
     match operation:
         case ConcreteSubtypeAdded() | ConcreteSubtypeRemoved():
             return operation.entity in denoted
-        case AsOfAxisAdded() | AsOfAxisRemoved() | AsOfAxisAltered():
+        case AsOfAxisAdded() | AsOfAxisRemoved():
             # An axis is the family root's, and it decides the temporal shape
             # every position of that family selects through.
             return operation.entity in family
@@ -643,30 +642,20 @@ def _moves_attribute_input(
             return operation.attribute == attribute and _carries(
                 operation.deltas, (PrimaryKeyChanged, ReadOnlyChanged, OptimisticLockingChanged)
             )
-        case AsOfAxisAdded() | AsOfAxisRemoved() | AsOfAxisAltered():
+        case AsOfAxisAdded() | AsOfAxisRemoved():
             return attribute in _axis_endpoints(analysis, operation)
         case _:
             return False
 
 
 def _axis_endpoints(
-    analysis: _Analysis, operation: AsOfAxisAdded | AsOfAxisRemoved | AsOfAxisAltered
+    analysis: _Analysis, operation: AsOfAxisAdded | AsOfAxisRemoved
 ) -> frozenset[AttributeIdentity]:
-    """Every Attribute the named axis position uses as an endpoint, on either
-    endpoint of the evolution."""
+    """The endpoint Attributes of the axis arriving or leaving."""
     key = (operation.entity, operation.dimension)
     paired = analysis.matching.as_of_axes
-    surviving = paired.surviving.get(key)
-    present = (
-        surviving
-        if surviving is not None
-        else tuple(
-            axis for axis in (paired.added.get(key), paired.removed.get(key)) if axis is not None
-        )
-    )
-    return frozenset(
-        endpoint for axis in present for endpoint in (axis.start_attribute, axis.end_attribute)
-    )
+    axis = paired.added[key] if isinstance(operation, AsOfAxisAdded) else paired.removed[key]
+    return frozenset((axis.start_attribute, axis.end_attribute))
 
 
 def _entity_writes(endpoint: _Endpoint, facts: EntityFacts) -> EntityWriteCapability:
@@ -715,7 +704,7 @@ def _moves_the_write_surface(
     family: frozenset[EntityIdentity],
 ) -> bool:
     match operation:
-        case AsOfAxisAdded() | AsOfAxisRemoved() | AsOfAxisAltered():
+        case AsOfAxisAdded() | AsOfAxisRemoved():
             # An axis moves the temporal write shape, which a later surface
             # admitting no write at all no longer carries.
             return operation.entity in family and _shape_moved(analysis, entity)

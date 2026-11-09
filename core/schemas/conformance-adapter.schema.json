@@ -819,7 +819,6 @@
         "RelationshipAltered",
         "AsOfAxisAdded",
         "AsOfAxisRemoved",
-        "AsOfAxisAltered",
         "IndexAdded",
         "IndexRemoved",
         "IndexAltered",
@@ -847,8 +846,6 @@
         "ReverseOfChanged",
         "DependencyChanged",
         "OrderingChanged",
-        "StartAttributeChanged",
-        "EndAttributeChanged",
         "ComponentsChanged",
         "UniquenessChanged"
       ]
@@ -1021,11 +1018,6 @@
           "properties": {"kind": {"enum": ["AsOfAxisAdded", "AsOfAxisRemoved"]}},
           "required": ["kind", "entity", "dimension"],
           "propertyNames": {"enum": ["kind", "entity", "dimension"]}
-        },
-        {
-          "properties": {"kind": {"enum": ["AsOfAxisAltered"]}},
-          "required": ["kind", "entity", "dimension", "deltas"],
-          "propertyNames": {"enum": ["kind", "entity", "dimension", "deltas"]}
         },
         {
           "properties": {"kind": {"enum": ["IndexAdded", "IndexRemoved"]}},

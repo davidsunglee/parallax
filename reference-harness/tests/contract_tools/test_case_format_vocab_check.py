@@ -239,14 +239,14 @@ def test_missing_prose_entry_is_reported() -> None:
 
 def test_real_evolution_vocabularies_match_their_schema_enums() -> None:
     # A sanity floor beneath the set comparison the check runs: the five
-    # vocabularies are the sizes ADR 0063 fixes, so a drifted fence anchor
+    # vocabularies are the sizes m-model-evolution fixes, so a drifted fence anchor
     # shrinking one to nothing fails here rather than passing vacuously.
     schema = _real_schema()
     markdown = _real_evolution_markdown()
     sizes = {
-        "evolutionOperationKind": 24,
+        "evolutionOperationKind": 23,
         "declarationCollection": 6,
-        "evolutionFieldDeltaKind": 22,
+        "evolutionFieldDeltaKind": 20,
         "coordinationReason": 2,
         "behavioralImpactKind": 7,
     }

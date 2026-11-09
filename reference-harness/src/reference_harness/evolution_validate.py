@@ -57,7 +57,6 @@ _IDENTITY_MEMBER: Mapping[str, str] = {
     "RelationshipAltered": "relationship",
     "AsOfAxisAdded": "entity",
     "AsOfAxisRemoved": "entity",
-    "AsOfAxisAltered": "entity",
     "IndexAdded": "index",
     "IndexRemoved": "index",
     "IndexAltered": "index",
@@ -86,7 +85,6 @@ _MEMBER_RANK: Mapping[str, int] = {
     "ValueObjectAttributeAltered": _VO_ATTRIBUTE,
     "AsOfAxisAdded": _AS_OF_AXIS,
     "AsOfAxisRemoved": _AS_OF_AXIS,
-    "AsOfAxisAltered": _AS_OF_AXIS,
     "IndexAdded": _INDEX,
     "IndexRemoved": _INDEX,
     "IndexAltered": _INDEX,
@@ -129,7 +127,6 @@ FIELD_DELTA_ORDER: Mapping[str, tuple[str, ...]] = {
         "DependencyChanged",
         "OrderingChanged",
     ),
-    "AsOfAxisAltered": ("StartAttributeChanged", "EndAttributeChanged"),
     "IndexAltered": ("ComponentsChanged", "UniquenessChanged"),
 }
 
