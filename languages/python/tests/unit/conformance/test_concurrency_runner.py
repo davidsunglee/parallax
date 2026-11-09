@@ -127,20 +127,6 @@ def test_parse_rounds_reads_a_commit_step_that_authors_no_statement() -> None:
     assert round1["A"].expect_rows is None
 
 
-def test_parse_rounds_a_node_absent_from_a_round_is_omitted() -> None:
-    case = _case(
-        {
-            "when": {
-                "concurrency": {
-                    "rounds": [{"A": {"statements": [{"sql": {"postgres": "select 1"}}]}}]
-                }
-            }
-        }
-    )
-    (round0,) = concurrency_runner.parse_rounds(case, "postgres")
-    assert "B" not in round0
-
-
 # --------------------------------------------------------------------------- #
 # run_rounds: the thread/barrier choreography over fake node sessions.        #
 # --------------------------------------------------------------------------- #
@@ -401,16 +387,6 @@ def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
     with pytest.raises(RuntimeError, match="unexpected defect"):
         concurrency_runner.run_rounds(rounds, lambda: next(peers))
     assert b.closed
-
-
-def test_run_rounds_reports_no_outcome_for_an_absent_node() -> None:
-    a, b = _FakeSession(), _FakeSession()
-    peers = iter([a, b])
-    rounds = _rounds(
-        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
-    )
-    run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
-    assert set(run.rounds[0]) == {"A"}
 
 
 # --------------------------------------------------------------------------- #

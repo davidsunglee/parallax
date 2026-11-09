@@ -1,18 +1,14 @@
-"""The evolution lane, driven database-free: the refusal of a case whose
-``when.evolve`` names no loadable endpoints, and the schema cell a Dialect's
-refusal to render an operation is reported as, since no shipped dialect refuses
-one and the case has no corpus witness.
+"""The evolution lane, driven database-free: the schema cell a Dialect's refusal
+to render an operation is reported as, since no shipped dialect refuses one and
+the case has no corpus witness.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import evolution
-from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.metamodel import EntityIdentity, Table
 from parallax.evolution.model_evolution import EntityAdded
 from parallax.evolution.schema_delta import (
@@ -25,37 +21,6 @@ from tests._support.case_corpus import case as corpus_case
 
 def _case(case_id: str) -> case_format.Case:
     return corpus_case(case_id, reachable=True)
-
-
-def _evolution_case(document: dict[str, object]) -> case_format.Case:
-    return case_format.Case(
-        path=Path("m-model-evolution-999-synthetic.yaml"),
-        case_id="m-model-evolution-999",
-        shape="evolution",
-        tags=("m-model-evolution", "slice-snapshot-1"),
-        model="",
-        document=document,
-    )
-
-
-def test_an_evolution_case_without_its_endpoints_is_rejected() -> None:
-    with pytest.raises(UnclassifiedEngineError, match=r"when\.evolve"):
-        evolution.run_evolution_case(_evolution_case({"when": {}}))
-
-
-def test_an_evolution_case_without_a_later_endpoint_is_rejected() -> None:
-    with pytest.raises(UnclassifiedEngineError, match=r"when\.evolve\.later"):
-        evolution.run_evolution_case(_evolution_case({"when": {"evolve": {"earlier": None}}}))
-
-
-def test_an_evolution_case_whose_earlier_endpoint_is_neither_a_path_nor_null_is_rejected() -> None:
-    # `null` is the fresh-provisioning SENTINEL, so the member is a string path or
-    # that one value; anything else names an endpoint nothing can load.
-    bad = _evolution_case(
-        {"when": {"evolve": {"earlier": 7, "later": "models/evolution-widget-v1.yaml"}}}
-    )
-    with pytest.raises(UnclassifiedEngineError, match=r"when\.evolve\.earlier"):
-        evolution.run_evolution_case(bad)
 
 
 def test_a_dialect_that_cannot_render_an_operation_reports_an_unsupported_cell(

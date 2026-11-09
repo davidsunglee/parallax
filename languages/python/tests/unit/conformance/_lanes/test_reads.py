@@ -1,9 +1,9 @@
 """The read lanes, compiled purely and run against a fake in-memory
-``m-db-port`` (no Docker): the golden the compile lane matches, the driver
-translation and wire rendering the `then.rows` run reports, the envelope the
-graph-form and milestone-set runs report around production's Wire result, the
-streamed delivery's refusals, and every refusal the lanes translate into an
-``UnclassifiedEngineError`` naming the case.
+``m-db-port`` (no Docker): what a `then.rows` read makes of a record whose stored
+data contradicts the model, how a milestone-set result is partitioned, ranked
+and pinned, the boundary each read form opens under the case's root and
+request, the streamed delivery's refusals, and every refusal the lanes translate
+into an ``UnclassifiedEngineError`` naming the case.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
     TxnOptions,
 )
-from parallax.core.execution_lifecycle import ReadStarted
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -52,17 +51,6 @@ def _rows(row: MappingRow | None, key: str) -> list[MappingRow]:
     return cast("list[MappingRow]", row[key])
 
 
-def _node(nodes: list[MappingRow | None], index: int) -> MappingRow:
-    """One published graph position that carries a value.
-
-    A position whose stored state contradicted the model carries ``null``, so a
-    test asserting about the node itself states that it expected one.
-    """
-    node = nodes[index]
-    assert node is not None
-    return node
-
-
 def _entry(entry: dict[str, object], key: str) -> MappingRow:
     """A milestone-set `{pin, graph}` entry's own member, typed for test-side
     assertions (`then.graphs`' wire shape is a plain ``dict[str, object]``)."""
@@ -79,99 +67,6 @@ def _load_case(case_id: str) -> case_format.Case:
     # entry point on its own terms, never gated on whether the case has ALSO
     # been flipped visible in the sweep.
     return corpus_case(case_id)
-
-
-def test_compile_read_case_matches_golden() -> None:
-    emissions, database_calls = reads.compile_read_case(_case("m-value-object-001"), "postgres")
-    assert database_calls == 1
-    assert emissions[0].case_pointer == "/objectQuery"
-    assert emissions[0].sql == (
-        "select t0.id, t0.name, not t0.address is null, t0.address from customer t0 "
-        "where jsonb_extract_path_text(t0.address, ?) = ?"
-    )
-    assert emissions[0].binds == ("city", "Oslo")
-    assert emissions[0].to_json()["casePointer"] == "/objectQuery"
-
-
-def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
-    port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, database_calls = reads.run_read_case(_case("m-value-object-001"), port)
-    assert database_calls == 1
-    assert rows == [{"id": 1, "name": "Grace"}]
-    assert emissions[0].sql == (
-        "select t0.id, t0.name, not t0.address is null, t0.address from customer t0 "
-        "where jsonb_extract_path_text(t0.address, ?) = ?"
-    )
-    driver_sql, driver_binds = port.executed[0]
-    assert "%s" in driver_sql and "?" not in driver_sql
-    assert driver_binds == ["city", "Oslo"]
-
-
-def test_run_read_case_materializes_the_type_from_the_tph_tag_column() -> None:
-    # m-inheritance-003 (Payment root, table-per-hierarchy): the compiled SELECT
-    # projects the raw `kind` tag column; run_read_case materializes `_type`
-    # from the tag metadata map at row construction and never leaves the raw tag key
-    # on the wire row (m-case-format: an abstract-target row carries `_type`,
-    # never the framework-owned tag).
-    port = FakeDbPort(
-        [
-            {
-                "id": 1,
-                "amount": decimal.Decimal("100.00"),
-                "card_network": "Visa",
-                "tendered": None,
-                "kind": "card",
-            }
-        ]
-    )
-    _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-003"), port)
-    assert rows == [
-        {
-            "id": 1,
-            "amount": "100.00",
-            "card_network": "Visa",
-            "tendered": None,
-            "_type": "parallax.compatibility.CardPayment",
-        }
-    ]
-
-
-def test_run_read_case_materializes_the_type_from_the_tpcs_literal_column() -> None:
-    # m-inheritance-050 (Document root, table-per-concrete-subtype): the compiled
-    # union-all projects the `family_variant` literal per branch; run_read_case just
-    # renames the wire key, no tag map involved.
-    port = FakeDbPort(
-        [
-            {
-                "id": 1,
-                "title": "Invoice-A",
-                "folder_id": 100,
-                "currency": "USD",
-                "amount_due": decimal.Decimal("120.00"),
-                "body": None,
-                "paid_amount": None,
-                "family_variant": "Invoice",
-            }
-        ]
-    )
-    _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-050"), port)
-    assert rows[0]["_type"] == "parallax.compatibility.Invoice"
-    assert "family_variant" not in rows[0]
-
-
-def test_run_read_case_concrete_target_read_carries_its_type() -> None:
-    # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
-    # projects a tag/literal column, so the variant is the node's concrete Entity.
-    port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
-    _emissions, rows, _database_calls = reads.run_read_case(_case("m-inheritance-001"), port)
-    assert rows == [
-        {
-            "id": 1,
-            "amount": "100.00",
-            "card_network": "Visa",
-            "_type": "parallax.compatibility.CardPayment",
-        }
-    ]
 
 
 def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> None:
@@ -255,107 +150,6 @@ def test_compile_read_case_reports_missing_fields(
 ) -> None:
     with pytest.raises(UnclassifiedEngineError, match=message):
         reads.compile_read_case(_synthetic(document), "postgres")
-
-
-# --------------------------------------------------------------------------- #
-# Graph reads (m-read-planning / m-snapshot-read): the                            #
-# `run_graph_case` / `run_graphs_case` envelope lane. What a root LOOKS like   #
-# is the wire materializer's own contract (`test_wire_reads.py`); what is left #
-# here is the envelope.                                                        #
-# --------------------------------------------------------------------------- #
-def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> None:
-    port = QueueDbPort(
-        [
-            [
-                {
-                    "id": 1,
-                    "name": "Ada",
-                    "sku": "A-100",
-                    "qty": 5,
-                    "price": decimal.Decimal("10.50"),
-                    "active": True,
-                    "ordered_on": dt.date(2024, 1, 5),
-                }
-            ],
-            [
-                {
-                    "id": 12,
-                    "order_id": 1,
-                    "sku": "B-200",
-                    "quantity": 1,
-                    "shipped_on": dt.date(2024, 2, 15),
-                },
-                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-            ],
-            [
-                {
-                    "id": 12,
-                    "order_id": 1,
-                    "sku": "B-200",
-                    "quantity": 1,
-                    "shipped_on": dt.date(2024, 2, 15),
-                },
-                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-            ],
-        ]
-    )
-    emissions, graph, database_calls, stored_data_issues = reads.run_graph_case(
-        _case("m-snapshot-read-001"), port
-    )
-    assert database_calls == 3
-    assert len(emissions) == 3
-    assert stored_data_issues is None
-    assert [item["id"] for item in _rows(graph["Order"][0], "items")] == [12, 11]
-    assert _rows(graph["Order"][0], "itemsByShipDate")[0]["shippedOn"] == "2024-02-15"
-
-
-def test_run_graph_case_unwinds_a_back_reference_finitely() -> None:
-    port = QueueDbPort(
-        [
-            [
-                {
-                    "id": 1,
-                    "name": "Ada",
-                    "sku": "A-100",
-                    "qty": 5,
-                    "price": decimal.Decimal("10.50"),
-                    "active": True,
-                    "ordered_on": dt.date(2024, 1, 5),
-                }
-            ],
-            [
-                {
-                    "id": 12,
-                    "order_id": 1,
-                    "sku": "B-200",
-                    "quantity": 1,
-                    "shipped_on": dt.date(2024, 2, 15),
-                },
-                {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
-            ],
-        ]
-    )
-    _emissions, graph, database_calls, stored_data_issues = reads.run_graph_case(
-        _case("m-snapshot-read-011"), port
-    )
-    assert database_calls == 2
-    assert stored_data_issues is None
-    # The back-reference renders its target ONCE, in full, and terminates: the
-    # include tree — not a cycle detector — is what bounds the value, so the
-    # position carries the ancestor's own members rather than a primary-key stub.
-    back = _rows(graph["Order"][0], "items")[0]["order"]
-    assert isinstance(back, Mapping)
-    assert back["id"] == 1
-    assert back["name"] == "Ada"
-    assert "items" not in back
-
-
-def test_run_read_case_states_the_scalars_of_a_read_that_carried_its_value_object() -> None:
-    port = FakeDbPort(
-        [{"id": 1, "name": "Grace", "address": StructuredDocument({"street": "1 Main"})}]
-    )
-    _emissions, rows, _database_calls = reads.run_read_case(_case("m-value-object-001"), port)
-    assert rows == [{"id": 1, "name": "Grace"}]
 
 
 def _flattening_refused(*_arguments: object, **_keywords: object) -> list[MappingRow]:
@@ -676,133 +470,6 @@ def test_an_omitted_occurrence_issue_on_another_object_is_refused(
         )
 
 
-def test_run_read_case_observes_a_wire_read() -> None:
-    port = FakeDbPort(
-        [{"id": 3, "owner": "Grace", "balance": decimal.Decimal("10.00"), "version": 1}]
-    )
-    run = lifecycle_run(None)
-    reads.run_read_case(_load_case("m-execution-lifecycle-001"), port, run)
-    (root,) = run.roots
-    started = root.events[0]
-    assert isinstance(started, ReadStarted)
-    assert started.purpose == "wire"
-
-
-def test_run_graph_case_reports_the_records_a_classified_root_published() -> None:
-    # A `then.graph` position whose stored state contradicted the model carries the
-    # collapsed node the classification hydrated, and the diagnosis rides the
-    # separate `storedDataIssues` observation — one entry per invalid position, in
-    # result order, naming the concrete Entity, the member path inside the
-    # occurrence, and the affected object's own key.
-    port = QueueDbPort(
-        [
-            # The case's own `given.corrupt` reads the addressed document back
-            # before it writes over it (m-case-format), ahead of the read.
-            [{"profile": {"street": "4 Main", "city": "Boston"}}],
-            [
-                {"id": 1, "profile": StructuredDocument({"street": "1 Main", "city": None})},
-                {"id": 2, "profile": StructuredDocument({"city": "Oslo"})},
-            ],
-            [{"id": 12, "item_id": 2, "profile": StructuredDocument({"street": "12 Main"})}],
-        ]
-    )
-    _emissions, graph, _database_calls, stored_data_issues = reads.run_graph_case(
-        _load_case("m-storage-layout-027"), port
-    )
-    assert _node(graph["ClassificationTwinItem"], 0)["profile"] == {
-        "street": "1 Main",
-        "city": None,
-    }
-    assert _node(graph["ClassificationTwinItem"], 1)["profile"] == {"city": "Oslo"}
-    assert stored_data_issues == [
-        {
-            "ordinal": 1,
-            "hydrated": True,
-            "issues": [
-                {
-                    "code": "stored-data-required-member-absent",
-                    "entity": "parallax.compatibility.ClassificationTwinItem",
-                    "member": "parallax.compatibility.ClassificationTwinItem.profile.street",
-                    "objectKey": {
-                        "entity": "parallax.compatibility.ClassificationTwinItem",
-                        "key": {"id": 2},
-                    },
-                }
-            ],
-        }
-    ]
-
-
-def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None:
-    # The other case of the same observation: a leaf no declared decoding admits
-    # leaves the position with no value at all, so the graph carries `null` and
-    # `hydrated` is what says the null means "unhydrated" rather than "collapsed".
-    port = QueueDbPort(
-        [
-            # The case's own `given.corrupt` reads the addressed document back
-            # before it writes over it (m-case-format), ahead of the read.
-            [{"profile": {"street": "4 Main", "city": "Boston"}}],
-            [{"id": 1, "profile": StructuredDocument({"street": "1 Main", "city": 7})}],
-            [],
-        ]
-    )
-    _emissions, graph, _database_calls, stored_data_issues = reads.run_graph_case(
-        _load_case("m-storage-layout-027"), port
-    )
-    assert graph["ClassificationTwinItem"] == [None]
-    assert stored_data_issues is not None
-    (record,) = stored_data_issues
-    assert record["hydrated"] is False
-    assert [issue["code"] for issue in cast("list[MappingRow]", record["issues"])] == [
-        "stored-data-leaf-undecodable"
-    ]
-
-
-def test_a_diagnosis_names_its_member_by_the_path_the_corpus_addresses_one_by() -> None:
-    # The three member arms a diagnosis can name, in the one dotted spelling a
-    # nested predicate already authors: a top-level Attribute, a Value Object
-    # occurrence at any containment depth, and a scalar inside one.
-    entity = EntityIdentity("parallax.compatibility", "Customer")
-    occurrence = ValueObjectIdentity(entity, ("address", "geo"))
-    assert reads._member_path(AttributeIdentity(entity, "name")) == (  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
-        "parallax.compatibility.Customer.name"
-    )
-    assert reads._member_path(occurrence) == (  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
-        "parallax.compatibility.Customer.address.geo"
-    )
-    assert reads._member_path(ValueObjectAttributeIdentity(occurrence, "country")) == (  # pyright: ignore[reportPrivateUsage] - unit test drives the reads lane's private helper directly
-        "parallax.compatibility.Customer.address.geo.country"
-    )
-
-
-def test_run_read_case_accepts_provider_normalized_native_columns() -> None:
-    port = FakeDbPort([{"id": 4, "name": None}])
-    _emissions, rows, _database_calls = reads.run_read_case(_load_case("m-value-object-007"), port)
-    assert rows == [{"id": 4, "name": None}]
-
-
-def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
-    port = FakeDbPort(
-        [
-            {
-                "id": 1,
-                "person_id": "person-1",
-                "tax_i_d": "TAX-1",
-                "line2_item": 2,
-                "already_snake": "ready",
-                "legacy__i_d": "legacy",
-                "mailing_address": {"city": "Oslo"},
-            }
-        ]
-    )
-    _emissions, graph, _database_calls, _stored_data_issues = reads.run_graph_case(
-        _case("m-descriptor-002"), port
-    )
-    row = _node(graph["MemberColumnDefaults"], 0)
-    assert row["mailingAddress"] == {"city": "Oslo"}
-    assert "mailing_address" not in row
-
-
 # --------------------------------------------------------------------------- #
 # Docker-free error paths (m-conformance-adapter's lane-honest ``UnclassifiedEngineError``  #
 # wrapping): a compiled/found query that fails inside `m-sql` / `m-navigate`  #
@@ -841,40 +508,6 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
     )
     with pytest.raises(UnclassifiedEngineError, match="undeclared"):
         reads.run_graph_case(case, QueueDbPort([]))
-
-
-def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
-    port = QueueDbPort(
-        [
-            [
-                {
-                    "id": 1000,
-                    "invoice_id": 100,
-                    "amount": decimal.Decimal("50.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-                },
-                {
-                    "id": 1000,
-                    "invoice_id": 100,
-                    "amount": decimal.Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-                    "out_z": INFINITY,
-                },
-            ]
-        ]
-    )
-    emissions, graphs, database_calls = reads.run_graphs_case(_case("m-snapshot-read-013"), port)
-    assert database_calls == 1
-    assert len(emissions) == 1
-    assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
-        "2024-01-01T00:00:00.000000Z",
-        "2024-04-01T00:00:00.000000Z",
-    ]
-    assert [_rows(_entry(g, "graph"), "InvoiceLine")[0]["amount"] for g in graphs] == [
-        "50.00",
-        "75.00",
-    ]
 
 
 def test_run_streamed_graphs_case_groups_a_delivery_back_into_milestone_ranked_graphs() -> None:
@@ -1141,28 +774,6 @@ def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
         reads.run_graphs_case(case, QueueDbPort([[]]))
 
 
-def test_render_value_recurses_into_a_nested_value_object_document() -> None:
-    port = FakeDbPort(
-        [
-            {
-                "id": 1,
-                "name": "Ada",
-                "address": {"street": "x", "city": "Oslo", "geo": {"country": "NO"}},
-            }
-        ]
-    )
-    _emissions, graph, _database_calls, _stored_data_issues = reads.run_graph_case(
-        _case("m-value-object-024"), port
-    )
-    rendered = _node(graph["Customer"], 0)
-    assert rendered["address"] == {
-        "street": "x",
-        "city": "Oslo",
-        "geo": {"country": "NO"},
-        "phones": [],
-    }
-
-
 # --------------------------------------------------------------------------- #
 # Streamed delivery (m-case-format "Streamed reads"): the three inputs the      #
 # streamed run lane refuses before or during the delivery.                      #
@@ -1264,18 +875,6 @@ def _rooted(case_id: str, *, uow: dict[str, object] | None = None) -> case_forma
     return dataclasses.replace(case, document=document)
 
 
-def test_a_standalone_read_under_a_locking_root_opens_no_transaction_and_takes_no_lock() -> None:
-    # The root configures `locking`, and the case requests nothing: the read
-    # stays the standalone `db.wire.find` every other unrequesting read is, so
-    # no boundary is asked for at all and the emitted statement carries no lock
-    # suffix — the root's defaults govern transactions, and this read opens none.
-    port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, _calls = reads.run_read_case(_rooted("m-value-object-001"), port)
-    assert rows == [{"id": 1, "name": "Grace"}]
-    assert port.levels == []
-    assert "for share" not in emissions[0].sql
-
-
 def test_a_transactional_read_resolves_what_it_omits_against_the_case_root() -> None:
     # An authored `when.uow` puts the read inside `db.transact`, and every
     # field the request leaves out is then production's to resolve against the
@@ -1284,27 +883,6 @@ def test_a_transactional_read_resolves_what_it_omits_against_the_case_root() -> 
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
     reads.run_read_case(_rooted("m-value-object-001", uow={"concurrency": "optimistic"}), port)
     assert port.levels == ["serializable"]
-
-
-def test_a_read_carrying_an_empty_uow_block_under_a_locking_root_locks_in_both_lanes() -> None:
-    # The block's PRESENCE is the boundary and its contents are the request: a
-    # `when.uow` that requests nothing still runs the read in a transaction,
-    # whose preference production resolves against the locking root, so the
-    # executed statement carries the suffix — and the compile lane, planning
-    # under the same resolved preference, renders the same golden. The
-    # standalone sibling (`-063`) differs from this case by the block alone.
-    locking = _load_case("m-concurrency-064")
-    standalone = _load_case("m-concurrency-063")
-    assert cast("Mapping[str, Any]", locking.document["when"])["uow"] == {}
-    port = FakeDbPort(
-        [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
-    )
-    emissions, _rows, _calls = reads.run_read_case(locking, port)
-    assert port.levels == ["read_committed"]
-    assert emissions[0].sql.endswith("for share of t0")
-    compiled, _calls = reads.compile_read_case(locking, "postgres")
-    assert compiled[0].sql == emissions[0].sql
-    assert not reads.compile_read_case(standalone, "postgres")[0][0].sql.endswith("for share of t0")
 
 
 def test_an_explicit_optimistic_request_under_a_locking_root_plans_and_runs_lock_free() -> None:

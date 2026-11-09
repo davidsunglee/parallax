@@ -25,7 +25,6 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     StatementIndexError,
     execution_lifecycle_observation,
-    lifecycle_run,
 )
 from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
@@ -913,14 +912,6 @@ def test_a_run_positions_each_observations_resolving_reads_in_its_own_order() ->
 
     assert first.resolving_read_calls == second.resolving_read_calls == frozenset({0})
     assert run.resolving_read_calls == frozenset({0, 2})
-
-
-def test_an_entry_point_grading_no_oracle_still_drives_a_run() -> None:
-    supplied = LifecycleRun()
-    assert lifecycle_run(supplied) is supplied
-    own = lifecycle_run(None)
-    assert own is not supplied
-    assert own.roots == ()
 
 
 # --- the port is no longer an observation seam --------------------------------

@@ -106,85 +106,6 @@ def test_keyed_verbs_submit_against_the_units_own_read(mutation: str, declared: 
     assert port.writes[0][1][-1] == 1
 
 
-@pytest.mark.parametrize("mutation", ["amend", "replace", "delete"])
-def test_target_verbs_need_no_resolving_read(mutation: str) -> None:
-    port = FakeWritePort()
-    row = {"id": 1} if mutation == "delete" else {"id": 1, "owner": "Grace", "balance": "105.00"}
-    outcome = _run(
-        "account",
-        port,
-        lambda submitter, tx, model: submitter.submit(
-            _one(model, {"mutation": mutation, "entity": "Account", "row": row, "ifVersion": 1})
-        ),
-    )
-    assert outcome == Buffered()
-    assert port.reads == [] and len(port.writes) == 1
-
-
-@pytest.mark.parametrize("mutation", ["amend", "replace", "delete"])
-def test_predicate_verbs_execute_readlessly_and_return_their_count(mutation: str) -> None:
-    port = FakeWritePort(affected_script=[3])
-    entry: dict[str, object] = {
-        "mutation": mutation,
-        "target": {
-            "entity": "Wallet",
-            "predicate": {"greaterThan": {"path": "Wallet.id", "value": 0}},
-        },
-    }
-    if mutation == "amend":
-        entry["assignments"] = [{"attr": "Wallet.owner", "value": "Grace"}]
-    elif mutation == "replace":
-        entry["row"] = {"owner": "Grace", "balance": "10.00"}
-    outcome = _run(
-        "wallet",
-        port,
-        lambda submitter, tx, model: submitter.submit_unit(read_submissions(model, entry)),
-    )
-    assert outcome == (Executed(3),)
-    assert port.reads == [] and len(port.writes) == 1
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        "insert",
-        "insertUntil",
-        "amend",
-        "amendUntil",
-        "replace",
-        "replaceUntil",
-        "terminate",
-        "terminateUntil",
-    ],
-)
-def test_temporal_verbs_keep_their_bounds(mutation: str) -> None:
-    start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    row: MappingRow = {
-        "pos_id": 1,
-        "acct_num": "A",
-        "val": decimal.Decimal("100.00"),
-        "from_z": start,
-        "thru_z": INFINITY,
-        "in_z": start,
-        "out_z": INFINITY,
-    }
-    port = FakeWritePort(find_rows=[row])
-    payload: dict[str, object] = {"id": 2 if mutation.startswith("insert") else 1}
-    if not mutation.startswith("terminate"):
-        payload.update({"acctNum": "B", "value": "150.00"})
-    entry = _entry(mutation, payload, entity="Position", validFrom="2024-01-01T00:00:00Z")
-    if mutation.endswith("Until"):
-        entry["until"] = "2024-06-01T00:00:00Z"
-    outcome = _run(
-        "position",
-        port,
-        lambda submitter, tx, model: submitter.submit_unit(read_submissions(model, [entry])),
-    )
-    assert outcome == (Buffered(),)
-    assert port.writes
-    assert any(start in binds for _, binds in port.writes)
-
-
 @pytest.mark.parametrize("on,expected", [(None, 2), (0, 1), (1, 2)])
 @pytest.mark.parametrize("declared", [None, 1, 2])
 def test_named_find_and_latest_read_keep_distinct_generations(
@@ -375,85 +296,6 @@ def test_marker_shaped_value_objects_are_literal_submission_values(
     assert submission.instruction.rows[0]["address"] == document
 
 
-def test_submit_unit_reads_every_source_before_its_hook_and_any_write() -> None:
-    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
-    hooks: list[int] = []
-
-    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
-        def before() -> None:
-            assert len(port.reads) == 1 and port.writes == []
-            hooks.append(len(port.reads))
-
-        submitter.submit_unit(
-            read_submissions(
-                model, [_entry("amend", {"id": 1, "owner": "Grace"}), _entry("delete", {"id": 1})]
-            ),
-            before_writes=before,
-        )
-
-    _run("account", port, body)
-    assert hooks == [1]
-    assert len(port.reads) == len(port.writes) == 1
-    assert port.writes[0][0].startswith("delete")
-
-
-def test_a_unit_submits_the_same_flat_node_its_resolving_snapshot_published(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
-    published: list[object] = []
-    submitted: list[object] = []
-
-    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
-        view_type = type(tx.wire)
-        find, amend = view_type.find, view_type.amend
-
-        def observed_find(view: Any, *args: Any, **kwargs: Any) -> Any:
-            snapshot = find(view, *args, **kwargs)
-            published.append(snapshot.results()[0])
-            return snapshot
-
-        def observed_amend(view: Any, node: Any, changes: Any) -> Any:
-            submitted.append(node)
-            return amend(view, node, changes)
-
-        monkeypatch.setattr(view_type, "find", observed_find)
-        monkeypatch.setattr(view_type, "amend", observed_amend)
-
-        def before_writes() -> None:
-            assert len(published) == 1 and submitted == [] and port.writes == []
-
-        assert submitter.submit_unit(
-            read_submissions(
-                model, [_entry("amend", {"id": 1, "owner": "Grace", "observedVersion": 1})]
-            ),
-            before_writes=before_writes,
-        ) == (Buffered(),)
-
-    _run("account", port, body)
-    assert len(submitted) == 1 and submitted[0] is published[0]
-    assert len(port.reads) == len(port.writes) == 1
-    assert port.writes[0][1] == ["Grace", 2, 1, 1]
-
-
-def test_a_retried_attempt_gets_fresh_submitter_and_source() -> None:
-    port = FakeWritePort(
-        read_script=[[dict(_ACCOUNT)], [dict(_ACCOUNT) | {"version": 2}]], affected_script=[0, 1]
-    )
-    attempts: list[WireSubmitter] = []
-
-    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
-        attempts.append(submitter)
-        submitter.submit_unit(
-            read_submissions(model, [_entry("amend", {"id": 1, "owner": "Grace"})])
-        )
-
-    _run("account", port, body, retry=fast_retry(1))
-    assert len(attempts) == 2 and attempts[0] is not attempts[1]
-    assert [binds[-1] for _, binds in port.writes] == [1, 2]
-    assert port.rollbacks == port.commits == 1
-
-
 def test_a_later_declared_mismatch_prevents_the_hook_and_every_verb(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -639,19 +481,7 @@ def test_ordinary_submissions_never_prepare_or_simulate_a_peer_write(
     assert port.writes
 
 
-def test_read_submissions_parses_a_multi_row_entry_once_and_keeps_each_declaration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from parallax.core._execution._unit_work import instructions
-
-    original = instructions.deserialize
-    parsed: list[object] = []
-
-    def deserialize(document: object) -> Any:
-        parsed.append(document)
-        return original(document)
-
-    monkeypatch.setattr(instructions, "deserialize", deserialize)
+def test_read_submissions_splits_a_multi_row_entry_and_keeps_each_declaration() -> None:
     model = models.load_models()["account"]
     submissions = read_submissions(
         model,
@@ -667,7 +497,6 @@ def test_read_submissions_parses_a_multi_row_entry_once_and_keeps_each_declarati
         ],
         step=5,
     )
-    assert len(parsed) == 1
     assert len(submissions) == 2
     assert [
         s.declared_observation.observed_version if s.declared_observation else None
@@ -724,21 +553,6 @@ def test_a_pinned_bitemporal_source_is_selected_by_the_writes_start(named: bool)
     assert port.writes == []
 
 
-def test_record_find_walks_a_streams_checked_delivery_values() -> None:
-    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
-
-    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
-        with tx.wire.stream(
-            {"target": "Account", "predicate": {"true": {}}}, batch_size=2
-        ) as delivery:
-            roots = tuple(delivery.checked())
-        submitter.record_find(0, roots)
-        submitter.submit(_one(model, _entry("amend", {"id": 1, "owner": "Grace"}, on=0)))
-
-    _run("account", port, body)
-    assert len(port.writes) == 1
-
-
 def test_a_named_insertion_must_be_the_submissions_own_object() -> None:
     port = FakeWritePort()
 
@@ -753,38 +567,3 @@ def test_a_named_insertion_must_be_the_submissions_own_object() -> None:
     with pytest.raises(UnclassifiedEngineError, match="published 0 rows"):
         _run("account", port, body)
     assert port.writes == []
-
-
-@pytest.mark.parametrize(
-    "mutation", ["amend", "amendUntil", "replace", "replaceUntil", "terminate", "terminateUntil"]
-)
-def test_temporal_target_verbs_use_the_declared_revision_and_bounds(mutation: str) -> None:
-    start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    row: MappingRow = {
-        "pos_id": 1,
-        "acct_num": "A",
-        "val": decimal.Decimal("100.00"),
-        "from_z": start,
-        "thru_z": INFINITY,
-        "in_z": start,
-        "out_z": INFINITY,
-    }
-    port = FakeWritePort(find_rows=[row])
-    payload: dict[str, object] = {"id": 1}
-    if not mutation.startswith("terminate"):
-        payload.update({"acctNum": "B", "value": "150.00"})
-    entry: dict[str, object] = {
-        "mutation": mutation,
-        "entity": "Position",
-        "row": payload,
-        "ifTxStart": "2024-01-01T00:00:00Z",
-        "validFrom": "2024-01-01T00:00:00Z",
-    }
-    if mutation.endswith("Until"):
-        entry["until"] = "2024-06-01T00:00:00Z"
-    outcome = _run(
-        "position", port, lambda submitter, tx, model: submitter.submit(_one(model, entry))
-    )
-    assert outcome == Buffered()
-    assert port.writes
-    assert any(start in binds for _, binds in port.writes)

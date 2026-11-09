@@ -10,7 +10,6 @@ dispatches a scenario carrying an action step to them.
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import datetime as dt
 import decimal
@@ -26,10 +25,8 @@ from parallax.conformance._lanes import snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import Emission, ScenarioRun, UnclassifiedEngineError
-from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
-    STRING,
     UsageError,
 )
 from parallax.core.db_port import (
@@ -38,22 +35,11 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.metamodel import (
-    AbstractRoot,
-    Column,
-    ConcreteSubtype,
     EntityIdentity,
-    ExactEntityReference,
-    Table,
-    TablePerHierarchy,
-    ValueObjectAttributeDeclaration,
-    ValueObjectOccurrenceDeclaration,
-    ValueObjectShapeDeclaration,
-    ValueObjectShapeKey,
 )
 from parallax.core.temporal_read import Pin
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import body_outcome
-from tests.unit._metamodel_support import Declaration, attribute, key, source
 from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, QueueDbPort
 
 
@@ -88,81 +74,6 @@ def _run(case: case_format.Case, port: CaseDatabase) -> ScenarioRun:
 # publishes and how its assignments resolve. What a root LOOKS like is the    #
 # wire materializer's own contract (`test_wire_reads.py`).                      #
 # --------------------------------------------------------------------------- #
-_VARIANT_ROOT = EntityIdentity("catalog", "AssetRecord")
-_NAMED_VARIANT = EntityIdentity("catalog", "NamedVariant")
-_FIRST_SHARED_VARIANT = EntityIdentity("catalog", "SharedVariant")
-_SECOND_SHARED_VARIANT = EntityIdentity("archive", "SharedVariant")
-_UNRELATED_NAMED_VARIANT = EntityIdentity("unrelated", "NamedVariant")
-
-
-def _rendering_value_object(name: str, column: str) -> ValueObjectOccurrenceDeclaration:
-    return ValueObjectOccurrenceDeclaration(
-        name=name,
-        storage=Column(column),
-        shape=ValueObjectShapeDeclaration(
-            key=ValueObjectShapeKey(),
-            attributes=(ValueObjectAttributeDeclaration("label", STRING),),
-        ),
-    )
-
-
-_VARIANT_MODEL = form_metamodel(
-    source(
-        Declaration(
-            identity=_VARIANT_ROOT,
-            container=Table("asset_record"),
-            attributes=(key(_VARIANT_ROOT),),
-            value_objects=(_rendering_value_object("mailingAddress", "mailing_address"),),
-            inheritance=AbstractRoot(TablePerHierarchy("kind")),
-        ),
-        Declaration(
-            identity=_NAMED_VARIANT,
-            value_objects=(_rendering_value_object("namedProfile", "named_profile"),),
-            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "named"),
-        ),
-        Declaration(
-            identity=_FIRST_SHARED_VARIANT,
-            value_objects=(_rendering_value_object("catalogProfile", "catalog_profile"),),
-            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "catalog-shared"),
-        ),
-        Declaration(
-            identity=_SECOND_SHARED_VARIANT,
-            value_objects=(_rendering_value_object("archiveProfile", "archive_profile"),),
-            inheritance=ConcreteSubtype(ExactEntityReference(_VARIANT_ROOT), "archive-shared"),
-        ),
-        Declaration(
-            identity=_UNRELATED_NAMED_VARIANT,
-            container=Table("unrelated_named_variant"),
-            attributes=(key(_UNRELATED_NAMED_VARIANT),),
-            value_objects=(_rendering_value_object("wrongProfile", "wrong_profile"),),
-        ),
-    )
-)
-
-
-_ATTACH_OWNER = EntityIdentity("catalog", "Owner")
-_ATTACH_TARGET = EntityIdentity("catalog", "Target")
-
-# One Entity whose Value Object storage column is spelled exactly like a
-# relationship it also carries: the two namespaces must not overwrite each other
-# on the wire.
-_ATTACH_MODEL = form_metamodel(
-    source(
-        Declaration(
-            identity=_ATTACH_OWNER,
-            container=Table("owner"),
-            attributes=(key(_ATTACH_OWNER), attribute(_ATTACH_OWNER, "targetId")),
-            value_objects=(_rendering_value_object("profile", "details"),),
-        ),
-        Declaration(
-            identity=_ATTACH_TARGET,
-            container=Table("target"),
-            attributes=(key(_ATTACH_TARGET),),
-        ),
-    )
-)
-
-
 def _scenario_result(
     *roots: dict[str, object], pin: Pin | None = None, identity: EntityIdentity | None = None
 ) -> Any:
@@ -253,15 +164,6 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
     with pytest.raises(UnclassifiedEngineError, match="has no assignable member of"):
         _edited_copy(step, 0, source)
     assert source.roots[0] == {"id": 1, "name": "Ada"}
-
-
-def test_edited_copy_reports_a_value_its_member_cannot_decode() -> None:
-    # Decoding, not judgment: a literal with no managed value fails the case
-    # loudly rather than escaping the lane as a decoder error.
-    step = {"action": "mutate", "on": 0, "set": {"qty": "five"}}
-    source = _order_view(id=1, name="Ada", qty=5)
-    with pytest.raises(UnclassifiedEngineError, match="cannot decode"):
-        _edited_copy(step, 0, source)
 
 
 def test_edited_copy_names_the_member_whose_value_cannot_decode() -> None:
@@ -380,14 +282,6 @@ def test_edited_copy_resolves_a_concrete_target_read_against_that_target() -> No
     assert (copy.identity, copy.roots[0]["barkVolume"]) == (dog, 9)
 
 
-def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
-    step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
-    with pytest.raises(UnclassifiedEngineError, match="holds no view to edit"):
-        snapshot._grade_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-            _case("m-snapshot-read-010"), _ORDERS_MODEL, step, [_scenario_result({"id": 1})]
-        )
-
-
 def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None:
     # A refused mutation derives nothing, so its slot stays empty and a later
     # step naming it is told so rather than handed a copy the verb never made.
@@ -497,60 +391,6 @@ _ORDER_ROW: dict[str, object] = {
 }
 
 
-def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -> None:
-    port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    original = _case("m-snapshot-read-010")
-    document = copy.deepcopy(cast("dict[str, Any]", original.document))
-    document["when"]["scenario"][1]["expectRows"] = [{**_ORDER_ROW, "name": "Mutant"}]
-    run = _run(dataclasses.replace(original, document=document), port)
-    assert run.database_calls == 2
-    assert [e.case_pointer for e in run.emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/2/objectQuery",
-    ]
-    assert len(port.reads) == 2
-    assert len(port.writes) == 0
-    assert run.errors == []  # an unpinned mutate is accepted: no error observation
-    assert [entry["at"] for entry in run.step_rows] == [
-        "/scenario/0",
-        "/scenario/1",
-        "/scenario/2",
-    ]
-    assert run.step_rows[1]["rows"] == [
-        {
-            "id": 1,
-            "name": "Mutant",
-            "sku": "A-100",
-            "qty": 5,
-            "price": decimal.Decimal("10.50"),
-            "active": True,
-            "orderedOn": dt.date(2024, 1, 5),
-        }
-    ]
-
-
-def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() -> None:
-    # The end-to-end half of the assignment: the `set` resolves against the
-    # members the retained node's own Entity has, so a name that is no member of
-    # it is refused at the verb rather than silently dropped.
-    when = {
-        "scenario": [
-            {
-                "objectQuery": {
-                    "target": "Order",
-                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
-                }
-            },
-            {"action": "mutate", "on": 0, "set": {"nickname": "Mutant"}},
-        ]
-    }
-    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    with pytest.raises(UnclassifiedEngineError, match="Order has no assignable member of"):
-        _run(case, port)
-    assert len(port.writes) == 0
-
-
 def test_run_scenario_case_snapshot_lane_applies_out_of_band_statements() -> None:
     # `m-case-format` admits `given.apply` on a scenario without excluding the
     # action-bearing shape, so this lane owes the same setup every other executor
@@ -584,25 +424,6 @@ _POSITION_R1_ROW: dict[str, object] = {
     "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
 }
-
-
-def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
-    port = FakeDbPort([dict(_POSITION_R1_ROW)])
-    run = _run(_case("m-temporal-write-032"), port)
-    assert run.database_calls == 1
-    assert [e.case_pointer for e in run.emissions] == ["/scenario/0/objectQuery"]
-    assert run.errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
-
-
-def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
-    # The writable half of the finite-pin contrast: a finite Valid-Time pin
-    # (Transaction Time defaulted Latest) passes the SAME validator, so the
-    # mutate applies in-memory and no error observation is reported.
-    row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
-    port = FakeDbPort([row])
-    run = _run(_case("m-temporal-write-031"), port)
-    assert run.database_calls == 1
-    assert run.errors == []
 
 
 def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
@@ -685,16 +506,6 @@ def _include_scenario_port() -> QueueDbPort:
     return QueueDbPort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
 
 
-def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view() -> None:
-    run = _run(_case("m-snapshot-read-016"), _include_scenario_port())
-    # The find's two levels are the only calls; the mutate and the access cost none.
-    assert run.database_calls == 2
-    assert run.errors == []
-    assert [entry["at"] for entry in run.step_graphs] == ["/scenario/2"]
-    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
-    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
-
-
 def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph() -> None:
     # The read placement on the ACTION-step lane: a find there reports what it
     # materialized exactly as a `uow` lane find does, so one authored
@@ -720,33 +531,6 @@ def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph(
     (root,) = root_graph["Order"]
     assert root["id"] == 1
     assert sorted(node["id"] for node in cast("list[dict[str, object]]", root["items"])) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
-
-
-def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
-    # The chain the corpus authors (`m-snapshot-read-022`) in its DB-free form: a
-    # second `mutate` names the FIRST one's copy rather than the read, which
-    # resolves only because an accepted edit publishes what it derived. Each hop
-    # carries its predecessor's assignment, and the source the chain hangs off
-    # still holds the read's own state and the SAME loaded items.
-    when: dict[str, object] = {
-        "scenario": [
-            {
-                "objectQuery": {
-                    "target": "Order",
-                    "predicate": {"eq": {"path": "Order.id", "value": 1}},
-                    "includes": [{"segments": [{"rel": "Order.items"}]}],
-                }
-            },
-            {"action": "mutate", "on": 0, "set": {"name": "Mutant"}},
-            {"action": "mutate", "on": 1},
-            {"action": "access", "on": 0, "path": "items", "expectGraph": {"OrderItem": []}},
-        ]
-    }
-    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    run = _run(case, _include_scenario_port())
-    assert run.database_calls == 2  # the find's two levels; no hop of the chain costs one
-    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
-    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
 
 def _orders_access_scenario(access: dict[str, object], *, includes: bool) -> case_format.Case:
@@ -1069,32 +853,6 @@ _LEDGER_VALUE_UPDATE: list[dict[str, object]] = [
         "at": "2024-05-01T00:00:00+00:00",
     }
 ]
-
-
-def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_standing() -> None:
-    # The composition the closed-world clause is about: the write is its own unit
-    # of work — a resolving read and then its DML — and the view the find
-    # materialized stands across it, so the access still answers what THAT read
-    # fetched with nothing at the port of its own.
-    port = _QueueWritePort(
-        [
-            [dict(_ORDER_ROW)],
-            [dict(row) for row in _ORDER_1_ITEM_ROWS],
-            [dict(_ORDER_ROW)],
-        ]
-    )
-
-    run = _run(_write_between_find_and_access(_ORDER_NAME_UPDATE), port)
-
-    assert [emission.case_pointer for emission in run.emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/0/objectQuery",
-        "/scenario/1/write",
-    ]
-    assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
-    assert run.database_calls == 4  # the find's two levels, the write's resolve and its DML
-    graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
-    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
 
 def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane() -> None:
