@@ -311,7 +311,7 @@ def test_run_rejected_case_raises_for_an_inline_model_the_schema_refuses() -> No
     # The second door's own refusal, which the first cannot reach: a document
     # whose families are well formed but whose canonical schema they are not.
     # The family validator has no schema phase and returns, so this arrives at
-    # `domain_model_from_document` and is a `DescriptorSchemaError` — an engine
+    # `domain_model_from_document` and is `descriptor-schema-invalid` — an engine
     # report, never a graded rule, since a rejected case names a model rule.
     schema_invalid: dict[str, object] = {
         "model": {
