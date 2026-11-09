@@ -201,6 +201,51 @@ def test_a_schema_valid_but_unconstructible_value_fails_in_the_value_phase() -> 
     assert [v.rule for v in caught.value.violations] == ["type-spelling-invalid"]
 
 
+def test_a_nested_value_object_spelling_fails_in_the_value_phase_at_its_own_path() -> None:
+    document = {
+        "entity": {
+            "name": "Customer",
+            "table": "customer",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            "valueObjects": [
+                {
+                    "name": "contact",
+                    "valueObjects": [
+                        {
+                            "name": "phone",
+                            "attributes": [{"name": "number", "type": "decimal(2,5)"}],
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+    with raises_code(DescriptorError, "descriptor-value-invalid") as caught:
+        domain_model_from_document(document)
+    assert [(v.path, v.rule) for v in caught.value.violations] == [
+        (
+            ("entity", "valueObjects", 0, "valueObjects", 0, "attributes", 0, "type"),
+            "type-spelling-invalid",
+        )
+    ]
+
+
+def test_a_model_value_refusing_construction_fails_in_the_value_phase_naming_its_entity() -> None:
+    # A qualified reference with an empty namespace passes the schema, and the
+    # Entity Identity it denotes refuses construction.
+    text = _YAML.replace(
+        "target: { entity: Author, attribute: id }", "target: { entity: .Author, attribute: id }"
+    )
+    with raises_code(
+        DescriptorError,
+        "descriptor-value-invalid",
+        match=r"entity 'bookshop\.Book': an Entity namespace",
+    ) as caught:
+        domain_model_from_yaml(text)
+    assert caught.value.violations == ()
+    assert isinstance(caught.value.__cause__, ValueError)
+
+
 def test_a_semantic_model_rule_fails_last_and_is_not_a_descriptor_error() -> None:
     # An unresolvable relationship target is a Model Formation concern, so it
     # survives every ingestion phase and fails inside the same call as the

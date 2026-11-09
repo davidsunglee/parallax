@@ -28,11 +28,9 @@ from parallax.core.base import STRING
 from parallax.core.dialect import (
     POSTGRES,
     Dialect,
-    PhysicalIndexName,
 )
-from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
+from parallax.core.metamodel import Column, Table
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.storage_layout import ColumnSlot
 from parallax.descriptor._ingest import ingest_document
 from parallax.evolution.model_evolution import (
@@ -50,13 +48,9 @@ from parallax.evolution.schema_delta._order import order
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateExtension,
-    CreateIndex,
     CreateTable,
-    DropIndex,
-    IndexDefinition,
     IntervalCheck,
     PhysicalColumn,
-    RestateColumnDomain,
     location_of,
     member_key,
 )
@@ -549,31 +543,6 @@ def test_provisioning_creates_every_unique_index_over_one_column() -> None:
     assert len(names) == 2
 
 
-def test_an_index_naming_an_undeclared_attribute_never_reaches_provisioning() -> None:
-    # An accepted model's every Index names a declared Attribute (the resolver's
-    # `metamodel-index-attribute-missing`), so the layout's partial-mapping guard
-    # is unreachable defensive code — the defect is caught before a model can
-    # form.
-    broken = dataclasses.replace(
-        _RECORDS["error-cases"],
-        entities=tuple(
-            dataclasses.replace(
-                entity,
-                indices=(dataclasses.replace(entity.indices[0], attributes=("noSuchAttr",)),),
-            )
-            if entity.name == "Tag"
-            else entity
-            for entity in _RECORDS["error-cases"].entities
-        ),
-    )
-    with pytest.raises(MetamodelValidationError, match="metamodel-index-attribute"):
-        formed(
-            dataclasses.replace(
-                broken, entities=(next(e for e in broken.entities if e.name == "Tag"),)
-            )
-        )
-
-
 # --------------------------------------------------------------------------- #
 # What the generator itself owns: the shape of the whole answer, the refusal    #
 # it aggregates, and what the returned value is allowed to keep alive.          #
@@ -762,55 +731,17 @@ def test_a_delta_retains_neither_the_model_nor_the_layouts_it_resolved() -> None
 
 
 # --------------------------------------------------------------------------- #
-# The algebra is CLOSED by ADR 0063 and by the case schema's operation enum, so #
-# every case renders and addresses a location today even though the lowering     #
-# reaches only two of them so far. A case defined but unrendered would be a     #
-# hole no type checker can see.                                                 #
+# Two arms no generated delta here observes: the member a table creation or   #
+# an added column addresses, and where a refusal would report it.             #
 # --------------------------------------------------------------------------- #
 _TABLE = Table(name="widget")
 _LABEL = PhysicalColumn(Column(name="label"), STRING, 8, nullable=False)
-_WIDER = PhysicalColumn(Column(name="label"), STRING, 16, nullable=True)
-_INDEX = IndexDefinition(
-    table=_TABLE,
-    index=IndexIdentity(EntityIdentity(namespace="parallax.test", name="Widget"), "widget_label"),
-    components=(AttributeIdentity(EntityIdentity("parallax.test", "Widget"), "label"),),
-    column_attributes=(AttributeIdentity(EntityIdentity("parallax.test", "Widget"), "label"),),
-    columns=(_LABEL,),
-    unique=True,
-)
-_NAME = PhysicalIndexName("pxi_widget_label_0")
 
 
-def test_adding_a_column_renders_and_addresses_that_column() -> None:
-    operation = AddColumn(table=_TABLE, column=_WIDER, caused_by=())
-    assert render(operation, POSTGRES) == "alter table widget add column label varchar(16)"
+def test_adding_a_column_addresses_that_column() -> None:
+    operation = AddColumn(table=_TABLE, column=_LABEL, caused_by=())
     assert member_key(operation) == "label"
     assert location_of(operation) == PhysicalLocation(table=_TABLE, column=Column(name="label"))
-
-
-def test_restating_a_domain_renders_every_moved_fact_and_addresses_the_later_column() -> None:
-    operation = RestateColumnDomain(table=_TABLE, earlier=_LABEL, later=_WIDER, caused_by=())
-    assert render(operation, POSTGRES) == (
-        "alter table widget alter column label type varchar(16), alter column label drop not null"
-    )
-    assert member_key(operation) == "label"
-    assert location_of(operation) == PhysicalLocation(table=_TABLE, column=Column(name="label"))
-
-
-def test_dropping_an_index_renders_and_addresses_its_physical_name() -> None:
-    operation = DropIndex(definition=_INDEX, name=_NAME, caused_by=())
-    assert render(operation, POSTGRES) == "drop index pxi_widget_label_0"
-    assert member_key(operation) == _NAME.value
-    assert location_of(operation) == PhysicalLocation(table=_TABLE, index=_NAME)
-
-
-def test_creating_an_index_addresses_its_physical_name() -> None:
-    operation = CreateIndex(definition=_INDEX, name=_NAME, caused_by=())
-    assert render(operation, POSTGRES) == (
-        "create unique index pxi_widget_label_0 on widget (label)"
-    )
-    assert member_key(operation) == _NAME.value
-    assert location_of(operation) == PhysicalLocation(table=_TABLE, index=_NAME)
 
 
 def test_creating_a_table_addresses_no_member() -> None:

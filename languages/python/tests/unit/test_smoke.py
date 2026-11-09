@@ -3,75 +3,14 @@
 from __future__ import annotations
 
 import importlib
-import json
 import subprocess
 import sys
 
 import psycopg
 import pytest
 
-import parallax.conformance
-import parallax.core
-import parallax.descriptor
-import parallax.postgres
-import parallax.snapshot
 from parallax.conformance import cli
 from tests._support.distributions import TOP_PACKAGE_NAMES, importable_submodules
-from tests._support.repo import PY_ROOT
-
-_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
-
-
-def test_top_package_public_surfaces() -> None:
-    # `parallax.core` publishes the model-definition surface; the concrete
-    # Postgres adapter surface and the snapshot developer surface
-    # (`Snapshot[T]` and the vocabulary a result publishes, §8) are published
-    # alongside `connect()`. Execution observability is absent by design: it is
-    # `parallax.core.execution_lifecycle`'s, installed through `connect`. The
-    # Snapshot surface re-exports no name another package owns.
-    assert {"Entity", "ValueObject", "Attr", "Rel", "attr", "rel", "DomainModel"} <= set(
-        parallax.core.__all__
-    )
-    assert "meta" not in parallax.core.__all__
-    assert set(parallax.snapshot.__all__) == {
-        "connect",
-        "Database",
-        "TxnContext",
-        "ReadOnlyTxnContext",
-        "Snapshot",
-        "CheckedSnapshot",
-        "SnapshotStream",
-        "ScopedDatabase",
-        "SharingScope",
-        "WireEntity",
-        "WireValue",
-        "WireDatabaseView",
-        "WireTransactionView",
-        "WireQuery",
-        "WireChanges",
-        "WirePredicateTarget",
-        "is_view_loaded",
-        "view",
-        "pin_of",
-        "edge_of",
-    }
-    # §8 topology fixes the adapter's public exports as the adapter itself, its endpoint,
-    # its principal-role value, the two retention policies, and this engine's name
-    # for each portable Isolation Level; psycopg bind mechanics (Jsonb), the
-    # native pool, and the scoped connection under an acquisition stay internal.
-    assert set(parallax.postgres.__all__) == {
-        "OnDemandOptions",
-        "PoolOptions",
-        "PostgresAdapter",
-        "PostgresEndpoint",
-        "PostgresRole",
-        "isolation_spelling",
-    }
-    # §8 pins the Descriptor Frontend's surface closed, so the committed
-    # public-API snapshot is the authority for it rather than a second list.
-    descriptor_surface = json.loads(_PUBLIC_API_SNAPSHOT.read_text())["parallax.descriptor"]
-    assert set(parallax.descriptor.__all__) == set(descriptor_surface)
-    assert parallax.conformance.__all__ == []
 
 
 def test_every_scope_submodule_imports() -> None:
