@@ -744,7 +744,7 @@ isn't caught: the client asked for something reasonable, so it reaches
   retried.
 - [Database error classification](../../../../core/spec/m-db-error.md) defines the
   categories, how each database's codes map to them, and
-  [the violated index name](../../../../core/spec/m-db-error.md#the-violated-physical-index-name).
+  [the violated index name](../../../../core/spec/m-db-error.md#the-violated-constraint-name).
   [Physical Index Names](../../../../core/spec/m-schema-delta.md#physical-index-names)
   defines how Parallax names the indices it creates, and the
   [database port](../../../../core/spec/m-db-port.md) defines connection acquisition.
