@@ -10,7 +10,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT64, STRING
+from parallax.core.base import STRING
 from parallax.core.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
@@ -745,72 +745,6 @@ def test_a_family_declaration_sequence_is_absent_for_every_identity_but_a_root()
 # --------------------------------------------------------------------------
 # The compiler's own contract.
 # --------------------------------------------------------------------------
-
-
-def _fake_entity(name: str, parent: str | None, *, concrete: bool) -> fake.FakeEntity:
-    entity = EntityIdentity(None, name)
-    declared = (
-        None
-        if parent is None
-        else (
-            ConcreteSubtype(EntityIdentity(None, parent))
-            if concrete
-            else AbstractSubtype(EntityIdentity(None, parent))
-        )
-    )
-    return fake.FakeEntity(
-        entity,
-        declared_container=Table(name.lower()),
-        declared_attributes=(
-            AttributeMetadata(
-                identity=AttributeIdentity(entity, "id"),
-                type=INT64,
-                storage=Column("id"),
-            ),
-        ),
-        inheritance=declared,
-    )
-
-
-def test_a_cyclic_ancestry_is_a_compiler_contract_failure() -> None:
-    # Validation rejects a cycle, so meeting one here means the compiler was
-    # handed a candidate no accepted model can be: it raises for the formation
-    # runner to classify rather than looping or publishing a facet.
-    metadata = fake.FakeMetamodel(
-        (_fake_entity("Pet", "Paw", concrete=False), _fake_entity("Paw", "Pet", concrete=False))
-    )
-    with pytest.raises(RuntimeError, match="unresolvable or cyclic"):
-        compile_facet(metadata)
-
-
-def test_an_ancestry_reaching_no_abstract_root_is_a_compiler_contract_failure() -> None:
-    metadata = fake.FakeMetamodel(
-        (
-            _fake_entity("Widget", None, concrete=False),
-            _fake_entity("Gadget", "Widget", concrete=True),
-        )
-    )
-    with pytest.raises(RuntimeError, match="reaches no abstract root"):
-        compile_facet(metadata)
-
-
-@pytest.mark.parametrize("keys", [0, 2])
-def test_a_root_without_exactly_one_key_is_a_compiler_contract_failure(keys: int) -> None:
-    # Validation proves every accepted family declares exactly one key on its
-    # root, so any other count means the compiler was handed metadata no
-    # accepted model can be.
-    widget = EntityIdentity(None, "Widget")
-    metadata = fake.FakeMetamodel(
-        (
-            fake.FakeEntity(
-                widget,
-                declared_container=Table("widget"),
-                declared_attributes=tuple(key(widget, f"id{index}") for index in range(keys)),
-            ),
-        )
-    )
-    with pytest.raises(RuntimeError, match=f"declares {keys} primary-key Attributes"):
-        compile_facet(metadata)
 
 
 def test_an_alternate_implementation_compiles_the_same_answers() -> None:

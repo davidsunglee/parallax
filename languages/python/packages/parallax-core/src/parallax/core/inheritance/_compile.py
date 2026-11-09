@@ -91,20 +91,13 @@ def _primary_key(root: EntityMetadata) -> AttributeMetadata:
     """The one primary-key Attribute ``root`` declares for its whole family.
 
     Validation asks the one-key rule of every position, the root included, so an
-    accepted family declares exactly one key and declares it on the root; any
-    other count is a state no accepted model can be in.
+    accepted family declares exactly one key and declares it on the root.
     """
-    keys = [
+    return next(
         attribute
         for attribute in root.declared_attributes
         if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    if len(keys) != 1:
-        raise RuntimeError(
-            f"Entity {root.identity.canonical!r} declares {len(keys)} primary-key "
-            "Attributes for its family, which validation should have rejected"
-        )
-    return keys[0]
+    )
 
 
 def _ancestry(
@@ -113,31 +106,14 @@ def _ancestry(
     """``entity``'s chain from its family root down to itself.
 
     A standalone Entity is its own chain. A participant's chain ends at the
-    abstract root that validation established, so a walk that revisits a
-    position or tops out anywhere else has reached a state no accepted model
-    can be in.
+    abstract root that validation established: every parent resolves and no
+    ancestry is cyclic.
     """
     chain = [entity.identity]
-    visited = {entity.identity}
     position = entity
-    while True:
-        parent = inheritance_parent(position.inheritance)
-        if parent is None:
-            break
-        ancestor = by_identity.get(parent)
-        if ancestor is None or ancestor.identity in visited:
-            raise RuntimeError(
-                f"Entity {entity.identity.canonical!r} has an inheritance ancestry that "
-                "validation should have rejected as unresolvable or cyclic"
-            )
-        visited.add(ancestor.identity)
-        chain.append(ancestor.identity)
-        position = ancestor
-    if entity.inheritance is not None and not isinstance(position.inheritance, AbstractRoot):
-        raise RuntimeError(
-            f"Entity {entity.identity.canonical!r} reaches no abstract root, which "
-            "validation should have rejected"
-        )
+    while (parent := inheritance_parent(position.inheritance)) is not None:
+        position = by_identity[parent]
+        chain.append(position.identity)
     return tuple(reversed(chain))
 
 

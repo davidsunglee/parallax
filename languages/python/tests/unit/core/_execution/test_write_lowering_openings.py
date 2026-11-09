@@ -319,7 +319,6 @@ def test_a_run_of_openings_is_one_statement_of_every_entry_in_order() -> None:
     statement, following, failure = _grouped(cursor)
     assert _spelled(statement) == _joined(*steps)
     assert statement.wire_binds() == _wire(*steps)
-    assert statement.is_compiler_proven
     assert (following, failure, _remaining(cursor)) == (None, None, [])
     assert preparer.prepared == [step.entries[0] for step in steps]
 

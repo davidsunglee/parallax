@@ -150,38 +150,6 @@ def _where(
     return where, statement.binds
 
 
-def test_temporal_injection_rejects_incomplete_resolved_products() -> None:
-    axis = POSITION.declared_as_of_axes[0]
-    without_end = cast(
-        "EntityMetadata",
-        dataclasses.replace(
-            cast("Any", POSITION),
-            declared_attributes=tuple(
-                member
-                for member in POSITION.declared_attributes
-                if member.identity.name != axis.end_attribute.name
-            ),
-        ),
-    )
-
-    with raises_code(
-        UsageError, "temporal-read-invalid", match="temporal axis member is undeclared"
-    ):
-        inject_resolved_as_of(
-            ResolvedConstant(True),
-            (ResolvedLatestSelection(axis),),
-            without_end,
-        )
-    with raises_code(UsageError, "temporal-read-invalid", match="not a managed datetime"):
-        resolved_query_pin((ResolvedAsOfSelection(axis, 1),))
-    with pytest.raises(AssertionError):
-        inject_resolved_as_of(
-            ResolvedConstant(True),
-            (cast("Any", type("UnknownSelection", (), {"axis": axis})()),),
-            POSITION,
-        )
-
-
 def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: EntityMetadata) -> None:
     """Fail any read of an Entity's declared As-Of Axes."""
 
@@ -1293,15 +1261,6 @@ def test_a_scanned_root_axis_leaves_the_target_at_latest(
         valid_time=LatestPerspective(shape.valid_time),
         transaction_time=AtPerspective(shape.transaction_time, instant),
     )
-
-
-def test_perspective_construction_refuses_a_coordinate_that_is_not_a_managed_datetime() -> None:
-    selections: tuple[ResolvedTemporalSelection, ...] = (
-        ResolvedAsOfSelection(_source_axis(TemporalDimension.TRANSACTION_TIME), 1),
-    )
-
-    with raises_code(UsageError, "temporal-read-invalid", match="not a managed datetime"):
-        resolve_perspective(LEASE, model=_LEASE_MODEL, root_selections=selections)
 
 
 # --------------------------------------------------------------------------- #

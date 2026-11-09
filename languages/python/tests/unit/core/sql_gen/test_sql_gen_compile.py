@@ -44,10 +44,6 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     Metamodel,
-    NestedValueObjectMetadata,
-    ValueObjectAttributeIdentity,
-    ValueObjectAttributeMetadata,
-    ValueObjectIdentity,
 )
 from parallax.core.navigate import (
     NoRootSelections,
@@ -145,59 +141,6 @@ def test_an_element_scope_admits_constants_and_refuses_attribute_subjects() -> N
         _compile_resolved_product(
             ResolvedQuantifier("any", phones, ResolvedComparison("eq", name, "Ada")), CUSTOMER
         )
-
-
-def test_sql_lowering_rejects_inconsistent_resolved_value_object_products() -> None:
-    customer = target(CUSTOMER, "Customer")
-    position = inheritance.view(CUSTOMER).entity(customer.identity)
-    assert position is not None
-    address = position.applicable_value_object("address")
-    assert address is not None
-    city = address.attribute("city")
-    phones = address.value_object("phones")
-    assert city is not None
-    assert phones is not None
-
-    outside_leaf = cast(
-        "ValueObjectAttributeMetadata",
-        dataclasses.replace(
-            cast("Any", city),
-            identity=ValueObjectAttributeIdentity(
-                ValueObjectIdentity(customer.identity, ("address", "other")), "city"
-            ),
-        ),
-    )
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="outside its resolved container"):
-        _compile_resolved_product(
-            ResolvedQuantifier("any", phones, ResolvedComparison("eq", outside_leaf, "Berlin")),
-            CUSTOMER,
-        )
-
-    absent_leaf = cast(
-        "ValueObjectAttributeMetadata",
-        dataclasses.replace(
-            cast("Any", city),
-            identity=ValueObjectAttributeIdentity(
-                ValueObjectIdentity(customer.identity, ("missing",)), "city"
-            ),
-        ),
-    )
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="is absent from the active position"
-    ):
-        _compile_resolved_product(ResolvedComparison("eq", absent_leaf, "Berlin"), CUSTOMER)
-
-    absent_container = cast(
-        "NestedValueObjectMetadata",
-        dataclasses.replace(
-            cast("Any", phones),
-            identity=ValueObjectIdentity(customer.identity, ("missing", "phones")),
-        ),
-    )
-    with raises_code(
-        InternalError, SQL_GENERATION_FAILED, match="is absent from the active position"
-    ):
-        _compile_resolved_product(ResolvedQuantifier("any", absent_container), CUSTOMER)
 
 
 def test_all_projects_scalar_columns() -> None:
@@ -753,12 +696,6 @@ def test_a_template_renders_every_key_occurrence_of_one_form_from_one_gathered_s
 
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
-def test_a_template_refuses_gathered_keys_of_two_forms(dialect: Dialect) -> None:
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="exactly one bind form"):
-        sql_compile.compile_template(_two_key_sets(("orderId", "sku")), ORDERS, dialect)
-
-
-@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 @pytest.mark.parametrize("narrow", [False, True], ids=["three-branches", "single-branch"])
 def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     dialect: Dialect, narrow: bool, monkeypatch: pytest.MonkeyPatch
@@ -824,7 +761,6 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         assert rendered.statement.sql.count(membership) == branches
         assert rendered.statement.sql.count("union all") == branches - 1
         assert EXPANDING_PLACEHOLDER not in rendered.statement.sql
-        assert rendered.statement.is_compiler_proven
         assert rendered.result_contract is template.compiled.result_contract
         assert rendered.projection is template.compiled.projection
         assert rendered.document_reads == template.compiled.document_reads
@@ -1182,16 +1118,13 @@ def test_direct_compilation_of_a_sourced_query_binds_its_operands_concretely() -
     assert statement.execution_value_positions() == ()
 
 
-def test_a_template_of_authored_operands_requires_a_query_holding_each_of_them() -> None:
+def test_a_template_of_authored_operands_requires_its_query() -> None:
     template = sql_compile.compile_template(
         _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "ab"))), _TRAVELERS, POSTGRES
     )
-    fewer = _traveler_query({"eq": {"path": "Traveler.displayName", "value": "Ada"}})
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="requires its query"):
         template.render()
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="lacks an operand"):
-        template.render(query=fewer)
 
 
 @pytest.mark.parametrize(

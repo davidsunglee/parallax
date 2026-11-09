@@ -3,10 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Final, Literal, assert_never, cast
+from typing import Literal, assert_never, cast
 
 from parallax.core.base import (
-    INFINITY,
     Bytes,
     DocumentReadOrdinals,
     InternalError,
@@ -224,9 +223,6 @@ def _expanded_sql(
     return "".join(sql)
 
 
-_EXHAUSTED: Final = object()
-
-
 def _execution_values(
     positions: tuple[ExecutionValuePositions, ...],
     keys: list[ManagedValue] | None,
@@ -240,7 +236,7 @@ def _execution_values(
     """
     operands: Iterator[object] | None = None
     ordinal = -1
-    operand: object = _EXHAUSTED
+    operand: object = None
     for group in positions:
         match group.source:
             case ("predicate", wanted):
@@ -252,13 +248,8 @@ def _execution_values(
                         )
                     operands = predicate_operands(query.predicate)
                 while ordinal < wanted:
-                    operand = next(operands, _EXHAUSTED)
+                    operand = next(operands)
                     ordinal += 1
-                if operand is _EXHAUSTED:
-                    raise InternalError(
-                        SQL_GENERATION_FAILED,
-                        "the query's predicate lacks an operand its template renders",
-                    )
                 yield group, _prepared_operand(group.form, operand)
             case _:
                 yield group, _execution_value(group, keys, query)
@@ -292,13 +283,7 @@ def _execution_value(
                 raise InternalError(
                     SQL_GENERATION_FAILED, "a continuing read template requires its current seek"
                 )
-            carrier = seek.coordinate.carriers[at]
-            if carrier is None or carrier is INFINITY:
-                raise InternalError(
-                    SQL_GENERATION_FAILED,
-                    "a continuing read template renders only a finite carrier",
-                )
-            return carrier
+            return seek.coordinate.carriers[at]
         case ("limit",):
             if query is None or query.paging is None or query.limit is None:
                 raise InternalError(
@@ -366,10 +351,6 @@ def _template(compiled: CompiledRead) -> CompiledTemplate:
         for index in group.indices
     )
     parts = tuple(statement.sql.split(EXPANDING_PLACEHOLDER))
-    if len(parts) - 1 != len(expanding):
-        raise InternalError(
-            SQL_GENERATION_FAILED, "a template's expanding placeholders disagree with its positions"
-        )
     if not expanding:
         return CompiledTemplate(compiled, positions)
     return CompiledTemplate(compiled, positions, parts, tuple(number for _, number in expanding))

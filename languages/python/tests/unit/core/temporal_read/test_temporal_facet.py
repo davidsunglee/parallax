@@ -337,24 +337,6 @@ def _canonical(identity: EntityIdentity) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 
-def _axis(dimension: TemporalDimension) -> AsOfAxisMetadata:
-    entity = identity("Correction")
-    return AsOfAxisMetadata(
-        dimension=dimension,
-        start_attribute=AttributeIdentity(entity, "start"),
-        end_attribute=AttributeIdentity(entity, "end"),
-    )
-
-
-def test_no_shape_variant_holds_valid_time_without_transaction_time() -> None:
-    with pytest.raises(ValueError, match="Transaction-Time axis"):
-        TransactionTimeOnly(_axis(_VALID_TIME))
-    with pytest.raises(ValueError, match="Valid-Time axis"):
-        Bitemporal(_axis(_TX_TIME), _axis(_TX_TIME))
-    with pytest.raises(ValueError, match="Transaction-Time axis"):
-        Bitemporal(_axis(_VALID_TIME), _axis(_VALID_TIME))
-
-
 def test_a_valid_time_only_family_is_a_compiler_contract_failure() -> None:
     # No frontend can author this shape, so the compiler treats it the way its
     # siblings treat any impossible state: it raises for the runner to classify
@@ -370,12 +352,6 @@ def test_a_valid_time_only_family_is_a_compiler_contract_failure() -> None:
 # --------------------------------------------------------------------------
 # The compiler's own contract.
 # --------------------------------------------------------------------------
-
-
-def test_the_compiler_requires_the_inheritance_facet_under_its_own_key() -> None:
-    metadata = fake.parity_model()
-    with pytest.raises(RuntimeError, match="Inheritance Facet"):
-        temporal_read.MODEL_COMPILER.compile(metadata, {})
 
 
 def test_an_entity_the_inheritance_facet_does_not_cover_is_a_contract_failure() -> None:

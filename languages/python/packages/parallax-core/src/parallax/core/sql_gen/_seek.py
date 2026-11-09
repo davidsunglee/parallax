@@ -174,21 +174,7 @@ def lower_seek[RowScope](
     already pushed. A ``deferred`` seek binds each finite carrier as the marker
     its template renders the current coordinate's carrier into.
     """
-    if len(seek.terms) != len(terms):
-        raise InternalError(
-            SQL_GENERATION_FAILED,
-            f"a seek over {len(seek.terms)} term(s) cannot be lowered against "
-            f"{len(terms)} ordering term(s)",
-        )
     carriers = seek.coordinate.carriers
-    if len(carriers) != len(terms):
-        raise InternalError(
-            SQL_GENERATION_FAILED,
-            f"a coordinate carrying {len(carriers)} value(s) cannot be lowered against "
-            f"{len(terms)} ordering term(s)",
-        )
-    for term, lowered in zip(seek.terms, terms, strict=True):
-        _refuse_a_crossed_term(term, lowered)
     dialect = ctx.dialect
     coordinate = _Coordinate(carriers, deferred)
     parts: list[str] = []
@@ -224,40 +210,6 @@ def lower_seek[RowScope](
     # NULLs after the coordinate.
     parts.append(f"({disjunction})" if len(branches) > 1 or loose else disjunction)
     return " and ".join(parts)
-
-
-def _refuse_a_crossed_term(term: ContinuationTerm, lowered: LoweredTerm) -> None:
-    """Refuse a seek whose terms are not the ordering clause's own.
-
-    The two arrive from one Continuation Order and are aligned positionally, so
-    a disagreement means the page was composed against a different order than it
-    is being lowered under — which would seek past a coordinate the statement
-    never evaluated.
-
-    Every field the two spellings share is compared, not the member alone: the
-    order clause reads direction, Null Placement, and nullability off
-    :class:`LoweredTerm`, while every branch of the seek reads them off
-    :class:`~parallax.core.object_query._resolved.ContinuationTerm`. Agreeing on
-    the member while disagreeing on any of the three would emit an opposite
-    comparator, or measure a branch against a placement the clause did not
-    take.
-    """
-    if (
-        term.identity != lowered.member.identity
-        or term.direction != lowered.term.direction
-        or term.nulls != lowered.term.nulls
-        or term.nullable != lowered.member.nullable
-    ):
-        raise InternalError(
-            SQL_GENERATION_FAILED,
-            f"the seek's term {term.identity.name!r} "
-            f"({term.direction}, nulls {term.nulls}, "
-            f"{'nullable' if term.nullable else 'non-nullable'}) is not the ordering term "
-            f"{lowered.member.identity.name!r} "
-            f"({lowered.term.direction}, nulls {lowered.term.nulls}, "
-            f"{'nullable' if lowered.member.nullable else 'non-nullable'}) "
-            f"at the same position",
-        )
 
 
 def _placement(term: ContinuationTerm, dialect: Dialect) -> Literal["first", "last"]:

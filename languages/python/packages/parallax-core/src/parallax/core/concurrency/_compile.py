@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from parallax.core.concurrency._facet import (
     CONCURRENCY_MODULE,
@@ -58,13 +58,7 @@ def compile_facet(
 
 def _shape(temporal: TemporalFacet, entity: EntityIdentity) -> TemporalShape:
     """``entity``'s effective temporal shape, which the Temporal Facet answers for all."""
-    shape = temporal.shape(entity)
-    if shape is None:
-        raise RuntimeError(
-            f"Entity {entity.canonical!r} has no Temporal Facet shape, which every "
-            "accepted Entity carries"
-        )
-    return shape
+    return cast(TemporalShape, temporal.shape(entity))
 
 
 def _version_source(root: EntityMetadata, shape: TemporalShape) -> VersionSource:
@@ -77,38 +71,23 @@ def _version_source(root: EntityMetadata, shape: TemporalShape) -> VersionSource
 
 
 def _explicit_version(root: EntityMetadata) -> VersionSource:
-    """The version Attribute ``root`` declares, or the unversioned source.
-
-    A root declaring more than one was already rejected, so meeting a second here
-    is a state no accepted model can be in.
-    """
+    """The version Attribute ``root`` declares, or the unversioned source; a
+    root declaring more than one was already rejected."""
     versions = [member for member in root.declared_attributes if member.optimistic_locking]
     if not versions:
         return UNVERSIONED
-    if len(versions) > 1:
-        raise RuntimeError(
-            f"Entity {root.identity.canonical!r} declares {len(versions)} version "
-            "Attributes, which validation should have rejected"
-        )
     return ExplicitVersion(versions[0].identity)
 
 
 def _required_facets(
     required_facets: Mapping[FacetKey[Any], object],
 ) -> tuple[InheritanceFacet, TemporalFacet]:
-    """The two facets this compiler declared it requires.
-
-    The runner supplies exactly the declared facets under the manifest's own
-    keys, so a mapping that answers otherwise is a formation seam defect rather
-    than a model one.
-    """
-    inheritance = required_facets.get(INHERITANCE_FACET_KEY)
-    if not INHERITANCE_FACET_KEY.accepts(inheritance):
-        raise RuntimeError("the required Inheritance Facet was not supplied under its own key")
-    temporal = required_facets.get(TEMPORAL_FACET_KEY)
-    if not TEMPORAL_FACET_KEY.accepts(temporal):
-        raise RuntimeError("the required Temporal Facet was not supplied under its own key")
-    return inheritance, temporal
+    """The two facets this compiler declared it requires, which the runner
+    supplies under the manifest's own keys."""
+    return (
+        cast(InheritanceFacet, required_facets[INHERITANCE_FACET_KEY]),
+        cast(TemporalFacet, required_facets[TEMPORAL_FACET_KEY]),
+    )
 
 
 class ConcurrencyModelCompiler:

@@ -21,7 +21,6 @@ from parallax.core.concurrency import _compile as concurrency_compile
 from parallax.core.concurrency._compile import compile_facet
 from parallax.core.concurrency._facet import UNVERSIONED
 from parallax.core.concurrency._rules import MULTIPLE_VERSION_ATTRIBUTES, TEMPORAL_EXPLICIT_VERSION
-from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     NOT_PRIMARY_KEY,
@@ -384,51 +383,16 @@ def test_every_defect_of_one_entity_is_reported_in_canonical_order() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_compiler_requires_both_facets_under_their_own_keys() -> None:
-    metadata = fake.parity_model()
-    inheritance_facet = inheritance_compile.compile_facet(metadata)
-    with pytest.raises(RuntimeError, match="Inheritance Facet"):
-        concurrency.MODEL_COMPILER.compile(metadata, {})
-    with pytest.raises(RuntimeError, match="Temporal Facet"):
-        concurrency.MODEL_COMPILER.compile(metadata, {INHERITANCE_FACET_KEY: inheritance_facet})
-
-
-def test_an_entity_a_required_facet_does_not_cover_is_a_contract_failure() -> None:
-    # Both required facets cover every accepted Entity, so one compiled over a
+def test_an_entity_the_inheritance_facet_does_not_cover_is_a_contract_failure() -> None:
+    # The Inheritance Facet covers every accepted Entity, so one compiled over a
     # different graph is a formation seam defect: the compiler raises rather than
-    # inventing a family or a shape for the Entity it cannot place.
+    # inventing a family for the Entity it cannot place.
     metadata = fake.parity_model()
     narrower = fake.FakeMetamodel([entity for entity in metadata.entities[:1]])
     complete = inheritance_compile.compile_facet(metadata)
     partial = inheritance_compile.compile_facet(narrower)
     with pytest.raises(RuntimeError, match="Inheritance Facet view"):
         compile_facet(metadata, partial, temporal_read_compile.compile_facet(metadata, complete))
-    with pytest.raises(RuntimeError, match="Temporal Facet shape"):
-        compile_facet(metadata, complete, temporal_read_compile.compile_facet(narrower, partial))
-
-
-def test_a_root_declaring_two_version_attributes_is_a_compiler_contract_failure() -> None:
-    # Validation rejects a second version Attribute, so meeting one here means
-    # the compiler was handed metadata no accepted model can be: it raises for
-    # the formation runner to classify rather than picking one.
-    entity = EntityIdentity(None, "Ledger")
-    metadata = fake.FakeMetamodel(
-        (
-            fake.FakeEntity(
-                entity,
-                declared_container=Table("ledger"),
-                declared_attributes=(
-                    key(entity),
-                    _version(entity),
-                    _version(entity, "revision"),
-                ),
-            ),
-        )
-    )
-    inheritance_facet = inheritance_compile.compile_facet(metadata)
-    temporal = temporal_read_compile.compile_facet(metadata, inheritance_facet)
-    with pytest.raises(RuntimeError, match="version"):
-        compile_facet(metadata, inheritance_facet, temporal)
 
 
 def test_an_alternate_implementation_compiles_the_same_answers() -> None:

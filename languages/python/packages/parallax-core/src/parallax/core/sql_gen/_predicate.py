@@ -748,12 +748,7 @@ def _element_subject(member: ResolvedPredicateMember, scope: ScalarElementScope)
 
 
 def _relative_path(path: tuple[str, ...], container: OccurrenceMetadata) -> tuple[str, ...]:
-    base = container.identity.path
-    if path[: len(base)] != base:
-        raise InternalError(
-            SQL_GENERATION_FAILED, "resolved element member is outside its resolved container"
-        )
-    return path[len(base) :]
+    return path[len(container.identity.path) :]
 
 
 def _following(
@@ -1413,12 +1408,10 @@ def _occurrence_carrier(
     """The rendered document carrying ``occurrence`` and the path reaching it."""
     identity = occurrence.identity
     if isinstance(scope, EntityRowScope):
-        vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
-        if vo is None:
-            raise InternalError(
-                SQL_GENERATION_FAILED,
-                f"resolved Value Object {identity} is absent from the active position",
-            )
+        vo = cast(
+            "ValueObjectMetadata",
+            _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0]),
+        )
         document, prefix = scope.document_root(vo)
         return document, (*prefix, *identity.path[1:])
     if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
@@ -1680,12 +1673,10 @@ def _resolved_vo_path(
     leaf: ValueObjectAttributeMetadata, scope: EntityRowScope
 ) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
     identity = leaf.identity.value_object
-    vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
-    if vo is None:
-        raise InternalError(
-            SQL_GENERATION_FAILED,
-            f"resolved Value Object {identity} is absent from the active position",
-        )
+    vo = cast(
+        "ValueObjectMetadata",
+        _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0]),
+    )
     return vo, (*identity.path[1:], leaf.identity.name)
 
 

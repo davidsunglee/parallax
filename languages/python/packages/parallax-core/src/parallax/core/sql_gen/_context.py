@@ -97,7 +97,6 @@ class LoweredStatement:
     binds: tuple[object, ...] = ()
     _typed_bind_spans: tuple[_BindSpan, ...] = field(default=(), repr=False)
     _wire_bind_overrides: tuple[_WireBindOverride, ...] = field(default=(), repr=False)
-    _compiler_proven: bool = field(default=False, repr=False, compare=False)
 
     @property
     def typed_bind_spans(self) -> tuple[_BindSpan, ...]:
@@ -106,10 +105,6 @@ class LoweredStatement:
     @property
     def wire_bind_overrides(self) -> tuple[_WireBindOverride, ...]:
         return self._wire_bind_overrides
-
-    @property
-    def is_compiler_proven(self) -> bool:
-        return self._compiler_proven
 
     def wire_binds(self) -> tuple[WireValue, ...]:
         unprojected = object()
@@ -126,62 +121,16 @@ class LoweredStatement:
 
     def execution_value_positions(self) -> tuple[ExecutionValuePositions, ...]:
         """Every deferred execution value's positions, one group per source and
-        form in canonical source order, once each marker's bind metadata is the
-        classification its form selects.
-
-        A statement's gathered keys take one form, and a value that expands
-        cannot occupy repeated row-bind metadata.
-        """
+        form in canonical source order."""
         found: dict[_ExecutionValueMarker, list[int]] = {}
         for index, value in enumerate(self.binds):
             if isinstance(value, _ExecutionValueMarker):
                 found.setdefault(value, []).append(index)
-        if not found:
-            return ()
-        slots, repeated = self._marker_slots(
-            sorted(index for indices in found.values() for index in indices)
-        )
-        overridden = {override.index for override in self._wire_bind_overrides}
-        groups: list[ExecutionValuePositions] = []
-        for marker, indices in found.items():
-            form = marker.form
-            for index in indices:
-                if slots.get(index) != form.typed_slot or index in overridden:
-                    raise InternalError(
-                        SQL_GENERATION_FAILED,
-                        "a deferred execution value's bind metadata is not the "
-                        "classification its form selects",
-                    )
-                if form.expands and index in repeated:
-                    raise InternalError(
-                        SQL_GENERATION_FAILED,
-                        "an expanding execution value cannot occupy repeated row-bind metadata",
-                    )
-            groups.append(ExecutionValuePositions(marker, tuple(indices)))
-        if sum(1 for group in groups if group.source == _KEYS) > 1:
-            raise InternalError(
-                SQL_GENERATION_FAILED, "a statement's gathered keys take exactly one bind form"
-            )
+        groups = [
+            ExecutionValuePositions(marker, tuple(indices)) for marker, indices in found.items()
+        ]
         groups.sort(key=lambda group: (source_order(group.source), group.indices[0]))
         return tuple(groups)
-
-    def _marker_slots(
-        self, marked: list[int]
-    ) -> tuple[dict[int, tuple[NeutralType, _BindForm]], set[int]]:
-        """The typed slot covering each of the ascending ``marked`` positions,
-        and which of them repeated row-bind metadata covers."""
-        slots: dict[int, tuple[NeutralType, _BindForm]] = {}
-        repeated: set[int] = set()
-        members = frozenset(marked)
-        for span in self._typed_bind_spans:
-            if isinstance(span, _TypedBindSpan):
-                covered = marked[bisect_left(marked, span.start) : bisect_left(marked, span.stop)]
-            else:
-                covered = [index for index in span.indices() if index in members]
-                repeated.update(covered)
-            for index in covered:
-                slots[index] = (span.neutral_type, span.form)
-        return slots, repeated
 
     def with_execution_values(
         self,
@@ -198,11 +147,6 @@ class LoweredStatement:
         for positions, value in values:
             if positions.form.expands:
                 elements = cast("Sequence[object]", value)
-                if not elements:
-                    raise InternalError(
-                        SQL_GENERATION_FAILED,
-                        "an expanding execution value requires at least one element",
-                    )
                 expansions.extend((index, elements) for index in positions.indices)
             else:
                 for index in positions.indices:
@@ -213,7 +157,6 @@ class LoweredStatement:
                 tuple(binds),
                 self._typed_bind_spans,
                 self._wire_bind_overrides,
-                self._compiler_proven,
             )
         expansions.sort(key=_position)
         return self._expanded(binds, expansions, sql=sql)
@@ -245,7 +188,6 @@ class LoweredStatement:
                 tuple(bound),
                 self._typed_bind_spans,
                 self._wire_bind_overrides,
-                self._compiler_proven,
             )
 
         def moved(index: int) -> int:
@@ -265,7 +207,7 @@ class LoweredStatement:
                 for override in self._wire_bind_overrides
             ]
         )
-        return LoweredStatement(sql, tuple(bound), spans, overrides, self._compiler_proven)
+        return LoweredStatement(sql, tuple(bound), spans, overrides)
 
 
 def _position(expansion: tuple[int, Sequence[object]]) -> int:
@@ -610,7 +552,6 @@ class StatementBuilder[RowScope = object]:
 
     __slots__ = (
         "_binds",
-        "_classified",
         "_next_alias_index",
         "_next_relation_index",
         "_owner_results_bindings",
@@ -618,7 +559,6 @@ class StatementBuilder[RowScope = object]:
         "_row_signature",
         "_row_start",
         "_source_bindings",
-        "_statement_plan",
         "_typed_spans",
         "_wire_overrides",
         "dialect",
@@ -641,13 +581,11 @@ class StatementBuilder[RowScope = object]:
         self._binds: list[object] = []
         self._typed_spans: list[_BindSpan] = []
         self._wire_overrides: dict[int, WireValue] = {}
-        self._classified = 0
         self._row_signature: tuple[_TypedBindSlot | None, ...] = ()
         self._row_start = 0
         self._row_count = 0
         self._next_alias_index = 1
         self._next_relation_index = 0
-        self._statement_plan: StatementPlanView | None = None
         self._source_bindings: dict[int, list[RenderedSourceBinding[RowScope] | None]] = {}
         self._owner_results_bindings: dict[int, list[RenderedOwnerResultsBinding | None]] = {}
 
@@ -665,20 +603,7 @@ class StatementBuilder[RowScope = object]:
 
     def select_scope_plan(self, statement: StatementPlanView, scope_id: int) -> None:
         """Take on rendering the shared sources and owner results of
-        ``statement``'s lexical plan ``scope_id``, which :meth:`finish` then
-        requires; selecting the same lexical plan again is a no-op.
-
-        A builder renders lexical plans of one statement plan, so a lexical plan
-        of any other statement plan is refused.
-        """
-        if self._statement_plan is None:
-            self._statement_plan = statement
-        elif self._statement_plan is not statement:
-            raise InternalError(
-                SQL_GENERATION_FAILED, "a statement renders the lexical plans of one statement plan"
-            )
-        if scope_id in self._source_bindings:
-            return
+        ``statement``'s lexical plan ``scope_id``."""
         plan = statement.lexical_scopes[scope_id]
         self._source_bindings[scope_id] = [None] * len(plan.sources)
         self._owner_results_bindings[scope_id] = [None] * len(plan.owner_results)
@@ -686,20 +611,14 @@ class StatementBuilder[RowScope = object]:
     def record_source_binding(
         self, ref: PlanEntryRefView[Literal["source"]], *, target: RowScope, origin: RowScope
     ) -> None:
-        slots = _entry_slots(self._source_bindings, ref, "source")
-        if slots[ref.index] is not None:
-            raise InternalError(SQL_GENERATION_FAILED, "a shared source renders once per statement")
-        slots[ref.index] = RenderedSourceBinding(target, origin)
+        self._source_bindings[ref.scope_id][ref.index] = RenderedSourceBinding(target, origin)
 
     def source_binding(
         self, ref: PlanEntryRefView[Literal["source"]]
     ) -> RenderedSourceBinding[RowScope]:
-        binding = _entry_slots(self._source_bindings, ref, "source")[ref.index]
-        if binding is None:
-            raise InternalError(
-                SQL_GENERATION_FAILED, "a shared source is read before its join renders"
-            )
-        return binding
+        return cast(
+            "RenderedSourceBinding[RowScope]", self._source_bindings[ref.scope_id][ref.index]
+        )
 
     def record_owner_results_binding(
         self,
@@ -708,22 +627,16 @@ class StatementBuilder[RowScope = object]:
         alias: str,
         columns: tuple[str, ...],
     ) -> None:
-        slots = _entry_slots(self._owner_results_bindings, ref, "owner_results")
-        if slots[ref.index] is not None:
-            raise InternalError(
-                SQL_GENERATION_FAILED, "an owner-results relation renders once per statement"
-            )
-        slots[ref.index] = RenderedOwnerResultsBinding(alias, columns)
+        self._owner_results_bindings[ref.scope_id][ref.index] = RenderedOwnerResultsBinding(
+            alias, columns
+        )
 
     def owner_results_binding(
         self, ref: PlanEntryRefView[Literal["owner_results"]]
     ) -> RenderedOwnerResultsBinding:
-        binding = _entry_slots(self._owner_results_bindings, ref, "owner_results")[ref.index]
-        if binding is None:
-            raise InternalError(
-                SQL_GENERATION_FAILED, "owner results are read before their relation renders"
-            )
-        return binding
+        return cast(
+            "RenderedOwnerResultsBinding", self._owner_results_bindings[ref.scope_id][ref.index]
+        )
 
     def bind_structural(self, value: object) -> None:
         self._append(value)
@@ -820,7 +733,6 @@ class StatementBuilder[RowScope = object]:
             if value is INFINITY:
                 self._wire_overrides[len(binds)] = INFINITY_LITERAL
             binds.append(value)
-        self._classified += len(row)
 
     def _seal_typed_rows(self) -> None:
         """Record the open run's spans: each run of equal non-null slots in its
@@ -858,70 +770,28 @@ class StatementBuilder[RowScope = object]:
             run_slot = slot
 
     def append_fragment(self, statement: LoweredStatement) -> None:
-        """Append a compiler-proven fragment without discarding bind provenance."""
-        if not statement.is_compiler_proven:
-            raise InternalError(
-                SQL_GENERATION_FAILED, "only a finished compiler fragment may be appended"
-            )
+        """Append a finished compiler fragment without discarding bind provenance."""
         self._seal_typed_rows()
         offset = len(self._binds)
         self._binds.extend(statement.binds)
-        self._classified += len(statement.binds)
         for span in statement.typed_bind_spans:
             self._append_typed_span(span.shifted(offset))
         for override in statement.wire_bind_overrides:
             self._wire_overrides[offset + override.index] = override.value
 
     def finish(self, sql: str) -> LoweredStatement:
-        """Validate bind metadata and seal a compiler-proven statement."""
+        """Seal the statement with its bind metadata."""
         self._seal_typed_rows()
-        if self._classified != len(self._binds):
-            raise InternalError(
-                SQL_GENERATION_FAILED,
-                "every compiler bind must be supplied through one role-specific API",
-            )
-        if any(None in bindings for bindings in self._source_bindings.values()):
-            raise InternalError(SQL_GENERATION_FAILED, "a planned shared source was never rendered")
-        if any(None in bindings for bindings in self._owner_results_bindings.values()):
-            raise InternalError(
-                SQL_GENERATION_FAILED, "a planned owner-results relation was never rendered"
-            )
-        occupied: set[int] = set()
         spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
-        for span in spans:
-            if isinstance(span, _TypedBindSpan):
-                valid_shape = span.start >= 0 and span.stop > span.start
-            else:
-                valid_shape = (
-                    span.start >= 0
-                    and span.width > 0
-                    and span.stride >= span.width
-                    and span.repetitions > 0
-                )
-            if not valid_shape:
-                raise InternalError(
-                    SQL_GENERATION_FAILED, "typed bind metadata has invalid dimensions or stride"
-                )
-            for index in span.indices():
-                if not 0 <= index < len(self._binds) or index in occupied:
-                    raise InternalError(
-                        SQL_GENERATION_FAILED, "typed bind metadata is out of range or overlaps"
-                    )
-                occupied.add(index)
         overrides = tuple(
             _WireBindOverride(index, value) for index, value in sorted(self._wire_overrides.items())
         )
-        if any(not 0 <= override.index < len(self._binds) for override in overrides):
-            raise InternalError(
-                SQL_GENERATION_FAILED, "Wire bind override metadata is out of range"
-            )
-        return LoweredStatement(sql, tuple(self._binds), spans, overrides, True)
+        return LoweredStatement(sql, tuple(self._binds), spans, overrides)
 
     def _append(self, value: object) -> None:
         if self._row_count:
             self._seal_typed_rows()
         self._binds.append(value)
-        self._classified += 1
 
     def _bind_typed(self, value: object, neutral_type: NeutralType, form: _BindForm) -> None:
         index = len(self._binds)
@@ -943,21 +813,3 @@ class StatementBuilder[RowScope = object]:
             )
         else:
             self._typed_spans.append(span)
-
-
-def _entry_slots[Binding](
-    store: dict[int, list[Binding | None]], ref: PlanEntryRefView[str], kind: str
-) -> list[Binding | None]:
-    """The binding slots of ``ref``'s selected lexical plan, refusing a
-    reference of another kind or to an entry no selected plan holds."""
-    if ref.kind != kind:
-        raise InternalError(
-            SQL_GENERATION_FAILED, f"a {ref.kind} reference addresses no {kind} binding"
-        )
-    slots = store.get(ref.scope_id)
-    if slots is None or not 0 <= ref.index < len(slots):
-        raise InternalError(
-            SQL_GENERATION_FAILED,
-            f"no selected lexical plan holds {kind} {ref.scope_id}.{ref.index}",
-        )
-    return slots
