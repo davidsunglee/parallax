@@ -171,7 +171,6 @@ class _FakePort(ConnectsAsItself):
     def __init__(self, *, rows: list[MappingRow]) -> None:
         self.rows = rows
         self.writes: list[tuple[str, tuple[object, ...]]] = []
-        self.ops: list[str] = []
         # One physical transaction attempt is one demarcation (`m-unit-work`),
         # so counting the boundary here is how a retry is observed at all: an
         # invocation retains no record of what it did. The level each boundary
@@ -189,12 +188,10 @@ class _FakePort(ConnectsAsItself):
         read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
-        self.ops.append("read")
         return [tuple(row.values()) for row in self.rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.writes.append((sql, tuple(binds)))
-        self.ops.append("write")
         return 1
 
     def transaction[T](
