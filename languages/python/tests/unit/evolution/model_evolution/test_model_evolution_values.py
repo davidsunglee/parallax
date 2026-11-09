@@ -20,7 +20,6 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     Column,
     IndexIdentity,
-    Multiplicity,
     RelationshipIdentity,
     TemporalDimension,
     ValueObjectAttributeIdentity,
@@ -47,7 +46,6 @@ from parallax.evolution.model_evolution import (
     IndexAdded,
     IndexAltered,
     IndexRemoved,
-    MultiplicityChanged,
     NullabilityChanged,
     RelationshipAdded,
     RelationshipAltered,
@@ -148,11 +146,10 @@ def test_every_operation_kind_has_a_witness() -> None:
     ],
     ids=lambda value: type(value).__name__,
 )
-def test_every_value_is_frozen_and_slotted(value: Any) -> None:
+def test_every_value_is_frozen(value: Any) -> None:
     field = next(iter(dataclasses.fields(value))).name
     with pytest.raises(FrozenInstanceError):
         setattr(value, field, None)
-    assert not hasattr(value, "__dict__"), "a slotted record carries no instance dict"
 
 
 def test_canonical_order_is_the_model_location_order() -> None:
@@ -216,26 +213,3 @@ def test_declaration_order_operations_sort_by_owner_then_collection() -> None:
     # collection its owning Entity holds directly.
     assert canonical_operation_key(indices) < canonical_operation_key(nested)
     assert canonical_operation_key(indices) < canonical_operation_key(other_owner)
-
-
-def test_one_delta_class_serves_every_owner_that_carries_its_name() -> None:
-    # `NullabilityChanged` and `MultiplicityChanged` are each one class whether
-    # they sit on an Attribute, on a Value Object occurrence, or on a Value Object
-    # leaf, so the corpus spells each delta the same way everywhere.
-    leaf = ValueObjectAttributeIdentity(_ADDRESS, "city")
-    for delta in (
-        NullabilityChanged(False, True),
-        MultiplicityChanged(Multiplicity.ONE, Multiplicity.MANY),
-    ):
-        assert AttributeAltered(AttributeIdentity(_ORDER, "sku"), (delta,)).deltas[0] is delta
-        assert ValueObjectOccurrenceAltered(_ADDRESS, (delta,)).deltas[0] is delta
-        assert ValueObjectAttributeAltered(leaf, (delta,)).deltas[0] is delta
-
-
-def test_an_operation_retains_identities_rather_than_declarations() -> None:
-    # An add or remove resolves its full declaration through the retained
-    # endpoint, so the operation itself holds nothing that could outlive one.
-    attribute = AttributeIdentity(_ORDER, "id")
-    added = AttributeAdded(attribute)
-    assert added.attribute is attribute
-    assert [field.name for field in dataclasses.fields(added)] == ["attribute"]

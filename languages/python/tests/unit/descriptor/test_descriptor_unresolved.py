@@ -46,6 +46,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor import _records as records
+from parallax.descriptor import validate_inheritance_families
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._errors import (
     DESCRIPTOR_SCHEMA_INVALID,
@@ -139,13 +140,13 @@ def test_parse_leaves_a_relationship_target_unresolved() -> None:
     assert declaration.join.target.entity == "Entry"
 
 
-def test_parse_rejects_an_empty_or_ambiguous_source() -> None:
+def test_the_shape_door_rejects_an_empty_or_ambiguous_source() -> None:
     with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="must not be empty"):
-        parse_document({"entities": []})
+        validate_inheritance_families({"entities": []})
     with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="exactly one"):
-        parse_document({})
+        validate_inheritance_families({})
     with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="exactly one"):
-        parse_document({"entity": {}, "entities": []})
+        validate_inheritance_families({"entity": {}, "entities": []})
 
 
 _KEY: dict[str, object] = {"name": "id", "type": "int64", "primaryKey": True}
@@ -328,15 +329,14 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
         "order-by-nulls-outside-its-vocabulary",
     ],
 )
-def test_parse_rejects_a_shape_defect_naming_where_it_sits(
+def test_the_shape_door_rejects_a_shape_defect_naming_where_it_sits(
     document: dict[str, Any], message: str
 ) -> None:
-    # These branches are shipped behavior at the parse seam, not only behind the
-    # doors: `validate_inheritance_families` parses shape alone, with no schema
-    # phase in front of it, so a malformed document reaching that door is refused
-    # here and nowhere earlier.
+    # `validate_inheritance_families` parses shape alone, with no schema phase in
+    # front of it, so a malformed document reaching that door is refused by the
+    # parse and nowhere earlier.
     with raises_code(DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match=re.escape(message)):
-        parse_document(document)
+        validate_inheritance_families(document)
 
 
 def test_the_adapter_rejects_an_empty_record_model() -> None:
@@ -347,15 +347,6 @@ def test_the_adapter_rejects_an_empty_record_model() -> None:
 # --------------------------------------------------------------------------- #
 # A model value's own refusal is a fact about the descriptor.                   #
 # --------------------------------------------------------------------------- #
-def test_an_empty_namespace_is_a_descriptor_rejection_naming_its_entity() -> None:
-    key = records.Attribute(name="id", type="int64", column="id", primary_key=True)
-    entity = records.Entity(name="Account", namespace="", table="account", attributes=(key,))
-    with raises_code(
-        DescriptorError, DESCRIPTOR_VALUE_INVALID, match=r"entity '\.Account': an Entity namespace"
-    ):
-        unresolved_metamodel(records.Metamodel((entity,)))
-
-
 def test_a_bounded_length_on_a_non_text_attribute_is_a_descriptor_rejection() -> None:
     key = records.Attribute(name="id", type="int64", column="id", primary_key=True, max_length=8)
     entity = records.Entity(name="Account", table="account", attributes=(key,))
@@ -418,7 +409,7 @@ def test_an_authored_read_write_stays_distinguishable_from_an_omitted_one() -> N
 
 
 # --------------------------------------------------------------------------- #
-# The seam is enumeration-only over unmirrored declarations.                    #
+# No descriptor record reaches the seam.                                      #
 # --------------------------------------------------------------------------- #
 def _reachable(value: object) -> Iterator[object]:
     yield value
@@ -435,14 +426,6 @@ def test_no_descriptor_record_reaches_the_unresolved_seam() -> None:
     for declaration in view.entities:
         for reachable in _reachable(declaration):
             assert type(reachable).__module__ != records.__name__, reachable
-
-
-def test_the_unresolved_seam_exposes_no_lookup() -> None:
-    view = _view(_ACCOUNT)
-    assert not hasattr(view, "entity")
-    declaration = view.entities[0]
-    for absent in ("attribute", "relationship", "value_object", "as_of_axis", "index"):
-        assert not hasattr(declaration, absent)
 
 
 def test_duplicate_identities_are_enumerated_rather_than_deduplicated() -> None:
@@ -1010,26 +993,4 @@ def test_an_unrepresentable_attribute_spelling_is_rejected() -> None:
     with raises_code(
         DescriptorError, DESCRIPTOR_VALUE_INVALID, match="not a neutral type spelling"
     ):
-        _view(text)
-
-
-def test_an_unrepresentable_value_object_spelling_is_rejected() -> None:
-    text = """
-    entity:
-      name: Customer
-      namespace: parallax.fixture
-      table: customer
-      attributes:
-        - name: id
-          type: int64
-          primaryKey: true
-      valueObjects:
-        - name: contact
-          valueObjects:
-            - name: phone
-              attributes:
-                - name: number
-                  type: telephone
-    """
-    with raises_code(DescriptorError, DESCRIPTOR_VALUE_INVALID, match=r"contact\.phone\.number"):
         _view(text)

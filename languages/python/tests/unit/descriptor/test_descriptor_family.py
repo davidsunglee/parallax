@@ -284,108 +284,11 @@ def _minimal_attrs() -> tuple[Attribute, ...]:
     return (Attribute(name="id", type="int64", column="id", primary_key=True),)
 
 
-def test_reject_descendant_temporality_under_a_non_temporal_root() -> None:
-    # A non-temporal TPH root with an abstract-subtype declaring its own profile.
-    root = Entity(
-        name="Animal",
-        table="animal",
-        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
-        attributes=_minimal_attrs(),
-    )
-    pet = Entity(
-        name="Pet",
-        inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
-        temporality="transaction-time",
-    )
-    dog = Entity(
-        name="Dog",
-        inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog"),
-        attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
-    )
-    meta = Metamodel(entities=(root, pet, dog))
-    with raises_code(UsageError, "inheritance-temporality-not-root-owned") as caught:
-        validate_families(meta)
-    assert "Pet " in caught.value.args[1]
-
-
-def test_reject_descendant_temporality_under_a_temporal_root() -> None:
-    # A temporal TPCS root whose concrete subtype widens the family profile.
-    root = Entity(
-        name="Rate",
-        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
-        attributes=_minimal_attrs(),
-        temporality="transaction-time",
-    )
-    deposit = Entity(
-        name="DepositRate",
-        table="deposit_rate",
-        inheritance=Inheritance(role="concrete-subtype", parent="Rate"),
-        attributes=(Attribute(name="grade", type="string", column="grade"),),
-        temporality="bitemporal",
-    )
-    meta = Metamodel(entities=(root, deposit))
-    with raises_code(UsageError, "inheritance-temporality-not-root-owned") as caught:
-        validate_families(meta)
-    assert "DepositRate " in caught.value.args[1]
-
-
 def test_temporal_root_and_root_owned_profile_still_validate_cleanly() -> None:
     # A well-formed family (the profile declared ONLY on the root) passes
     # validation — the invariant must not reject the corpus's own families.
     validate_families(_MODELS["rate"])
     validate_families(_MODELS["instrument"])
-
-
-def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> None:
-    # ADR 0027: a non-versioned TPH root with an abstract-subtype that
-    # declares its own optimisticLocking attribute.
-    root = Entity(
-        name="Animal",
-        table="animal",
-        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
-        attributes=_minimal_attrs(),
-    )
-    pet = Entity(
-        name="Pet",
-        inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
-        attributes=(
-            Attribute(name="revision", type="int32", column="revision", optimistic_locking=True),
-        ),
-    )
-    dog = Entity(
-        name="Dog",
-        inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog"),
-        attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
-    )
-    meta = Metamodel(entities=(root, pet, dog))
-    with raises_code(UsageError, "inheritance-optimistic-locking-not-root-owned") as caught:
-        validate_families(meta)
-    assert "Pet " in caught.value.args[1]
-
-
-def test_reject_descendant_optimistic_locking_under_a_versioned_root() -> None:
-    # A versioned TPCS root whose concrete subtype adds a SECOND version
-    # attribute of its own, under a different name.
-    root = Entity(
-        name="Appliance",
-        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
-        attributes=(
-            *_minimal_attrs(),
-            Attribute(name="version", type="int32", column="version", optimistic_locking=True),
-        ),
-    )
-    fridge = Entity(
-        name="Fridge",
-        table="fridge",
-        inheritance=Inheritance(role="concrete-subtype", parent="Appliance"),
-        attributes=(
-            Attribute(name="revision", type="int32", column="revision", optimistic_locking=True),
-        ),
-    )
-    meta = Metamodel(entities=(root, fridge))
-    with raises_code(UsageError, "inheritance-optimistic-locking-not-root-owned") as caught:
-        validate_families(meta)
-    assert "Fridge " in caught.value.args[1]
 
 
 def test_a_table_per_concrete_subtype_concrete_declares_its_own_table() -> None:

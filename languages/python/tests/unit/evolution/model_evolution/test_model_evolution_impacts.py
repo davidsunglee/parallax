@@ -5,9 +5,9 @@ standalone Entities and single-family hierarchies. What it does not reach
 cheaply is what this covers: the facts a TEMPORAL family answers with, an impact
 several operations contribute to, one operation moving a surviving Entity
 between two families at once, the member impact an Entity-level change
-deliberately dominates, and the two scenarios an authored descriptor cannot
-spell at all — an As-Of Axis moving its endpoint Attributes, and the derived
-primary-key Index changing underneath an unchanged authored one.
+deliberately dominates, and the scenario an authored descriptor cannot spell
+at all — the derived primary-key Index changing underneath an unchanged authored
+one.
 
 Every impact is read off the public result, and endpoint facts are compared as
 whole values, because an impact reports a scope's facts rather than one field.
