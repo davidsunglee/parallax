@@ -213,9 +213,6 @@ _ERROR_SURFACE: Final[dict[str, frozenset[str]]] = {
 """Every exception class an application may catch, by the module that defines
 its import home."""
 
-_EXECUTION_WRAPPER: Final = "parallax.core._execution._adoption.ExecutionFailure"
-"""The execution-boundary wrapper, the one exported exception outside the root."""
-
 _MODULE_PRIVATE_CARRIERS: Final = frozenset(
     {
         "parallax.core.auto_retry._RetryCandidate",
@@ -291,13 +288,11 @@ def test_every_application_error_is_rooted_in_parallax_error() -> None:
 def test_no_public_module_exports_an_exception_outside_the_error_surface() -> None:
     surface = _error_surface()
     assert {
-        exported: kind
-        for exported, kind in _exported_exceptions().items()
-        if kind not in surface and _qualified(kind) != _EXECUTION_WRAPPER
+        exported: kind for exported, kind in _exported_exceptions().items() if kind not in surface
     } == {}
 
 
 def test_every_shipped_exception_is_a_parallax_error_or_a_module_private_carrier() -> None:
     assert {
         _qualified(kind) for kind in _shipped_exceptions() if not issubclass(kind, ParallaxError)
-    } == _MODULE_PRIVATE_CARRIERS | {_EXECUTION_WRAPPER}
+    } == _MODULE_PRIVATE_CARRIERS

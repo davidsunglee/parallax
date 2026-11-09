@@ -51,7 +51,6 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._expressions import AttributeRef, AuthoredMemberPath, UnfinishedOperation
-from parallax.core.execution import ExecutionFailure
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.predicate._interpretation import COMPARE
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
@@ -1153,12 +1152,7 @@ def answered(result: Outcome) -> Answer:
 
 
 def _refused(raised: Exception, phase: Phase, port: ScriptedAdapter) -> Refused:
-    """The refusal ``raised`` states, in the four facts a row is graded on.
-
-    A refusal escaping the transaction arrives as the cause of an
-    ``ExecutionFailure``; what the order judged is that cause, so it is
-    reported unwrapped, exactly as a refusal raised obtaining an outside source is.
-    """
+    """The refusal ``raised`` states, in the four facts a row is graded on."""
     return Refused(type(raised), _code(raised), _message(raised), phase, tuple(port.calls))
 
 
@@ -1237,18 +1231,10 @@ def _observed(
         db.transact(body, concurrency=concurrency)
     except AssertionError:
         raise
-    except ExecutionFailure as failed:
-        underlying = failed.cause
     except Exception as raised:
         return _refused(raised, phase, port)
-    else:
-        reached()
-        return Completed(tuple(port.calls))
-    # Outside the handler, so the wrapper enters neither the chain of the
-    # harness's own claim nor that of the refusal a row is graded on.
-    if isinstance(underlying, AssertionError):
-        raise underlying
-    return _refused(underlying, phase, port)
+    reached()
+    return Completed(tuple(port.calls))
 
 
 def _reads_the_stored_row(scenario: KeyedWriteScenario) -> bool:

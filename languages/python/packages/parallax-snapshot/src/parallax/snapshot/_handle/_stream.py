@@ -159,8 +159,8 @@ class SnapshotStream[T]:
 
     Entry adopts the model edition. Take exactly one iterator, either the default
     view (invalid stored data raises) or ``checked()`` (invalid roots are records).
-    Ordinary standalone delivery failures are contextualized under that edition;
-    stream-state refusals retain their own type.
+    An ordinary standalone delivery failure carries a note naming that edition;
+    a stream-state refusal carries none.
 
     Typed ``wire()`` projection is available only while paused at a delivered
     root. It uses that page's includes and does not advance the stream. Page size

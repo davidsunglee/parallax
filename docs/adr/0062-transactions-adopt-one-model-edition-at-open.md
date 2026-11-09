@@ -84,6 +84,14 @@ their own types rather than acquiring an edition of `None`. If an
 `InvalidDataError` from result A escapes transaction B, the outer
 `ExecutionFailure` carries B and preserves the A-bearing error as its cause.
 
+*Superseded in part (2026-11, [Python ADR 0015](../../languages/python/docs/adr/0015-parallax-errors-share-one-root-and-carry-a-code.md)):*
+there is no `ExecutionFailure`. The escaping exception keeps its identity and
+each execution it leaves after adoption adds a note naming its edition, so an
+`InvalidDataError` from result A escaping transaction B carries B's note and
+keeps A's edition as its own field. Which failures are noted follows the
+wrapping rules above, except that a failure leaving nested executions carries
+one note from each rather than only the innermost edition.
+
 The database seam preserves neutral failure facts, including the violated
 Physical Index Name when supplied by the database, and the execution failure
 preserves the database failure in its cause chain. The failure path does not
@@ -137,3 +145,6 @@ under COR-123: preparation, publication, adoption by all three execution shapes,
 the retained edition on every result envelope, `ExecutionFailure`, the edition
 each adoption-owning Started event carries, and the executable host-owned update
 example are active contracts rather than planned ones.
+
+*Superseded in part (2026-11, [Python ADR 0015](../../languages/python/docs/adr/0015-parallax-errors-share-one-root-and-carry-a-code.md)):*
+the edition note replaces `ExecutionFailure` among those active contracts.

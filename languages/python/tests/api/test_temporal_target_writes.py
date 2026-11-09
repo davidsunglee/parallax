@@ -40,7 +40,7 @@ from parallax.core import (
 )
 from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, RetryPolicy
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseReadCompleted,
@@ -56,6 +56,7 @@ from parallax.core.unit_work import (
 )
 from parallax.descriptor import domain_model_from_document, export_document
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 from tests.api._peer_commit import commit_as_a_peer
@@ -395,13 +396,12 @@ def test_an_equal_replacement_of_a_stale_milestone_still_fails_its_precondition(
     profile_run: Any, entity: type[Any], representation: _Representation
 ) -> None:
     db = _seeded_spans(profile_run, entity, _TA)
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(
             lambda tx: _equal_replacement(
                 tx, entity, representation, valid_from=_FEB, until=_APR, tx_start=_T1
             ),
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _span_rows(profile_run, entity) == _SEED_CURRENT
 
 
@@ -469,10 +469,9 @@ def test_a_target_whose_start_does_not_stand_at_its_callers_milestone_changes_no
         attempts += 1
         _span_replace(tx, entity, "wire", **stated)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         db.transact(stale, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
-    assert failed.value.cause.expected == stated.get("tx_start", _T0)
+    assert failed.value.expected == stated.get("tx_start", _T0)
     assert attempts == 1
     assert _span_rows(profile_run, entity) == _SEED_CURRENT
 
@@ -514,12 +513,11 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
         (_T1, _TA, "patched", _S1, []),
         (_TA, None, "replaced", None, [{"code": "r"}]),
     ]
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(
             lambda tx: tx.wire.amend_if(_name(entity), {"id": 1, "label": "x"}, tx_start=_T1),
             concurrency=concurrency,
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
 
 
 # --------------------------------------------------------------------------- #
@@ -592,11 +590,10 @@ def test_a_termination_whose_start_does_not_stand_fails_and_ends_nothing(
 ) -> None:
     db = _seeded_spans(profile_run, entity, _TA, _TB)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(
             lambda tx: _span_terminate(tx, entity, "wire", **stated), concurrency=concurrency
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _span_rows(profile_run, entity) == _SEED_CURRENT
 
 
@@ -619,9 +616,8 @@ def test_a_transaction_time_termination_closes_its_callers_milestone_and_chains_
         else:
             tx.wire.terminate_if(_name(entity), {"id": 1}, tx_start=tx_start)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(lambda tx: terminate(tx, _T1), concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     db.transact(lambda tx: terminate(tx, _T0), concurrency=concurrency)
     # Locking refuses the stale start at the call, before its attempt takes a
     # Transaction-Time instant; Optimistic refuses it at the flush, after.
@@ -723,9 +719,8 @@ def test_a_stale_observed_source_composed_with_a_replacement_fails_as_its_precon
         tx.amend(stale.edit(amount=1), until=_SEP)
         _span_replace(tx, entity, "wire", until=_SEP)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _span_rows(profile_run, entity) == before
 
 
@@ -792,9 +787,8 @@ def test_a_target_after_this_attempts_own_flush_states_the_milestone_it_left(
         _span_patch(tx, entity, valid_from=_APR, tx_start=_TA, amount=2)
 
     before = _span_rows(profile_run, entity)
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(outdated, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _span_rows(profile_run, entity) == before
 
 
@@ -923,9 +917,8 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
 
     if lost != "later":
         peer_rows = _PEER_ROWS[lost]
-        with pytest.raises(ExecutionFailure) as failed:
+        with pytest.raises(WritePreconditionError):
             ours.transact(fn)
-        assert isinstance(failed.value.cause, WritePreconditionError)
         assert (attempts, interleaving.failures) == (1, [])
         # Only the peer's change stands: the attempt's effects rolled back.
         assert [row[:6] for row in _span_rows(profile_run, entity)] == peer_rows
@@ -1003,12 +996,10 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
             profile_run.port, _MODEL, clock=ScriptedClock([_TA]), lifecycle_provider=interleaving
         )
     ).using_database_login()
-    with pytest.raises(ExecutionFailure) as failed:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         ours.transact(
             lambda tx: _span_patch(tx, entity, amount=150), retry=RetryPolicy(max_retries=0)
         )
-    assert isinstance(failed.value.cause, ConflictError)
-    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert [row[:2] for row in _span_rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
 
@@ -1052,9 +1043,8 @@ def test_a_locking_target_holds_its_start_until_commit_against_another_session(
         control.close()
     # The peer's close waited for the commit, then found its milestone gone.
     (failure,) = peer_failures
-    assert isinstance(failure, ExecutionFailure)
-    assert isinstance(failure.cause, ConflictError)
-    assert failure.cause.code == OPTIMISTIC_LOCK_CONFLICT
+    assert isinstance(failure, ConflictError)
+    assert failure.code == OPTIMISTIC_LOCK_CONFLICT
     assert [row[:6] for row in _span_rows(profile_run, entity)] == [
         (_T0, _TA, _JAN, _JUN, 100, "a"),
         (_T1, _TA, _JUN, None, 200, "b"),
@@ -1154,10 +1144,8 @@ def test_a_source_replacement_whose_evidence_fails_opens_nothing(
         )
         tx.replace(found.edit(amount=300), until=_SEP)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         db.transact(fn, retry=RetryPolicy(max_retries=0))
-    assert isinstance(failed.value.cause, ConflictError)
-    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     rows = _span_rows(profile_run, entity)
     assert all(row[4] != 300 for row in rows)
     assert not any(row[2] == _APR for row in rows)
@@ -1290,9 +1278,8 @@ def test_a_rolled_back_insertion_replacement_leaves_nothing(
         _span_find(tx, entity, _MAY)
         raise _Abandoned
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(_Abandoned):
         db.transact(fn)
-    assert isinstance(failed.value.cause, _Abandoned)
     assert _span_rows(profile_run, entity) == [(_T0, None, _MAY, _JUL, 200, "b", _S2, [])]
 
 
@@ -1507,12 +1494,11 @@ def test_a_locking_targets_invalid_stored_occurrence_fails_at_the_flush(
         _span_patch(tx, entity, valid_from=_FEB, until=_MAR, amount=150)
         called.append("admitted")
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(InvalidDataError):
         _db(profile_run, _TA).transact(fn, concurrency="locking")
     # The call admitted the write on the row's revision; the occurrence its
     # reuse needed was judged at the flush, and the attempt rolled back.
     assert called == ["admitted"]
-    assert isinstance(failed.value.cause, InvalidDataError)
     assert [row[:4] for row in _span_rows(profile_run, entity)] == [
         (_T0, None, _JAN, _APR),
         (_T1, None, _JUN, _AUG),
@@ -1592,14 +1578,13 @@ def test_a_wire_read_milestone_conditions_a_later_transaction_time_target(
     assert _log_rows(profile_run, entity) == patched
 
     # The node still answers the milestone it was read at, which no longer stands.
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         db.transact(
             lambda tx: tx.wire.amend_if(
                 _name(entity), {"id": 1, "label": "stale"}, tx_start=edge_of(node).tx_time
             )
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
-    assert failed.value.cause.expected == _T0
+    assert failed.value.expected == _T0
     assert _log_rows(profile_run, entity) == patched
 
 
@@ -1636,7 +1621,7 @@ def test_a_wire_read_milestone_conditions_a_bitemporal_target_and_a_historical_o
     cast("dict[str, object]", query["temporal"])["transaction-time"] = {"asOf": _instant(_T1)}
     historical = db.wire.find(query).result()
     assert edge_of(historical) == Edge(tx_time=_T0, valid_time=_JAN)
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         db.transact(
             lambda tx: tx.wire.amend_if(
                 _name(entity),
@@ -1646,6 +1631,5 @@ def test_a_wire_read_milestone_conditions_a_bitemporal_target_and_a_historical_o
                 tx_start=edge_of(historical).tx_time,
             )
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
-    assert failed.value.cause.expected == _T0
+    assert failed.value.expected == _T0
     assert _span_rows(profile_run, entity) == amended

@@ -49,6 +49,24 @@ transient. A core-named error therefore surfaces as a Parallax parent class plus
 a `code`; facts beyond `ConflictError`'s `entity` and `key` and a kept class's
 own fields travel in the message.
 
+A failure leaving an execution keeps its identity. Each transaction
+invocation, standalone read and standalone stream advance it escapes after
+adopting a Model Edition adds one note, `raised in a {transaction|read|stream}
+under model edition '<edition>'`, and re-raises the same object, an
+application's own exception included; nested executions add one note each,
+innermost first, and a transaction's note follows any retry-exhaustion note.
+Joins, participating reads and streams, refusals before adoption, stream-state
+refusals and `BaseException` control flow add none. This supersedes the
+`ExecutionFailure` wrapper of
+[ADR 0062](../../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md):
+`ParallaxError` has no `edition` attribute, code that needs the edition as data
+reads it from the `ReadStarted`, `StreamStarted` or `TransactionAttemptStarted`
+lifecycle event, and `InvalidDataError.edition` keeps naming the edition its
+result was read under. A wrapper was rejected because every handler had to
+unwrap it before it could branch on a class; noting only the first boundary
+was rejected because an exception cannot be marked as noted except through
+the note text itself.
+
 Parallax errors are no longer `ValueError`, `RuntimeError`, `TypeError` or
 `LookupError`. Only `UnloadedRelationshipError` keeps a builtin base,
 `AttributeError`, so `hasattr` and `getattr` with a default keep treating an

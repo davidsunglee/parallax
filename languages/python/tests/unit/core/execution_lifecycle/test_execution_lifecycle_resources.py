@@ -48,7 +48,6 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -70,7 +69,6 @@ from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle import _fanout as fanout_module
 from parallax.snapshot import Database, ScopedDatabase, connect
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -246,7 +244,7 @@ def test_a_failed_acquisition_carries_its_partial_cleanup_and_emits_no_release()
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[partial])
 
-    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ConnectionAcquisitionError):
         db = _root_db.using_database_login()
         _read(db)
 
@@ -271,7 +269,7 @@ def test_an_acquisition_that_owned_nothing_reports_no_cleanup_at_all() -> None:
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("closed")])
 
-    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ConnectionAcquisitionError):
         db = _root_db.using_database_login()
         _read(db)
 
@@ -319,7 +317,7 @@ def test_a_failed_acquisition_names_the_route_its_failure_was_terminal_on() -> N
     )
     adapter = ScriptedAdapter(acquisition_failures=[refused], routes=("writer", "reader"))
 
-    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ConnectionAcquisitionError):
         _read(_root_db.using_database_login())
 
     (root,) = recorder.roots
@@ -336,7 +334,7 @@ def test_a_refusal_before_any_route_was_selected_names_none() -> None:
     db = database.using_database_login()
     cast("Any", database)._resources.runtime.close()
 
-    with pytest.raises(ExecutionFailure):
+    with pytest.raises(ConnectionAcquisitionError):
         _read(db)
     database.close()
 
@@ -410,7 +408,7 @@ def test_a_failed_acquisition_is_still_measured_around_its_own_cleanup(
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[_not_idle()])
 
-    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ConnectionAcquisitionError):
         db = _root_db.using_database_login()
         _read(db)
 
@@ -518,7 +516,7 @@ def test_a_failed_acquisitions_duration_excludes_reading_its_cleanup_fact(
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[_not_idle()])
 
-    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ConnectionAcquisitionError):
         db = _root_db.using_database_login()
         _read(db)
 
@@ -572,7 +570,7 @@ def test_a_refused_boundary_is_the_acquisitions_failure_measured_through_it(
     refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
     adapter = _BurningBegin(Transact(begin=refused), clock=clock, steps=5)
 
-    with _db(adapter, recorder) as _root_db, raises_contextualized(DatabaseError):
+    with _db(adapter, recorder) as _root_db, pytest.raises(DatabaseError):
         _root_db.using_database_login().transact(lambda _tx: None)
 
     (root,) = recorder.roots
@@ -618,9 +616,7 @@ def test_a_refused_boundarys_cleanup_is_inside_the_acquisitions_duration(
     adapter = _BurningBegin(Transact(begin=refused), clock=clock, steps=5)
 
     expected = (
-        raises_contextualized(DatabaseError)
-        if interrupt is None
-        else pytest.raises(KeyboardInterrupt)
+        pytest.raises(DatabaseError) if interrupt is None else pytest.raises(KeyboardInterrupt)
     )
     with _db(adapter, recorder) as _root_db, expected:
         _root_db.using_database_login().transact(lambda _tx: None)
@@ -925,7 +921,7 @@ def test_a_quarantined_handler_leaves_a_refused_boundarys_cleanup_to_the_log(
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
         _db(adapter, _Provider(handler)) as _root_db,
-        raises_contextualized(DatabaseError),
+        pytest.raises(DatabaseError),
     ):
         _root_db.using_database_login().transact(lambda _tx: None)
 
@@ -943,7 +939,7 @@ def test_a_refused_boundarys_cleanup_a_handler_received_is_not_logged_again(
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
         _db(adapter, recorder) as _root_db,
-        raises_contextualized(DatabaseError),
+        pytest.raises(DatabaseError),
     ):
         _root_db.using_database_login().transact(lambda _tx: None)
 
@@ -1030,7 +1026,10 @@ def test_an_acquisition_that_failed_for_no_stated_reason_reports_preparation_fai
     recorder = RecordingLifecycleProvider()
     defect = RuntimeError("the adapter raised something else")
 
-    with _db(_UnusableAdapter(defect), recorder) as _root_db, pytest.raises(ExecutionFailure):
+    with (
+        _db(_UnusableAdapter(defect), recorder) as _root_db,
+        pytest.raises(RuntimeError, match="the adapter raised something else"),
+    ):
         db = _root_db.using_database_login()
         _read(db)
 
@@ -1052,12 +1051,12 @@ def test_an_adapter_defect_escaping_acquisition_still_fails_the_attempts_begin()
 
     with (
         _db(_UnusableAdapter(defect), recorder) as _root_db,
-        pytest.raises(ExecutionFailure) as raised,
+        pytest.raises(RuntimeError) as raised,
     ):
         db = _root_db.using_database_login()
         db.transact(lambda _tx: None)
 
-    assert raised.value.__cause__ is defect
+    assert raised.value is defect
     (root,) = recorder.roots
     (acquisition,) = _of(root, AcquisitionStarted)
     (begin_failed,) = [event.outcome for event in _of(root, TransactionAttemptFinished)]
@@ -1121,7 +1120,7 @@ def test_an_operations_own_failure_survives_an_unconfirmed_release() -> None:
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[release_unconfirmed])
 
-    with _db(adapter, recorder) as _root_db, raises_contextualized(DatabaseError) as raised:
+    with _db(adapter, recorder) as _root_db, pytest.raises(DatabaseError) as raised:
         db = _root_db.using_database_login()
         _read(db)
 

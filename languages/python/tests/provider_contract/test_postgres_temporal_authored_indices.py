@@ -23,7 +23,6 @@ from parallax.core import Attr, Bitemporal, DomainModel, TxTemporal, attr, index
 from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.evolution import SchemaDelta, schema_delta
 from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
@@ -89,10 +88,9 @@ def _created(rollout: SchemaDelta, name: str) -> tuple[str, str]:
 
 
 def _refused(db: ScopedDatabase, work: Callable[[TxnContext], None]) -> DatabaseError:
-    with pytest.raises(ExecutionFailure) as failure:
+    with pytest.raises(DatabaseError) as failure:
         db.transact(work)
-    cause = failure.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failure.value
     return cause
 
 

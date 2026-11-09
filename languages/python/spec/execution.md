@@ -137,8 +137,8 @@ offers no transaction context-manager demarcation because a retry must replay
 the body. `retry` is the only public retry keyword: `max_retries=` and `retries=`
 raise Python's unknown-keyword `TypeError` on every entrypoint.
 After the bound is exhausted the caller receives the last attempt's own failure,
-inside `ExecutionFailure`, with its original chain and a note naming the attempt
-count.
+with its original chain and a note naming the attempt count, followed by the
+transaction's edition note.
 
 `scope.read_only(fn, *, retry=..., isolation=...)` is the read-only
 entrypoint, callback-only on the same terms. Its callback receives a
@@ -182,22 +182,24 @@ are not thread-safe, and execution through an escaped reference after the
 invocation ends is refused.
 
 An ordinary failure escaping an adopted outer transaction or standalone read
-is `ExecutionFailure`, carrying the adopted edition and original `cause`.
-Transactional operations raise their own errors inside the callback; the outer
-boundary contextualizes a failure once. Entered standalone stream advances use
-the stream edition, while stream-state misuse remains
-`UsageError(stream-state-invalid)`. Failures rejected before model adoption remain
-unstamped. Interpreter control-flow exceptions keep their
-ordinary behavior.
+reaches the caller as itself, with a note naming the boundary and the adopted
+edition: `raised in a transaction under model edition '<edition>'`, or `read`.
+Transactional operations raise their own errors inside the callback; joins and
+participating reads add no note, and the outer boundary notes the failure once.
+Each entered standalone stream advance notes the stream edition, while
+stream-state misuse, `UsageError(stream-state-invalid)`, carries no note. A
+failure leaving nested executions carries one note from each, innermost first.
+Failures rejected before model adoption carry no note. Interpreter control-flow
+exceptions keep their ordinary behavior.
 
-A failed statement's `cause` is a `parallax.core.db_error.DatabaseError`. Its
+A failed statement raises a `parallax.core.db_error.DatabaseError`. Its
 `category` is a `Category`, the closed set
 [Database Error Classification](../../../core/spec/m-db-error.md) owns, or
 `None` when the failure is uncategorized. Its `constraint_name` is the name the
 database reported for the violated constraint, or `None`. Its `violated_index`
 is that name as a `PhysicalIndexName` for a `uniqueViolation`, and `None`
-otherwise, a unique violation naming no constraint included. Handlers narrow
-with `isinstance(failure.cause, DatabaseError)`; a handler meant for one
+otherwise, a unique violation naming no constraint included. Handlers catch
+`DatabaseError`; a handler meant for one
 constraint compares `violated_index` or `constraint_name` with that
 constraint's name rather than treating every failure of a category as its own.
 
@@ -358,7 +360,8 @@ is explicit at the projection boundary.
 Driver failures raised by port work are translated to fresh Parallax database
 errors with neutral category and preserved native SQLSTATE/message. A unique
 violation's physical index name comes from the driver's structured diagnostic.
-Exceptions raised by the caller's transaction body retain their identity unless
-rollback itself fails; body errors do not become driver failures by type alone.
+Exceptions raised by the caller's transaction body reach the caller as the same
+object, carrying the edition note, unless rollback itself fails; body errors do
+not become driver failures by type alone.
 Provider-specific composition and lifecycle examples are in the
 [PostgreSQL lifecycle guide](../docs/postgresql-lifecycle.md).

@@ -65,7 +65,7 @@ from parallax.core import (
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure, TxnOptions
+from parallax.core.execution import TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
@@ -221,17 +221,17 @@ returns. The callback receives a `TxnContext`, here `tx`, and every write happen
 through it, here `tx.insert(...)`. Once the transaction has committed, `transact`
 returns whatever the callback returned.
 
-If the callback raises, nothing is committed, and you get an `ExecutionFailure`: the
-error Parallax raises when work it ran fails. It carries the original exception as its
-`cause` attribute, which is also its `__cause__`. A standalone read that fails while it
-runs against the database reaches you the same way. A mistake Parallax refuses before
-any work runs, such as a query naming an entity the model lacks, is raised as itself.
+If the callback raises, nothing is committed, and the exception it raised reaches you
+as itself, with a note naming the model edition the transaction ran under. A
+standalone read that fails while it runs against the database reaches you the same
+way. A mistake Parallax refuses before any work runs, such as a query naming an entity
+the model lacks, is raised without a note.
 [Errors](08-errors.md#where-an-error-reaches-you) sets out both rules.
 
 If the transaction fails for a reason a second attempt can fix, such as a deadlock,
 Parallax rolls it back and runs the callback again. Each run is an attempt. By default
 Parallax makes up to ten more attempts, and if the last one fails too, its failure
-arrives inside an `ExecutionFailure`. That is why a transaction is a callback rather
+reaches you. That is why a transaction is a callback rather
 than a block, and why anything the callback does outside the database must be safe to
 repeat. A `db.transact` call made inside a callback joins the transaction that is
 already running rather than starting another. [Transactions](05-transactions.md) covers
@@ -243,8 +243,8 @@ retries and nesting.
 returns a `Snapshot`. `.result()` takes its single result and raises `NoResultFound` if
 there is none or `TooManyResultsFound` if there are several. Use `.result_or_none()`
 when the result may be missing, and `.results()` for a list. These accessors raise after
-`find` has returned, so their errors reach you as themselves; inside a callback, one
-you let escape becomes the `cause` of the `ExecutionFailure`.
+`find` has returned, so their errors reach you without a note; inside a callback, one
+you let escape gains the transaction's note.
 
 What you get back is a `Customer`, an instance of your own class, and it is frozen. To
 change a customer, you read it inside a transaction, call `edit(...)` for a modified

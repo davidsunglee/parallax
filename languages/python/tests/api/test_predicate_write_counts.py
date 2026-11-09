@@ -23,7 +23,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution import RetryPolicy
 from parallax.core.unit_work import MISSING_TARGET, STALE_WRITE, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
-from tests._support.adoption import raises_contextualized
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "predicate.counts"
@@ -251,7 +251,7 @@ def test_a_source_whose_row_a_predicate_write_deleted_fails_its_own_write(
         # admitted and its keyed update finds no row.
         tx.amend(source.edit(quantity=1))
 
-    with raises_contextualized(ConflictError) as failed:
+    with pytest.raises(ConflictError) as failed:
         db.transact(fn, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     assert failed.value.code in {MISSING_TARGET, STALE_WRITE}
     assert len(_bins(profile_run)) == 4
@@ -272,7 +272,7 @@ def test_a_statement_failure_surfaces_at_the_call_and_dooms_the_transaction(
             caught.append(failure)
         tx.find(Bin.where(Bin.id == 1))
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         db.transact(fn, retry=RetryPolicy(max_retries=0))
     assert len(caught) == 1
     # Everything the attempt wrote, the insert its flush ran first included, is
@@ -296,7 +296,7 @@ def test_a_deferred_constraint_a_predicate_write_violates_fails_at_commit(
         tx.delete_where(Bin.where(Bin.shelf_id == 2))
         answered.append(tx.delete_where(Shelf.where(Shelf.id == 2)))
 
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         db.transact(fn, retry=RetryPolicy(max_retries=0))
     assert answered == [1]
     assert len(_bins(profile_run)) == 4

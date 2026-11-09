@@ -57,7 +57,6 @@ from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -440,7 +439,7 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
         ).result()
         tx.amend(fetched.edit(value=Decimal("9.00")))
 
-    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
+    with pytest.raises(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn, concurrency=concurrency)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -862,7 +861,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         assert [_retained_evidence(root) for root in milestones] == [None, None]
         tx.amend(milestones[-1].edit(value=Decimal("9.00")))
 
-    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
+    with pytest.raises(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -919,7 +918,7 @@ def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
     assert edge.tx_time == rendered_in_z
 
-    with raises_contextualized(stale_web_edit.StaleMilestoneError, match="superseded"):
+    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -942,7 +941,7 @@ def test_stale_web_edit_balance_submit_conflict_is_replayed_into_the_staleness_r
     db = db_for(BALANCE, port)
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
 
-    with raises_contextualized(stale_web_edit.StaleMilestoneError, match="superseded"):
+    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
     assert sum(isinstance(op, WriteCall) for op in port.calls) == 1
 
@@ -962,7 +961,7 @@ def test_a_locking_temporal_close_missing_its_row_is_a_stale_write__m_temporal_r
         )
     )
 
-    with raises_contextualized(ConflictError, code=STALE_WRITE):
+    with raises_code(ConflictError, STALE_WRITE):
         db_for(BALANCE, port).transact(_terminate_balance_1, concurrency="locking")
     assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
     (close,) = [call for call in port.calls if isinstance(call, WriteCall)]
@@ -1063,7 +1062,7 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
     _node, edge = stale_web_edit.render_branch_milestone(db, id=1)
     assert edge.tx_time == rendered_in_z
 
-    with raises_contextualized(stale_web_edit.StaleMilestoneError, match="superseded"):
+    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_branch_edit(
             db,
             id=1,
@@ -1085,7 +1084,7 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
     def fn(tx: TxnContext) -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
-    with raises_contextualized(UsageError, code="query-target-not-in-model") as caught:
+    with raises_code(UsageError, "query-target-not-in-model") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1104,7 +1103,7 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
             .include(Policy.coverages)
         )
 
-    with raises_contextualized(UnsupportedError, code="execution-feature-deferred") as caught:
+    with raises_code(UnsupportedError, "execution-feature-deferred") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1184,7 +1183,7 @@ def test_a_transaction_read_past_a_back_reference_is_refused_before_any_statemen
     database = own_root(
         Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
     ).using_database_login()
-    with raises_contextualized(UsageError, match="back-reference") as refused:
+    with pytest.raises(UsageError, match="back-reference") as refused:
         getattr(database, lane)(read)
     assert refused.value.code == "deep-fetch-past-back-reference"
     assert [call for call in port.calls if isinstance(call, ReadCall)] == []

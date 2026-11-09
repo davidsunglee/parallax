@@ -32,7 +32,6 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.execution import ExecutionFailure
 from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
     ReadOnlyTxnContext,
@@ -129,8 +128,9 @@ def amend_after_reading_it_again(db: ScopedDatabase, customer_id: int, email: st
 <!-- /example -->
 
 In the first function, `tx.amend` raises a `UsageError` with code
-`write-evidence-unavailable` before anything is written; outside the callback it arrives as the `cause` of the `ExecutionFailure` that
-[Getting started](01-getting-started.md#write-in-a-transaction) described. In the
+`write-evidence-unavailable` before anything is written; it escapes the callback and
+reaches you as [Getting started](01-getting-started.md#write-in-a-transaction)
+described. In the
 second, the read inside the transaction licenses the amendment. `Customer` has no
 version, so that read also takes a shared lock on the customer's row, which holds until
 the transaction ends.
@@ -500,9 +500,9 @@ connection. A stream inside a transaction uses the transaction's connection inst
 A stream ends when its results run out or when you leave the `with` block, whichever
 comes first. Using it after that, entering it twice or iterating it twice raises a
 `UsageError` with code `stream-state-invalid`. If a page fails partway through, the results already delivered stay
-delivered, and the failure is raised in place of the next one. A standalone stream
-raises it as an `ExecutionFailure`, as a failing standalone read does. Inside a
-transaction it is the page's own error, which `transact` wraps if you let it escape the
+delivered, and the failure is raised in place of the next one, with a note naming the
+edition the stream reads under, as a failing standalone read's is. Inside a
+transaction it is the page's own error, which `transact` notes if you let it escape the
 callback.
 
 A stream inside a transaction can't outlive the transaction attempt. Each page of a

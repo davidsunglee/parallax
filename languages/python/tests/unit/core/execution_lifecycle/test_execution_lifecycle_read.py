@@ -48,7 +48,6 @@ from parallax.core.execution_lifecycle._activity import open_read_root
 from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
     Read,
@@ -238,7 +237,7 @@ def test_a_failed_sibling_pipeline_balances_every_open_call() -> None:
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
     port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]), Read(raises=failure))
 
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         _db(port, recorder, ORDERS).wire.find(
             {
                 "target": "Order",
@@ -282,7 +281,7 @@ def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     recorder = RecordingLifecycleProvider()
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
     port = ScriptedAdapter(Read(raises=failure))
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
@@ -337,7 +336,7 @@ def test_a_failure_past_a_completed_call_is_the_reads_own() -> None:
     # the Read failed DIRECTLY: proximity to a completed call attributes nothing.
     recorder = RecordingLifecycleProvider()
     port = _UnwalkablePort(Read(rows=[NEW_ROW]))
-    with raises_contextualized(ValueError, match="cannot be walked"):
+    with pytest.raises(ValueError, match="cannot be walked"):
         _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots

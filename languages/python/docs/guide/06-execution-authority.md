@@ -101,8 +101,8 @@ PostgreSQL grants the role. Two things follow:
 
 - The login must be a member of every role it switches to, for example through
   `GRANT shop_clerk TO shop_service`.
-- A statement the role may not run fails. The database's refusal reaches you as the
-  `cause` of an `ExecutionFailure`, like any other database error.
+- A statement the role may not run fails. The database's refusal reaches you as a
+  `DatabaseError`, like any other database error.
 
 If the role can't be set, the work doesn't start. If it can't be reset, the connection
 is discarded rather than reused. Because the role belongs to the session, a connection

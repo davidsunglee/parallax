@@ -98,7 +98,7 @@ class BegunRead(StreamRead[SelectedReadModel], Protocol):
     Each capability that executes is handed one operation's body and runs it
     inside its own bracket, which is where the force-flush, the activity
     opening, the activity's parentage, and — for a standalone read — the
-    edition an escaping failure is named under live. Nothing that calls it needs
+    edition note an escaping failure takes live. Nothing that calls it needs
     to know which lane it is, and nothing here decides anything about the
     query. Every call of one begun read runs under the one selection it began
     with, by construction rather than by threading a parameter.
@@ -273,9 +273,9 @@ class StandaloneRead:
         # creates no root and calls no Provider, while acquisition, planning,
         # lowering, every Database Call, conversion, and materialization are all
         # inside it. It is opened OUTSIDE the failure bracket and entered inside
-        # it: a Provider that fails to open keeps its own type, and the root's
-        # own Finished event sees the underlying failure before the caller sees
-        # it named under this read's edition.
+        # it: a Provider that fails to open carries no edition note, and the
+        # root's own Finished event sees the failure before it is noted with
+        # this read's edition.
         root = open_read_root(
             self.lifecycle, target=target, purpose=purpose, edition=self.selected.edition
         )
@@ -296,7 +296,7 @@ class StandaloneRead:
                 exit_connection(resource, read, held_since_ns, None)
                 return published
 
-        return self.adopted.contextualized(inside)
+        return self.adopted.noting_edition("read", inside)
 
     @property
     def meta(self) -> Metamodel:
@@ -335,4 +335,4 @@ class StandaloneRead:
             return result
 
     def advance[T](self, body: Callable[[], T], /) -> T:
-        return self.adopted.contextualized(body)
+        return self.adopted.noting_edition("stream", body)

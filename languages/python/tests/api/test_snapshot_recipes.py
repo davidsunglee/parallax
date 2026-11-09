@@ -48,7 +48,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import Database, ScopedDatabase, connect, edge_of, is_view_loaded
 from tests._support.db_port import ConnectsAsItself, projected_row
@@ -326,7 +325,7 @@ def test_a_write_conditioned_on_a_read_milestone_applies_only_while_it_stands(
     # The node read before the write still names the milestone it stood on,
     # which the write closed, so stating it again conditions nothing.
     assert edge_of(displayed).tx_time == _OPENED
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(
             lambda tx: tx.wire.amend_if(
                 "parallax.compatibility.Balance",
@@ -334,7 +333,6 @@ def test_a_write_conditioned_on_a_read_milestone_applies_only_while_it_stands(
                 tx_start=edge_of(displayed).tx_time,
             )
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert [node["value"] for node in db.wire.find(Balance.where(Balance.id == 1)).results()] == [
         "9.00"
     ]

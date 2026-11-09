@@ -92,7 +92,6 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
@@ -1034,7 +1033,7 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         )
         db = _db(port, LoggingLifecycleProvider(logger))
         try:
-            with raises_contextualized(DatabaseError):
+            with pytest.raises(DatabaseError):
                 db.transact(lambda tx: tx.insert(new_account()), retry=fast_retry(1))
         finally:
             logger.removeHandler(collected)

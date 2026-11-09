@@ -53,7 +53,6 @@ from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     AdaptiveBackoff,
-    ExecutionFailure,
     ReadOnlyTxnOptions,
     RetryPolicy,
     ServingModel,
@@ -84,7 +83,6 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import WireDatabaseView
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -126,7 +124,7 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
         tx.uow.buffer_insert(account_insert(), insertion_advice=None)
         raise RuntimeError("boom")
 
-    with raises_contextualized(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError, match="boom"):
         scope(port).transact(fn, itself)
     # Nothing flushed: the buffered write never reached the port.
     assert port.calls == [BeginCall(), RollbackCall()]
@@ -154,7 +152,7 @@ def test_a_reference_escaped_from_a_doomed_attempt_reports_the_escape_not_the_do
         with pytest.raises(RuntimeError, match="inner failure"):
             db.transact(_raise_inner, itself)
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         db.transact(outer, itself)
     with raises_code(UsageError, TRANSACTION_ESCAPED):
         escaped[0].uow.buffer_insert(account_insert(), insertion_advice=None)
@@ -169,7 +167,7 @@ def test_a_failed_transaction_leaves_nothing_for_the_next_one_to_join() -> None:
         failed.append(tx)
         raise RuntimeError("boom")
 
-    with raises_contextualized(RuntimeError, match="boom"):
+    with pytest.raises(RuntimeError, match="boom"):
         db.transact(fn, itself)
 
     assert db.transact(lambda tx: tx is not failed[0], itself)
@@ -303,7 +301,7 @@ def test_join_refusal_precedence_is_ownership_then_rollback_authority_then_optio
         assert isinstance(rollback_only.value.__cause__, RuntimeError)
         return "withheld"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as refused_commit:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused_commit:
         owner.transact(outer, itself)
     assert isinstance(refused_commit.value.__cause__, RuntimeError)
     assert port.calls == [BeginCall(), RollbackCall()]
@@ -482,7 +480,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
 
     # The outer callback caught everything and returned normally, but the inner
     # failure doomed the transaction: commit is refused and the value withheld.
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as excinfo:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as excinfo:
         db.transact(outer, itself)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert ran == []
@@ -616,7 +614,7 @@ def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> 
             owner.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "unreachable value"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         owner.transact(outer, itself)
     assert port.calls == [BeginCall(), RollbackCall()]
 
@@ -632,7 +630,7 @@ def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
 
 def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
-    with raises_contextualized(DatabaseError) as excinfo:
+    with pytest.raises(DatabaseError) as excinfo:
         scope(port).transact(lambda _tx: "ok", itself, retry=fast_retry(2))
     assert port.calls.count(BeginCall()) == 3
     assert excinfo.value.category == "deadlock"  # the surfaced error is the failure itself
@@ -641,7 +639,7 @@ def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
 
 def test_the_default_bound_is_ten_reexecutions() -> None:
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(11)))
-    with raises_contextualized(DatabaseError) as excinfo:
+    with pytest.raises(DatabaseError) as excinfo:
         scope(port).transact(lambda _tx: "ok", itself, retry=RetryPolicy(backoff=TINY_BACKOFF))
     assert port.calls.count(BeginCall()) == 11
     assert "11 attempts (max_retries=10)" in "".join(excinfo.value.__notes__)
@@ -657,14 +655,14 @@ def test_non_retriable_categories_surface_after_one_attempt(category: str, nativ
             commit=DatabaseError(category=category, native_code=native, message=category)  # type: ignore[arg-type] - parametrized str widens the DatabaseError category Literal
         )
     )
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         scope(port).transact(lambda _tx: "ok", itself)
     assert port.calls.count(BeginCall()) == 1
 
 
 def test_retries_zero_disables_the_loop() -> None:
     port = ScriptedAdapter(Transact(commit=deadlock()))
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         scope(port).transact(lambda _tx: "ok", itself, retry=RetryPolicy(max_retries=0))
     assert port.calls.count(BeginCall()) == 1
 
@@ -793,14 +791,16 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     # error would be retried on an attempt whose callback had run
     # (m-execution-lifecycle: a begin failure finishes the attempt `beginFailed`
     # and the invocation failed, without retry). The attempt had adopted before
-    # it asked the boundary to begin, so the failure names that edition.
+    # it asked the boundary to begin, so the failure is noted with that edition.
     never_began = deadlock()
     port = ScriptedAdapter(Transact(begin=never_began))
     serving = ServingModel(prepare_model(ACCOUNT, edition="adopted-before-begin"))
-    with raises_contextualized(DatabaseError) as excinfo:
+    with pytest.raises(DatabaseError) as excinfo:
         scope(port, serving).transact(_must_not_run_callback, itself)
     assert excinfo.value is never_began
-    assert excinfo.edition == "adopted-before-begin"
+    assert excinfo.value.__notes__ == [
+        "raised in a transaction under model edition 'adopted-before-begin'"
+    ]
     assert port.calls.count(BeginCall()) == 1
     # The private carrier that made it terminal is nowhere in what a caller
     # reads: it is neither the cause of the error the port made nor its context.
@@ -817,7 +817,7 @@ def test_a_failed_rollback_reports_both_live_errors_and_is_never_retried() -> No
         raise triggering
 
     port = _RollbackFailingPort()
-    with raises_contextualized(TransactionRollbackError) as excinfo:
+    with pytest.raises(TransactionRollbackError) as excinfo:
         scope(port).transact(failing, itself)
     assert excinfo.value.triggering_error is triggering
     assert excinfo.value.rollback_error is port.rollback_error
@@ -841,9 +841,9 @@ def test_a_failed_rollback_leaves_a_control_flow_trigger_primary() -> None:
 
 
 def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> None:
-    # Contextualization is for ordinary failures: an interrupt leaving the
-    # callback is never an `ExecutionFailure`, with or without a rollback
-    # failure beside it, and the rollback still completes.
+    # The edition note is for ordinary failures: an interrupt leaving the
+    # callback carries none and gains no context, and the rollback still
+    # completes.
     interrupt = KeyboardInterrupt()
 
     def interrupted(_tx: TxnAttempt) -> str:
@@ -853,14 +853,16 @@ def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> No
     with pytest.raises(KeyboardInterrupt) as excinfo:
         scope(port).transact(interrupted, itself)
     assert excinfo.value is interrupt
-    assert not isinstance(excinfo.value.__context__, ExecutionFailure)
+    assert excinfo.value.__context__ is None
+    assert not hasattr(excinfo.value, "__notes__")
     assert port.calls == [BeginCall(), RollbackCall()]
 
 
 # --------------------------------------------------------------------------- #
 # Adoption: every outer attempt adopts the Serving Model's current              #
 # selection before its boundary opens, a join inherits it, a retry adopts       #
-# afresh, and a failure names the edition of the attempt that failed last.      #
+# afresh, and a failure is noted with the edition of the attempt that failed   #
+# last.                                                                        #
 # --------------------------------------------------------------------------- #
 _A = prepare_model(ACCOUNT, edition="a")
 _B = prepare_model(ACCOUNT, edition="b")
@@ -937,10 +939,13 @@ def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
         if tx.edition == "a":
             serving.publish(_B, expected=_A)
 
-    with raises_contextualized(DatabaseError) as exhausted:
+    with pytest.raises(DatabaseError) as exhausted:
         db.transact(body, itself, retry=fast_retry(1))
-    assert exhausted.edition == "b"
     assert exhausted.value.category == "deadlock"
+    assert exhausted.value.__notes__ == [
+        "bounded retry exhausted after 2 attempts (max_retries=1)",
+        "raised in a transaction under model edition 'b'",
+    ]
 
 
 def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
@@ -951,46 +956,63 @@ def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
     def body(_tx: TxnAttempt) -> None:
         raise RuntimeError("the callback's own")
 
-    with raises_contextualized(RuntimeError, match="the callback's own") as failed:
+    with pytest.raises(RuntimeError, match="the callback's own") as failed:
         db.transact(body, itself)
-    assert failed.edition == "a"
+    assert failed.value.__notes__ == ["raised in a transaction under model edition 'a'"]
 
 
-def test_a_standalone_failure_escaping_a_callback_keeps_the_edition_that_read_adopted() -> None:
-    # The nested read names its own edition, and the invocation around it adds no
-    # second wrapper, so what escapes is the failure that read raised, naming the
-    # execution that failed rather than the one that merely enclosed it.
+def test_a_standalone_failure_in_a_callback_carries_the_reads_then_the_transactions_note() -> None:
+    # The nested read notes its own edition, and the invocation around it adds
+    # its own after it, so what escapes is the very failure that read raised,
+    # naming the execution that failed first and then the one that enclosed it.
     serving = ServingModel(_A)
     failure = DatabaseError(category="uniqueViolation", native_code="23505", message="duplicate")
     port = ScriptedAdapter(Transact(Read(raises=failure)))
     db = scope(port, serving)
-    nested: list[ExecutionFailure] = []
+    nested: list[DatabaseError] = []
 
     def body(_tx: TxnAttempt) -> None:
         serving.publish(_B, expected=_A)
         try:
             WireDatabaseView(db).find(_account_seven())
-        except ExecutionFailure as raised:
+        except DatabaseError as raised:
             nested.append(raised)
+            assert raised.__notes__ == ["raised in a read under model edition 'b'"]
             raise
 
-    with raises_contextualized(DatabaseError) as failed:
+    with pytest.raises(DatabaseError) as failed:
         db.transact(body, itself)
-    assert failed.edition == "b"
-    assert failed.value is failure
-    assert failed.failure is nested[0]
+    assert failed.value is failure is nested[0]
+    assert failure.__notes__ == [
+        "raised in a read under model edition 'b'",
+        "raised in a transaction under model edition 'a'",
+    ]
 
 
-def test_a_failed_rollback_keeps_both_errors_inside_the_contextualized_cause() -> None:
+def test_a_transient_failure_of_a_standalone_read_inside_a_callback_replays_the_attempt() -> None:
+    # The nested read's failure reaches the retry loop as itself, so it is
+    # classified exactly as the callback's own would be: a deadlock is replayed,
+    # and only the final attempt's failure carries the transaction's note.
+    port = ScriptedAdapter(Transact(Read(raises=deadlock())), Transact(Read(rows=[])))
+    db = scope(port)
+
+    def body(_tx: TxnAttempt) -> object:
+        return WireDatabaseView(db).find(_account_seven()).results()
+
+    assert db.transact(body, itself) == []
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_a_failed_rollback_keeps_both_errors_and_takes_the_note() -> None:
     triggering = deadlock()
 
     def failing(_tx: TxnAttempt) -> str:
         raise triggering
 
     port = _RollbackFailingPort()
-    with raises_contextualized(TransactionRollbackError) as failed:
+    with pytest.raises(TransactionRollbackError) as failed:
         scope(port, ServingModel(_A)).transact(failing, itself)
-    assert failed.edition == "a"
+    assert failed.value.__notes__ == ["raised in a transaction under model edition 'a'"]
     assert failed.value.triggering_error is triggering
     assert failed.value.rollback_error is port.rollback_error
 
@@ -1100,7 +1122,7 @@ def test_an_exhausted_conflict_surfaces_as_the_identical_failure_with_its_own_ch
         except RuntimeError:
             raise conflict from None
 
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as excinfo:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT) as excinfo:
         scope(port).transact(body, itself, retry=fast_retry(1))
     assert excinfo.value is raised[-1]
     assert excinfo.value.__cause__ is None
@@ -1116,7 +1138,7 @@ def test_a_non_retriable_database_error_is_not_replayed() -> None:
             commit=DatabaseError(category="uniqueViolation", native_code="23505", message="dup")
         )
     )
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         scope(port).transact(lambda _tx: "ok", itself)
     assert port.calls.count(BeginCall()) == 1
 
@@ -1363,7 +1385,7 @@ def test_a_failure_that_ends_the_invocation_starts_no_second_attempt(
     port = port_for()
     observed = _PortProgress(port)
 
-    with pytest.raises((ExecutionFailure, KeyboardInterrupt)):
+    with pytest.raises((DatabaseError, TransactionRollbackError, RuntimeError, KeyboardInterrupt)):
         scope(port, provider=observed).transact(lambda _tx: "ok", itself, **keywords)
 
     assert observed.count("TransactionAttemptStarted") == 1
@@ -1605,7 +1627,7 @@ def test_the_record_outlives_the_invocation_without_ambient_state() -> None:
 
 def test_the_roots_bound_admits_at_most_one_more_attempt_than_it_names() -> None:
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         _configured_db(port).transact(lambda _tx: "ok", itself)
     assert port.calls.count(BeginCall("serializable")) == 3
 
@@ -1613,7 +1635,7 @@ def test_the_roots_bound_admits_at_most_one_more_attempt_than_it_names() -> None
 def test_a_zero_root_bound_means_one_attempt_and_an_explicit_bound_retries() -> None:
     zero = TxnOptions(retry=RetryPolicy(max_retries=0))
     port = ScriptedAdapter(Transact(commit=deadlock()))
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         _configured_db(port, zero).transact(lambda _tx: "ok", itself)
     assert port.calls.count(BeginCall()) == 1
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
@@ -1790,7 +1812,7 @@ def test_join_admission_runs_ownership_rollback_only_authority_access_mode_then_
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "withheld"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as refused_commit:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused_commit:
         owner.read_only(outer, itself)
     assert isinstance(refused_commit.value.__cause__, RuntimeError)
     assert port.calls == [BeginCall("read_committed", "read_only"), RollbackCall()]
@@ -1810,7 +1832,7 @@ def test_a_failed_read_only_join_dooms_the_attempt_even_when_the_outer_callback_
             db.read_only(lambda _joined: ran.append(True), itself)
         return "withheld"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY) as excinfo:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as excinfo:
         db.read_only(outer, itself)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert ran == []

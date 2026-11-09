@@ -69,7 +69,7 @@ import datetime as dt
 import gc
 import hashlib
 from collections.abc import Callable, Generator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter_ns
@@ -94,7 +94,6 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import (
-    ExecutionFailure,
     ServingModel,
     prepare_model,
 )
@@ -917,11 +916,8 @@ def _insertion_driver(cell: AlgorithmCell) -> Generator[Driver]:
         def run(stopwatch: Stopwatch) -> Outcome:
             port.counter.reset()
             answer: list[Outcome] = []
-            try:
+            with suppress(_Abandoned):
                 handle.transact(lambda tx: body(tx, stopwatch, answer))
-            except ExecutionFailure as failure:
-                if not isinstance(failure.cause, _Abandoned):
-                    raise
             (outcome,) = answer
             return outcome
 

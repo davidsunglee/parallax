@@ -74,7 +74,6 @@ from parallax.snapshot import (
     pin_of,
     view,
 )
-from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
     CollectionKinds,
@@ -86,6 +85,7 @@ from tests._support.corpus import (
     instance_row,
 )
 from tests._support.db_port import ConnectsAsItself
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 
@@ -921,7 +921,7 @@ def test_a_finite_transaction_time_pinned_view_is_read_only(profile_run: Any) ->
     meta = _reset_for("m-temporal-write-092", profile_run)
     db = _counting_connect(profile_run.port, meta)
     before = engine.read_table_state(profile_run.port, model_of(meta))
-    with raises_contextualized(UsageError, code="transaction-time-pin-read-only") as refused:
+    with raises_code(UsageError, "transaction-time-pin-read-only") as refused:
         a_finite_transaction_time_pinned_view_is_read_only(db)
     assert refused.value.code == "transaction-time-pin-read-only"
     # The case's own `databaseCalls: 0` on the mutate step, graded as durable state:
@@ -1032,7 +1032,7 @@ def test_an_older_reader_diagnoses_a_stored_subtype_it_does_not_compose(
     query = Beast.where(Beast.all).order_by(Beast.id.asc())
     with db.stream(query, batch_size=2) as stream:
         delivered: list[Any] = []
-        with raises_contextualized(InvalidDataError):
+        with pytest.raises(InvalidDataError):
             delivered.extend(stream)
     assert [beast.name for beast in delivered] == ["Akela"]
     with db.wire.stream(query, batch_size=2) as wire_stream:

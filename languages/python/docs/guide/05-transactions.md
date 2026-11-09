@@ -19,7 +19,6 @@ from decimal import Decimal
 from parallax.core import ConflictError, DomainModel, UsageError
 from parallax.core.execution import (
     AdaptiveBackoff,
-    ExecutionFailure,
     ReadOnlyTxnOptions,
     RetryPolicy,
     TxnOptions,
@@ -40,9 +39,9 @@ from parallax.snapshot import (
 
 `db.transact(callback)` opens a transaction, hands the callback a `TxnContext`, and
 commits when the callback returns. Only then does it return what the callback returned.
-If the callback raises, or the commit fails, nothing is committed: you get an
-`ExecutionFailure` whose `cause` is what went wrong, and the callback's value is never
-handed back as if it had been saved.
+If the callback raises, or the commit fails, nothing is committed: what went wrong
+reaches you as itself, with a note naming the model edition the transaction ran under,
+and the callback's value is never handed back as if it had been saved.
 
 Each run of the callback is an attempt, and one call to `transact` can make several
 attempts when it is [retried](#retries). That is why a transaction is a callback rather
@@ -123,10 +122,9 @@ def open_an_account_even_if_the_order_fails(
 
 With a valid order this commits both rows and returns `True`. When `record_an_order`
 refuses an order with no total, its `ValueError` reaches the outer callback, which
-catches it and returns `False`. The transaction rolls back anyway: `transact` raises an
-`ExecutionFailure` whose `cause` is a `UsageError` with the `code`
-`"transaction-rollback-only"`, chained to the `ValueError`, and the customer isn't
-saved. A read or write the callback tried after catching the failure would raise that
+catches it and returns `False`. The transaction rolls back anyway: `transact` raises a
+`UsageError` with the `code` `"transaction-rollback-only"`, chained to the
+`ValueError`, and the customer isn't saved. A read or write the callback tried after catching the failure would raise that
 refusal too.
 
 This is deliberate. The joined callback may have buffered some of its writes before it
@@ -362,8 +360,8 @@ Which failures are retried is fixed:
 
 Anything else includes your own exceptions, a lock that couldn't be had in time, and a
 constraint violation such as a duplicate key, a check, or an exclusion Parallax didn't
-generate for the table it writes. Each reaches you as the `cause` of an
-`ExecutionFailure`. The database reports the last two as a `DatabaseError`: a lock
+generate for the table it writes. Each reaches you as itself. The database reports the
+last two as a `DatabaseError`: a lock
 waited on too long has the `category` `"lockWaitTimeout"`, a duplicate key
 `"uniqueViolation"`, and another constraint violation none
 ([Errors](08-errors.md#failures-the-database-reports)). How long a statement waits for a
@@ -407,8 +405,8 @@ finds that the row changed after the attempt's Serializable snapshot and fails t
 with a serialization failure. That is transient, so Parallax retries. The re-run reads
 the limit and the orders afresh, passes the check, and states version 1 again, as the
 caller asked. The order is now at version 2, so the write fails its precondition. That
-`WritePreconditionError` reaches the caller as the `cause` of an `ExecutionFailure` after
-two attempts, with no third: a re-run would only state version 1 again.
+`WritePreconditionError` reaches the caller after two attempts, with no third: a re-run
+would only state version 1 again.
 
 A deadlock that ends a transaction holding a target write plays out the same way. The
 re-run states the same revision, and if the row moved in the meantime, the precondition
@@ -424,9 +422,10 @@ the target write: only the stated version counts.
 A `RetryPolicy` sets how many times, and how long Parallax waits between attempts. Its
 `max_retries` counts re-runs, not attempts. The default is 10, so a transaction makes up
 to 11 attempts. If every one of them fails with something retryable, the last attempt's
-failure reaches you as the `cause` of an `ExecutionFailure`, with a note naming the
-count, such as `bounded retry exhausted after 11 attempts (max_retries=10)`. For a deadlock
-or a serialization failure, that cause is a `DatabaseError` whose `category` is
+failure reaches you with a note naming the count, such as
+`bounded retry exhausted after 11 attempts (max_retries=10)`, before the edition note.
+For a deadlock or a serialization failure, that failure is a `DatabaseError` whose
+`category` is
 `"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it. A
 temporal conflict that outlasts every attempt means a clock stayed behind stored
 history for longer than the retries took. A temporal overlap that outlasts every attempt
@@ -454,9 +453,8 @@ def add_to_an_order_once(db: ScopedDatabase, order_id: int, amount: Decimal) -> 
 ```
 <!-- /example -->
 
-If another transaction changes the order between the read and the write, this raises an
-`ExecutionFailure` whose `cause` is a `ConflictError` with the `code`
-`"optimistic-lock-conflict"`, and the job queue
+If another transaction changes the order between the read and the write, this raises a
+`ConflictError` with the `code` `"optimistic-lock-conflict"`, and the job queue
 runs the job again later. Which failures are retried isn't an option.
 
 ### How long between attempts
@@ -562,8 +560,7 @@ def place_two_orders_together_serializably(
 Called alone, `place_two_orders` runs each check in a transaction of its own, so the
 first order can commit while the second is declined. `place_two_orders_together` runs at
 the scope's default, Read Committed here, so the first check's `isolation="serializable"`
-is refused, and the call raises an `ExecutionFailure` whose `cause` is that
-`transaction-option-conflict` refusal. In `place_two_orders_together_serializably`, both
+is refused, and the call raises that `transaction-option-conflict` refusal. In `place_two_orders_together_serializably`, both
 checks join. Against the 170.00 of orders and the 250.00 limit from
 [Isolation levels](#isolation-levels), orders of 50.00 and 60.00 return `(True, False)`:
 the second check's read sees the first order, pending in the same transaction, and

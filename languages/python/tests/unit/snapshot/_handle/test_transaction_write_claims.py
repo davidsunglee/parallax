@@ -17,7 +17,6 @@ from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.snapshot import Database, TxnContext
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -211,7 +210,7 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
         tx.delete(node)
         tx.amend(node.edit(balance=Decimal("125.00")))
 
-    with raises_contextualized(UsageError, code="write-evidence-already-claimed") as refusal:
+    with raises_code(UsageError, "write-evidence-already-claimed") as refusal:
         account_db(port).transact(fn)
     assert " {'id': 1}: " in refusal.value.args[1]
 
@@ -306,7 +305,7 @@ def test_a_destruction_over_another_window_of_the_same_state_is_refused() -> Non
         tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
         tx.terminate(late, until=_UNTIL)
 
-    with raises_contextualized(UsageError, code="write-evidence-already-claimed"):
+    with raises_code(UsageError, "write-evidence-already-claimed"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -428,7 +427,7 @@ def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> No
         tx.delete(node)
         tx.amend(node.edit(name="Grace"))
 
-    with raises_contextualized(UsageError, code="write-evidence-already-claimed") as refusal:
+    with raises_code(UsageError, "write-evidence-already-claimed") as refusal:
         db_for(PERSON, port).transact(fn)
     assert " {'id': 1}: " in refusal.value.args[1]
 

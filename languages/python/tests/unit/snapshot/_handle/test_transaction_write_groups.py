@@ -37,7 +37,6 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import TxnContext
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -54,6 +53,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests.unit._transact_support import db_for
 
 _NS: Final = "write.groups.handle"
@@ -317,7 +317,7 @@ def test_a_failing_grouped_insert_reports_its_statement_error_and_replays_nothin
         ),
         ordered=True,
     )
-    with raises_contextualized(DatabaseError) as raised:
+    with pytest.raises(DatabaseError) as raised:
         db_for(_MODEL, port).transact(_loop("transaction-time"), concurrency="optimistic")
     assert raised.value is failure
     assert _shapes(port.calls) == [("grouped", 3), ("insert", 3)]
@@ -334,7 +334,7 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
         ),
         ordered=True,
     )
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as raised:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT) as raised:
         db_for(_MODEL, port).transact(
             _loop("transaction-time"), concurrency="optimistic", retry=RetryPolicy(max_retries=0)
         )

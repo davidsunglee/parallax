@@ -27,8 +27,8 @@ from parallax.conformance.guide_authority_recipes import (
     rename_a_customer,
 )
 from parallax.conformance.guide_models import SHOP_MODEL, Customer, Order
+from parallax.core.db_error import DatabaseError
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import Database, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
@@ -76,10 +76,9 @@ def test_a_request_runs_with_its_users_role_in_place_of_the_logins_privileges(
         )
 
     change_an_email_for(root, clerk, 1, "ada@example.org")
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(DatabaseError, match="permission denied"):
         change_an_email_for(root, viewer, 1, "ada@example.net")
 
-    assert "permission denied" in str(refused.value.cause)
     assert _customer_one(root).email == "ada@example.org"
 
 

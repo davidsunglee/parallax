@@ -42,7 +42,7 @@ from parallax.core._execution._unit_work import write_settlement
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, RetryPolicy
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallFailed,
@@ -261,7 +261,7 @@ class _Failed:
     """What one failed amendment raised, what its attempt reported, and what it
     left stored."""
 
-    cause: BaseException
+    error: Exception
     attempts: list[TransactionAttemptFinished]
     failed: list[DatabaseCallFinished]
     writes: list[str]
@@ -277,13 +277,13 @@ def _failed(
     _seed(db, ColumnsSpan, ())
     before = _rows(profile_run, ColumnsSpan)
     edit = _conflicting_amendment(profile_run, ColumnsSpan, then)
-    with pytest.raises(ExecutionFailure) as escaped:
+    with pytest.raises(Exception) as escaped:
         db.transact(edit, retry=fast_retry(2))
     events = _events(provider)
     rows = _rows(profile_run, ColumnsSpan)
     assert rows == before
     return _Failed(
-        escaped.value.cause,
+        escaped.value,
         [event for event in events if isinstance(event, TransactionAttemptFinished)],
         [
             event
@@ -311,16 +311,16 @@ def test_a_grouped_statement_fails_whole_with_its_own_diagnostic_and_retry_verdi
 
     # Alone, the head fails first, on the account constraint its statement
     # checks as it ends.
-    assert isinstance(raw.cause, DatabaseError)
-    assert (raw.cause.category, raw.cause.native_code) == (None, "23503")
+    assert isinstance(raw.error, DatabaseError)
+    assert (raw.error.category, raw.error.native_code) == (None, "23503")
     assert _diagnostic(raw) == (None, "23503")
     assert len(raw.writes) == 2
     # Grouped, the one statement fails as a whole on the middle's row check,
     # which is checked as its row is inserted, before the head's constraint is
     # checked.
-    assert isinstance(grouped.cause, DatabaseError)
-    assert (grouped.cause.category, grouped.cause.native_code) == ("constraintViolation", "23514")
-    assert grouped.cause.constraint_name == "opn_span_amount"
+    assert isinstance(grouped.error, DatabaseError)
+    assert (grouped.error.category, grouped.error.native_code) == ("constraintViolation", "23514")
+    assert grouped.error.constraint_name == "opn_span_amount"
     assert _diagnostic(grouped) == ("constraintViolation", "23514")
     assert len(grouped.writes) == 2
     assert grouped.inserted == [3]
@@ -352,8 +352,8 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
     assert isinstance(refused, UsageError)
     assert refused.code == TRANSACTION_ROLLBACK_ONLY
     assert refused.__cause__ is flush_failure
-    assert isinstance(failed.cause, UsageError)
-    assert failed.cause.code == TRANSACTION_ROLLBACK_ONLY
+    assert isinstance(failed.error, UsageError)
+    assert failed.error.code == TRANSACTION_ROLLBACK_ONLY
     (finished,) = failed.attempts
     assert isinstance(finished.outcome, AttemptRolledBack)
 
@@ -405,11 +405,10 @@ def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
     provider = RecordingLifecycleProvider()
     db = _ledgers(profile_run, provider)
     before = _ledger_rows(profile_run)
-    with pytest.raises(ExecutionFailure) as escaped:
+    with pytest.raises(DatabaseError) as escaped:
         db.transact(_amend_ledgers({1: 150, 2: 150, 3: 150}), retry=fast_retry(2))
 
-    cause = escaped.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = escaped.value
     assert (cause.category, cause.native_code) == ("constraintViolation", "23514")
     assert cause.constraint_name == "opn_ledger_amount"
     events = _events(provider)
@@ -461,12 +460,12 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
     with monkeypatch.context() as patched:
         if not grouped:
             patched.setattr(write_settlement, "_GROUP_WRITES", 1)
-        with pytest.raises(ExecutionFailure) as escaped:
+        with pytest.raises((ConflictError, DatabaseError)) as escaped:
             db.transact(
                 _amend_ledgers({1: 150, 2: 160}, advance_two), retry=RetryPolicy(max_retries=0)
             )
 
-    cause = escaped.value.cause
+    cause = escaped.value
     writes = _writes(_events(provider))
     if grouped:
         assert isinstance(cause, ConflictError)

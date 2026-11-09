@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from functools import partial
 from typing import Final, Literal, cast
 
 from parallax.conformance import (
@@ -41,9 +40,6 @@ from parallax.conformance._mechanism.model_facts import (
     case_serving_model,
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
-from parallax.conformance._mechanism.transaction_control import (
-    underlying,
-)
 from parallax.core import (
     inheritance,
     relationship,
@@ -306,7 +302,7 @@ def run_scenario(
                         # document is read, so no later step carries a spelling into a
                         # production seam that takes an Entity Identity.
                         identity = case_entity(model, query.target.canonical).identity
-                        snapshot = underlying(partial(db.wire.find, query))
+                        snapshot = db.wire.find(query)
                     except READ_ERRORS as exc:
                         raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
                     emissions.extend(

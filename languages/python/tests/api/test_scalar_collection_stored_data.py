@@ -26,7 +26,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
 from parallax.snapshot import ScopedDatabase, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "scalar.collection.stored"
@@ -172,7 +171,7 @@ def test_default_access_refuses_an_invalid_collection_rather_than_shortening_it(
 
     with pytest.raises(InvalidDataError):
         db.find(query).result()
-    with raises_contextualized(InvalidDataError), db.stream(query, batch_size=1) as stream:
+    with pytest.raises(InvalidDataError), db.stream(query, batch_size=1) as stream:
         list(stream)
 
 

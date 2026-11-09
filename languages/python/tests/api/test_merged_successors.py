@@ -34,12 +34,8 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.execution import (
-    ExecutionFailure,
-)
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
@@ -267,9 +263,8 @@ def test_a_failed_proof_rolls_back_the_merge_with_everything_else(
             _name(entity), {"id": 1, "amount": 150}, valid_from=_FEB, until=_JUN, tx_start=_T1
         )
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert [row[1] for row in _rows(profile_run, entity)] == [None, None]
 
 
@@ -317,7 +312,7 @@ def test_a_historical_read_of_a_merged_original_writes_nothing(
         assert (historical.amount, historical.label) == (200, "a")
         tx.amend(historical.edit(label="z"), until=_JUN)
 
-    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
+    with pytest.raises(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn)
     assert _rows(profile_run, entity) == before
 

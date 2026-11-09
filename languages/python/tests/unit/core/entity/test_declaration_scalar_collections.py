@@ -25,7 +25,6 @@ from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32, UsageErro
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.entity._declaration import declaration_of, shape_of
 from parallax.core.entity._errors import EditError
-from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import Multiplicity, ScalarDefinition
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.predicate import serialize
@@ -189,12 +188,12 @@ _OUT_OF_SPACE: list[tuple[str, tuple[object, ...], str]] = [
 ]
 
 
-def _write_refusal(work: Callable[[TxnContext], object]) -> BaseException:
+def _write_refusal(work: Callable[[TxnContext], object]) -> UsageError:
     port = ScriptedAdapter(Transact())
     database = own_root(connect(port, DomainModel(Order))).using_database_login()
-    with pytest.raises(ExecutionFailure) as caught:
+    with pytest.raises(UsageError) as caught:
         database.transact(work)
-    return caught.value.__cause__ or caught.value
+    return caught.value
 
 
 @pytest.mark.parametrize(
@@ -207,7 +206,6 @@ def test_an_out_of_space_element_constructs_and_the_write_refuses_it(
 
     assert getattr(order, member) == authored
     refused = _write_refusal(lambda tx: tx.insert(order))
-    assert isinstance(refused, UsageError)
     assert refused.code == "write-value-type-mismatch"
     assert refused.args[1].startswith(refusal)
 

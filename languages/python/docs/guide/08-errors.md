@@ -41,7 +41,6 @@ from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import (
-    ExecutionFailure,
     PublicationConflictError,
     TransactionRollbackError,
 )
@@ -55,20 +54,22 @@ from parallax.snapshot import ScopedDatabase, TxnContext, is_view_loaded
 
 ## Where an error reaches you
 
-Two rules decide where you catch an error.
+Every error reaches you as itself, so you catch the class you expect. Two rules decide
+whether it also carries a note naming the model edition the work ran under.
 
-**A refusal raised before any work runs reaches you as itself.** Creating an entity
+**A refusal raised before any work runs carries no note.** Creating an entity
 class, building a `DomainModel`, building a query and editing a value each check what
 you wrote on the spot. A standalone read also checks its query against the model before
 it reads: `db.find` raises a `UsageError` itself, with code `query-target-not-in-model`,
 when the model declares no entity for the query's target.
 
 **Anything that escapes a transaction, or fails while a read runs against the database,
-reaches you as an `ExecutionFailure`.** Its `cause` is the original error, which is also
-its `__cause__`, and its `edition` names the model edition the work ran under. Inside a
-callback, a verb raises its own error where you call it, and you can catch it there.
-Once the error leaves the callback, `transact` wraps it. So a handler around `transact`,
-`read_only` or a standalone read looks at `failure.cause`, as the examples below do.
+carries a note naming the edition**, such as
+`raised in a transaction under model edition '2026-09-b'`. Inside a callback, a verb
+raises its own error where you call it, and you can catch it there. Once the error
+leaves the callback, `transact` adds its note and raises the same error. So a handler
+around `transact`, `read_only` or a standalone read catches the original class, as the
+examples below do.
 
 Catching an error inside the callback doesn't always leave the transaction usable. A
 refusal a verb raises before anything is sent, such as a `UsageError` with a
@@ -119,7 +120,7 @@ tool can report them without parsing messages.
   `"read-only-write-target"` for any write to an entity
   [declared read-only](02-modeling.md#entities-and-keys). Caught inside the callback,
   that refusal leaves the transaction usable, and the writes buffered before and after
-  it still commit. If it escapes, it reaches you as the `cause` of an `ExecutionFailure`.
+  it still commit. If it escapes, it reaches you from `transact`.
   `"transaction-time-pin-read-only"` means the value was read as of a past Transaction
   Time, which [can't be rewritten](04-writing.md#correct-the-past).
 
@@ -189,9 +190,10 @@ when a result it would return breaks the model. The error's `invalid_data` holds
 anything. `checked()` hands you the same records in their place among the results
 instead of raising.
 
-The accessor raises after the read has finished. Outside a transaction, you catch
-`InvalidDataError` itself; inside a callback that lets it escape, it becomes the `cause`
-of an `ExecutionFailure` like any other error.
+The accessor raises after the read has finished, so outside a transaction its
+`InvalidDataError` carries no note; inside a callback that lets it escape, it gains the
+transaction's note like any other error. Its own `edition` still names the edition the
+result was read under.
 
 **What to do:** repair the stored data. The request isn't at fault, and reading again
 returns the same verdict until the data changes. Where a report or a batch job should
@@ -205,10 +207,10 @@ section covers the ones that reach you.
 
 - **An optimistic lock conflict** means a version or Transaction-Time start that a read
   in this attempt observed has moved. Parallax retries it, so a `ConflictError` whose
-  `code` is `"optimistic-lock-conflict"` reaches you as a `cause` only when retries are
-  off or used up.
+  `code` is `"optimistic-lock-conflict"` reaches you only when retries are off or used
+  up.
 - **A deadlock or a serialization failure** is retried the same way. The database
-  reports it, so it reaches you as a `DatabaseError` cause whose `category` is
+  reports it, so it reaches you as a `DatabaseError` whose `category` is
   `"deadlock"` ([below](#failures-the-database-reports)).
 - **A temporal conflict** means the transaction's instant is no later than the stored
   `tx_start` of a milestone it would close: clocks that repeat or run behind, or an
@@ -219,7 +221,7 @@ section covers the ones that reach you.
   to follow
   ([Writing](04-writing.md#transaction-time-only-entities)).
 - **Retries run out** when every attempt fails with something retryable. You then get the
-  last attempt's failure as the `cause`, with a note naming the count, such as
+  last attempt's failure, with a note naming the count, such as
   `bounded retry exhausted after 11 attempts (max_retries=10)`.
 - **A failed precondition** means the revision a target write stated no longer matches,
   so the write raises `WritePreconditionError`. Its `expected` holds the revision you
@@ -241,9 +243,7 @@ def cancel_unless_changed(db: ScopedDatabase, order: Order) -> bool:
     """Cancel ``order`` unless it changed since it was read; answer whether it was cancelled."""
     try:
         db.transact(lambda tx: tx.delete_if(Order, key=order.id, version=order.version))
-    except ExecutionFailure as failure:
-        if not isinstance(failure.cause, WritePreconditionError):
-            raise
+    except WritePreconditionError:
         return False
     return True
 ```
@@ -259,9 +259,8 @@ writers wait for each other instead of re-running.
 
 ## Failures the database reports
 
-A failure the database reports, such as a duplicate key, reaches you as the `cause` of
-an `ExecutionFailure`, and that cause is a `DatabaseError`. Test it with `isinstance`,
-and then read its attributes:
+A failure the database reports, such as a duplicate key, reaches you as a
+`DatabaseError`. Catch it, and then read its attributes:
 
 - `category` says what kind of failure it is, in Parallax's portable vocabulary. Its
   type is `Category`: `"uniqueViolation"` for a duplicate key, `"constraintViolation"`
@@ -289,9 +288,8 @@ def add_a_customer_unless_the_id_is_taken(db: ScopedDatabase, customer: Customer
     """Insert ``customer``, or answer False when another customer already has its id."""
     try:
         db.transact(lambda tx: tx.insert(customer))
-    except ExecutionFailure as failure:
-        cause = failure.cause
-        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
+    except DatabaseError as failure:
+        if failure.category != "uniqueViolation":
             raise
         return False
     return True
@@ -331,13 +329,8 @@ def add_a_shipment_unless_its_tracking_number_is_taken(
     """Insert ``shipment``, or answer False when another shipment has its tracking number."""
     try:
         db.transact(lambda tx: tx.insert(shipment))
-    except ExecutionFailure as failure:
-        cause = failure.cause
-        if not (
-            isinstance(cause, DatabaseError)
-            and cause.category == "uniqueViolation"
-            and cause.violated_index == tracking_index
-        ):
+    except DatabaseError as failure:
+        if failure.violated_index != tracking_index:
             raise
         return False
     return True
@@ -376,9 +369,8 @@ def price_a_window_unless_it_is_priced(
 
     try:
         return db.transact(price_unless_priced)
-    except ExecutionFailure as failure:
-        cause = failure.cause
-        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
+    except DatabaseError as failure:
+        if failure.category != "uniqueViolation":
             raise
         return False
 ```
@@ -408,8 +400,7 @@ doesn't match the model (see [Model evolution](07-model-evolution.md)), and a re
 privilege belongs to the role the work runs as (see
 [Execution authority](06-execution-authority.md)).
 
-Two more failures fall outside the categories, and each also reaches you as the `cause`
-of an `ExecutionFailure`:
+Two more failures fall outside the categories, and each also reaches you as itself:
 
 - **No connection.** `ConnectionAcquisitionError` means Parallax couldn't get a
   connection, and its `reason` says why, such as `"timeout"` or `"closed"`. It isn't

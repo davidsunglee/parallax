@@ -124,7 +124,7 @@ _IN_SCOPE: Final = "a Snapshot Stream answers only inside its own scope"
 _END: Final = object()
 """What one advance answers when the delivery ran out, so exhaustion crosses the
 read's bracket as a value: ``StopIteration`` is an ordinary exception, and a
-bracket that contextualizes ordinary failures would otherwise wrap it."""
+bracket that notes ordinary failures would otherwise note it."""
 
 
 def check_batch_size(batch_size: int) -> None:
@@ -375,11 +375,10 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         yields nothing, and settles nothing.
 
         The step itself runs under the begun read's bracket, which is what
-        names the edition on an ordinary failure escaping a standalone
+        notes the edition on an ordinary failure escaping a standalone
         delivery; the state check stands before it, so a refusal about the
-        stream keeps its own type. The delivery settles with the failure the
-        step raised, before the bracket sees it, so the verdict the stream
-        announces is the underlying one.
+        stream carries no edition note. The delivery settles with the failure
+        the step raised, before the bracket notes it.
 
         A delivery that already settled keeps answering ``StopIteration`` inside
         its scope, so exhaustion is the end of an iteration rather than a second

@@ -28,7 +28,7 @@ from parallax.core.db_port import (
     RoutePolicy,
     RouteSelection,
 )
-from parallax.core.execution import ExecutionFailure, RetryPolicy, TxnOptions
+from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.core.execution_lifecycle._activity import ActivityTarget
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, root
@@ -204,10 +204,9 @@ def test_a_routing_alias_shares_the_root_s_resources_and_close() -> None:
     alias.close()
 
     assert adapter.closes == 1
-    with pytest.raises(ExecutionFailure) as closed:
+    with pytest.raises(ConnectionAcquisitionError) as closed:
         _read(database.using_database_login())
-    assert isinstance(closed.value.cause, ConnectionAcquisitionError)
-    assert closed.value.cause.reason == "closed"
+    assert closed.value.reason == "closed"
 
 
 def test_a_join_never_consults_the_joining_scope_s_routing() -> None:
@@ -425,10 +424,10 @@ def test_a_boundary_that_moved_its_lease_and_then_failed_still_records_the_move(
     )
     scope = root(adapter, read_policy="reader_preferred").using_database_login()
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         scope.read_only(lambda _attempt: pytest.fail("the callback must never run"), itself)
 
-    assert failed.value.cause is refused
+    assert failed.value is refused
     assert adapter.requested_policies == ["reader_preferred"]
     # The lease was cleaned up once, as the acquisition's own cleanup, and no
     # release followed it.

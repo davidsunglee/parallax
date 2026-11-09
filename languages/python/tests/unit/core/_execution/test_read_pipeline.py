@@ -44,7 +44,7 @@ from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, ServingModel, prepare_model
+from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     FlushStarted,
@@ -286,25 +286,22 @@ def test_a_standalone_body_is_handed_its_own_connection_and_no_preference_or_led
         handed.connection.execute("select 1", [])
 
 
-def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_cause() -> None:
+def test_a_standalone_read_notes_its_edition_on_a_failure_the_root_saw_first() -> None:
     # The failure bracket sits OUTSIDE the root activity: the root's own
-    # Finished event reports the underlying failure, and only then does the
-    # caller receive it named under the edition this read adopted. A
-    # participating read brackets nothing, because the invocation above it
-    # names the attempt's edition once.
+    # Finished event reports the failure, and only then does the caller receive
+    # the same object noted with the edition this read adopted. A participating
+    # read brackets nothing, because the invocation above it notes the
+    # attempt's edition.
     provider = RecordingLifecycleProvider()
     boom = RuntimeError("the executor failed")
 
     def failing(_activity: object, _inputs: ReadInputs) -> object:
         raise boom
 
-    try:
+    with pytest.raises(RuntimeError) as raised:
         _scope(ScriptedAdapter(), provider=provider).begin().eager(_TARGET, "typed", failing)
-    except ExecutionFailure as failure:
-        assert (failure.edition, failure.cause) == ("test", boom)
-        assert failure.__cause__ is boom
-    else:  # pragma: no cover - the assertion is the except clause
-        raise AssertionError("a standalone read's failure was not contextualized")
+    assert raised.value is boom
+    assert boom.__notes__ == ["raised in a read under model edition 'test'"]
     (root,) = provider.roots
     # The connection is acquired before the body and released after it however
     # the body left, so a read whose executor raised still gives it back.
@@ -317,13 +314,16 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
         "ReadFinished",
     ]
 
+    participating = RuntimeError("the participating executor failed")
+
+    def failing_inside(_activity: object, _inputs: ReadInputs) -> object:
+        raise participating
+
     def run(attempt: TxnAttempt) -> None:
-        try:
-            attempt.eager(_TARGET, "typed", failing)
-        except RuntimeError as raised:
-            assert raised is boom
-        else:  # pragma: no cover - the assertion is the except clause
-            raise AssertionError("a participating read wrapped its failure")
+        with pytest.raises(RuntimeError) as raised:
+            attempt.eager(_TARGET, "typed", failing_inside)
+        assert raised.value is participating
+        assert not hasattr(participating, "__notes__")
 
     _participating(run, ScriptedAdapter(Transact()))
 
@@ -545,33 +545,32 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
 # --------------------------------------------------------------------------- #
 # advance: one advance of a delivery, under the read's failure bracket         #
 # --------------------------------------------------------------------------- #
-def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not() -> None:
-    # The page bracket reports the underlying failure to the batch and the
-    # stream above it; the ADVANCE is where a standalone delivery names its
-    # edition, once, on the way out to the caller. A participating advance is
-    # the body itself.
-    boom = RuntimeError("the page failed")
+def test_a_standalone_advance_notes_the_edition_and_a_participating_one_does_not() -> None:
+    # The page bracket reports the failure to the batch and the stream above
+    # it; the ADVANCE is where a standalone delivery notes its edition on the
+    # way out to the caller. A participating advance is the body itself.
+    def failing(failure: RuntimeError) -> Callable[[], object]:
+        def body() -> object:
+            raise failure
 
-    def failing() -> object:
-        raise boom
+        return body
 
+    standalone = RuntimeError("the page failed")
     read = _scope(ScriptedAdapter()).begin()
     assert read.advance(lambda: _ANSWER) is _ANSWER
-    try:
-        read.advance(failing)
-    except ExecutionFailure as failure:
-        assert (failure.edition, failure.cause) == ("test", boom)
-    else:  # pragma: no cover - the assertion is the except clause
-        raise AssertionError("a standalone advance's failure was not contextualized")
+    with pytest.raises(RuntimeError) as raised:
+        read.advance(failing(standalone))
+    assert raised.value is standalone
+    assert standalone.__notes__ == ["raised in a stream under model edition 'test'"]
+
+    participating = RuntimeError("the participating page failed")
 
     def run(attempt: TxnAttempt) -> None:
         assert attempt.begin().advance(lambda: _ANSWER) is _ANSWER
-        try:
-            attempt.begin().advance(failing)
-        except RuntimeError as raised:
-            assert raised is boom
-        else:  # pragma: no cover - the assertion is the except clause
-            raise AssertionError("a participating advance wrapped its failure")
+        with pytest.raises(RuntimeError) as raised:
+            attempt.begin().advance(failing(participating))
+        assert raised.value is participating
+        assert not hasattr(participating, "__notes__")
 
     _participating(run, ScriptedAdapter(Transact()))
 

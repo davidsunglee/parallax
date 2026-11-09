@@ -46,7 +46,6 @@ from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallStarted,
@@ -329,10 +328,9 @@ def test_a_check_violation_fails_the_whole_grouped_update_and_rolls_it_back(
     finally:
         control.close()
     before = _rows(profile_run, "grp_order")
-    with pytest.raises(ExecutionFailure) as escaped:
+    with pytest.raises(DatabaseError) as escaped:
         db.transact(_amend_all(Order), retry=fast_retry(2))
-    cause = escaped.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = escaped.value
     assert (cause.category, cause.native_code) == ("constraintViolation", "23514")
     assert len(_writes(provider)) == 1
     assert _rows(profile_run, "grp_order") == before
@@ -389,10 +387,9 @@ def test_a_unique_violation_fails_the_whole_grouped_update_naming_no_row(
         for seat in tx.find(Seat.where(Seat.id >= 4)).results():
             tx.amend(seat.edit(seat_no=9 - seat.id))
 
-    with pytest.raises(ExecutionFailure) as escaped:
+    with pytest.raises(DatabaseError) as escaped:
         db.transact(collide, retry=fast_retry(2))
-    cause = escaped.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = escaped.value
     assert (cause.category, cause.native_code) == ("uniqueViolation", "23505")
     assert cause.constraint_name == "grp_seat_no"
     (statement,) = _writes(provider)
@@ -702,10 +699,9 @@ def test_an_exclusion_refusal_fails_the_whole_grouped_close_as_a_recoverable_con
     finally:
         control.close()
     before = _history(profile_run, "grp_book")
-    with pytest.raises(ExecutionFailure) as escaped:
+    with pytest.raises(DatabaseError) as escaped:
         db.transact(_amend_books, retry=fast_retry(1))
-    cause = escaped.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = escaped.value
     assert (cause.native_code, cause.constraint_name) == ("23P01", name)
     finished = [
         event

@@ -35,9 +35,6 @@ from parallax.core import (
 )
 from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import (
-    ExecutionFailure,
-)
 from parallax.core.unit_work import MISSING_TARGET
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import raises_code
@@ -579,10 +576,8 @@ def test_an_edit_through_an_insertion_whose_anchor_was_removed_rolls_back(
         _read_span(tx, entity, representation, _MAR)
         first.update(amount=150)
 
-    with pytest.raises(ExecutionFailure) as failure:
+    with raises_code(ConflictError, MISSING_TARGET):
         db.transact(edit)
-    assert isinstance(failure.value.cause, ConflictError)
-    assert failure.value.cause.code == MISSING_TARGET
     assert _span_rows(profile_run, entity) == []
 
 

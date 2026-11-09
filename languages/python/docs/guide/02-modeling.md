@@ -151,8 +151,8 @@ to write it. The verb raises a `UsageError` whose `code` is
 write verb refuses a read-only entity the same way, whether it writes your classes or
 Wire mappings: `insert`, `amend`, `replace`, `delete` and `terminate`, and the
 [target](04-writing.md#target-writes) and [predicate](04-writing.md#predicate-writes)
-writes. Here the error escapes the callback, so `db.transact` raises `ExecutionFailure`
-with the refusal as its `cause`, and the supplier keeps its name.
+writes. Here the error escapes the callback, so `db.transact` raises that `UsageError`,
+and the supplier keeps its name.
 [Errors](08-errors.md#mistakes-in-what-you-wrote) shows what changes when you catch it
 inside the callback instead.
 

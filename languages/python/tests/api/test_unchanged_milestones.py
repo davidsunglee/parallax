@@ -21,9 +21,10 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, RetryPolicy
+from parallax.core.execution import RetryPolicy
 from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 
@@ -423,10 +424,8 @@ def test_a_peer_revision_to_equal_values_after_the_read_still_conflicts(
     ours = _db(profile_run, _TA, _TB)
     peer_rows = [(_S1, _TP, 100, _SPEC), (_TP, None, 100, _SPEC)]
     if not retried:
-        with pytest.raises(ExecutionFailure) as failed:
+        with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
             ours.transact(fn, retry=RetryPolicy(max_retries=0))
-        assert isinstance(failed.value.cause, ConflictError)
-        assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     else:
         ours.transact(fn)
         assert attempts == 2
@@ -482,9 +481,8 @@ def test_a_guard_holds_its_lock_until_commit_and_leaves_a_peers_token_standing(
         assert _log_rows(profile_run, entity) == [(_S1, _TP, 100, _SPEC), (_TP, None, 150, _SPEC)]
     else:
         (failure,) = peer_failures
-        assert isinstance(failure, ExecutionFailure)
-        assert isinstance(failure.cause, ConflictError)
-        assert failure.cause.code == OPTIMISTIC_LOCK_CONFLICT
+        assert isinstance(failure, ConflictError)
+        assert failure.code == OPTIMISTIC_LOCK_CONFLICT
         assert _log_rows(profile_run, entity) == [(_S1, _TA, 100, _SPEC), (_TA, None, 120, _SPEC)]
 
 
@@ -529,11 +527,9 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
     def fn(tx: TxnContext) -> None:
         _update(tx, _span_find(tx, entity, "typed", _MAR), "typed", {"amount": 100}, until=_OCT)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         ours.transact(fn, retry=RetryPolicy(max_retries=0))
     assert interleaving.failures == []
-    assert isinstance(failed.value.cause, ConflictError)
-    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     # Only the peer's revision stands: nothing this attempt wrote survives.
     rows = _span_rows(profile_run, entity)
     assert all(row[0] != _TA and row[1] != _TA for row in rows)

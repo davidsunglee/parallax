@@ -35,12 +35,12 @@ from parallax.core.base import DocumentValue, StructuredDocument, UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
+from parallax.core.execution import RetryPolicy
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import MISSING_TARGET
 from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -315,7 +315,7 @@ def test_an_insertion_authority_ends_with_its_attempt(ending: str) -> None:
     if ending == "commit":
         db.transact(insert)
     else:
-        with raises_contextualized(RuntimeError):
+        with pytest.raises(RuntimeError):
             db.transact(insert)
     later = opened.edit(name="Grace")
 
@@ -563,7 +563,7 @@ def test_an_insertion_source_whose_anchor_was_removed_fails_its_flush() -> None:
         _read_at(tx, _MAR)
         tx.amend(opened.edit(value=Decimal("150.00")))
 
-    with raises_contextualized(ConflictError, code=MISSING_TARGET):
+    with raises_code(ConflictError, MISSING_TARGET):
         _transact(port, fn)
     assert len(_writes(port)) == 2
     assert RollbackCall() in port.calls
@@ -630,8 +630,11 @@ def test_a_failed_removal_withholds_the_reinsertion_that_depends_on_it() -> None
         tx.terminate(first)
         tx.insert(_position("200.00"), valid_from=_JAN)
 
-    with raises_contextualized(Exception):
-        _transact(port, fn)
+    db = own_root(
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+    ).using_database_login()
+    with pytest.raises(ConflictError):
+        db.transact(fn, retry=RetryPolicy(max_retries=0))
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert", "delete"]
     assert RollbackCall() in port.calls
 
@@ -650,7 +653,7 @@ def test_a_failed_reinsertion_after_its_removal_rolls_the_attempt_back() -> None
         tx.terminate(first)
         tx.insert(_position("200.00"), valid_from=_JAN)
 
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         _transact(port, fn)
     assert RollbackCall() in port.calls
 
@@ -718,7 +721,7 @@ def test_an_opening_a_predicate_write_flushed_and_removed_in_part_refuses_a_rein
         _refused_as_a_repeat(lambda: tx.insert(_position("200.00"), valid_from=_JAN))
         raise _Abandoned
 
-    with raises_contextualized(_Abandoned):
+    with pytest.raises(_Abandoned):
         db_for(_PREDICATE_MODEL, port).transact(fn)
 
 
@@ -740,7 +743,7 @@ def test_a_removal_before_a_pending_reinsertion_never_counts_against_it() -> Non
         _refused_as_a_repeat(lambda: tx.insert(_position("300.00"), valid_from=_JAN))
         raise _Abandoned
 
-    with raises_contextualized(_Abandoned):
+    with pytest.raises(_Abandoned):
         db_for(_PREDICATE_MODEL, port).transact(fn)
 
 

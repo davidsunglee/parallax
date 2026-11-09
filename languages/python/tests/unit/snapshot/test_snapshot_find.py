@@ -130,7 +130,6 @@ from parallax.snapshot._handle import _database, _read
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
 from parallax.snapshot._publication._graph_view import GraphView
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ConnectsAsItself,
     Read,
@@ -1370,7 +1369,7 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
         ]
     )
     db = own_root(Database.connect(port, read_models.BALANCE_MODEL)).using_database_login()
-    with raises_contextualized(InternalError, code="snapshot-materialization-failed") as refusal:
+    with raises_code(InternalError, "snapshot-materialization-failed") as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
     assert isinstance(refusal.value.__cause__, ValueError)
 
@@ -2259,9 +2258,9 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
 
 def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None:
     # The accessor is reached inside a transaction adopted under B, so the
-    # failure escaping that transaction is contextualized under B — and the
-    # refusal it carries is still the one the result under A settled, with A's
-    # edition on it. Access itself starts no execution and adopts nothing.
+    # failure escaping that transaction is noted with B — and it is still the
+    # refusal the result under A settled, with A's edition on it. Access itself
+    # starts no execution and adopts nothing.
     a = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-a")
     b = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-b")
     serving = ServingModel(a)
@@ -2273,10 +2272,10 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
     serving.publish(b, expected=a)
 
-    with raises_contextualized(InvalidDataError) as failed:
+    with pytest.raises(InvalidDataError) as failed:
         db.transact(lambda tx: snapshot.result())
 
-    assert failed.edition == "ledger-b"
+    assert failed.value.__notes__ == ["raised in a transaction under model edition 'ledger-b'"]
     assert failed.value.edition == "ledger-a" == snapshot.edition
     (record,) = failed.value.invalid_data
     assert {issue.code for issue in record.issues} == {

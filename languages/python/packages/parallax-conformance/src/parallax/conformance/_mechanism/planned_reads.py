@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.sole_connection import ConnectsAsItself, body_outcome
-from parallax.conformance._mechanism.transaction_control import read_only, transact, underlying
+from parallax.conformance._mechanism.transaction_control import read_only, transact
 from parallax.conformance.case_format import TransactionKeywords, read_only_keywords
 from parallax.core.db_port import (
     AccessMode,
@@ -90,7 +90,7 @@ def planned_read(
             return source.wire.find(query)
 
         if transaction is None:
-            underlying(lambda: read(db))
+            read(db)
         elif access_mode == "read_only":
             read_only(db, read, **read_only_keywords(transaction, where="a read-only read"))
         else:

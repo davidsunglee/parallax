@@ -144,7 +144,6 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
 from parallax.core.execution import (
     AdaptiveBackoff,
-    ExecutionFailure,
     RetryPolicy,
     TxnOptions,
 )
@@ -179,7 +178,7 @@ from parallax.snapshot import (
     pin_of,
 )
 from tests._support.db_port import ConnectsAsItself, projected_row
-from tests._support.errors import raises_code
+from tests._support.errors import raises_code, retry_notes
 from tests._support.retry import TINY_BACKOFF
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
@@ -519,11 +518,9 @@ def test_only_a_read_in_the_writing_transaction_licenses_an_amendment(profile_ru
     _seed_customers(db)
     shown = db.find(Customer.where(Customer.id == 1)).result()
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, "write-evidence-unavailable"):
         amend_a_value_read_earlier(db, shown, "ada@example.net")
 
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == "write-evidence-unavailable"
     assert look_up_a_customer(db, 1).email == "ada@example.com"
 
     amend_after_reading_it_again(db, 1, "ada@example.net")
@@ -766,11 +763,10 @@ def test_registering_a_taken_id_fails_as_a_unique_violation(profile_run: Any) ->
     db = _shop(profile_run)
     register_a_customer(db, 5, "Barbara")
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         register_a_customer(db, 5, "Grace")
 
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert cause.category == "uniqueViolation"
     assert look_up_a_customer(db, 5).name == "Barbara"
 
@@ -841,11 +837,9 @@ def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> Non
     def delete_the_limit(tx: TxnContext) -> None:
         tx.delete(tx.find(CreditLimit.where(CreditLimit.customer_id == 1)).result())
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, WRITE_INSTRUCTION_INVALID) as refused:
         db.transact(delete_the_limit)
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == WRITE_INSTRUCTION_INVALID
-    assert "terminate" in str(refused.value.cause)
+    assert "terminate" in str(refused.value)
 
     withdraw_a_credit_limit(db, 1)
 
@@ -897,10 +891,8 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
     latest = Price.where(Price.sku == "TEA-2").as_of(valid_time=LATEST)
     assert db.find(latest).result_or_none() is None
     # A Bitemporal insert must say where it starts.
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, WRITE_INSTRUCTION_INVALID):
         db.transact(lambda tx: tx.insert(Price(sku="TEA-3", amount=Decimal("5.00"))))
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == WRITE_INSTRUCTION_INVALID
 
     change_a_price_from(db, "TEA-1", twelve, _APR)
     first_year = {
@@ -964,11 +956,9 @@ def test_a_value_read_at_a_past_transaction_time_cannot_be_corrected(profile_run
     change_a_price_from(db, "TEA-1", Decimal("12.00"), _APR)
     stored = _price_milestones(db, "TEA-1")
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, "transaction-time-pin-read-only"):
         correct_a_price_as_recorded_then(db, "TEA-1", Decimal("9.50"), _JAN, _APR, _T2)
 
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == "transaction-time-pin-read-only"
     assert _price_milestones(db, "TEA-1") == stored
 
 
@@ -997,10 +987,9 @@ def test_a_target_write_applies_only_at_the_revision_its_caller_states(profile_r
     order = db.find(Order.where(Order.id == 10)).result()
     assert (order.total, order.version) == (Decimal("140.00"), 2)
     # The same review, stated again, no longer matches the stored version.
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(WritePreconditionError) as refused:
         change_a_reviewed_total(db, reviewed, Decimal("130.00"))
-    assert isinstance(refused.value.cause, WritePreconditionError)
-    assert refused.value.cause.expected == 1
+    assert refused.value.expected == 1
     assert db.find(Order.where(Order.id == 10)).result().total == Decimal("140.00")
 
 
@@ -1012,10 +1001,9 @@ def test_a_temporal_target_write_states_the_milestone_start_it_saw(profile_run: 
     change_a_reviewed_limit(db, reviewed, Decimal("1500.00"))
 
     assert current_credit_limit(db, 1) == Decimal("1500.00")
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(WritePreconditionError) as refused:
         change_a_reviewed_limit(db, reviewed, Decimal("2000.00"))
-    assert isinstance(refused.value.cause, WritePreconditionError)
-    assert refused.value.cause.expected == _T1
+    assert refused.value.expected == _T1
     assert current_credit_limit(db, 1) == Decimal("1500.00")
 
 
@@ -1035,15 +1023,12 @@ def test_a_target_write_to_an_unversioned_entity_is_refused(profile_run: Any) ->
     db = _shop(profile_run)
     _seed_customers(db)
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, WRITE_INSTRUCTION_INVALID):
         db.transact(
             lambda tx: tx.amend_if(
                 Customer, Customer.email.set("ada@example.org"), key=1, version=1
             )
         )
-
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == WRITE_INSTRUCTION_INVALID
 
 
 def test_predicate_writes_run_at_the_call_and_answer_their_row_count(profile_run: Any) -> None:
@@ -1088,11 +1073,9 @@ def test_a_read_only_entity_is_read_but_never_written(profile_run: Any) -> None:
     profile_run.reset(model_of(SHOP_MODEL), {"Supplier": [{"id": 1, "name": "Leaf & Co"}]})
     db = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, "read-only-write-target"):
         rename_a_supplier(db, 1, "Leaf Ltd")
 
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == "read-only-write-target"
     assert db.find(Supplier.where(Supplier.id == 1)).result().name == "Leaf & Co"
 
 
@@ -1100,13 +1083,10 @@ def test_a_predicate_write_to_a_versioned_entity_is_refused(profile_run: Any) ->
     db = _shop(profile_run)
     _seed_customers(db)
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with raises_code(UsageError, "set-based-write-target-unsupported"):
         db.transact(
             lambda tx: tx.amend_where(Order.where(Order.all), Order.total.set(Decimal("0.00")))
         )
-
-    assert isinstance(refused.value.cause, UsageError)
-    assert refused.value.cause.code == "set-based-write-target-unsupported"
 
 
 def test_wire_writes_insert_from_json_and_amend_a_node_read_in_the_transaction(
@@ -1286,10 +1266,9 @@ def test_a_bitemporal_target_write_states_the_milestone_its_review_read(
         (Decimal("10.00"), _JAN, _APR, _T3, _OPEN),
         (Decimal("12.00"), _APR, _OPEN, _T3, _OPEN),
     }
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(WritePreconditionError) as refused:
         reprice_from_a_review(db, reviewed, Decimal("13.00"), _APR)
-    assert isinstance(refused.value.cause, WritePreconditionError)
-    assert refused.value.cause.expected == _T1
+    assert refused.value.expected == _T1
 
 
 def test_a_wire_target_write_states_the_milestone_an_earlier_wire_read_showed(
@@ -1302,9 +1281,8 @@ def test_a_wire_target_write_states_the_milestone_an_earlier_wire_read_showed(
     change_a_limit_shown_earlier(db, shown, "1500.00")
 
     assert current_credit_limit(db, 1) == Decimal("1500.00")
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(WritePreconditionError):
         change_a_limit_shown_earlier(db, shown, "2000.00")
-    assert isinstance(refused.value.cause, WritePreconditionError)
     assert current_credit_limit(db, 1) == Decimal("1500.00")
 
 
@@ -1383,7 +1361,7 @@ def test_a_helper_joins_its_callers_transaction_and_commits_with_it(profile_run:
 
     # Order 10 exists already, so the joined insert fails, and the customer the
     # outer callback inserted is rolled back with it.
-    with pytest.raises(ExecutionFailure):
+    with pytest.raises(DatabaseError):
         open_an_account(db, Customer(id=4, name="Barbara", email=None), _order(10, 4, "9.00"))
     assert db.find(Customer.where(Customer.id == 4)).result_or_none() is None
 
@@ -1397,15 +1375,13 @@ def test_a_caught_joined_failure_still_rolls_the_transaction_back(profile_run: A
     )
     assert look_up_a_customer(db, 3).name == "Edsger"
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(UsageError) as refused:
         open_an_account_even_if_the_order_fails(
             db, Customer(id=4, name="Barbara", email=None), _order(14, 4, "0.00")
         )
 
-    assert isinstance(refused.value.cause, UsageError)
-
-    assert refused.value.cause.code == TRANSACTION_ROLLBACK_ONLY
-    assert isinstance(refused.value.cause.__cause__, ValueError)
+    assert refused.value.code == TRANSACTION_ROLLBACK_ONLY
+    assert isinstance(refused.value.__cause__, ValueError)
     assert db.find(Customer.where(Customer.id == 4)).result_or_none() is None
 
 
@@ -1448,15 +1424,13 @@ def test_a_conflict_on_every_attempt_exhausts_ten_retries(profile_run: Any) -> N
         profile_run, lambda peer: add_to_an_order(peer, 10, Decimal("1.00")), every_attempt=True
     )
 
-    with pytest.raises(ExecutionFailure) as exhausted:
+    with pytest.raises(ConflictError) as exhausted:
         add_to_an_order(
             db.with_options(retry=RetryPolicy(backoff=TINY_BACKOFF)), 10, Decimal("20.00")
         )
 
-    assert isinstance(exhausted.value.cause, ConflictError)
-
-    assert exhausted.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
-    assert exhausted.value.cause.__notes__ == [
+    assert exhausted.value.code == OPTIMISTIC_LOCK_CONFLICT
+    assert retry_notes(exhausted.value) == [
         "bounded retry exhausted after 11 attempts (max_retries=10)"
     ]
     assert observer.attempts == ["ConflictError(optimistic-lock-conflict), retried"] * 11
@@ -1492,10 +1466,9 @@ def test_a_retried_target_write_fails_the_precondition_it_states_again(profile_r
     # The first attempt's write meets a row the peer changed after its
     # Serializable snapshot, which fails to serialize and is retried; the retry
     # states the same version, which no longer holds, and is not retried.
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(WritePreconditionError):
         change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("160.00"))
 
-    assert isinstance(refused.value.cause, WritePreconditionError)
     assert observer.attempts == [
         "DatabaseError(database-statement-failed), retried",
         "WritePreconditionError(write-precondition-failed), not retried",
@@ -1508,13 +1481,11 @@ def test_a_single_attempt_surfaces_the_conflict_unretried(profile_run: Any) -> N
     _seed_customers(_shop(profile_run))
     db, observer = _observed(profile_run, lambda peer: add_to_an_order(peer, 10, Decimal("5.00")))
 
-    with pytest.raises(ExecutionFailure) as conflicted:
+    with pytest.raises(ConflictError) as conflicted:
         add_to_an_order_once(db, 10, Decimal("20.00"))
 
-    assert isinstance(conflicted.value.cause, ConflictError)
-
-    assert conflicted.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
-    assert conflicted.value.cause.__notes__ == [
+    assert conflicted.value.code == OPTIMISTIC_LOCK_CONFLICT
+    assert retry_notes(conflicted.value) == [
         "bounded retry exhausted after 1 attempts (max_retries=0)"
     ]
     assert observer.attempts == ["ConflictError(optimistic-lock-conflict), retried"]
@@ -1552,10 +1523,9 @@ def test_a_tuned_scope_runs_its_transactions_under_the_policy_it_names(profile_r
 def test_a_join_must_name_the_options_its_transaction_resolved(profile_run: Any) -> None:
     db = _seed_customers_and_a_limit(profile_run)
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(UsageError):
         place_two_orders_together(db, _order(20, 1, "50.00"), _order(21, 1, "60.00"))
 
-    assert isinstance(refused.value.cause, UsageError)
     assert sorted(order.id for order in orders_of(db, 1)) == [10, 11]
 
     # The second check sees the first order, pending in the same transaction,
@@ -1688,12 +1658,12 @@ def _look_up_customer_one(db: ScopedDatabase) -> Customer:
 
 def _amend_a_customer_read_earlier(db: ScopedDatabase) -> None:
     shown = look_up_a_customer(db, 1)
-    with pytest.raises(ExecutionFailure):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         amend_a_value_read_earlier(db, shown, "ada@example.net")
 
 
 def _rename_supplier_one(db: ScopedDatabase) -> None:
-    with pytest.raises(ExecutionFailure):
+    with raises_code(UsageError, "read-only-write-target"):
         rename_a_supplier(db, 1, "Leaf Ltd")
 
 
@@ -1810,7 +1780,7 @@ def _correct_tea_from_january_to_april(db: ScopedDatabase) -> None:
 
 
 def _correct_tea_as_recorded_in_january(db: ScopedDatabase) -> None:
-    with pytest.raises(ExecutionFailure):
+    with raises_code(UsageError, "transaction-time-pin-read-only"):
         correct_a_price_as_recorded_then(db, "TEA-1", Decimal("9.50"), _JAN, _APR, _T2)
 
 
@@ -2145,32 +2115,26 @@ def test_cancelling_reviewed_orders_lets_any_other_failure_through() -> None:
     ).using_database_login()
     reviewed = db.find(Order.where(Order.id == 10)).results()
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(RuntimeError, match="the database refused the write"):
         cancel_reviewed_orders(db, reviewed)
-
-    assert not isinstance(failed.value.cause, WritePreconditionError)
 
 
 def test_a_caught_joined_failure_runs_through_the_shipped_surface() -> None:
     db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(UsageError) as refused:
         open_an_account_even_if_the_order_fails(
             db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "0.00")
         )
 
-    assert isinstance(refused.value.cause, UsageError)
-
-    assert refused.value.cause.code == TRANSACTION_ROLLBACK_ONLY
+    assert refused.value.code == TRANSACTION_ROLLBACK_ONLY
 
 
 def test_a_join_naming_another_level_runs_through_the_shipped_surface() -> None:
     db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(UsageError):
         place_two_orders_together(db, _order(13, 1, "50.00"), _order(14, 1, "60.00"))
-
-    assert isinstance(refused.value.cause, UsageError)
 
 
 def test_a_family_stored_per_subtype_runs_through_the_shipped_surface() -> None:

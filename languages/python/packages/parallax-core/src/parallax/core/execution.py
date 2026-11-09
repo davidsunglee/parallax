@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from parallax.core._execution._adoption import ExecutionFailure
 from parallax.core._execution._features import EXECUTION_FEATURE_DEFERRED
 from parallax.core._execution._keyed_writes import TRANSACTION_TIME_PIN_READ_ONLY
 from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions
@@ -41,7 +40,6 @@ __all__ = [
     "WRITE_VALUE_FOREIGN_LIFECYCLE",
     "WRITE_VALUE_NOT_STORED",
     "AdaptiveBackoff",
-    "ExecutionFailure",
     "KeyedWriteValueCode",
     "ModelSelection",
     "Principal",

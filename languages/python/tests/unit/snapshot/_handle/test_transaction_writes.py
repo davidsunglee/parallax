@@ -58,7 +58,6 @@ from parallax.core.unit_work import (
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -204,7 +203,7 @@ def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source(
             )
         )
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         db_for(CONTACT_MODEL, port).transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -247,7 +246,7 @@ def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete(grace())
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable") as refusal:
+    with raises_code(UsageError, "write-evidence-unavailable") as refusal:
         account_db(port).transact(fn)
     assert refusal.value.args[1].startswith(f"{mm.Account.identity.canonical} {{'id': 3}}: ")
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -271,7 +270,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
-    with raises_contextualized(ConflictError, code=STALE_WRITE, match="Account"):
+    with raises_code(ConflictError, STALE_WRITE, match="Account"):
         account_db(port).transact(fn, concurrency="locking")
     assert RollbackCall() in port.calls
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -294,7 +293,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.amend(fetched.edit(balance=Decimal("175.00")))
 
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT, match="Account"):
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic", retry=RetryPolicy(max_retries=0))
     assert RollbackCall() in port.calls
 
@@ -445,7 +444,7 @@ def test_a_bounded_insert_rejects_an_equal_or_reversed_window() -> None:
     port = ScriptedAdapter(Transact())
     db = db_for(MODELS["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    with raises_contextualized(UsageError, match="valid_from < until"):
+    with pytest.raises(UsageError, match="valid_from < until"):
         db.transact(lambda tx: tx.insert(branch, valid_from=same_instant, until=same_instant))
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -666,7 +665,7 @@ def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds(
         ).result()
         tx.amend(fetched.edit(), until=valid_from)
 
-    with raises_contextualized(UsageError, match="requires valid_from < until"):
+    with pytest.raises(UsageError, match="requires valid_from < until"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -692,7 +691,7 @@ def test_a_bounded_keyed_update_with_a_naive_until_raises_the_instant_refusal() 
     # The refusal's class and code are the pin against a `TypeError` leak: an
     # un-normalized comparison would escape as something else rather than
     # silently satisfy this block.
-    with raises_contextualized(UsageError, code="instant-invalid", match="naive datetime"):
+    with raises_code(UsageError, "instant-invalid", match="naive datetime"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -947,9 +946,7 @@ def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> No
         ).result()
         tx.amend(fetched.edit(value=Decimal("200.00")))
 
-    with raises_contextualized(
-        UsageError, code="write-instruction-invalid", match="read at Valid-Time LATEST"
-    ):
+    with raises_code(UsageError, "write-instruction-invalid", match="read at Valid-Time LATEST"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -966,7 +963,7 @@ def test_a_bounded_keyed_terminate_on_a_non_temporal_target_takes_no_until() -> 
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.terminate(fetched, until=FIXED)
 
-    with raises_contextualized(UsageError, match="takes no until"):
+    with pytest.raises(UsageError, match="takes no until"):
         account_db(port).transact(fn)
 
 
@@ -1005,7 +1002,7 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
         else:
             tx.insert(rate)
 
-    with raises_contextualized(UsageError, code="write-instruction-invalid", match=refusal):
+    with raises_code(UsageError, "write-instruction-invalid", match=refusal):
         database.using_database_login().transact(fn)
 
 
@@ -1027,7 +1024,7 @@ def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
         ).result()
         tx.amend(fetched.edit(value=Decimal("200.00")), until=valid_from)
 
-    with raises_contextualized(UsageError, match="requires valid_from < until"):
+    with pytest.raises(UsageError, match="requires valid_from < until"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -1044,7 +1041,7 @@ def test_a_bounded_keyed_terminate_rejects_a_reversed_window_bound() -> None:
         ).result()
         tx.terminate(fetched, until=until)
 
-    with raises_contextualized(UsageError, match="requires valid_from < until"):
+    with pytest.raises(UsageError, match="requires valid_from < until"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -1070,7 +1067,7 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
     def fn(tx: TxnContext) -> None:
         tx.terminate(mm.Balance(id=1, acct_num="A-1", value=Decimal("5.00")))
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         db.transact(fn, concurrency=cast("Any", concurrency))
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -1092,7 +1089,7 @@ def test_a_standalone_temporal_source_is_refused_under_either_preference(
     def fn(tx: TxnContext) -> None:
         tx.amend(node.edit(value=Decimal("9.00")))
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         db.transact(fn, concurrency=concurrency)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -1125,7 +1122,7 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
         tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
         tx.amend(mm.Balance(id=10, acct_num="Z", value=Decimal("1.00")).edit(value=Decimal("2.00")))
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         own_root(
             Database.connect(ScriptedAdapter(Transact()), BALANCE, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1250,7 +1247,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
         tx.amend(node.edit(value=Decimal("200.00")))
 
-    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
+    with pytest.raises(UsageError, match="transaction-time-pin-read-only"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -1272,7 +1269,7 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete(_Elsewhere(id=1))
 
-    with raises_contextualized(TypeError, match="_Elsewhere is not an Entity Class of this model"):
+    with pytest.raises(TypeError, match="_Elsewhere is not an Entity Class of this model"):
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1308,7 +1305,7 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
     # declares no `leftOnly`, so the substitution is named where it happened —
     # rather than reported downstream as the ABSENCE of the `rightOnly` this
     # model does declare.
-    with raises_contextualized(UsageError, code="entity-row-member-missing") as refusal:
+    with raises_code(UsageError, "entity-row-member-missing") as refusal:
         db_for(_TWIN_RIGHT, port).transact(fn)
     assert "'leftOnly'" in refusal.value.args[1]
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
@@ -1325,7 +1322,7 @@ def test_a_foreign_twins_row_refusal_precedes_a_window_its_target_does_not_admit
         def fn(tx: TxnContext) -> None:
             tx.insert(instance, valid_from=FIXED)
 
-        with raises_contextualized(UsageError) as refusal:
+        with pytest.raises(UsageError) as refusal:
             db_for(_TWIN_RIGHT, port).transact(fn)
         assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
         return refusal.value.code
@@ -1382,7 +1379,7 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
     def fn(tx: TxnContext) -> None:
         tx.amend(new_account().edit(balance=Decimal("9.00")))
 
-    with raises_contextualized(UsageError, code="write-value-not-stored") as refusal:
+    with raises_code(UsageError, "write-value-not-stored") as refusal:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1413,7 +1410,7 @@ def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: objec
             mm.Account.model_construct(id=key, owner="Ada", balance=Decimal("100.00"), version=1)
         )
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         account_db(ScriptedAdapter(Transact())).transact(fn)
 
 
@@ -1429,7 +1426,7 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
     def fn(tx: TxnContext) -> None:
         tx.insert(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
-    with raises_contextualized(UsageError, code="write-value-already-stored") as refusal:
+    with raises_code(UsageError, "write-value-already-stored") as refusal:
         account_db(port).transact(fn)
     assert "tx.amend(...)" in refusal.value.args[1]
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # refused before any DML
@@ -1448,7 +1445,7 @@ def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> Non
         tx.insert(fresh)
         tx.insert(fresh)
 
-    with raises_contextualized(UsageError, code="write-value-already-stored") as refusal:
+    with raises_code(UsageError, "write-value-already-stored") as refusal:
         account_db(port).transact(fn)
     assert refusal.value.args[1].startswith(f"{mm.Account.identity.canonical}: ")
     assert "already buffered an insert of" in refusal.value.args[1]
@@ -1466,7 +1463,7 @@ def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_
         tx.insert(mm.Person(id=9, name="Newton"))
         tx.insert(mm.Person(id=9, name="Grace"))
 
-    with raises_contextualized(UsageError, code="write-value-already-stored") as refusal:
+    with raises_code(UsageError, "write-value-already-stored") as refusal:
         db_for(PERSON, port).transact(fn)
     assert "tx.amend(inserted.edit(...))" in refusal.value.args[1]
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -1541,7 +1538,7 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
         tx.delete(fresh)
         tx.amend(fresh.edit(name="Grace"))
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         db_for(PERSON, port).transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -1613,7 +1610,7 @@ def test_an_insert_after_a_bounded_terminate_of_a_flushed_insert_is_still_refuse
         tx.terminate(fresh, until=until)
         tx.insert(fresh, valid_from=opened_from)
 
-    with raises_contextualized(UsageError, code="write-value-already-stored"):
+    with raises_code(UsageError, "write-value-already-stored"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1654,7 +1651,7 @@ def test_a_value_carrying_foreign_lifecycle_sources_state_is_refused_by_both_fam
         else:
             tx.amend(foreign.edit(balance=Decimal("175.00")))
 
-    with raises_contextualized(UsageError, code="write-value-foreign-lifecycle"):
+    with raises_code(UsageError, "write-value-foreign-lifecycle"):
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1678,7 +1675,7 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
         tx.insert(_TwinRight(id=1, right_only="x"))
         tx.amend(_RekeyedTwin(id_elsewhere=1, right_only="y").edit(right_only="z"))
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         db_for(_TWIN_RIGHT, port).transact(fn)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
@@ -1696,7 +1693,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
     def fn(tx: TxnContext) -> None:
         tx.amend(unkeyed)
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1729,7 +1726,7 @@ def test_a_read_outside_the_writing_transaction_is_still_this_source(second_hand
     port = ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
-    with raises_contextualized(UsageError, code="write-value-already-stored"):
+    with raises_code(UsageError, "write-value-already-stored"):
         writer.transact(lambda tx: tx.insert(node))
 
 
@@ -1745,7 +1742,7 @@ def test_an_unversioned_update_of_such_a_value_is_refused_for_its_evidence(
     port = ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable") as refusal:
+    with raises_code(UsageError, "write-evidence-unavailable") as refusal:
         writer.transact(lambda tx: tx.amend(node.edit(name="Grace")))
     assert " {'id': 1}: " in refusal.value.args[1]
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -1797,7 +1794,7 @@ def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
     def fn(tx: TxnContext) -> None:
         tx.terminate(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         db_for(BALANCE, port).transact(fn)
 
 

@@ -36,7 +36,6 @@ from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import AcquisitionReason, ConnectionAcquisitionError
 from parallax.core.execution import (
-    ExecutionFailure,
     ServingModel,
     prepare_model,
 )
@@ -45,8 +44,8 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, case_fixtures
+from tests._support.errors import raises_code
 
 _CASES = boundary_runner.reachable_boundary_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
@@ -109,25 +108,25 @@ def _assert_outcome(
             "the committed write must persist"
         )
     elif outcome == "aborted":
-        with raises_contextualized(BoundaryAbort):
+        with pytest.raises(BoundaryAbort):
             run()
         assert _persisted_amount(verify_db, target) == target.baseline, (
             "the withheld, force-flushed write must never persist"
         )
     elif outcome == "optimistic-lock-conflict":
-        with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
+        with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
             run()
     elif outcome == "option-conflict":
-        with raises_contextualized(UsageError, code="transaction-option-conflict"):
+        with raises_code(UsageError, "transaction-option-conflict"):
             run()
         assert _persisted_amount(verify_db, target) == target.baseline, (
             "a refused joining option dooms the boundary it tried to renegotiate"
         )
     elif outcome == "authority-mismatch":
-        with raises_contextualized(UsageError, code="transaction-authority-mismatch"):
+        with raises_code(UsageError, "transaction-authority-mismatch"):
             run()
     elif outcome == "access-mode-mismatch":
-        with raises_contextualized(UsageError, code="transaction-access-mode-mismatch") as refused:
+        with raises_code(UsageError, "transaction-access-mode-mismatch") as refused:
             run()
         assert refused.value.code == "transaction-access-mode-mismatch"
         assert _persisted_amount(verify_db, target) == target.baseline, (
@@ -142,23 +141,27 @@ def _assert_outcome(
         # connection never reached the database at all and surfaces the
         # acquisition failure itself, which is outside the `m-db-error`
         # categories by contract. Either way the attempt had adopted before it
-        # asked the boundary to begin, so the failure names the edition it ran
-        # under.
+        # asked the boundary to begin, so the failure is noted with the edition
+        # it ran under.
         if fault == "connection-acquisition-failure":
-            with raises_contextualized(ConnectionAcquisitionError) as unacquired:
+            with pytest.raises(ConnectionAcquisitionError) as unacquired:
                 run()
             assert unacquired.value.reason == "preparation_failed", case.case_id
-            assert unacquired.edition == engine.case_edition(case)
+            assert unacquired.value.__notes__ == [_edition_note(case)]
         else:
-            with raises_contextualized(DatabaseError) as unopened:
+            with pytest.raises(DatabaseError) as unopened:
                 run()
             assert unopened.value.category is None, (case.case_id, unopened.value)
-            assert unopened.edition == engine.case_edition(case)
+            assert unopened.value.__notes__ == [_edition_note(case)]
     else:
         category = _FAILURE_CATEGORY[outcome]
-        with raises_contextualized(DatabaseError) as excinfo:
+        with pytest.raises(DatabaseError) as excinfo:
             run()
         assert excinfo.value.category == category, (case.case_id, excinfo.value)
+
+
+def _edition_note(case: case_format.Case) -> str:
+    return f"raised in a transaction under model edition {engine.case_edition(case)!r}"
 
 
 def _persisted_amount(verify_db: ScopedDatabase, target: BoundaryTarget[Any]) -> Decimal:
@@ -376,9 +379,10 @@ def _returning(result: Decimal | None) -> Callable[[], Entity | None]:
     return lambda: cast("Entity | None", result)
 
 
-def _failing(cause: Exception, edition: str = _EDITION) -> Callable[[], Entity | None]:
+def _failing(failure: Exception, edition: str = _EDITION) -> Callable[[], Entity | None]:
     def run() -> Entity | None:
-        raise ExecutionFailure(edition, cause) from cause
+        failure.add_note(f"raised in a transaction under model edition {edition!r}")
+        raise failure
 
     return run
 
@@ -549,6 +553,8 @@ def test_assert_outcome_refuses_a_run_that_raised_nothing(outcome: str, fault: s
         ("deadlock", None),
     ],
 )
-def test_assert_outcome_refuses_a_failure_of_another_type(outcome: str, fault: str | None) -> None:
-    with pytest.raises(AssertionError, match="expected an ExecutionFailure caused by"):
+def test_assert_outcome_lets_a_failure_of_another_type_escape(
+    outcome: str, fault: str | None
+) -> None:
+    with pytest.raises(ValueError, match="another failure"):
         _grade(outcome, _failing(ValueError("another failure")), fault=fault)
