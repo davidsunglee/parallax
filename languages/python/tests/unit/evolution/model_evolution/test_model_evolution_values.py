@@ -27,7 +27,6 @@ from parallax.core.metamodel import (
 )
 from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
-    AsOfAxisAltered,
     AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
@@ -38,7 +37,6 @@ from parallax.evolution.model_evolution import (
     CoordinationRequirement,
     DeclarationCollection,
     DeclarationOrderChanged,
-    EndAttributeChanged,
     EntityAdded,
     EntityAltered,
     EntityRemoved,
@@ -68,7 +66,6 @@ _ORDER = identity("Order")
 _PAYMENT = identity("Payment")
 _SHIPMENT = identity("Shipment")
 _CARD = identity("Card")
-_LEDGER = identity("Ledger")
 _WIRE = identity("Wire")
 
 _ADDRESS = ValueObjectIdentity(_ORDER, ("address",))
@@ -108,15 +105,6 @@ def _one_of_every_kind() -> tuple[EvolutionOperation, ...]:
         RelationshipAltered(RelationshipIdentity(_ORDER, "altered"), ()),
         AsOfAxisAdded(_ORDER, TemporalDimension.VALID_TIME),
         AsOfAxisRemoved(_ORDER, TemporalDimension.TRANSACTION_TIME),
-        AsOfAxisAltered(
-            _LEDGER,
-            TemporalDimension.VALID_TIME,
-            (
-                EndAttributeChanged(
-                    AttributeIdentity(_LEDGER, "thru"), AttributeIdentity(_LEDGER, "until")
-                ),
-            ),
-        ),
         IndexAdded(IndexIdentity(_ORDER, "added")),
         IndexRemoved(IndexIdentity(_ORDER, "removed")),
         IndexAltered(IndexIdentity(_ORDER, "altered"), (UniquenessChanged(False, True),)),
@@ -130,9 +118,9 @@ def _one_of_every_kind() -> tuple[EvolutionOperation, ...]:
 
 
 def test_every_operation_kind_has_a_witness() -> None:
-    # The closed algebra is 24 cases wide, so a witness set that quietly shrinks
+    # The closed algebra is 23 cases wide, so a witness set that quietly shrinks
     # would leave the ordering law below graded over a subset of it.
-    assert len({type(operation) for operation in _one_of_every_kind()}) == 24
+    assert len({type(operation) for operation in _one_of_every_kind()}) == 23
 
 
 @pytest.mark.parametrize(

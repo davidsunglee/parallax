@@ -46,7 +46,6 @@ from parallax.core.metamodel import (
 
 __all__ = [
     "ABSENT",
-    "AS_OF_AXIS_DELTA_ORDER",
     "ATTRIBUTE_DELTA_ORDER",
     "BEHAVIORAL_IMPACT_ORDER",
     "CALLER_INPUT_ORDER",
@@ -60,8 +59,6 @@ __all__ = [
     "WRITES_DISABLED",
     "Absent",
     "AsOfAxisAdded",
-    "AsOfAxisAltered",
-    "AsOfAxisDelta",
     "AsOfAxisRemoved",
     "AttributeAdded",
     "AttributeAltered",
@@ -85,7 +82,6 @@ __all__ = [
     "DeletePropagation",
     "DeletePropagationChanged",
     "DependencyChanged",
-    "EndAttributeChanged",
     "EntityAdded",
     "EntityAltered",
     "EntityDelta",
@@ -122,7 +118,6 @@ __all__ = [
     "ScalarAdmissibility",
     "SelectionFacts",
     "SelectionScope",
-    "StartAttributeChanged",
     "StorageChanged",
     "StorageContainerChanged",
     "StorageLayoutChanged",
@@ -324,22 +319,6 @@ class OrderingChanged:
 
 
 @dataclass(frozen=True, slots=True)
-class StartAttributeChanged:
-    """The start Attribute of a surviving As-Of Axis."""
-
-    earlier: AttributeIdentity
-    later: AttributeIdentity
-
-
-@dataclass(frozen=True, slots=True)
-class EndAttributeChanged:
-    """The end Attribute of a surviving As-Of Axis."""
-
-    earlier: AttributeIdentity
-    later: AttributeIdentity
-
-
-@dataclass(frozen=True, slots=True)
 class ComponentsChanged:
     """The ordered components of a surviving authored Index.
 
@@ -382,7 +361,6 @@ type RelationshipDelta = (
     | DependencyChanged
     | OrderingChanged
 )
-type AsOfAxisDelta = StartAttributeChanged | EndAttributeChanged
 type IndexDelta = ComponentsChanged | UniquenessChanged
 
 ENTITY_DELTA_ORDER: Final[tuple[type, ...]] = (
@@ -419,7 +397,6 @@ RELATIONSHIP_DELTA_ORDER: Final[tuple[type, ...]] = (
     DependencyChanged,
     OrderingChanged,
 )
-AS_OF_AXIS_DELTA_ORDER: Final[tuple[type, ...]] = (StartAttributeChanged, EndAttributeChanged)
 INDEX_DELTA_ORDER: Final[tuple[type, ...]] = (ComponentsChanged, UniquenessChanged)
 
 
@@ -584,15 +561,6 @@ class AsOfAxisRemoved:
 
 
 @dataclass(frozen=True, slots=True)
-class AsOfAxisAltered:
-    """A surviving As-Of Axis whose endpoint Attributes differ."""
-
-    entity: EntityIdentity
-    dimension: TemporalDimension
-    deltas: tuple[AsOfAxisDelta, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class IndexAdded:
     """An authored secondary Index present only in the later endpoint."""
 
@@ -649,7 +617,6 @@ type EvolutionOperation = (
     | RelationshipAltered
     | AsOfAxisAdded
     | AsOfAxisRemoved
-    | AsOfAxisAltered
     | IndexAdded
     | IndexRemoved
     | IndexAltered
@@ -689,7 +656,7 @@ def _model_location(operation: EvolutionOperation) -> ModelLocation:
             | ValueObjectAttributeAltered()
         ):
             return ValueObjectAttributeLocation(operation.value_object_attribute)
-        case AsOfAxisAdded() | AsOfAxisRemoved() | AsOfAxisAltered():
+        case AsOfAxisAdded() | AsOfAxisRemoved():
             return AsOfAxisLocation(operation.entity, operation.dimension)
         case IndexAdded() | IndexRemoved() | IndexAltered():
             return IndexLocation(operation.index)

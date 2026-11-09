@@ -55,7 +55,6 @@ from parallax.core.metamodel import (
 from parallax.descriptor._type_spelling import format_type_spelling
 from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
-    AsOfAxisAltered,
     AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
@@ -361,13 +360,6 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
                 "kind": type(operation).__name__,
                 "entity": _entity(operation.entity),
                 "dimension": _DIMENSIONS[operation.dimension],
-            }
-        case AsOfAxisAltered():
-            return {
-                "kind": type(operation).__name__,
-                "entity": _entity(operation.entity),
-                "dimension": _DIMENSIONS[operation.dimension],
-                "deltas": [_delta(delta) for delta in operation.deltas],
             }
         case IndexAdded() | IndexRemoved() | IndexAltered():
             return _subject_operation(operation, "index", _index(operation.index))

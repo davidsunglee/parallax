@@ -46,6 +46,7 @@ from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisRemoved,
     AttributeAdded,
+    AttributeAltered,
     AttributeRemoved,
     BehavioralImpact,
     ConcreteSubtypeAdded,
@@ -666,3 +667,54 @@ def test_an_axis_behind_a_surrendered_write_handle_is_no_cause_of_it() -> None:
     (bond,) = [impact for impact in _of(evolution, WriteCapabilityChanged) if impact.scope == _BOND]
     assert bond.later == WritesEnabled(EntityWriteShape.TRANSACTION_TIME_ONLY)
     assert bond.caused_by == (added,)
+
+
+def _note_beside_an_arrival(*, sealed: bool, dated: bool) -> Metamodel:
+    """An `Archive` whose note is read-only or not, beside an `Arrival` that
+    holds Transaction Time or not."""
+    note = attribute(_ARCHIVE, "note", type=STRING)
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ARCHIVE,
+                container=Table("archive"),
+                attributes=(key(_ARCHIVE), dataclasses.replace(note, read_only=sealed)),
+            ),
+            Declaration(
+                identity=_ARRIVAL,
+                container=Table("arrival"),
+                attributes=(
+                    key(_ARRIVAL),
+                    *((instant(_ARRIVAL, "txStart"), instant(_ARRIVAL, "txEnd")) if dated else ()),
+                ),
+                as_of_axes=(_ARRIVAL_AXIS,) if dated else (),
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize("gains_the_axis", [True, False], ids=["gained", "lost"])
+def test_an_axis_on_another_entity_is_no_cause_of_a_member_input_change(
+    gains_the_axis: bool,
+) -> None:
+    # An axis moves what a caller may supply only for its own endpoints, so an
+    # axis arriving at or leaving another Entity in the same evolution is no
+    # cause of a member's input capability moving: its own alteration is.
+    evolution = evolve(
+        _note_beside_an_arrival(sealed=False, dated=not gains_the_axis),
+        _note_beside_an_arrival(sealed=True, dated=gains_the_axis),
+    )
+    note = AttributeIdentity(_ARCHIVE, "note")
+    (axis,) = [
+        operation
+        for operation in evolution.operations
+        if isinstance(operation, AsOfAxisAdded | AsOfAxisRemoved)
+    ]
+    assert type(axis) is (AsOfAxisAdded if gains_the_axis else AsOfAxisRemoved)
+    (altered,) = [
+        operation
+        for operation in evolution.operations
+        if isinstance(operation, AttributeAltered) and operation.attribute == note
+    ]
+    (write,) = [impact for impact in _of(evolution, WriteCapabilityChanged) if impact.scope == note]
+    assert write.caused_by == (altered,)

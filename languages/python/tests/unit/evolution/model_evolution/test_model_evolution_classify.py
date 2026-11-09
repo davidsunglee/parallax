@@ -50,7 +50,6 @@ from parallax.core.metamodel import (
 )
 from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
-    AsOfAxisAltered,
     AsOfAxisRemoved,
     AttributeAltered,
     ConcreteSubtypeAdded,
@@ -986,6 +985,6 @@ def _axis_operation(evolution: Evolution) -> EvolutionOperation:
     (operation,) = [
         candidate
         for candidate in evolution.operations
-        if isinstance(candidate, AsOfAxisAdded | AsOfAxisAltered | AsOfAxisRemoved)
+        if isinstance(candidate, AsOfAxisAdded | AsOfAxisRemoved)
     ]
     return operation

@@ -6,14 +6,12 @@ implementation is measured against, so these tests read the enums back out of th
 schema and require each name to appear in some case's `then.evolution`, together
 with both directions of the boundaries the specification calls directional.
 
-Three names are exempt, and ADR 0063's portable-proof obligation is written to
-admit exactly them: it covers every name a pair of model descriptors can
-express, while a name only an accepted Metamodel can produce is witnessed by the
-implementation's own suite and proved unreachable here rather than asserted. The
-proof reads the descriptor language itself — the closed temporal vocabulary
-`m-descriptor.md` fixes and the corpus's own rejection fixtures — rather than
-the models the evolution cases happen to name, so a language that grew a way to
-spell a disagreeing endpoint would fail it.
+An As-Of Axis has no alteration (`m-model-evolution`), and the corpus proves
+that rule rather than asserting it. The proof reads the descriptor language
+itself — the closed temporal vocabulary `m-descriptor.md` fixes and the corpus's
+own rejection fixtures — rather than the models the evolution cases happen to
+name, so a language that grew a way to spell a disagreeing endpoint would fail
+it.
 
 The property is the CORPUS's, not one implementation's, which is why it lives in
 the harness: it fails when a name is added to the vocabulary and no case is
@@ -50,21 +48,6 @@ _DESCRIPTOR_SPEC = _REPO_ROOT / "core" / "spec" / "m-descriptor.md"
 # Temporal Dimension derives.
 _PROFILE_TABLE_HEADER = "| Profile | Derived As-Of Axes |"
 _ENDPOINT_TABLE_HEADER = "| Dimension | Start Attribute / column | End Attribute / column |"
-
-# A surviving As-Of Axis cannot report changed endpoints from any descriptor
-# pair: a descriptor spells one Temporality Profile out of a closed vocabulary
-# and the profile derives each axis's endpoint Attributes from its dimension
-# alone, so two descriptors agreeing on (Entity, Temporal Dimension) agree on
-# the endpoints too. The vocabulary keeps the names because an accepted
-# Metamodel reaching `m-metamodel` directly may carry other endpoints, and ADR
-# 0063 names this exemption where it states the portable-proof obligation: such
-# a name is witnessed by the implementation's own suite, and the corpus proves
-# it unreachable. The three tests below are that proof — the temporal alphabet
-# is the language's own, one endpoint pair is derived per dimension across every
-# descriptor the language spells, and an authored endpoint is rejected.
-_UNREACHABLE_FROM_A_DESCRIPTOR: Final[frozenset[str]] = frozenset(
-    {"AsOfAxisAltered", "StartAttributeChanged", "EndAttributeChanged"}
-)
 
 
 def _schema_enum(name: str) -> frozenset[str]:
@@ -179,14 +162,12 @@ def test_the_corpus_has_evolution_cases() -> None:
 
 def test_every_evolution_operation_kind_has_a_witness() -> None:
     witnessed = {str(operation.get("kind")) for operation in _operations()}
-    expected = _schema_enum("evolutionOperationKind") - _UNREACHABLE_FROM_A_DESCRIPTOR
-    assert expected - witnessed == set()
+    assert _schema_enum("evolutionOperationKind") - witnessed == set()
 
 
 def test_every_field_delta_kind_has_a_witness() -> None:
     witnessed = {str(delta.get("kind")) for delta in _deltas()}
-    expected = _schema_enum("evolutionFieldDeltaKind") - _UNREACHABLE_FROM_A_DESCRIPTOR
-    assert expected - witnessed == set()
+    assert _schema_enum("evolutionFieldDeltaKind") - witnessed == set()
 
 
 def test_every_physical_operation_kind_has_a_witness() -> None:
@@ -316,7 +297,8 @@ def test_a_member_addition_is_witnessed_unilateral_and_coordinated(kind: str) ->
 
 
 def test_the_temporal_alphabet_is_the_one_the_descriptor_language_spells() -> None:
-    # First half of the exemption's proof, and what makes the second half
+    # A surviving As-Of Axis cannot report changed endpoints from any descriptor
+    # pair, and three tests prove it. This first one is what makes the second
     # exhaustive rather than a sample: `m-descriptor.md` fixes the closed
     # profile vocabulary and the normative dimension-to-endpoint table, so both
     # are read back out of the specification. A profile or endpoint the language
@@ -326,12 +308,11 @@ def test_the_temporal_alphabet_is_the_one_the_descriptor_language_spells() -> No
 
 
 def test_no_two_descriptors_can_disagree_on_a_surviving_axis_endpoint() -> None:
-    # Second half: every axis any pair of descriptors can put at one position,
-    # derived from every profile the language spells and from definitions
-    # differing in everything else a descriptor may carry. One endpoint pair per
-    # Temporal Dimension means two descriptors agreeing on (Entity, Temporal
-    # Dimension) agree on the endpoints too, so `AsOfAxisAltered` and its two
-    # deltas have no descriptor pair that can emit them.
+    # Every axis any pair of descriptors can put at one position, derived from
+    # every profile the language spells and from definitions differing in
+    # everything else a descriptor may carry. One endpoint pair per Temporal
+    # Dimension means two descriptors agreeing on (Entity, Temporal Dimension)
+    # agree on the endpoints too.
     spelled = _spelled_endpoints()
     derived: dict[str, set[tuple[Endpoint, Endpoint]]] = {}
     for definition in _every_definition_the_language_spells():
