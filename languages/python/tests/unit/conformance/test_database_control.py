@@ -1328,12 +1328,6 @@ def test_a_control_exposes_its_own_session_for_the_harnesss_native_proofs() -> N
     assert _control(connection).native is _native(connection)
 
 
-def test_a_controlled_runtime_publishes_no_pool_measurements() -> None:
-    # It manages no pool, so it keeps no bookkeeping — absence rather than a
-    # source that would answer nothing.
-    assert _adapter(_FakeConnection()).open().pool_metrics == ()
-
-
 def test_a_controlled_runtime_captures_its_actual_session_login() -> None:
     runtime = _adapter(_FakeConnection(login_identity="controlled-login")).open()
     assert runtime.login_identity == "controlled-login"

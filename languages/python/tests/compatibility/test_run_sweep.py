@@ -13,6 +13,7 @@ gated; a skip is reported, never silent.
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -269,6 +270,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
+    assert json.loads(json.dumps(envelope)) == envelope
     # The envelope names the profile this lane declares and reports the dialect the
     # container's own adapter executed in — the same key the goldens below resolve.
     assert envelope["profile"] == profile.name
@@ -1133,9 +1135,10 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
         )
         for entry in then["statements"]
     ]
-    for emission, (golden_sql, golden_binds) in zip(
-        envelope["emissions"], golden_trigger, strict=True
+    for index, (emission, (golden_sql, golden_binds)) in enumerate(
+        zip(envelope["emissions"], golden_trigger, strict=True)
     ):
+        assert emission["casePointer"] == f"/then/statements/{index}", (case.case_id, emission)
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert emission["binds"] == golden_binds, (case.case_id, emission)
 

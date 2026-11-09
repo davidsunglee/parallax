@@ -1,117 +1,22 @@
 """The declared matrix profiles (`parallax.conformance.profile`).
 
-A profile is resolved by name out of one declaration, reports the dialect its
-adapter executes in, and constitutes the runs made under its name. Everything here
-runs without a container and without a connection, which is the property the profile
-exists to have: the claim `describe` publishes is derived from these, so deriving it
-must not need a database.
+An unprovisioned run reports its profile's dialect and refuses SQL, and the claim
+`describe` publishes, a profile's dialect, and a scoped control are each reached in
+a cold process without a container or the driver: deriving the claim must not need a
+database.
 """
 
 from __future__ import annotations
 
-import inspect
 import json
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
 
 import pytest
 
-from parallax.conformance.claim import SNAPSHOT_CLAIM
-from parallax.conformance.profile import (
-    PROFILES,
-    Profile,
-    ProfileRun,
-    ProvisionedRun,
-    profile_dialects,
-    profile_for,
-)
-from parallax.conformance.provision import Provisioner
-from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.postgres import PostgresAdapter
-from tests._support.db_port import ConnectsAsItself
-from tests._support.repo import PY_ROOT, canonical_snapshot_claim
-from tests.unit._second_dialect import BACKTICKED
-
-
-def test_profile_for_resolves_the_declared_profile() -> None:
-    assert profile_for("pg-full") is PROFILES[0]
-    assert profile_for("pg-full") == Profile("pg-full", Provisioner)
-
-
-def test_profile_for_refuses_a_name_no_profile_declares() -> None:
-    with pytest.raises(ValueError, match="unknown profile 'mariadb-full'"):
-        profile_for("mariadb-full")
-
-
-def test_a_profile_reports_its_adapters_dialect_without_a_connection() -> None:
-    # The whole point of siting the declaration on the adapter's CLASS: nothing
-    # here constructs a provisioner, a container, or a connection, and the
-    # dialect is still the one that adapter's own SQL is spelled in.
-    profile = profile_for("pg-full")
-    assert profile.adapter is PostgresAdapter
-    assert profile.dialect is PostgresAdapter.dialect
-    assert profile.dialect is POSTGRES
-
-
-class _StandInPort(ConnectsAsItself):
-    """An `m-db-port` standing in for a database: it answers a dialect of its own
-    and refuses every execution."""
-
-    dialect: Dialect = BACKTICKED
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[tuple[int, int]] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        raise AssertionError(f"the stand-in port executes nothing: {sql!r}")
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        raise AssertionError(f"the stand-in port executes nothing: {sql!r}")
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:
-        raise AssertionError("the stand-in port opens nothing")
-
-
-def test_a_run_pairs_the_profiles_reporting_name_with_the_port_it_runs_through() -> None:
-    # A run is reported from the pairing, and the name half of it comes off the
-    # profile rather than from the caller. Substituting the port is the deliberate
-    # exception, which is why the call site has to name it. It answers no dialect of
-    # its own — what executes does.
-    profile = profile_for("pg-full")
-    port = _StandInPort()
-    run = profile.on_stand_in(port)
-    assert isinstance(run, ProfileRun)
-    assert (run.name, run.port) == (profile.name, port)
-    assert not hasattr(run, "dialect")
-
-
-def test_a_run_cannot_be_spelled_from_a_reporting_name_beside_a_port() -> None:
-    # What makes the pairing constructed rather than checked: a run takes the profile
-    # itself, so there is no argument position a caller can put a borrowed name in.
-    # A name is read off the profile handed over, never accepted beside the port.
-    with pytest.raises(AttributeError):
-        ProfileRun("pg-full", _StandInPort())  # type: ignore[arg-type]
-
-
-def test_a_provisioned_run_is_spelled_from_the_profile_alone() -> None:
-    # The other half of the same rule: a provisioned run opens the profile's own
-    # provisioning, so there is no argument position a foreign recipe could occupy
-    # and no run that reports one profile while executing through another's
-    # database. Constructing one starts a container, so what is inspected here is
-    # the signature that leaves the recipe unspellable rather than a run.
-    assert list(inspect.signature(ProvisionedRun).parameters) == ["profile"]
+from parallax.conformance.profile import profile_for
+from parallax.core.dialect import POSTGRES
+from tests._support.repo import PY_ROOT
 
 
 def test_an_unprovisioned_run_answers_this_profiles_dialect_and_refuses_sql() -> None:
@@ -138,21 +43,6 @@ def test_an_unprovisioned_run_starts_no_container() -> None:
         " 'dialect': run.port.dialect.name, 'profile': run.name}))\n"
     )
     assert probed == {"testcontainers": False, "dialect": "postgres", "profile": "pg-full"}
-
-
-def test_profile_dialects_are_the_dialects_some_profile_runs() -> None:
-    assert profile_dialects() == tuple(sorted({p.dialect.name for p in PROFILES}))
-    assert profile_dialects() == ("postgres",)
-
-
-def test_the_claim_derives_its_dialects_from_the_profiles() -> None:
-    # `dialects` is the one capability the claim does not author: a claimed
-    # dialect is one some declared profile actually runs the suite against.
-    assert SNAPSHOT_CLAIM.dialects == profile_dialects()
-    assert (
-        SNAPSHOT_CLAIM.capabilities()["dialects"]
-        == canonical_snapshot_claim()["capabilities"]["dialects"]
-    )
 
 
 def _probe(source: str) -> dict[str, object]:

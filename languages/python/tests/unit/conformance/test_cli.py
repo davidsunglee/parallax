@@ -95,6 +95,7 @@ def test_unreadable_case_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     )
     assert code == 2
     validate_adapter_envelope(envelope)
+    assert envelope["status"] == "error"
     assert envelope["diagnostics"][0]["code"] == "unreadable-case"
 
 
