@@ -658,6 +658,26 @@ def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
     assert child.sql.endswith(f"where t0.order_id {membership}")
 
 
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_a_template_refuses_a_table_name_carrying_the_expanding_placeholder(
+    dialect: Dialect,
+) -> None:
+    meta = _orders_with_item_table(f"item{EXPANDING_PLACEHOLDER}")
+    entity = target(meta, "OrderItem")
+    root = read_planning.PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        position=read_position(meta, entity),
+        predicate=resolved_as_stated(ResolvedConstant(True), meta, entity),
+        projection=read_planning.ResolvedReadProjection((), False),
+    )
+
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
+        sql_compile.compile_template(root, meta, dialect)
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
+        _child_template(dialect, meta)
+
+
 def _two_key_sets(members: tuple[str, str]) -> read_planning.PlannedEntityQuery:
     entity = target(ORDERS, "OrderItem")
     first, second = (entity.attribute(name) for name in members)

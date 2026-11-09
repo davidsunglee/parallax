@@ -351,6 +351,10 @@ def _template(compiled: CompiledRead) -> CompiledTemplate:
         for index in group.indices
     )
     parts = tuple(statement.sql.split(EXPANDING_PLACEHOLDER))
+    if len(parts) - 1 != len(expanding):
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a template's expanding placeholders disagree with its positions"
+        )
     if not expanding:
         return CompiledTemplate(compiled, positions)
     return CompiledTemplate(compiled, positions, parts, tuple(number for _, number in expanding))
