@@ -93,6 +93,7 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import formed, records
 
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
@@ -1092,7 +1093,9 @@ def test_literal_comparison_over_a_value_object_field() -> None:
 def test_literal_nodes_reject_none_at_construction(
     constructor: Callable[[], PredicateNode],
 ) -> None:
-    with pytest.raises(ValueError, match=r"\.is_null\(\).+\.is_not_null\(\)"):
+    with raises_code(
+        UsageError, "query-expression-invalid", match=r"\.is_null\(\).+\.is_not_null\(\)"
+    ):
         constructor()
 
 

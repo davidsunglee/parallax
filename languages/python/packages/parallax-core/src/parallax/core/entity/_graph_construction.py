@@ -14,13 +14,18 @@ from typing import Protocol, cast
 
 from pydantic import BaseModel
 
+from parallax.core.base import InternalError
 from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
     WireNames,
     shape_of,
     wire_names_of,
 )
-from parallax.core.entity._errors import GraphConstructionError
+from parallax.core.entity._errors import (
+    ENTITY_GRAPH_INVALID_ENTITY,
+    ENTITY_GRAPH_INVALID_MEMBER,
+    ENTITY_GRAPH_LAYOUT_MISMATCH,
+)
 from parallax.core.entity._instance_state import PublicationPlan, plan_of
 from parallax.core.entity._instance_state import relationship as relationship_state
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -28,7 +33,6 @@ from parallax.core.entity._model import ClassIndex
 from parallax.core.entity._row_fill import EntityFacts, OccurrenceFacts, publish_graph
 from parallax.core.metamodel import (
     EntityIdentity,
-    MemberIdentity,
     OccurrenceMetadata,
     RelationshipIdentity,
 )
@@ -69,12 +73,9 @@ def _entity_facts(
 ) -> EntityFacts:
     cls = classes.class_of(identity)
     if cls is None:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-entity",
-            message=(
-                f"{identity.canonical} is not an Entity this Domain Model composed a class for"
-            ),
-            identity=identity,
+        raise InternalError(
+            ENTITY_GRAPH_INVALID_ENTITY,
+            f"{identity.canonical} is not an Entity this Domain Model composed a class for",
         )
     layout = cataloged.layouts.entity(identity)
     plan = plan_of(cls)
@@ -163,13 +164,12 @@ def _require_member_correspondence(
             layout.concrete,
             f"the model lays out members {row} and the class is laid out as {plan.py_names}",
         )
-    for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count):
+    for position, _ in enumerate(layout.occurrences, start=layout.attribute_count):
         if plan.occurrences.get(position + 1) is None:
             raise _correspondence_refusal(
                 layout.concrete,
                 f"the model calls member {position} ({plan.py_names[position]!r}) a Value "
                 "Object occurrence, and the class holds None at that position",
-                identity=occurrence.identity,
             )
 
 
@@ -200,7 +200,6 @@ def _require_declared_member_correspondence(
                 layout.concrete,
                 f"the model declares member {position} ({py_name!r}) as {declared} "
                 f"and the class declares it as {carried}",
-                identity=declared.identity,
             )
 
 
@@ -237,7 +236,6 @@ def _require_relationship_correspondence(
                 layout.concrete,
                 f"the model lays out relationship {position} ({py_name!r}) as "
                 f"{direction} and the class navigates {carried} there",
-                identity=direction,
             )
 
 
@@ -262,7 +260,6 @@ def _proven_occurrence(
         raise _correspondence_refusal(
             concrete,
             f"{path} lays out members {row} and {vo_class.__name__} is laid out as {plan.py_names}",
-            identity=declared.identity,
         )
     nested: list[OccurrenceFacts] = []
     for position, occurrence in enumerate(declared.value_objects, start=len(declared.attributes)):
@@ -273,7 +270,6 @@ def _proven_occurrence(
                 concrete,
                 f"{path} calls member {position} ({py_name!r}) a nested occurrence, and "
                 f"{vo_class.__name__} holds None there",
-                identity=occurrence.identity,
             )
         nested.append(
             _proven_occurrence(concrete, occurrence, nested_class, path=f"{path}.{py_name}")
@@ -281,20 +277,12 @@ def _proven_occurrence(
     return OccurrenceFacts(declared, vo_class, plan, tuple(nested))
 
 
-def _correspondence_refusal(
-    concrete: EntityIdentity,
-    detail: str,
-    *,
-    identity: EntityIdentity | MemberIdentity | RelationshipIdentity | None = None,
-) -> GraphConstructionError:
+def _correspondence_refusal(concrete: EntityIdentity, detail: str) -> InternalError:
     """The one refusal every correspondence disagreement earns, naming both sides."""
-    return GraphConstructionError(
-        code="entity-graph-layout-mismatch",
-        message=(
-            f"the class composed for {concrete.canonical} is not laid out the way this "
-            f"model lays it out, so no positional row addresses it: {detail}"
-        ),
-        identity=concrete if identity is None else identity,
+    return InternalError(
+        ENTITY_GRAPH_LAYOUT_MISMATCH,
+        f"the class composed for {concrete.canonical} is not laid out the way this model lays "
+        f"it out, so no positional row addresses it: {detail}",
     )
 
 
@@ -327,7 +315,7 @@ class EntityGraphConstruction:
 
     def __init__(self, cataloged: CatalogedModel, classes: ClassIndex) -> None:
         """Derive every Entity's construction facts, or raise
-        :class:`GraphConstructionError`."""
+        :class:`~parallax.core.base.InternalError`."""
         self._cataloged = cataloged
         self._classes = classes
         self._facts: Mapping[EntityIdentity, EntityFacts] = MappingProxyType(
@@ -387,12 +375,9 @@ class EntityGraphConstruction:
         not declare."""
         facts = self._facts.get(entity)
         if facts is None:
-            raise GraphConstructionError(
-                code="entity-graph-invalid-entity",
-                message=(
-                    f"{entity.canonical} is not an Entity this Domain Model composed a class for"
-                ),
-                identity=entity,
+            raise InternalError(
+                ENTITY_GRAPH_INVALID_ENTITY,
+                f"{entity.canonical} is not an Entity this Domain Model composed a class for",
             )
         return facts
 
@@ -411,13 +396,10 @@ def relationship_value_of(instance: object, relationship: RelationshipIdentity) 
     """
     py_name = wire_names_of(type(instance)).relationship_py.get(relationship.name)
     if py_name is None:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-member",
-            message=(
-                f"{type(instance).__name__} declares no relationship "
-                f"{relationship.name!r} in its family"
-            ),
-            identity=relationship,
+        raise InternalError(
+            ENTITY_GRAPH_INVALID_MEMBER,
+            f"{type(instance).__name__} declares no relationship "
+            f"{relationship.name!r} in its family",
         )
     return relationship_state(cast("BaseModel", instance), py_name)
 

@@ -56,13 +56,7 @@ from parallax.conformance.vo_models import (
     CustomerPhone,
     Supplier,
 )
-from parallax.core import (
-    DomainModel,
-    Entity,
-    ObjectQuery,
-    Predicate,
-    QueryDefinitionError,
-)
+from parallax.core import DomainModel, Entity, ObjectQuery, Predicate
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import UsageError
 from parallax.core.entity._authored_resolver import object_query_node
@@ -73,6 +67,7 @@ from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document
+from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_document, typed_resolved
 
 # case id -> the idiomatic query that must canonicalize to the case's own document.
@@ -326,7 +321,7 @@ def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) 
 @pytest.mark.parametrize("case_id", sorted(_UNFINISHED))
 def test_a_model_without_entity_classes_refuses_an_unfinished_path(case_id: str) -> None:
     model = _DESCRIPTOR_MODELS[Path(corpus_case(case_id).model).stem]
-    with pytest.raises(QueryDefinitionError, match="through Wire instead"):
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         typed_resolved(BUILDERS[case_id](), model)
 
 
@@ -413,9 +408,8 @@ def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str)
         "neutral-literal-type-mismatch",
         "string-predicate-non-string-member",
     }
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-expression-invalid"):
         AUTHORING_REJECTIONS[case_id]()
-    assert caught.value.code == "query-expression-invalid"
 
 
 @pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))
@@ -440,6 +434,5 @@ def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> 
         "parallax.compatibility.Dog",
         "parallax.compatibility.Dog",
     ]
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-path-invalid"):
         sm.Animal.is_a(sm.Dog, sm.Dog)
-    assert caught.value.code == "query-path-invalid"

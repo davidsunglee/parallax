@@ -30,7 +30,7 @@ from typing import Final
 
 import pytest
 
-from parallax.core.base import InstantError, UsageError
+from parallax.core.base import UsageError
 from parallax.core.unit_work import (
     WriteEvidenceError,
     WritePreconditionError,
@@ -713,7 +713,7 @@ _TARGET_RULES: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         TargetWriteScenario(_POSITION, "terminate", valid_from="naive"),
-        _both(_refused(InstantError, _NAIVE)),
+        _both(_refused(UsageError, _NAIVE, code="instant-invalid")),
     ),
 )
 
@@ -794,8 +794,9 @@ _REVISION: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_BALANCE, "amend", revision="ill_typed"),
         _both(
             _refused(
-                InstantError,
+                UsageError,
                 "Balance: 'amend' takes an aware datetime for tx_start, and str is no `timestamp`",
+                code="instant-invalid",
             )
         ),
     ),

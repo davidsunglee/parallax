@@ -38,6 +38,7 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
+    InternalError,
     Rel,
     TablePerHierarchy,
     TxTemporal,
@@ -46,7 +47,6 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument
 from parallax.core.db_port import Row
-from parallax.core.entity import GraphConstructionError
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -1252,10 +1252,10 @@ def test_a_loaded_view_naming_a_direction_the_concrete_lacks_is_refused() -> Non
     with pytest.raises(SnapshotMaterializationError) as refusal:
         fixture.materialize(order)
     cause = refusal.value.cause
-    assert isinstance(cause, GraphConstructionError)
+    assert isinstance(cause, InternalError)
     assert cause.code == "entity-graph-invalid-member"
-    assert cause.index == 0
-    assert cause.identity == RelationshipIdentity(_ORDER_IDENTITY, "zzz")
+    assert cause.args[1].startswith("node 0: ")
+    assert repr(RelationshipIdentity(_ORDER_IDENTITY, "zzz")) in cause.args[1]
 
 
 def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refused() -> None:
@@ -1271,10 +1271,10 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
     with pytest.raises(SnapshotMaterializationError) as refusal:
         fixture.materialize(order)
     cause = refusal.value.cause
-    assert isinstance(cause, GraphConstructionError)
+    assert isinstance(cause, InternalError)
     assert cause.code == "entity-graph-invalid-member"
-    assert cause.index == 0
-    assert cause.identity == foreign
+    assert cause.args[1].startswith("node 0: ")
+    assert repr(foreign) in cause.args[1]
 
 
 def test_a_root_outside_the_page_is_refused_at_sealing() -> None:

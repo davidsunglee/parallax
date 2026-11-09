@@ -1,6 +1,6 @@
 """An Entity value read as a Typed write's source: the members it populated,
 the key it names its object by, and what its edit chain touched, each answered
-in the resolved Entity's member order, and the two closed ``EntityRowError``
+in the resolved Entity's member order, and the two closed ``EntityRowCode``
 codes.
 
 Whether an authored value changed anything is not asked here: that is the
@@ -16,21 +16,22 @@ import datetime as dt
 import uuid
 from collections.abc import Iterator
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, get_args
 
 import pytest
 from pydantic import TypeAdapter
 
 from parallax.conformance import read_models as rm
-from parallax.core import Attr, Entity, ValueObject, attr
-from parallax.core.entity import DomainModel, EntityDefinitionError
+from parallax.core import Attr, Entity, InternalError, UsageError, ValueObject, attr
+from parallax.core.entity import DomainModel
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
-from parallax.core.entity._errors import ENTITY_ROW_CODES, EntityRowError
+from parallax.core.entity._errors import EntityRowCode
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import MemberDefinition, MemberShape, UnresolvedEntityDeclaration
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
+from tests._support.errors import raises_code
 from tests._support.typed_write_source import TypedWriteSource
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._authored_storage_support import (
@@ -456,9 +457,8 @@ def test_an_authored_row_refuses_a_selection_a_restoration_would_have_carried() 
     # member the resolved identity does not declare is refused even where the
     # chain restored it and no consumer would have written anything for it.
     restored = WiderWidget(id=1, label="a", extra="x").edit(extra="y").edit(extra="x")
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(UsageError, "entity-row-member-missing"):
         TypedWriteSource(NARROW_MODEL).authored(restored)
-    assert refusal.value.code == "entity-row-member-missing"
 
 
 # --------------------------------------------------------------------------- #
@@ -473,10 +473,9 @@ def test_a_value_from_another_model_declaring_the_same_identity_derives_a_row() 
 
 
 def test_a_row_refuses_a_populated_member_the_resolved_identity_does_not_declare() -> None:
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(UsageError, "entity-row-member-missing") as refusal:
         TypedWriteSource(NARROW_MODEL).row(WiderWidget(id=1, label="a", extra="x"))
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'extra'" in refusal.value.message
+    assert "'extra'" in refusal.value.args[1]
 
 
 def test_the_same_value_emits_an_identity_row_and_an_untouched_authored_row() -> None:
@@ -495,11 +494,10 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_identity_row() -
     # The resolved identity declares `id`; this value's class keys the same
     # Entity by `key` and carries no attribute to read `id` from. Dropping it
     # would hand a keyed write an unkeyed `{}` outside the closed vocabulary.
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(UsageError, "entity-row-member-missing") as refusal:
         TypedWriteSource(NARROW_MODEL).identity(RekeyedWidget(key=1, label="a"))
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'id'" in refusal.value.message
-    assert refusal.value.identity == Widget.identity
+    assert "'id'" in refusal.value.args[1]
+    assert Widget.identity.canonical in refusal.value.args[1]
 
 
 @pytest.mark.parametrize(
@@ -517,10 +515,9 @@ def test_a_net_zero_edit_of_a_rekeyed_value_is_refused_rather_than_answering_non
     # half of it: "nothing to compare" cannot excuse a key member the value's
     # class supplies no attribute for, or `None` would answer for a value no
     # write could have keyed.
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(UsageError, "entity-row-member-missing") as refusal:
         TypedWriteSource(NARROW_MODEL).authored(net_zero)
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'id'" in refusal.value.message
+    assert "'id'" in refusal.value.args[1]
 
 
 def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> None:
@@ -532,11 +529,10 @@ def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> Non
     # set with an `AttributeError`.
     narrow = Widget(id=1, label="a")
     object.__setattr__(narrow, CHANGE_RECORD_SLOT, ChangeRecord({"extra": "x"}))
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(UsageError, "entity-row-member-missing") as refusal:
         TypedWriteSource(WIDER_MODEL).authored(narrow)
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'extra'" in refusal.value.message
-    assert refusal.value.identity == Widget.identity
+    assert "'extra'" in refusal.value.args[1]
+    assert Widget.identity.canonical in refusal.value.args[1]
 
 
 @pytest.mark.parametrize(
@@ -553,9 +549,8 @@ def test_a_change_record_no_edit_wrote_reports_corruption_rather_than_absence(
     # Change Record is that `edit(...)` made it, not what it looks like.
     account = _account()
     object.__setattr__(account, CHANGE_RECORD_SLOT, carrier)
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(InternalError, "entity-row-malformed-provenance"):
         _accounts().authored(account)
-    assert refusal.value.code == "entity-row-malformed-provenance"
 
 
 def test_a_class_body_denying_the_change_record_still_writes_the_edit() -> None:
@@ -593,9 +588,8 @@ def test_a_change_record_forged_into_a_value_s_own_storage_earns_no_row() -> Non
     for plain in _every_construction_door(ForgeableWidget, {"id": 1, "label": "a"}):
         forge_into_storage(plain, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
         assert stored_state(plain)[CHANGE_RECORD_SLOT] == _FORGED_RECORD
-        with pytest.raises(EntityRowError) as refusal:
+        with raises_code(InternalError, "entity-row-malformed-provenance"):
             TypedWriteSource(NARROW_MODEL).authored(plain)
-        assert refusal.value.code == "entity-row-malformed-provenance"
 
 
 def test_no_class_body_may_answer_for_the_slot_the_record_lives_beside() -> None:
@@ -603,14 +597,12 @@ def test_no_class_body_may_answer_for_the_slot_the_record_lives_beside() -> None
     # closed at class creation: `__dict__` is the name the framework presents a
     # published value's state under, so a body binding it would decide what every
     # reader of every instance is told rather than doctoring one slot.
-    with pytest.raises(EntityDefinitionError) as refusal:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class Bound(Entity, name="Widget", table="widget", namespace=_NS):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
             id: Attr[int] = attr(primary_key=True)
 
             __dict__ = {}  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - the point of the probe
-
-    assert refusal.value.code == "entity-reserved-member-name"
 
 
 def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None:
@@ -634,16 +626,13 @@ def test_a_never_edited_value_still_judges_the_primary_key_selection() -> None:
     # through the SAME path, so both judge the identity selection first: a value
     # whose class carries no attribute for a key member the resolved identity
     # declares is refused rather than answered.
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_code(UsageError, "entity-row-member-missing") as refusal:
         TypedWriteSource(NARROW_MODEL).authored(RekeyedWidget(key=1, label="a"))
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'id'" in refusal.value.message
+    assert "'id'" in refusal.value.args[1]
 
 
 # --------------------------------------------------------------------------- #
 # The closed code set.                                                        #
 # --------------------------------------------------------------------------- #
-def test_the_code_set_is_closed_against_an_unlisted_code() -> None:
-    assert ENTITY_ROW_CODES == _SPEC_CODES
-    with pytest.raises(ValueError, match="not an entity row code"):
-        EntityRowError(code="entity-row-nosuch", message="invented")
+def test_the_code_set_is_closed() -> None:
+    assert frozenset(get_args(EntityRowCode.__value__)) == _SPEC_CODES

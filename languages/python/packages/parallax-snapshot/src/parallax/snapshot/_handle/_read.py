@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from parallax.core import read_planning
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.base import NoResultFound, TooManyResultsFound
+from parallax.core.base import NoResultFound, TooManyResultsFound, UsageError
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._authored_resolver import include_path_node
 from parallax.core.entity._expressions import authored_include_path
@@ -26,7 +26,10 @@ if TYPE_CHECKING:
     from parallax.snapshot._publication._wire import InstanceReader
 
 from parallax.core._execution._publication import SelectedReadModel
-from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotMaterializationError
+from parallax.snapshot._handle._errors import (
+    SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
+    SnapshotMaterializationError,
+)
 from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots, publish_shared_roots
@@ -582,9 +585,10 @@ def _typed_publication_at(
     """
     construction = selected.construction
     if construction is None:
-        raise SnapshotConnectionError(
+        raise UsageError(
+            SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
             "this read is served under a model that composed no Entity Class, so it "
-            "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
+            "cannot materialize a Snapshot",
         )
     return typed_publication(
         selected.model,

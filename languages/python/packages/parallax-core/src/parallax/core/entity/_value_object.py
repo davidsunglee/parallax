@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
 
+from parallax.core.base import UsageError
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     DeclarationKind,
@@ -19,7 +20,11 @@ from parallax.core.entity._edit import (
     unresolved_member_violation,
     use_edit,
 )
-from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
+from parallax.core.entity._errors import (
+    ENTITY_HEADER_UNKNOWN_OPTION,
+    EditError,
+    EditViolation,
+)
 from parallax.core.entity._expressions import judged_edit_violation
 from parallax.core.entity._instance_state import (
     BackedModel,
@@ -64,12 +69,10 @@ class ValueObjectMeta(ModelMetaclass):
         **unknown: object,
     ) -> type:
         if unknown:
-            raise EntityDefinitionError(
-                code="entity-header-unknown-option",
-                message=(
-                    f"{cls_name}: a Value Object declares no class-header option "
-                    f"({', '.join(sorted(unknown))})"
-                ),
+            raise UsageError(
+                ENTITY_HEADER_UNKNOWN_OPTION,
+                f"{cls_name}: a Value Object declares no class-header option "
+                f"({', '.join(sorted(unknown))})",
             )
         return build_class(
             mcs,

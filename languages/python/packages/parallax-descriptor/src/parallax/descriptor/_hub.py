@@ -8,7 +8,7 @@ import yaml
 from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.metamodel import UnresolvedMetamodel
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._export import DescriptorExportError, ExportTarget
+from parallax.descriptor._export import ExportTarget, export_defect
 from parallax.descriptor._export import export_document as _document_of_model
 from parallax.descriptor._ingest import ingest_document, parse_json, parse_yaml
 
@@ -26,11 +26,11 @@ def domain_model_from_document(document: Mapping[str, object]) -> DomainModel:
     """Seal an already-decoded descriptor ``document`` into a hub.
 
     Schema validation is the first gate, so this door never raises
-    :class:`~parallax.descriptor.DescriptorSyntaxError`. Otherwise the phase
-    order is the one every door shares:
-    :class:`~parallax.descriptor.DescriptorSchemaError` for a canonical-schema
-    violation, then :class:`~parallax.descriptor.DescriptorValueError` for a
-    schema-valid but unconstructible value — both before any hub exists — and
+    :class:`~parallax.descriptor.DescriptorError` with
+    ``descriptor-invalid-syntax``. Otherwise the phase order is the one every
+    door shares: ``descriptor-schema-invalid`` for a canonical-schema
+    violation, then ``descriptor-value-invalid`` for a schema-valid but
+    unconstructible value — both before any hub exists — and
     finally :class:`~parallax.core.model_formation.MetamodelValidationError` for
     every semantic model rule, still inside this call. The document uses the
     schema's two top-level forms: ``entity:`` for one Entity or ``entities:``
@@ -49,8 +49,9 @@ def domain_model_from_json(text: str | bytes) -> DomainModel:
 
     ``text`` is JSON source, decoded as UTF-8 when supplied as bytes. Adds phase
     1 to :func:`domain_model_from_document`'s contract: undecodable bytes or
-    malformed JSON raise :class:`~parallax.descriptor.DescriptorSyntaxError`
-    with ``format="json"`` before any later phase runs.
+    malformed JSON raise :class:`~parallax.descriptor.DescriptorError` with
+    ``descriptor-invalid-syntax`` and ``format="json"`` before any later phase
+    runs.
     """
     return _sealed(parse_json(text))
 
@@ -69,9 +70,9 @@ def export_document(model: DomainModel) -> dict[str, object]:
     hub-state check and has no state failure to propagate; it renews no
     validation, performs no state change, and retains no descriptor cache.
     Repeated results are structurally equal. A conversion defect raises
-    :class:`~parallax.descriptor.DescriptorExportError` with target ``document``
-    and the original cause, returns no partial output, and leaves ``model``
-    unchanged.
+    :class:`~parallax.core.base.InternalError` with ``descriptor-export-failed``,
+    naming target ``document`` and raised from the original defect; it returns
+    no partial output and leaves ``model`` unchanged.
     """
     return _document_of_model(model_of(model))
 
@@ -82,9 +83,8 @@ def export_json(model: DomainModel) -> str:
     Deterministic: repeated results are byte-identical, and key order is the
     canonical document's own authoring order rather than a sorted rewrite. Adds
     the serialization step to :func:`export_document`'s contract; a defect in
-    that step raises :class:`~parallax.descriptor.DescriptorExportError` with
-    target ``json``, while a conversion defect keeps the target
-    :func:`export_document` reported.
+    that step raises ``descriptor-export-failed`` naming target ``json``, while a
+    conversion defect keeps the target :func:`export_document` reported.
     """
     return _text(model, "json")
 
@@ -113,4 +113,4 @@ def _text(model: DomainModel, target: ExportTarget) -> str:
             return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
         return yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
     except Exception as error:
-        raise DescriptorExportError(target, error) from error
+        raise export_defect(target, error) from error

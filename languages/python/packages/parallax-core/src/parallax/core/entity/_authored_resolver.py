@@ -49,6 +49,8 @@ from parallax.core.predicate import (
     CURRENT_SCALAR_ELEMENT,
     PATH_TARGET_KIND_MISMATCH,
     PREDICATE_SUBJECT_OUTSIDE_SCOPE,
+    QUERY_EXPRESSION_INVALID,
+    QUERY_PATH_INVALID,
     And,
     Comparison,
     FalseNode,
@@ -64,7 +66,6 @@ from parallax.core.predicate import (
     PredicateNode,
     Presence,
     Quantifier,
-    QueryDefinitionError,
     Range,
     ScalarLiteral,
     ScalarSubject,
@@ -191,9 +192,9 @@ def _canonical_query(
 ) -> ObjectQueryNode:
     root = model.entity(query.target)
     if root is None:
-        raise QueryDefinitionError(
-            code="query-expression-invalid",
-            message=f"{query.target.canonical}: the serving model declares no such Entity",
+        raise UsageError(
+            QUERY_EXPRESSION_INVALID,
+            f"{query.target.canonical}: the serving model declares no such Entity",
         )
     resolver = _Resolver(model, classes)
     exported: list[PredicateNode] = []
@@ -371,11 +372,9 @@ class _Resolver:
         current = self._class_of(entity, described)
         relationship = segment.relationship_in(wire_names_of(current))
         if relationship is None:
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message=(
-                    f"{described}: {current.__name__} declares no relationship {segment.py_name!r}"
-                ),
+            raise UsageError(
+                QUERY_PATH_INVALID,
+                f"{described}: {current.__name__} declares no relationship {segment.py_name!r}",
             )
         return relationship
 
@@ -397,25 +396,20 @@ class _Resolver:
     def _class_index(self, described: str) -> ClassIndex:
         classes = self._classes
         if classes is None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{described}: the serving model was built from no Entity Classes, so it "
-                    "has no Python member correspondence to resolve these names through; "
-                    "author the query canonically through Wire instead"
-                ),
+            raise UsageError(
+                QUERY_EXPRESSION_INVALID,
+                f"{described}: the serving model was built from no Entity Classes, so it "
+                "has no Python member correspondence to resolve these names through; "
+                "author the query canonically through Wire instead",
             )
         return classes
 
     def _class_of(self, entity: EntityIdentity, described: str) -> type:
         current = self._class_index(described).class_of(entity)
         if current is None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{described}: the serving model composes no Entity Class for "
-                    f"{entity.canonical}"
-                ),
+            raise UsageError(
+                QUERY_EXPRESSION_INVALID,
+                f"{described}: the serving model composes no Entity Class for {entity.canonical}",
             )
         return current
 
@@ -464,7 +458,7 @@ class _Resolver:
         if not isinstance(
             receiver, EntityIdentity
         ):  # pragma: no cover - deferred paths start at an Entity
-            raise QueryDefinitionError(code="query-path-invalid", message=described)
+            raise UsageError(QUERY_PATH_INVALID, described)
         self._class_index(described)
         entity = receiver
         current: type | None = None
@@ -479,9 +473,9 @@ class _Resolver:
                 canonical.append(segment)
                 value_object = shape.nested_classes.get(name)
                 if value_object is None and index != len(path.names) - 1:
-                    raise QueryDefinitionError(
-                        code="query-path-invalid",
-                        message=f"{described}: {name!r} is a scalar but the path continues",
+                    raise UsageError(
+                        QUERY_PATH_INVALID,
+                        f"{described}: {name!r} is a scalar but the path continues",
                     )
                 continue
             if current is None:
@@ -492,9 +486,9 @@ class _Resolver:
                 canonical.append(correspondences.py_to_name[name])
                 if isinstance(member, AttributeMetadata):
                     if index != len(path.names) - 1:
-                        raise QueryDefinitionError(
-                            code="query-path-invalid",
-                            message=f"{described}: {name!r} is a scalar but the path continues",
+                        raise UsageError(
+                            QUERY_PATH_INVALID,
+                            f"{described}: {name!r} is a scalar but the path continues",
                         )
                     continue
                 value_object = correspondences.vo_classes[name]
@@ -542,9 +536,7 @@ def _exported_operation(subject: ScalarSubject, resolved: ResolvedPredicate) -> 
         case ResolvedNullCheck(op=tag) if isinstance(subject, FieldSubject):
             return NullCheck(tag, subject)
         case _:  # pragma: no cover - a Typed operation resolves to one of the above
-            raise QueryDefinitionError(
-                code="query-expression-invalid", message="an operation with no canonical form"
-            )
+            raise UsageError(QUERY_EXPRESSION_INVALID, "an operation with no canonical form")
 
 
 def _encoded(neutral_type: NeutralType, value: object) -> ScalarLiteral:
@@ -555,10 +547,8 @@ def _same_shape(receiver: ValueObjectReceiver, frame: ObjectElementFrame) -> boo
     return frame.occurrence.definition.shape == receiver.shape.member_shape
 
 
-def _unresolved_name(described: str, owner: str, name: str) -> QueryDefinitionError:
-    return QueryDefinitionError(
-        code="query-path-invalid", message=f"{described}: {owner} declares no member {name!r}"
-    )
+def _unresolved_name(described: str, owner: str, name: str) -> UsageError:
+    return UsageError(QUERY_PATH_INVALID, f"{described}: {owner} declares no member {name!r}")
 
 
 def _native_operands(

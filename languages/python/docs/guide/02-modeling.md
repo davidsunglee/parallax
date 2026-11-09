@@ -31,12 +31,12 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
-    EntityDefinitionError,
     Int32,
     MetamodelValidationError,
     Rel,
     TablePerHierarchy,
     TxTemporal,
+    UsageError,
     ValueObject,
     attr,
     desc,
@@ -119,7 +119,7 @@ attributes, never columns or canonical names.
 
 A member can't take a name Parallax uses on the class itself, such as `all`, `where`,
 `include` or `edit`, nor one starting with `model_`. Creating such a class raises
-`EntityDefinitionError` with the code `entity-reserved-member-name`. To keep `all` as the
+`UsageError` with the code `entity-reserved-member-name`. To keep `all` as the
 canonical name, give the attribute another Python name and rename it:
 `all_items: Attr[int] = attr(name="all")`.
 

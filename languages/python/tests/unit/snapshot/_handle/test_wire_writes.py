@@ -33,7 +33,7 @@ import pytest
 from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.base import InstantError, StructuredDocument, UsageError
+from parallax.core.base import StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
 from parallax.core.execution import (
@@ -697,9 +697,9 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
 
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
-        with pytest.raises(InstantError, match="naive datetime"):
+        with raises_code(UsageError, "instant-invalid", match="naive datetime"):
             tx.wire.amend(node, {"value": "300.00"}, until=_NAIVE_INSTANT)
-        with pytest.raises(InstantError, match="no `timestamp`"):
+        with raises_code(UsageError, "instant-invalid", match="no `timestamp`"):
             tx.wire.amend(node, {"value": "300.00"}, until=cast("dt.datetime", "2024-11-01"))
 
     own_root(

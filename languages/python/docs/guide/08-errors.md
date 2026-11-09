@@ -32,10 +32,8 @@ from parallax.core import (
     DomainModel,
     EditError,
     Entity,
-    EntityDefinitionError,
     MetamodelValidationError,
     NoResultFound,
-    QueryDefinitionError,
     TooManyResultsFound,
     UsageError,
 )
@@ -96,15 +94,16 @@ at once, each with a stable code and a location, so you can fix them in one pass
 tool can report them without parsing messages.
 
 - **A class.** Creating an entity class checks its declaration. An unknown class-header
-  option or a reserved member name raises `EntityDefinitionError`, whose `code` names
-  the rule. Constructing an instance validates its values as any Pydantic model does,
+  option or a reserved member name raises a `UsageError`, whose `code` names the rule,
+  such as `entity-reserved-member-name`. Constructing an instance validates its values as any Pydantic model does,
   and raises Pydantic's own `ValidationError`.
 - **A model.** `DomainModel(...)` checks the classes as a whole. As
   [Modeling](02-modeling.md) explains, a model that breaks a rule raises
   `MetamodelValidationError`, which lists every problem in its `issues`. Each one is a
   `MetamodelIssue` with a `code`, a `location` in the model and a `message`.
-- **A query.** Building a query checks each expression and clause, and
-  `QueryDefinitionError` refuses one it can't accept, with a `code` naming the rule.
+- **A query.** Building a query checks each expression and clause, and refuses one it
+  can't accept with a `UsageError` whose `code` names the rule, such as
+  `query-expression-invalid`.
   `Customer.name == 3` compares text with a number, a `Decimal` with more places than
   its attribute declares can't be compared with it, `limit(-1)` isn't positive, and
   `as_of(...)` on `Customer` asks for history that `Customer` doesn't keep. Whether the
@@ -429,7 +428,7 @@ of an `ExecutionFailure`:
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, query, edit or write, such as `EntityDefinitionError`, `MetamodelValidationError`, `QueryDefinitionError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or a write's `UsageError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, query, edit or write, such as a class's or query's `UsageError`, `MetamodelValidationError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or a write's `UsageError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
 | A `UsageError` whose `code` is `"read-only-write-target"` | by the write verb, before anything is buffered | No | Leave the entity's rows to the system that owns them, or drop `persistence=READ_ONLY` if your application owns them |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |

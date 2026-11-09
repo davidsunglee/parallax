@@ -34,7 +34,6 @@ from typing import Final
 
 import pytest
 
-from parallax.core import QueryDefinitionError
 from parallax.core.base import UsageError
 from tests._support.db_port import (
     BeginCall,
@@ -125,8 +124,8 @@ _SET_BASED_WRITE_TARGET_UNSUPPORTED: Final = "set-based-write-target-unsupported
 
 def _not_mutation_compatible(entity: str) -> _Expected:
     return _refused(
-        QueryDefinitionError,
-        f"query-not-mutation-compatible: {entity}: a set-based write target carries nothing but "
+        UsageError,
+        f"{entity}: a set-based write target carries nothing but "
         "a predicate, and this query carries limit",
         code="query-not-mutation-compatible",
     )
@@ -395,9 +394,8 @@ _INVERTED: Final = _refused(
     code="between-bounds-inverted",
 )
 _UNBOUND_PATH: Final = _refused(
-    QueryDefinitionError,
-    "query-path-invalid: parallax.compatibility.CardPayment.missing: CardPayment declares no "
-    "member 'missing'",
+    UsageError,
+    "parallax.compatibility.CardPayment.missing: CardPayment declares no member 'missing'",
     code="query-path-invalid",
 )
 _UNDECLARED_WIRE_CHANGE: Final = _refused(

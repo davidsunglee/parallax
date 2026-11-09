@@ -49,7 +49,6 @@ from parallax.core.execution import (
     QueryTargetError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.predicate import QueryDefinitionError
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
@@ -74,6 +73,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit import _deep_include_support as deep
 from tests.unit._transact_support import (
@@ -1144,11 +1144,10 @@ def test_a_bad_continuation_is_refused_before_a_pending_write_can_flush() -> Non
 
     def fn(tx: TxnContext) -> None:
         tx.insert(new_order)
-        with pytest.raises(QueryDefinitionError, match="no_such_member") as eager:
+        with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
             tx.find(Order.where(Order.id == 1).include(Order.items.no_such_member))
-        assert eager.value.code == "query-path-invalid"
         with (
-            pytest.raises(QueryDefinitionError, match="no_such_member"),
+            raises_code(UsageError, "query-path-invalid", match="no_such_member"),
             tx.stream(Order.where(Order.id == 1).include(Order.items.no_such_member)),
         ):
             pass

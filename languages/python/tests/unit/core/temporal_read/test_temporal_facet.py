@@ -9,7 +9,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import concurrency, inheritance, relationship, temporal_read
+from parallax.core import InternalError, concurrency, inheritance, relationship, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.concurrency import MODEL_COMPILER as CONCURRENCY_COMPILER
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
@@ -41,7 +41,6 @@ from parallax.core.model_formation._errors import (
     FORMATION_COMPILER_FAILED,
     FORMATION_FACET_DUPLICATE,
     FORMATION_FACET_MISSING,
-    FormationContractError,
 )
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
 from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
@@ -58,6 +57,7 @@ from parallax.core.temporal_read._facet import NON_TEMPORAL
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
+from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, identity, instant, key, source
 from tests.unit.core._family_owner_support import (
     DescendantsFirst,
@@ -359,12 +359,12 @@ def test_a_valid_time_only_family_is_a_compiler_contract_failure() -> None:
     # No frontend can author this shape, so the compiler treats it the way its
     # siblings treat any impossible state: it raises for the runner to classify
     # rather than inventing a shape the algebra does not have.
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-compiler-failed") as raised:
         form_metamodel(source(*_valid_time_only()))
     assert raised.value.code == FORMATION_COMPILER_FAILED
-    assert raised.value.owner == TEMPORAL_READ_MODULE
-    assert isinstance(raised.value.cause, RuntimeError)
-    assert "Valid-Time-Only" in str(raised.value.cause)
+    assert raised.value.args[1].startswith(f"{TEMPORAL_READ_MODULE}: ")
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert "Valid-Time-Only" in str(raised.value.__cause__)
 
 
 # --------------------------------------------------------------------------
@@ -412,10 +412,10 @@ def test_a_profile_missing_the_required_inheritance_compiler_fails_before_execut
         temporal_read.MODEL_COMPILER,
         CONCURRENCY_COMPILER,
     )
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-facet-missing") as raised:
         form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
     assert raised.value.code == FORMATION_FACET_MISSING
-    assert raised.value.owner == INHERITANCE_MODULE
+    assert raised.value.args[1].startswith(f"{INHERITANCE_MODULE}: ")
 
 
 def test_a_profile_installing_one_facet_key_twice_fails_before_execution() -> None:
@@ -427,10 +427,10 @@ def test_a_profile_installing_one_facet_key_twice_fails_before_execution() -> No
         temporal_read.MODEL_COMPILER,
         CONCURRENCY_COMPILER,
     )
-    with pytest.raises(FormationContractError) as raised:
+    with raises_code(InternalError, "formation-facet-duplicate") as raised:
         form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
     assert raised.value.code == FORMATION_FACET_DUPLICATE
-    assert raised.value.owner == TEMPORAL_READ_MODULE
+    assert raised.value.args[1].startswith(f"{TEMPORAL_READ_MODULE}: ")
 
 
 def test_an_accepted_model_installs_the_complete_facet_set_at_once() -> None:

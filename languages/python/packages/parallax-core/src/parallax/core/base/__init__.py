@@ -25,6 +25,7 @@ from parallax.core.base._neutral import (
     INT32,
     INT64,
     JSON,
+    NEUTRAL_TYPE_MISMATCH,
     STRING,
     TIME,
     TIMESTAMP,
@@ -40,7 +41,6 @@ from parallax.core.base._neutral import (
     Json,
     ManagedValue,
     NeutralType,
-    NeutralTypeMismatch,
     ScalarConverter,
     String,
     Time,
@@ -64,9 +64,11 @@ __all__ = [
     "FLOAT64",
     "INFINITY",
     "INFINITY_LITERAL",
+    "INSTANT_INVALID",
     "INT32",
     "INT64",
     "JSON",
+    "NEUTRAL_TYPE_MISMATCH",
     "SQL_NULL",
     "STRING",
     "TIME",
@@ -83,14 +85,12 @@ __all__ = [
     "Float32",
     "Float64",
     "FrozenMap",
-    "InstantError",
     "Int32",
     "Int64",
     "InternalError",
     "Json",
     "ManagedValue",
     "NeutralType",
-    "NeutralTypeMismatch",
     "NoResultFound",
     "ParallaxError",
     "ScalarConverter",
@@ -368,10 +368,9 @@ class TemporalBound(enum.Enum):
 # The native-infinity sentinel for a temporal interval's open upper bound.
 INFINITY: Final = TemporalBound.INFINITY
 
-
-class InstantError(ValueError):
-    """A ``timestamp`` value violates the m-core UTC / precision rules, or names
-    no instant a UTC ``datetime`` holds."""
+INSTANT_INVALID: Final = "instant-invalid"
+"""A ``timestamp`` value violates the m-core UTC / precision rules, or names no
+instant a UTC ``datetime`` holds."""
 
 
 def inert_scalar(value: object) -> object:
@@ -462,8 +461,11 @@ def normalize_instant(value: dt.datetime) -> dt.datetime:
     if instant is not None:
         return instant
     if value.tzinfo is None:
-        raise InstantError("a naive datetime is not a valid `timestamp`; attach a tzinfo")
-    raise InstantError(
+        raise UsageError(
+            INSTANT_INVALID, "a naive datetime is not a valid `timestamp`; attach a tzinfo"
+        )
+    raise UsageError(
+        INSTANT_INVALID,
         f"{value!r} is not a valid `timestamp`: no UTC datetime names its instant — an aware "
-        "value at the representational edge, or a tzinfo answering no usable offset"
+        "value at the representational edge, or a tzinfo answering no usable offset",
     )

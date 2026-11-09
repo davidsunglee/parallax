@@ -20,18 +20,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from parallax.core import (
-    MANY_TO_ONE,
-    Attr,
-    DomainModel,
-    Entity,
-    EntityDefinitionError,
-    QueryDefinitionError,
-    Rel,
-    ValueObject,
-    attr,
-    rel,
-)
+from parallax.core import MANY_TO_ONE, Attr, DomainModel, Entity, Rel, ValueObject, attr, rel
 from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32, UsageError
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.entity._declaration import declaration_of, shape_of
@@ -42,6 +31,7 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.predicate import serialize
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import ScriptedAdapter, Transact
+from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node
 from tests._support.root_ownership import own_root
 
@@ -264,18 +254,15 @@ def test_an_ill_shaped_collection_annotation_is_refused(annotation: str, match: 
         "    id: Attr[int] = attr(primary_key=True)\n"
         f"    tags: Attr[{annotation}] = attr()\n"
     )
-    with pytest.raises(EntityDefinitionError, match=match) as caught:
+    with raises_code(UsageError, "entity-annotation-invalid", match=match):
         exec(source, {"Entity": Entity, "Attr": Attr, "attr": attr}, namespace)
-    assert caught.value.code == "entity-annotation-invalid"
 
 
 def test_a_nullable_value_object_collection_leaf_is_refused() -> None:
-    with pytest.raises(EntityDefinitionError, match="never nullable") as caught:
+    with raises_code(UsageError, "entity-annotation-invalid", match="never nullable"):
 
         class Bad(ValueObject):  # pyright: ignore[reportUnusedClass]
             labels: Attr[tuple[str, ...] | None] = attr()
-
-    assert caught.value.code == "entity-annotation-invalid"
 
 
 @pytest.mark.parametrize(
@@ -284,13 +271,11 @@ def test_a_nullable_value_object_collection_leaf_is_refused() -> None:
     ids=["max-length", "primary-key", "optimistic-locking"],
 )
 def test_a_collection_refuses_an_entity_option_it_cannot_hold(options: dict[str, Any]) -> None:
-    with pytest.raises(EntityDefinitionError, match="many Attribute") as caught:
+    with raises_code(UsageError, "entity-option-context-invalid", match="many Attribute"):
 
         class Bad(Entity, table="bad", namespace=_NS):  # pyright: ignore[reportUnusedClass]
             id: Attr[int] = attr(primary_key=not options.get("primary_key", False))
             tags: Attr[tuple[str, ...]] = attr(**options)
-
-    assert caught.value.code == "entity-option-context-invalid"
 
 
 def test_a_join_endpoint_naming_a_collection_is_refused_at_formation() -> None:
@@ -365,9 +350,8 @@ def test_a_nested_collection_is_assigned_only_through_its_owning_occurrence() ->
     ids=["comparison", "negated-comparison", "nested-path", "element-scope"],
 )
 def test_no_comparison_reads_a_collection_as_one_value(operation: Any) -> None:
-    with pytest.raises(QueryDefinitionError, match="scalar collection") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="scalar collection"):
         operation()
-    assert caught.value.code == "query-expression-invalid"
 
 
 @pytest.mark.parametrize(

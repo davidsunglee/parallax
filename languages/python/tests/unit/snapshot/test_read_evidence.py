@@ -28,12 +28,9 @@ from pydantic import BaseModel
 import parallax.snapshot
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
-from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, ValueObject, attr
+from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, UsageError, ValueObject, attr
 from parallax.core.base import StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity import (
-    EntityDefinitionError,
-)
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
 from parallax.core.entity._model import DomainModel
@@ -75,6 +72,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._authored_storage_support import answering_for_instance_state, stored_state
 from tests.unit._gc_reachability import reachable_objects
@@ -562,14 +560,12 @@ def test_no_class_body_may_answer_for_the_name_that_presentation_uses() -> None:
     # The route the doctored declarations above do NOT take, because it is closed
     # at class creation: a body binding `__dict__` would decide what Pydantic
     # reads of every instance of the class rather than doctoring one slot.
-    with pytest.raises(EntityDefinitionError) as refusal:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class Bound(Entity, table="bound_dict", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
             id: Attr[int] = attr(primary_key=True)
 
             __dict__ = {}  # pyright: ignore[reportGeneralTypeIssues, reportAssignmentType] - the point of the probe
-
-    assert refusal.value.code == "entity-reserved-member-name"
 
 
 def test_an_edited_copy_of_a_value_whose_dictionary_denies_the_slot_is_refused_too() -> None:

@@ -17,10 +17,10 @@ from parallax.core import (
     Attr,
     DomainModel,
     Entity,
-    EntityDefinitionError,
     IncludePath,
     Predicate,
     Rel,
+    UsageError,
     ValueObject,
     attr,
     rel,
@@ -39,6 +39,7 @@ from parallax.core.entity._expressions import (
     UnfinishedExpr,
 )
 from parallax.core.predicate import Comparison, FieldSubject, Quantifier
+from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node
 
 _NS = "expression.families"
@@ -156,7 +157,7 @@ def test_a_continuation_keeps_its_family_at_every_depth() -> None:
 
 @pytest.mark.parametrize("name", ["any", "all", "none", "element", "is_a", "exists", "like"])
 def test_an_expression_operation_name_is_reserved_for_members(name: str) -> None:
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
         type(
             "Clash",
             (Entity,),
@@ -168,7 +169,6 @@ def test_an_expression_operation_name_is_reserved_for_members(name: str) -> None
             table="ef_clash",
             namespace=_NS,
         )
-    assert caught.value.code == "entity-reserved-member-name"
 
 
 def test_a_renamed_member_keeps_its_canonical_name_behind_a_free_python_name() -> None:

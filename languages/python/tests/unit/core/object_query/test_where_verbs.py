@@ -22,8 +22,8 @@ from parallax.core import (
     EditError,
     Entity,
     ObjectQuery,
-    QueryDefinitionError,
     TxTemporal,
+    UsageError,
     ValueObject,
     attr,
 )
@@ -34,6 +34,7 @@ from parallax.core.object_query._fluent import mutation_selection
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vom
+from tests._support.errors import raises_code
 
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -248,9 +249,8 @@ def test_an_explicitly_unfiltered_query_is_mutation_compatible() -> None:
 
 
 def _refused(query: ObjectQuery[Any, Any], clause: str) -> None:
-    with pytest.raises(QueryDefinitionError, match=clause) as caught:
+    with raises_code(UsageError, "query-not-mutation-compatible", match=clause):
         mutation_selection(query)
-    assert caught.value.code == "query-not-mutation-compatible"
 
 
 def test_an_ordered_query_is_not_mutation_compatible() -> None:
@@ -285,5 +285,5 @@ def test_every_carried_clause_is_named_at_once() -> None:
     # The refusal names what the query actually carries rather than the first
     # clause it happens to find, so a caller fixes the query in one pass.
     query = vom.Customer.where(vom.Customer.name == "Ada").order_by(vom.Customer.id.asc()).limit(1)
-    with pytest.raises(QueryDefinitionError, match="order_by, limit"):
+    with raises_code(UsageError, "query-not-mutation-compatible", match="order_by, limit"):
         mutation_selection(query)

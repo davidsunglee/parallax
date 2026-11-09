@@ -35,7 +35,8 @@ from parallax.core.object_query import (
     subtype_spelling,
 )
 from parallax.core.predicate import (
-    QueryDefinitionError,
+    QUERY_EXPRESSION_INVALID,
+    QUERY_PATH_INVALID,
     StringOp,
     SubtypeSelection,
     canonical_subtype_selection,
@@ -116,14 +117,12 @@ def _invalid_operand(
     neutral_type: NeutralType | None,
     value: object,
     rule: str,
-) -> QueryDefinitionError:
+) -> UsageError:
     declared = "<unresolved>" if neutral_type is None else repr(neutral_type)
-    return QueryDefinitionError(
-        code="query-expression-invalid",
-        message=(
-            f"{path}: declared NeutralType {declared}; supplied Python carrier "
-            f"{type(value).__name__}; developer-input rule violated: {rule}"
-        ),
+    return UsageError(
+        QUERY_EXPRESSION_INVALID,
+        f"{path}: declared NeutralType {declared}; supplied Python carrier "
+        f"{type(value).__name__}; developer-input rule violated: {rule}",
     )
 
 
@@ -370,12 +369,10 @@ def require_bound_elements(authored: AuthoredPredicate, where: str) -> None:
     """Refuse a scalar element ``authored`` reads outside the quantifier over
     its own collection."""
     for element in _unbound_elements(authored):
-        raise QueryDefinitionError(
-            code="query-path-invalid",
-            message=(
-                f"{_subject_described(element)}: a collection element is read only inside "
-                f"a quantifier over {element.collection.described()}, not {where}"
-            ),
+        raise UsageError(
+            QUERY_PATH_INVALID,
+            f"{_subject_described(element)}: a collection element is read only inside "
+            f"a quantifier over {element.collection.described()}, not {where}",
         )
 
 
@@ -657,14 +654,14 @@ class _ScalarAuthoring[P]:
         operator = Match(op, bool(case_insensitive))
         neutral_type = self._operand_type()
         if neutral_type is not None and not isinstance(neutral_type, String):
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._described()}: string operations require a String leaf",
+            raise UsageError(
+                QUERY_EXPRESSION_INVALID,
+                f"{self._described()}: string operations require a String leaf",
             )
         if cast("object", value) is None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message="None is not a Predicate literal; use .is_null() or .is_not_null()",
+            raise UsageError(
+                QUERY_EXPRESSION_INVALID,
+                "None is not a Predicate literal; use .is_null() or .is_not_null()",
             )
         if neutral_type is None:
             return Predicate(UnfinishedOperation(self._subject(), operator, (value,)))
@@ -733,12 +730,10 @@ class ScalarExpr[E, T](_ScalarAuthoring[E]):
     def _require_nullable(self) -> None:
         if self._leaf.nullable:
             return
-        raise QueryDefinitionError(
-            code="query-expression-invalid",
-            message=(
-                f"{self._described()}: is_null()/is_not_null() is invalid for a "
-                "non-nullable member (m-predicate null-check validity)"
-            ),
+        raise UsageError(
+            QUERY_EXPRESSION_INVALID,
+            f"{self._described()}: is_null()/is_not_null() is invalid for a "
+            "non-nullable member (m-predicate null-check validity)",
         )
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
@@ -826,12 +821,10 @@ def _quantified(
     if where is not None:
         for element in _unbound_elements(where):
             if binds in ("entity", "value-object") or element.collection != collection:
-                raise QueryDefinitionError(
-                    code="query-path-invalid",
-                    message=(
-                        f"{_subject_described(element)} is not an element of "
-                        f"{collection.described()}, which this quantifier binds"
-                    ),
+                raise UsageError(
+                    QUERY_PATH_INVALID,
+                    f"{_subject_described(element)} is not an element of "
+                    f"{collection.described()}, which this quantifier binds",
                 )
     return Predicate(AuthoredQuantifier(kind, collection, where, binds))
 
@@ -845,13 +838,11 @@ def _presence(
     where = None if predicate is None else predicate.authored
     if where is not None:
         for element in _unbound_elements(where):
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message=(
-                    f"{_subject_described(element)}: a collection element is read only inside "
-                    f"a quantifier over {element.collection.described()}, not inside a match "
-                    f"of {target.described()}"
-                ),
+            raise UsageError(
+                QUERY_PATH_INVALID,
+                f"{_subject_described(element)}: a collection element is read only inside "
+                f"a quantifier over {element.collection.described()}, not inside a match "
+                f"of {target.described()}",
             )
     return Predicate(AuthoredPresence(negated, target, where))
 
@@ -866,10 +857,10 @@ class _NotOneValue:
         raise NotImplementedError  # pragma: no cover - every subclass describes itself
 
     def __eq__(self, other: object) -> NoReturn:
-        raise QueryDefinitionError(code="query-expression-invalid", message=self._not_one_value())
+        raise UsageError(QUERY_EXPRESSION_INVALID, self._not_one_value())
 
     def __ne__(self, other: object) -> NoReturn:
-        raise QueryDefinitionError(code="query-expression-invalid", message=self._not_one_value())
+        raise UsageError(QUERY_EXPRESSION_INVALID, self._not_one_value())
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
         return object.__hash__(self)
@@ -1271,7 +1262,7 @@ class IncludePath[E, R]:
     def _authored_path(self) -> AuthoredIncludePath:
         authored = self._authored
         if authored is None:  # pragma: no cover - subclasses derive their own
-            raise QueryDefinitionError(code="query-path-invalid", message="no Include path")
+            raise UsageError(QUERY_PATH_INVALID, "no Include path")
         return authored
 
     def __getattr__(self, name: str) -> IncludePath[E, Any]:
@@ -1294,24 +1285,21 @@ class IncludePath[E, R]:
         *head, last = authored.segments
         described = authored.described()
         if last.narrow_to:
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message=(
-                    f"{described}: narrowing is single-shot per path segment and this hop is "
-                    f"already narrowed to {', '.join(last.narrow_to)}; derive the segment from "
-                    "the un-narrowed hop"
-                ),
+            raise UsageError(
+                QUERY_PATH_INVALID,
+                f"{described}: narrowing is single-shot per path segment and this hop is "
+                f"already narrowed to {', '.join(last.narrow_to)}; derive the segment from "
+                "the un-narrowed hop",
             )
         if not subtypes:
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message=f"{described}: narrow requires at least one subtype",
+            raise UsageError(
+                QUERY_PATH_INVALID, f"{described}: narrow requires at least one subtype"
             )
         narrowed = tuple(subtype_spelling(subtype) for subtype in subtypes)
         if len(set(narrowed)) != len(narrowed):
-            raise QueryDefinitionError(
-                code="query-path-invalid",
-                message=f"{described}: narrow alternatives must not repeat the same subtype",
+            raise UsageError(
+                QUERY_PATH_INVALID,
+                f"{described}: narrow alternatives must not repeat the same subtype",
             )
         selection = canonical_subtype_selection(narrowed)
         return IncludePath(
@@ -1334,14 +1322,9 @@ def subtype_selection(spellings: tuple[str, ...]) -> SubtypeSelection:
     """The Subtype Selection the Entity spellings ``spellings`` name, refused
     when empty or repeating one."""
     if not spellings:
-        raise QueryDefinitionError(
-            code="query-path-invalid", message="is_a requires at least one subtype"
-        )
+        raise UsageError(QUERY_PATH_INVALID, "is_a requires at least one subtype")
     if len(set(spellings)) != len(spellings):
-        raise QueryDefinitionError(
-            code="query-path-invalid",
-            message="is_a alternatives must not repeat the same subtype",
-        )
+        raise UsageError(QUERY_PATH_INVALID, "is_a alternatives must not repeat the same subtype")
     return canonical_subtype_selection(spellings)
 
 

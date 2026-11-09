@@ -482,6 +482,71 @@ def define_nullable_many_relationship() -> type:
     return Bad
 
 
+def define_many_relationship_without_ellipsis() -> type:
+    """A to-many relationship spelled as a fixed-length tuple."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        peers: Rel["tuple[Peer, int]"] = rel(reverse_of="bad")  # noqa: UP037 - the spelling is the probe
+
+    return Bad
+
+
+def define_inheritance_invalid_role() -> type:
+    """An ``inheritance=`` value that is no inheritance role."""
+
+    class Bad(
+        Entity,
+        table="bad",
+        inheritance="root",
+    ):
+        id: Attr[int] = attr(primary_key=True)
+
+    return Bad
+
+
+def define_rel_value_under_attr() -> type:
+    """A ``rel(...)`` value in the slot of an ``Attr[T]`` member."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        qty: Attr[int] = rel(reverse_of="bad")
+
+    return Bad
+
+
+def define_attr_value_under_rel() -> type:
+    """An ``attr(...)`` value in the slot of a ``Rel[T]`` member."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        peer: Rel[Peer] = attr()
+
+    return Bad
+
+
+class _Mixin:
+    """A plain class no declaration may extend."""
+
+
+def define_value_object_base_invalid() -> type:
+    """A Value Object Class extending a second, non-Parallax base."""
+
+    class Bad(ValueObject, _Mixin):
+        city: Attr[str]
+
+    return Bad
+
+
+def define_value_object_occurrence_with_scalar_type() -> type:
+    """A scalar narrowing on a member that is a Value Object occurrence."""
+
+    class Bad(ValueObject):
+        address: Attr[Address] = attr(type=Int32)
+
+    return Bad
+
+
 def accepted_relationship_targets() -> type:
     """Every relationship-target spelling the grammar admits as text.
 

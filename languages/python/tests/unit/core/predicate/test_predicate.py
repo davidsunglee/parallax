@@ -13,14 +13,13 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 
 from parallax.core import predicate
 from parallax.core.base import UsageError
-from parallax.core.predicate import QueryDefinitionError
-from parallax.core.predicate._nodes import QUERY_DEFINITION_CODES
+from parallax.core.predicate import QueryDefinitionCode
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
 from tests._support.errors import raises_code
@@ -288,25 +287,16 @@ def test_negated_membership_keeps_its_own_tag_through_serialization() -> None:
 
 _QUERY_SPEC_CODES = frozenset(
     {
-        "query-target-mismatch",
         "query-expression-invalid",
         "query-path-invalid",
         "query-clause-invalid",
-        "query-assignment-invalid",
         "query-not-mutation-compatible",
     }
 )
 
 
-def test_the_query_definition_code_set_is_exactly_the_six_spec_codes() -> None:
-    assert QUERY_DEFINITION_CODES == _QUERY_SPEC_CODES
-    assert len(QUERY_DEFINITION_CODES) == 6
-
-
-def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
-    with pytest.raises(ValueError, match="not a query definition code") as caught:
-        QueryDefinitionError(code="query-made-up", message="nope")
-    assert not isinstance(caught.value, QueryDefinitionError)
+def test_the_query_definition_code_set_is_exactly_the_four_spec_codes() -> None:
+    assert frozenset(get_args(QueryDefinitionCode.__value__)) == _QUERY_SPEC_CODES
 
 
 @pytest.mark.parametrize(

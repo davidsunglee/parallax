@@ -17,8 +17,8 @@ from parallax.core.base import (
     Decimal,
     FrozenMap,
     NeutralType,
-    NeutralTypeMismatch,
     ScalarConverter,
+    UsageError,
     typed_converter,
 )
 from parallax.core.document_codec._plan import (
@@ -207,14 +207,18 @@ def test_the_first_refused_member_in_member_order_is_reported(
     assert (refused.position, refused.violation) == (position, violation)
 
 
-def test_a_typed_mismatch_reports_the_converted_value() -> None:
+def test_a_typed_mismatch_reports_the_authored_value_and_names_the_converted_one() -> None:
     refused = _refusal(
         _TYPED,
         (7, None, _ABSENT, _ABSENT, {"city": "x", "geo": {"lat": decimal.Decimal(1) / 3}}, ()),
     )
 
+    third = decimal.Decimal(1) / 3
     assert refused.violation.path == "geo.lat"
-    assert isinstance(refused.cause, NeutralTypeMismatch)
+    assert refused.violation.value == third
+    assert isinstance(refused.cause, UsageError)
+    assert refused.cause.code == "neutral-type-mismatch"
+    assert repr(third) in str(refused.cause)
 
 
 def test_a_wire_mismatch_carries_its_decoding_failure() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from importlib import resources
 from typing import Any, cast
 
@@ -13,10 +13,12 @@ from jsonschema.protocols import Validator
 from parallax.core.metamodel import UnresolvedMetamodel, derive_temporal_structure
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._errors import (
+    DESCRIPTOR_INVALID_SYNTAX,
+    DESCRIPTOR_SCHEMA_INVALID,
+    DESCRIPTOR_VALUE_INVALID,
+    DescriptorCode,
+    DescriptorError,
     DescriptorFormat,
-    DescriptorSchemaError,
-    DescriptorSyntaxError,
-    DescriptorValueError,
     DescriptorViolation,
     canonical_violations,
 )
@@ -44,13 +46,11 @@ def parse_json(text: str | bytes) -> UnresolvedMetamodel:
     """Ingest a JSON descriptor document through every ingestion phase.
 
     ``text`` is JSON source, decoded as UTF-8 when supplied as bytes. Raises
-    :class:`~parallax.descriptor._errors.DescriptorSyntaxError` on undecodable
-    bytes or malformed JSON,
-    :class:`~parallax.descriptor._errors.DescriptorSchemaError` on a
-    canonical-schema violation, and
-    :class:`~parallax.descriptor._errors.DescriptorValueError` on a
-    schema-valid but unconstructible value. No model forms before every phase
-    succeeds.
+    :class:`~parallax.descriptor._errors.DescriptorError` with
+    ``descriptor-invalid-syntax`` on undecodable bytes or malformed JSON,
+    ``descriptor-schema-invalid`` on a canonical-schema violation, and
+    ``descriptor-value-invalid`` on a schema-valid but unconstructible value. No
+    model forms before every phase succeeds.
     """
     return unresolved_metamodel(ingest_document(_decode_json(_utf8(text, "json"))))
 
@@ -84,7 +84,7 @@ def ingest_document(document: object) -> Metamodel:
         *_index_temporal_violations(mapping),
     )
     if violations:
-        raise DescriptorValueError(canonical_violations(violations))
+        raise _judged(DESCRIPTOR_VALUE_INVALID, "value", violations)
     return parse_document(mapping)
 
 
@@ -100,14 +100,14 @@ def _utf8(text: str | bytes, format: DescriptorFormat) -> str:
     try:
         return text.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise DescriptorSyntaxError(format, cause=exc) from exc
+        raise _syntax(format) from exc
 
 
 def _decode_json(text: str) -> object:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise DescriptorSyntaxError("json", line=exc.lineno, column=exc.colno, cause=exc) from exc
+        raise _syntax("json", line=exc.lineno, column=exc.colno) from exc
 
 
 def _decode_yaml(text: str) -> object:
@@ -117,7 +117,31 @@ def _decode_yaml(text: str) -> object:
         mark = getattr(exc, "problem_mark", None)
         line = None if mark is None else mark.line + 1
         column = None if mark is None else mark.column + 1
-        raise DescriptorSyntaxError("yaml", line=line, column=column, cause=exc) from exc
+        raise _syntax("yaml", line=line, column=column) from exc
+
+
+def _syntax(
+    format: DescriptorFormat, *, line: int | None = None, column: int | None = None
+) -> DescriptorError:
+    where = "" if line is None else f" at line {line}, column {column}"
+    return DescriptorError(
+        DESCRIPTOR_INVALID_SYNTAX,
+        f"invalid {format} syntax{where}",
+        format=format,
+        line=line,
+        column=column,
+    )
+
+
+def _judged(
+    code: DescriptorCode, phase: str, violations: Iterable[DescriptorViolation]
+) -> DescriptorError:
+    """The ``phase`` failure reporting every violation it judged, canonically."""
+    reported = canonical_violations(violations)
+    rules = ", ".join(sorted({violation.rule for violation in reported}))
+    return DescriptorError(
+        code, f"{len(reported)} {phase} violation(s): {rules}", violations=reported
+    )
 
 
 @functools.cache
@@ -135,7 +159,7 @@ def _validate_schema(document: object) -> None:
         )
         for error in errors
     )
-    raise DescriptorSchemaError(canonical_violations(violations))
+    raise _judged(DESCRIPTOR_SCHEMA_INVALID, "schema", violations)
 
 
 def _type_spelling_violations(

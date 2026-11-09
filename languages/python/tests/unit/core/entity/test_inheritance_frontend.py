@@ -29,10 +29,10 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    EntityDefinitionError,
     Int32,
     Rel,
     TablePerHierarchy,
+    UsageError,
     ValueObject,
     attr,
     inheritance,
@@ -55,6 +55,7 @@ from parallax.core.inheritance._rules import (
 from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
 from parallax.core.model_formation import MetamodelValidationError
 from tests._support import inheritance_models as im
+from tests._support.errors import raises_code
 
 _NS = "parallax.compatibility"
 
@@ -71,36 +72,30 @@ def _issue_codes(error: MetamodelValidationError) -> list[str]:
 # What the grammar itself refuses, at class creation.                          #
 # --------------------------------------------------------------------------- #
 def test_a_domain_subclass_declaring_no_role_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-base-invalid"):
 
         class NoRole(im.Payment, namespace=_NS):  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
             reference: Attr[str | None] = attr(max_length=32)
-
-    assert caught.value.code == "entity-base-invalid"
 
 
 def test_a_subclass_extending_a_temporal_base_beside_its_parent_is_rejected() -> None:
     # Temporal shape is family-wide and root-owned, so a family member never
     # names a second Parallax base — the grammar allows exactly one.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-base-invalid"):
 
         class TwoBases(  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
             im.Rate, Bitemporal, namespace=_NS, inheritance=ConcreteSubtype
         ):
             extra: Attr[str | None]
 
-    assert caught.value.code == "entity-base-invalid"
-
 
 def test_a_subtype_role_without_a_domain_parent_is_rejected() -> None:
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-header-invalid-value"):
 
         class Orphan(  # pyright: ignore[reportUnusedClass] - class body must run to trigger the declaration-time rejection
             Entity, table="orphan", namespace=_NS, inheritance=ConcreteSubtype
         ):
             id: Attr[int] = attr(primary_key=True)
-
-    assert caught.value.code == "entity-header-invalid-value"
 
 
 # --------------------------------------------------------------------------- #

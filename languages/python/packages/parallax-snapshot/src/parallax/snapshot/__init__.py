@@ -1,10 +1,7 @@
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import WireValue
 from parallax.snapshot._handle._database import Database, ScopedDatabase, connect
-from parallax.snapshot._handle._errors import (
-    SnapshotConnectionError,
-    SnapshotMaterializationError,
-)
+from parallax.snapshot._handle._errors import SnapshotMaterializationError
 from parallax.snapshot._handle._read import (
     CheckedSnapshot,
     SharingScope,
@@ -40,7 +37,6 @@ __all__ = [
     "ScopedDatabase",
     "SharingScope",
     "Snapshot",
-    "SnapshotConnectionError",
     "SnapshotConsistencyError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",

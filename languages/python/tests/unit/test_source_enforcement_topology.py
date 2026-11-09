@@ -261,6 +261,9 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"typed_predicate_interpretation"}
     ),
     ("parallax.snapshot._handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
+    ("parallax.snapshot._publication._graph_view", "_errors"): frozenset(
+        {"ENTITY_GRAPH_INVALID_MEMBER"}
+    ),
     ("parallax.snapshot._publication._graph_view", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot._publication._wire", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot._publication._wire", "_declaration"): frozenset({"wire_names_of"}),

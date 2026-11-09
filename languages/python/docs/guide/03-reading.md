@@ -25,10 +25,10 @@ from parallax.core import (
     Attr,
     NoResultFound,
     Pin,
-    QueryDefinitionError,
     TemporalBound,
     TooManyResultsFound,
     TxTemporal,
+    UsageError,
     attr,
 )
 from parallax.core.entity import UnloadedRelationshipError
@@ -268,8 +268,8 @@ SQL pattern, in which `%` matches any run of characters and `_` any one characte
 no escaping; `starts_with`, `ends_with` and `contains` match their text literally, `%`
 and `_` included. A boolean attribute is tested
 with `.is_(True)` or `.is_(False)`. A nullable one is tested with `.is_null()` or
-`.is_not_null()`; comparing with `None` raises `QueryDefinitionError` as you build the
-query. The [Predicate](../../../../core/spec/m-predicate.md#predicate-set) contract
+`.is_not_null()`; comparing with `None` raises a `UsageError` whose `code` is
+`query-expression-invalid` as you build the query. The [Predicate](../../../../core/spec/m-predicate.md#predicate-set) contract
 defines each operation.
 
 Rows sort exactly as you ask, with nulls last unless a key says otherwise, as
@@ -363,8 +363,8 @@ row.
 
 `include` takes any number of paths, and calling it again adds more. A path can run as
 deep as your relationships do, and each name in it is checked against your model when the
-read starts, before any database work: a name that is no relationship raises
-`QueryDefinitionError`. A path loads every relationship along the way, so
+read starts, before any database work: a name that is no relationship raises a
+`UsageError` whose `code` is `query-path-invalid`. A path loads every relationship along the way, so
 `include(Order.customer.orders)` loads each order's customer as well as that customer's
 orders:
 

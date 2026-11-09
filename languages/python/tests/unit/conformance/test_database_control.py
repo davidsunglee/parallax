@@ -38,6 +38,7 @@ from parallax.conformance._postgres_control import (
     PostgresInterleavedExecution,
     initialized_session,
 )
+from parallax.core import UsageError
 from parallax.core.db_port import (
     ConnectionAcquisitionError,
     DatabaseConnection,
@@ -50,7 +51,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.postgres import PostgresRole
-from parallax.snapshot import SnapshotConnectionError
+from tests._support.errors import raises_code
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
 from tests.unit._contention_support import observing
 
@@ -408,7 +409,7 @@ def test_a_composition_that_refuses_the_model_opens_no_session_at_all() -> None:
     # the caller sees.
     connection = _FakeConnection()
 
-    with pytest.raises(SnapshotConnectionError):
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         PostgresInterleavedExecution(_adapter(connection), cast("Any", object()))
 
     assert connection.statements == []

@@ -29,6 +29,7 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.core import InternalError
 from parallax.core.entity import (
     MANY_TO_ONE,
     UNLOADED,
@@ -46,17 +47,14 @@ from parallax.core.entity import (
 from parallax.core.entity import _instance_state as instance_state
 from parallax.core.entity import _row_fill as row_fill
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._errors import GraphConstructionError
 from parallax.core.entity._graph_construction import EntityGraphConstruction
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import DomainModel, class_index, model_of
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
-    RelationshipIdentity,
-    ValueObjectIdentity,
 )
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._indexed_graph_support import Node, published_nodes
 from tests.unit.memory_instruments import serve_one_measurement
@@ -213,9 +211,8 @@ def test_a_refused_relationship_value_leaves_the_shell_unattached(
     # A row is assembled in local state and attached at the end, so a node whose
     # relationship row is refused after its Value Object was built holds nothing.
     allocated = _allocated(monkeypatch)
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-invalid-value"):
         _published((_PARCEL, (1, "north", ABSENT, ABSENT, _TAG_ROW), ("not a node",)))
-    assert refusal.value.code == "entity-graph-invalid-value"
     shell, tag = allocated
     assert not hasattr(shell, COMPACT_STATE_SLOT)
     assert cast("Any", tag).label == "red"
@@ -227,9 +224,8 @@ def test_a_value_object_refused_mid_row_leaves_the_shell_unattached(
     # The occurrence converts after every Attribute position is read, and its
     # refusal still precedes the one attachment.
     allocated = _allocated(monkeypatch)
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-invalid-value"):
         _published((_PARCEL, (1, "north", ABSENT, ABSENT, ("red",)), (UNLOADED,)))
-    assert refusal.value.code == "entity-graph-invalid-value"
     assert [hasattr(shell, COMPACT_STATE_SLOT) for shell in allocated] == [False, False]
 
 
@@ -399,7 +395,7 @@ class _DeepNested(Entity, table="corr_deep", name="CorrDeep", namespace=_NS):
 _CORR: EntityIdentity = _Composed.identity
 
 
-def _disagreeing(composed: type[Entity], variant: type[Entity]) -> GraphConstructionError:
+def _disagreeing(composed: type[Entity], variant: type[Entity]) -> InternalError:
     """The refusal one construction earns when the model it lays its rows out
     against is ``variant``'s and the class it publishes is ``composed``'s.
 
@@ -411,9 +407,8 @@ def _disagreeing(composed: type[Entity], variant: type[Entity]) -> GraphConstruc
     """
     classes = class_index(DomainModel(composed, CorrPeer))
     assert classes is not None
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-layout-mismatch") as refusal:
         EntityGraphConstruction(CatalogedModel(model_of(DomainModel(variant, CorrPeer))), classes)
-    assert refusal.value.code == "entity-graph-layout-mismatch"
     return refusal.value
 
 
@@ -443,9 +438,8 @@ def test_a_construction_proves_only_the_class_it_composed_for_an_entity() -> Non
 
 def test_a_member_row_the_class_lays_out_differently_is_refused() -> None:
     refusal = _disagreeing(_Composed, _ReorderedMembers)
-    assert "'id', 'note', 'label'" in refusal.message
-    assert "'id', 'label', 'note'" in refusal.message
-    assert refusal.identity == _CORR
+    assert "'id', 'note', 'label'" in refusal.args[1]
+    assert "'id', 'label', 'note'" in refusal.args[1]
 
 
 def test_a_member_the_model_calls_a_value_object_and_the_class_maps_as_a_scalar_is_refused() -> (
@@ -459,9 +453,8 @@ def test_a_member_the_model_calls_a_value_object_and_the_class_maps_as_a_scalar_
     # `str`'s value space — true, and an accident of what `note` happens to be
     # declared as.
     refusal = _disagreeing(_ScalarNote, _OccurrenceNote)
-    assert "the model calls member 1 ('note') a Value Object occurrence" in refusal.message
-    assert "the class holds None at that position" in refusal.message
-    assert refusal.identity == ValueObjectIdentity(_OccurrenceNote.identity, ("note",))
+    assert "the model calls member 1 ('note') a Value Object occurrence" in refusal.args[1]
+    assert "the class holds None at that position" in refusal.args[1]
 
 
 def test_a_relationship_tail_the_class_lays_out_differently_is_refused() -> None:
@@ -469,8 +462,8 @@ def test_a_relationship_tail_the_class_lays_out_differently_is_refused() -> None
     # so a direction installed at another direction's position would answer for
     # the wrong relationship silently, for the life of the graph.
     refusal = _disagreeing(_Composed, _ReorderedRelationships)
-    assert "'right', 'left'" in refusal.message
-    assert "'left', 'right'" in refusal.message
+    assert "'right', 'left'" in refusal.args[1]
+    assert "'left', 'right'" in refusal.args[1]
 
 
 def test_a_nested_occurrence_the_class_maps_as_a_leaf_is_refused() -> None:
@@ -478,8 +471,8 @@ def test_a_nested_occurrence_the_class_maps_as_a_leaf_is_refused() -> None:
     # is a member row of its own where a leaf is one value, so a class binding no
     # Value Object Class at that position would take the row as the leaf's value.
     refusal = _disagreeing(_DeepScalar, _DeepNested)
-    assert "calls member 1 ('inner') a nested occurrence" in refusal.message
-    assert "_OuterScalar holds None there" in refusal.message
+    assert "calls member 1 ('inner') a nested occurrence" in refusal.args[1]
+    assert "_OuterScalar holds None there" in refusal.args[1]
 
 
 def test_a_value_object_path_layout_the_class_lays_out_differently_is_refused() -> None:
@@ -487,8 +480,8 @@ def test_a_value_object_path_layout_the_class_lays_out_differently_is_refused() 
     # to a CLASS, so the correspondence descends into the occurrence rather than
     # stopping at the position that holds it.
     refusal = _disagreeing(_Composed, _SwappedDocMembers)
-    assert f"{_CORR.canonical}.doc lays out members ('second', 'first')" in refusal.message
-    assert "_Doc is laid out as ('first', 'second')" in refusal.message
+    assert f"{_CORR.canonical}.doc lays out members ('second', 'first')" in refusal.args[1]
+    assert "_Doc is laid out as ('first', 'second')" in refusal.args[1]
 
 
 class _AlphaRoot(
@@ -593,14 +586,13 @@ _DECLARING_LEVELS = (
 )
 
 
-def _refusal_across(cataloged: DomainModel, composed: DomainModel) -> GraphConstructionError:
+def _refusal_across(cataloged: DomainModel, composed: DomainModel) -> InternalError:
     """The refusal a construction earns when it lays its rows out against
     ``cataloged`` and publishes ``composed``'s classes."""
     classes = class_index(composed)
     assert classes is not None
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-layout-mismatch") as refusal:
         EntityGraphConstruction(CatalogedModel(model_of(cataloged)), classes)
-    assert refusal.value.code == "entity-graph-layout-mismatch"
     return refusal.value
 
 
@@ -614,10 +606,9 @@ def test_a_member_row_two_ancestries_spell_the_same_way_is_refused() -> None:
     # declared `str`, because the value is checked against the layout's declared
     # type and written at the class's own position.
     refusal = _refusal_across(_ANCESTRIES[1], _ANCESTRIES[0])
-    assert "the model declares member 0 ('id')" in refusal.message
-    assert "name='Beta'" in refusal.message
-    assert "name='Alpha'" in refusal.message
-    assert refusal.identity == AttributeIdentity(EntityIdentity(_NS, "Beta"), "id")
+    assert "the model declares member 0 ('id')" in refusal.args[1]
+    assert "name='Beta'" in refusal.args[1]
+    assert "name='Alpha'" in refusal.args[1]
 
 
 def test_a_relationship_two_ancestries_declare_at_different_levels_is_refused() -> None:
@@ -629,8 +620,7 @@ def test_a_relationship_two_ancestries_declare_at_different_levels_is_refused() 
     # enumeration is canonical Identity order and the refusal names the Entity
     # whose own row the disagreement would misdirect.
     refusal = _refusal_across(_DECLARING_LEVELS[0], _DECLARING_LEVELS[1])
-    assert "the model lays out relationship 0 ('peer')" in refusal.message
-    assert refusal.identity == RelationshipIdentity(EntityIdentity(_NS, "TieRoot"), "peer")
+    assert "the model lays out relationship 0 ('peer')" in refusal.args[1]
 
 
 if __name__ == "__main__":

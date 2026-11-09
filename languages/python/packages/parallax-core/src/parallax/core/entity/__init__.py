@@ -5,10 +5,6 @@ from parallax.core.entity._entity import Bitemporal, Entity, TxTemporal
 from parallax.core.entity._errors import (
     EditError,
     EditViolation,
-    EntityDefinitionError,
-    GraphConstructionError,
-    MetamodelDefinitionError,
-    MetamodelLookupError,
     UnloadedRelationshipError,
 )
 from parallax.core.entity._expressions import (
@@ -73,15 +69,11 @@ __all__ = [
     "EditError",
     "EditViolation",
     "Entity",
-    "EntityDefinitionError",
     "EntityGraphConstruction",
     "Float32",
-    "GraphConstructionError",
     "IncludePath",
     "IndexedGraph",
     "Int32",
-    "MetamodelDefinitionError",
-    "MetamodelLookupError",
     "ObjectQuery",
     "Predicate",
     "Rel",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
+from parallax.core.base import InternalError
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -37,37 +38,26 @@ from parallax.core.metamodel import (
 )
 from parallax.descriptor._type_spelling import format_type_spelling
 
-__all__ = ["DescriptorExportError", "ExportTarget", "export_document"]
+__all__ = ["DESCRIPTOR_EXPORT_FAILED", "ExportTarget", "export_defect", "export_document"]
 
-DESCRIPTOR_EXPORT_FAILED: Final[str] = "descriptor-export-failed"
-"""The sole code every :class:`DescriptorExportError` carries."""
+DESCRIPTOR_EXPORT_FAILED: Final = "descriptor-export-failed"
+"""A canonical export hit an implementation defect, not a model defect.
+
+An accepted Metamodel is exportable by contract, so export renews no validation
+and can fail only through a conversion or serialization bug. It is an
+adapter-defect boundary, never raised as, or translated to, a
+:class:`~parallax.descriptor._errors.DescriptorError`, whose phases are
+ingestion failures over documents. No partial output escapes, and the model is
+left unchanged."""
 
 type ExportTarget = Literal["document", "json", "yaml"]
 """The canonical form an export was producing when a defect interrupted it."""
 
 
-class DescriptorExportError(RuntimeError):
-    """A canonical export hit an implementation defect, not a model defect.
-
-    An accepted Metamodel is exportable by contract, so export renews no
-    validation and can fail only through a conversion or serialization bug.
-    ``target`` names the form under production and ``cause`` retains the original
-    defect, also chained natively. Like ``FormationContractError`` it is an
-    adapter-defect boundary; it is never raised as, or translated to, a
-    :class:`~parallax.descriptor._errors.DescriptorError`, whose subtypes are
-    ingestion failures over documents. No partial output escapes, and the model
-    is left unchanged.
-    """
-
-    code: str
-    target: ExportTarget
-    cause: BaseException
-
-    def __init__(self, target: ExportTarget, cause: BaseException) -> None:
-        self.code = DESCRIPTOR_EXPORT_FAILED
-        self.target = target
-        self.cause = cause
-        super().__init__(f"{DESCRIPTOR_EXPORT_FAILED} [{target}]: {cause}")
+def export_defect(target: ExportTarget, defect: Exception) -> InternalError:
+    """The export failure naming the form under production and the defect, to
+    be raised from that defect."""
+    return InternalError(DESCRIPTOR_EXPORT_FAILED, f"[{target}] {defect}")
 
 
 def export_document(metamodel: Metamodel) -> dict[str, object]:
@@ -77,7 +67,7 @@ def export_document(metamodel: Metamodel) -> dict[str, object]:
     re-derivable default is omitted, so a canonical document re-imports and
     re-exports to itself. Deterministic: repeated exports of one accepted
     Metamodel are equal. Returns the complete document or, on an implementation
-    defect, raises :class:`DescriptorExportError` with no partial output.
+    defect, raises :data:`DESCRIPTOR_EXPORT_FAILED` with no partial output.
     """
     try:
         entities = tuple(metamodel.entities)
@@ -85,7 +75,7 @@ def export_document(metamodel: Metamodel) -> dict[str, object]:
             return {"entity": _entity(entities[0])}
         return {"entities": [_entity(entity) for entity in entities]}
     except Exception as error:
-        raise DescriptorExportError("document", error) from error
+        raise export_defect("document", error) from error
 
 
 _CARDINALITIES: Final[dict[Cardinality, str]] = {

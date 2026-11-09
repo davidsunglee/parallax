@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from types import MappingProxyType
 from typing import Any, Final, TypeGuard
 
+from parallax.core.base import InternalError
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     CandidateMetamodel,
@@ -31,6 +32,7 @@ from parallax.core.model_formation._contributors import (
 )
 from parallax.core.model_formation._errors import (
     FORMATION_COMPILER_FAILED,
+    FORMATION_CONTRACT_CODES,
     FORMATION_FACET_DUPLICATE,
     FORMATION_FACET_MISSING,
     FORMATION_ISSUE_CODE_INVALID,
@@ -42,8 +44,8 @@ from parallax.core.model_formation._errors import (
     FORMATION_RULE_SET_FAILED,
     FORMATION_RULE_SET_RESULT_INVALID,
     FormationContractCode,
-    FormationContractError,
     MetamodelValidationError,
+    formation_contract_failure,
 )
 from parallax.core.model_formation._manifest import (
     FixedResolver,
@@ -69,8 +71,9 @@ def form(
 
     Raises :class:`MetamodelValidationError` when the model is invalid, carrying
     every foundational or semantic issue in canonical order, and
-    :class:`FormationContractError` when the profile, manifest, or a contributor
-    breaks its own contract. The two never substitute for each other.
+    :class:`~parallax.core.base.InternalError` under a ``formation-*`` code when
+    the profile, manifest, or a contributor breaks its own contract. The two
+    never substitute for each other.
     """
     _check_profile_drift(manifest, profile)
     candidate = _resolve_once(manifest, unresolved)
@@ -81,8 +84,8 @@ def form(
     return accept_metamodel(metadata, _compile_facets(manifest, profile, metadata))
 
 
-def _drift(message: str, owner: ModuleIdentity | None = None) -> FormationContractError:
-    return FormationContractError(FORMATION_PROFILE_DRIFT, message, owner=owner)
+def _drift(message: str, owner: ModuleIdentity | None = None) -> InternalError:
+    return formation_contract_failure(FORMATION_PROFILE_DRIFT, message, owner=owner)
 
 
 @contextmanager
@@ -94,16 +97,16 @@ def _contract_reads(
     Every ``owner``, ``issue_codes``, ``facet_key``, and ``requires`` member is
     arbitrary contributor code, so reading one can raise. Such a failure is a
     statement about the contributor, never about the model: it leaves the block
-    as a :class:`FormationContractError` under ``code`` with the original
-    exception preserved. A contract error the block raised deliberately keeps
-    its own more specific code.
+    as a contract failure under ``code``, raised from the original exception. A
+    contract failure the block raised deliberately keeps its own more specific
+    code.
     """
     try:
         yield
-    except FormationContractError:
-        raise
     except Exception as error:
-        raise FormationContractError(code, message, owner=owner, cause=error) from error
+        if isinstance(error, InternalError) and error.code in FORMATION_CONTRACT_CODES:
+            raise
+        raise formation_contract_failure(code, message, owner=owner) from error
 
 
 def _issue_code_prefix(owner: ModuleIdentity) -> str:
@@ -202,7 +205,7 @@ def _check_issue_code_grammar(entries: Sequence[FormationManifestEntry]) -> None
     for entry in entries:
         for code in sorted(entry.issue_codes):
             if not _well_formed_code(code, entry.owner):
-                raise FormationContractError(
+                raise formation_contract_failure(
                     FORMATION_ISSUE_CODE_INVALID,
                     f"Issue Code {code!r} is not kebab-case prefixed with "
                     f"{_issue_code_prefix(entry.owner)!r}",
@@ -253,7 +256,7 @@ def _check_model_compiler_presence(
         supplied.setdefault(compiler.owner, compiler)
     missing = sorted(set(required) - set(supplied))
     if missing:
-        raise FormationContractError(
+        raise formation_contract_failure(
             FORMATION_FACET_MISSING,
             f"the profile supplies no Model Compiler for {missing}",
             owner=missing[0],
@@ -273,7 +276,7 @@ def _check_compiler_keys(profile: FormationProfile) -> None:
     for compiler in profile.model_compilers:
         key = compiler.facet_key
         if key in seen:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_FACET_DUPLICATE,
                 f"{key} is installed more than once",
                 owner=compiler.owner,
@@ -297,7 +300,7 @@ def _check_facet_dependencies(entries: Sequence[FormationManifestEntry]) -> None
     for entry in entries:
         for key in sorted(entry.required_facets, key=lambda facet: facet.owner):
             if key not in requires:
-                raise FormationContractError(
+                raise formation_contract_failure(
                     FORMATION_FACET_MISSING,
                     f"{entry.owner} requires {key}, which no manifest row compiles",
                     owner=key.owner,
@@ -381,11 +384,10 @@ def _invoke_resolver(unresolved: UnresolvedMetamodel) -> object:
     try:
         return resolve(unresolved)
     except Exception as error:
-        raise FormationContractError(
+        raise formation_contract_failure(
             FORMATION_RESOLVER_FAILED,
             "the fixed resolver raised instead of returning a resolution result",
             owner=METAMODEL_MODULE,
-            cause=error,
         ) from error
 
 
@@ -401,7 +403,7 @@ def _resolve_once(
     if isinstance(result, Resolved):
         candidate = result.candidate
         if not is_candidate_metamodel(candidate):
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_RESOLVER_RESULT_INVALID,
                 "the fixed resolver resolved to a value that is not a Candidate Metamodel",
                 owner=METAMODEL_MODULE,
@@ -409,7 +411,7 @@ def _resolve_once(
         return candidate
     issues = _issue_sequence(result.issues) if isinstance(result, Rejected) else None
     if not issues:
-        raise FormationContractError(
+        raise formation_contract_failure(
             FORMATION_RESOLVER_RESULT_INVALID,
             "the fixed resolver returned neither a candidate nor a nonempty immutable "
             "issue sequence",
@@ -428,20 +430,20 @@ def _check_emitted(
     """Hold one emitter to its declared codes and to distinct issue identities."""
     for issue in issues:
         if not _well_formed_code(issue.code, owner):
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_ISSUE_CODE_INVALID,
                 f"emitted Issue Code {issue.code!r} is not kebab-case prefixed with "
                 f"{_issue_code_prefix(owner)!r}",
                 owner=owner,
             )
         if issue.code not in declared:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_ISSUE_UNDECLARED,
                 f"emitted Issue Code {issue.code!r} is outside the declared set",
                 owner=owner,
             )
         if issue in seen:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_ISSUE_DUPLICATE,
                 f"issue identity ({issue.code!r}, {issue.location}) was already emitted",
                 owner=owner,
@@ -464,15 +466,14 @@ def _run_rule_sets(
         try:
             returned: object = rule_set.validate(candidate)
         except Exception as error:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_RULE_SET_FAILED,
                 "the Rule Set raised instead of returning its issue sequence",
                 owner=entry.owner,
-                cause=error,
             ) from error
         issues = _issue_sequence(returned)
         if issues is None:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_RULE_SET_RESULT_INVALID,
                 "the Rule Set returned a mutable collection or a non-issue element",
                 owner=entry.owner,
@@ -499,14 +500,13 @@ def _compile_metadata(profile: FormationProfile, candidate: CandidateMetamodel) 
     try:
         metadata: object = compiler.compile(candidate)
     except Exception as error:
-        raise FormationContractError(
+        raise formation_contract_failure(
             FORMATION_COMPILER_FAILED,
             "the Metadata Compiler failed on an accepted candidate",
             owner=owner,
-            cause=error,
         ) from error
     if not is_compiled_metadata(metadata):
-        raise FormationContractError(
+        raise formation_contract_failure(
             FORMATION_COMPILER_FAILED,
             "the Metadata Compiler returned a value that is not Compiled Metadata",
             owner=owner,
@@ -582,14 +582,13 @@ def _compile_facets(
         try:
             facet = compiler.compile(metadata, required)
         except Exception as error:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_COMPILER_FAILED,
                 "the Model Compiler failed on accepted metadata",
                 owner=owner,
-                cause=error,
             ) from error
         if isinstance(facet, _MUTABLE_FACET_TYPES):
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_COMPILER_FAILED,
                 "the Model Compiler returned a mutable collection as its facet",
                 owner=owner,
@@ -599,7 +598,7 @@ def _compile_facets(
         ):
             accepted = key.accepts(facet)
         if not accepted:
-            raise FormationContractError(
+            raise formation_contract_failure(
                 FORMATION_COMPILER_FAILED,
                 f"the Model Compiler returned a value {key.owner!r} does not accept as its facet",
                 owner=owner,

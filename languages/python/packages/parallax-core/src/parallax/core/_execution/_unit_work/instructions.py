@@ -17,8 +17,8 @@ from parallax.core._execution._unit_work.preparation import (
 )
 from parallax.core.base import (
     INFINITY,
+    INSTANT_INVALID,
     TIMESTAMP,
-    InstantError,
     NeutralType,
     UsageError,
     coerce_neutral_input,
@@ -1916,8 +1916,7 @@ def _judge_window(
     A bounded form on a target without Valid Time, a half-stated window, an
     inadmissible bound, and an unordered one are this write's own verdict on its
     input (``write-instruction-invalid``); a bound that is no instant keeps
-    `m-core`'s :class:`~parallax.core.base.InstantError`. Refusals name the
-    family by its root.
+    `m-core`'s ``instant-invalid``. Refusals name the family by its root.
     """
     if mutation in BOUNDED_MUTATIONS:
         if not isinstance(shape, temporal_read.Bitemporal):
@@ -2209,14 +2208,14 @@ def _stated_instant(root: EntityIdentity, mutation: str, bound: str, value: obje
 
     Total over what a caller can actually pass, which a type annotation is not:
     a value of another type is no `m-core` instant at all, so it keeps
-    :class:`~parallax.core.base.InstantError` — the class a naive datetime earns
-    one step later — rather than leaving an ``AttributeError`` where a verdict
-    belongs.
+    ``instant-invalid`` — the code a naive datetime earns one step later —
+    rather than leaving an ``AttributeError`` where a verdict belongs.
     """
     if not isinstance(value, dt.datetime):
-        raise InstantError(
+        raise UsageError(
+            INSTANT_INVALID,
             f"{root.name}: {mutation!r} takes an aware datetime for {bound}, "
-            f"and {type(value).__name__} is no `timestamp`"
+            f"and {type(value).__name__} is no `timestamp`",
         )
     return value
 

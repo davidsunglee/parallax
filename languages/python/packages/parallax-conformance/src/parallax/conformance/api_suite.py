@@ -170,12 +170,12 @@ RECIPES: Final[list[Recipe]] = [
             "    Document,\n"
             "    DomainModel,\n"
             "    Entity,\n"
-            "    EntityDefinitionError,\n"
             "    Int32,\n"
             "    MetamodelValidationError,\n"
             "    Rel,\n"
             "    TablePerHierarchy,\n"
             "    TxTemporal,\n"
+            "    UsageError,\n"
             "    ValueObject,\n"
             "    attr,\n"
             "    desc,\n"
@@ -202,10 +202,10 @@ RECIPES: Final[list[Recipe]] = [
             "    Attr,\n"
             "    NoResultFound,\n"
             "    Pin,\n"
-            "    QueryDefinitionError,\n"
             "    TemporalBound,\n"
             "    TooManyResultsFound,\n"
             "    TxTemporal,\n"
+            "    UsageError,\n"
             "    attr,\n"
             ")\n"
             "from parallax.core.entity import UnloadedRelationshipError\n"
@@ -757,10 +757,8 @@ RECIPES: Final[list[Recipe]] = [
             "    DomainModel,\n"
             "    EditError,\n"
             "    Entity,\n"
-            "    EntityDefinitionError,\n"
             "    MetamodelValidationError,\n"
             "    NoResultFound,\n"
-            "    QueryDefinitionError,\n"
             "    TooManyResultsFound,\n"
             "    UsageError,\n"
             ")\n"
@@ -939,7 +937,7 @@ EXAMPLES: Final[list[Example]] = [
     Example(
         "m-inheritance-133",
         "A Subtype Selection with an exact duplicate",
-        'Animal.is_a(Dog, Dog)\n# raises QueryDefinitionError(code="query-path-invalid")',
+        'Animal.is_a(Dog, Dog)\n# raises UsageError(code="query-path-invalid")',
     ),
     # Rejected-case build/buffer-time proof: the write-side counterpart of the
     # read-side proofs above —
@@ -1849,7 +1847,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # (098/099, `inheritance-temporality-not-root-owned`), a descendant declaring
 # its own `optimisticLocking` attribute (102/103,
 # `inheritance-optimistic-locking-not-root-owned`, ADR 0027) — are rejected
-# either at class creation as an `EntityDefinitionError` or at model construction
+# either at class creation as an `entity-*` `UsageError` or at model construction
 # as the shared formation-time `inheritance-*` issue
 # (`test_inheritance_frontend.py`), never as a family refusal's code. No case in
 # this group can therefore reproduce `then.rejectedRule` through the public

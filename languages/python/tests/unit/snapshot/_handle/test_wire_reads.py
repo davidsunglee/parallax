@@ -78,7 +78,6 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
-    SnapshotConnectionError,
     SnapshotInspectionError,
     TxnContext,
     WireEntity,
@@ -946,7 +945,7 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
 
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
-    with pytest.raises(SnapshotConnectionError):
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         own_root(Database.connect(RefusingAdapter(), ORDERS)).using_database_login().find(
             cast("Any", Gadget.where(Gadget.id == 1))
         )

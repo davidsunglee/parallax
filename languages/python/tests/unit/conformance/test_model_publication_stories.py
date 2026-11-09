@@ -19,6 +19,7 @@ import pytest
 
 from parallax.conformance import model_publication_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL, NICKNAMED_ACCOUNT_MODEL
+from parallax.core import InternalError
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
@@ -30,8 +31,8 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
-from parallax.core.entity import GraphConstructionError, model_of
 from parallax.core.entity import _graph_construction as graph_construction_module
+from parallax.core.entity import model_of
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution import (
     ModelSelection,
@@ -192,16 +193,16 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
 
     def refuse_the_candidate(cataloged: CatalogedModel, *derivation: Any) -> Any:
         if cataloged.meta is candidate:
-            raise GraphConstructionError(
-                code="entity-graph-layout-mismatch",
-                message="the candidate's per-Entity facts could not be derived",
+            raise InternalError(
+                "entity-graph-layout-mismatch",
+                "the candidate's per-Entity facts could not be derived",
             )
         return derive_entity_facts(cataloged, *derivation)
 
     monkeypatch.setattr(stories, "connect", connect_and_hold)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse_the_candidate)
 
-    with pytest.raises(GraphConstructionError):
+    with pytest.raises(InternalError):
         stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
 
     ((serving, a, root),) = connected

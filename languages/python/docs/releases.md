@@ -33,13 +33,13 @@ need no migration.
 
 A Typed include that continues past its first relationship now needs a class-backed
 serving model. On a model built without Entity Classes, such a path passed to
-`db.wire.find(...)` raises `QueryDefinitionError(query-expression-invalid)` instead of
+`db.wire.find(...)` raises `UsageError(query-expression-invalid)` instead of
 composing a canonical spelling from Python names. Migrate those reads to a canonical
 Wire query, which states each segment's owner. Includes of a single relationship and
 canonical Wire input are unaffected.
 
 A continuation naming no relationship of the class it reaches now raises
-`QueryDefinitionError(query-path-invalid)` before I/O, in place of the `ValueError`
+`UsageError(query-path-invalid)` before I/O, in place of the `ValueError`
 that composed spelling reached at the read gate. Stream reads report it on entry.
 
 `view` and `is_view_loaded` now find a narrowed view by the key the read planned, so

@@ -50,7 +50,7 @@ predicate: `p` is built from the Value Object or target Entity Class for object
 elements, and from the collection's `.element` for scalar elements
 (`Order.tags.any(Order.tags.element == "urgent")`). A collection offers no
 comparison, ordering, null check, or traversal of its own, and comparing one with
-`==` raises `QueryDefinitionError`. Single Value Objects and to-one relationships
+`==` raises `UsageError(query-expression-invalid)`. Single Value Objects and to-one relationships
 offer `.exists()` / `.not_exists()` and dotted field access. A to-one
 relationship's `.exists(p)` / `.not_exists(p)` match its target against one
 predicate `p` built from the target Entity Class
@@ -74,8 +74,8 @@ traversing a to-many relationship is what an Include does rather than something
 it refuses. A segment narrowed to one subtype continues through that subtype's
 members; any other segment continues through its relationship's target. A name
 that is no relationship of the class reached raises
-`QueryDefinitionError(query-path-invalid)`, and a model built without Entity
-Classes raises `QueryDefinitionError(query-expression-invalid)` for a continuation
+`UsageError(query-path-invalid)`, and a model built without Entity
+Classes raises `UsageError(query-expression-invalid)` for a continuation
 while still binding a path of one relationship. Binding happens once per
 operation, so a stream refuses at entry rather than at the `.stream(...)` call.
 
@@ -86,8 +86,8 @@ spelling and clause order; model-dependent facts instead require execution
 preflight. The negative-typing suite pins those distinctions. Variadic narrowing
 outside the fixed overloads conservatively retains the original result type.
 
-Python authoring refusals use `QueryDefinitionError(ValueError)` with structured
-context and stable codes, excluding literal values and internal model state.
+Python authoring refusals are `UsageError`s whose `query-*` codes name the rule,
+with structured context excluding literal values and internal model state.
 A query's target absent from the connected model is instead
 `QueryTargetError(query-target-not-in-model)` before I/O. Queries hold no model
 identity and can be executed against any model that accepts their target.
@@ -98,7 +98,7 @@ entry for all of its pages, and a Typed query handed to a Wire read or a Wire
 predicate-selected write under the same Typed operand policy. A literal prepared at authoring is adopted only where
 that model declares the member with the identical neutral type — Decimal
 precision and scale and float width included — and is otherwise refused with
-`QueryDefinitionError(query-expression-invalid)` before I/O.
+`UsageError(query-expression-invalid)` before I/O.
 
 ## Temporal spelling
 

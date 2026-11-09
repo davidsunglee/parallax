@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Final, Self, SupportsIndex, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
 
+from parallax.core.base import InternalError, UsageError
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import (
     DECLARATION_MEMBER_NAMES as _DECLARATION_MEMBERS,
@@ -28,12 +29,11 @@ from parallax.core.entity._edit import (
     use_edit,
 )
 from parallax.core.entity._errors import (
+    ENTITY_HEADER_UNKNOWN_OPTION,
     ENTITY_ROW_MALFORMED_PROVENANCE,
     ENTITY_ROW_MEMBER_MISSING,
     EditError,
     EditViolation,
-    EntityDefinitionError,
-    EntityRowError,
 )
 from parallax.core.entity._expressions import (
     AllPredicate,
@@ -73,7 +73,10 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
 )
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.predicate import QueryDefinitionError
+from parallax.core.predicate import (
+    QUERY_CLAUSE_INVALID,
+    QUERY_EXPRESSION_INVALID,
+)
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -201,11 +204,9 @@ class EntityMeta(ModelMetaclass):
         **unknown: object,
     ) -> type:
         if unknown:
-            raise EntityDefinitionError(
-                code="entity-header-unknown-option",
-                message=(
-                    f"{cls_name}: unknown class-header option(s) {', '.join(sorted(unknown))}"
-                ),
+            raise UsageError(
+                ENTITY_HEADER_UNKNOWN_OPTION,
+                f"{cls_name}: unknown class-header option(s) {', '.join(sorted(unknown))}",
             )
         return build_class(
             mcs,
@@ -263,20 +264,16 @@ def build_object_query(
     collection, so one read at the queried position is refused here.
     """
     if not predicates:
-        raise QueryDefinitionError(
-            code="query-clause-invalid",
-            message=(
-                "where() requires at least one predicate; spell an explicitly unfiltered "
-                "query as where(Entity.all)"
-            ),
+        raise UsageError(
+            QUERY_CLAUSE_INVALID,
+            "where() requires at least one predicate; spell an explicitly unfiltered "
+            "query as where(Entity.all)",
         )
     if len(predicates) > 1 and any(isinstance(p, AllPredicate) for p in predicates):
-        raise QueryDefinitionError(
-            code="query-expression-invalid",
-            message=(
-                "Entity.all is legal only as the sole where() argument; an unfiltered query "
-                "is the whole filter or it is not the filter at all"
-            ),
+        raise UsageError(
+            QUERY_EXPRESSION_INVALID,
+            "Entity.all is legal only as the sole where() argument; an unfiltered query "
+            "is the whole filter or it is not the filter at all",
         )
     predicate = conjoin(predicates)
     assert predicate is not None  # the empty argument list is refused above
@@ -778,13 +775,10 @@ def _recorded_changes(value: Entity, entity: EntityIdentity) -> Mapping[str, obj
     if record is _NO_RECORD:
         return {}
     if not isinstance(record, ChangeRecord):
-        raise EntityRowError(
-            code=ENTITY_ROW_MALFORMED_PROVENANCE,
-            message=(
-                f"this {entity.canonical} value's Change Record slot holds a "
-                f"{type(record).__name__} no edit wrote, so it names no touched member"
-            ),
-            identity=entity,
+        raise InternalError(
+            ENTITY_ROW_MALFORMED_PROVENANCE,
+            f"this {entity.canonical} value's Change Record slot holds a "
+            f"{type(record).__name__} no edit wrote, so it names no touched member",
         )
     return record
 
@@ -797,14 +791,11 @@ def _require_declared(
     if not undeclared:
         return
     named = ", ".join(repr(name) for name in undeclared)
-    raise EntityRowError(
-        code=ENTITY_ROW_MEMBER_MISSING,
-        message=(
-            f"{operation} selects {named}, which {entity.canonical} does not "
-            "declare: no canonical key names it, and dropping a value the caller authored "
-            "would signal nothing"
-        ),
-        identity=entity,
+    raise UsageError(
+        ENTITY_ROW_MEMBER_MISSING,
+        f"{operation} selects {named}, which {entity.canonical} does not "
+        "declare: no canonical key names it, and dropping a value the caller authored "
+        "would signal nothing",
     )
 
 
@@ -822,14 +813,11 @@ def _require_supplied(
     if not unsupplied:
         return
     named = ", ".join(repr(name) for name in unsupplied)
-    raise EntityRowError(
-        code=ENTITY_ROW_MEMBER_MISSING,
-        message=(
-            f"{operation} selects {named}, which this {entity.canonical} value's "
-            "class does not carry: its own declaration of that Entity names those members "
-            "otherwise, and a row short of what its selection claims would signal nothing"
-        ),
-        identity=entity,
+    raise UsageError(
+        ENTITY_ROW_MEMBER_MISSING,
+        f"{operation} selects {named}, which this {entity.canonical} value's "
+        "class does not carry: its own declaration of that Entity names those members "
+        "otherwise, and a row short of what its selection claims would signal nothing",
     )
 
 

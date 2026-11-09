@@ -29,14 +29,21 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core import LATEST, Attr, ConflictError, DomainModel, Entity, attr, unit_work
+from parallax.core import (
+    LATEST,
+    Attr,
+    ConflictError,
+    DomainModel,
+    Entity,
+    attr,
+    unit_work,
+)
 from parallax.core._execution._options import OMITTED
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import INT64, DocumentValue, InstantError, StructuredDocument, UsageError
+from parallax.core.base import INT64, DocumentValue, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity._errors import EntityRowError
 from parallax.core.execution import (
     KEYED_WRITE_VALUE_CODES,
     KeyedWriteValueError,
@@ -47,6 +54,7 @@ from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,
+    WRITE_INSTRUCTION_INVALID,
     WriteEvidenceError,
 )
 from parallax.core.write_plan import ObjectKey
@@ -670,8 +678,8 @@ def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds(
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # never reached the no-op check
 
 
-def test_a_bounded_keyed_update_with_a_naive_until_raises_the_proper_value_error() -> None:
-    # A naive `until` (no tzinfo) must raise the SAME `ValueError` shape
+def test_a_bounded_keyed_update_with_a_naive_until_raises_the_instant_refusal() -> None:
+    # A naive `until` (no tzinfo) must raise the SAME `instant-invalid` refusal
     # the shared window gate's own `normalize_instant` normalization raises
     # for a naive `valid_from` (never a bare `TypeError` leaked by
     # comparing a naive `until` against an already-aware `valid_from`
@@ -686,10 +694,10 @@ def test_a_bounded_keyed_update_with_a_naive_until_raises_the_proper_value_error
         ).result()
         tx.amend(fetched.edit(value=Decimal("200.00")), until=naive_until)
 
-    # `pytest.raises(ValueError, ...)` itself is the pin against a
-    # `TypeError` leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
-    # would escape uncaught here rather than silently satisfy this block.
-    with raises_contextualized(ValueError, match="naive datetime"):
+    # The refusal's class and code are the pin against a `TypeError` leak: an
+    # un-normalized comparison would escape as something else rather than
+    # silently satisfy this block.
+    with raises_contextualized(UsageError, code="instant-invalid", match="naive datetime"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn, concurrency="optimistic")
@@ -706,9 +714,9 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
         fetched = tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
         ).result()
-        with pytest.raises(InstantError, match="no `timestamp`"):
+        with raises_code(UsageError, "instant-invalid", match="no `timestamp`"):
             tx.amend(fetched.edit(value=Decimal("200.00")), until=cast("dt.datetime", "2024-09-01"))
-        with pytest.raises(InstantError, match="no `timestamp`"):
+        with raises_code(UsageError, "instant-invalid", match="no `timestamp`"):
             tx.insert(
                 WherePosition(id=2, acct_num="B", value=Decimal("1.00")),
                 valid_from=cast("dt.datetime", "2024-06-01"),
@@ -1311,10 +1319,9 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
     # declares no `leftOnly`, so the substitution is named where it happened —
     # rather than reported downstream as the ABSENCE of the `rightOnly` this
     # model does declare.
-    with raises_contextualized(EntityRowError) as refusal:
+    with raises_contextualized(UsageError, code="entity-row-member-missing") as refusal:
         db_for(_TWIN_RIGHT, port).transact(fn)
-    assert refusal.value.code == "entity-row-member-missing"
-    assert "'leftOnly'" in refusal.value.message
+    assert "'leftOnly'" in refusal.value.args[1]
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
@@ -1323,19 +1330,19 @@ def test_a_foreign_twins_row_refusal_precedes_a_window_its_target_does_not_admit
     # built from it, so a call carrying both a member the connected model does not
     # declare and a `valid_from` its non-temporal target takes none of hears the
     # acquisition refusal; the model's own instance hears the window's.
-    def insert(instance: Entity) -> type[Exception]:
+    def insert(instance: Entity) -> str:
         port = ScriptedAdapter(Transact())
 
         def fn(tx: TxnContext) -> None:
             tx.insert(instance, valid_from=FIXED)
 
-        with raises_contextualized(Exception) as refusal:
+        with raises_contextualized(UsageError) as refusal:
             db_for(_TWIN_RIGHT, port).transact(fn)
         assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
-        return type(refusal.value)
+        return refusal.value.code
 
-    assert insert(_TwinLeft(id=1, left_only="x")) is EntityRowError
-    assert insert(_TwinRight(id=1, right_only="x")) is UsageError
+    assert insert(_TwinLeft(id=1, left_only="x")) == "entity-row-member-missing"
+    assert insert(_TwinRight(id=1, right_only="x")) == WRITE_INSTRUCTION_INVALID
 
 
 def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:
@@ -1684,7 +1691,7 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
     # identity row at all. The exemption an insertion grants is decided from the
     # authority the value carries rather than from a row, so this transaction
     # having an insert of the same key cannot turn a provenance refusal into an
-    # `EntityRowError` reported on the value's behalf.
+    # `entity-row-member-missing` reported on the value's behalf.
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:

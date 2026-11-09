@@ -69,7 +69,7 @@ families. Decimal requires both `precision=` and `scale=`. `primary_key=True`
 means application-assigned; `MAX` and `Sequence(...)` imply an integer primary
 key. No free-form JSON member annotation exists.
 
-Ineligible key types and incompatible generation fail at class creation with `EntityDefinitionError` and code `entity-option-context-invalid`, before a `DomainModel` can be constructed. Eligibility belongs to the [Metamodel](../../../core/spec/m-metamodel.md#attributes-and-primary-keys). Public descriptor inputs reject serialized key-policy violations in the schema phase instead.
+Ineligible key types and incompatible generation fail at class creation with `UsageError` and code `entity-option-context-invalid`, before a `DomainModel` can be constructed. Eligibility belongs to the [Metamodel](../../../core/spec/m-metamodel.md#attributes-and-primary-keys). Public descriptor inputs reject serialized key-policy violations in the schema phase instead.
 
 `Rel[T]` requires `rel(...)`. Its defining form names `cardinality`, `join`,
 optional `dependent`, `order_by`, and `name`; its reverse form names
@@ -171,13 +171,13 @@ as `MAX` have equality semantics, not singleton identity semantics.
 ## Descriptor and metadata boundary
 
 `parallax.descriptor` accepts documents, JSON, or YAML and exports canonical
-descriptors. Text decoding failures are `DescriptorSyntaxError`; document input
-starts at schema validation. A descriptor-backed model has no Entity Classes
+descriptors. Text decoding failures are `DescriptorError` with
+`descriptor-invalid-syntax`; document input starts at schema validation. A descriptor-backed model has no Entity Classes
 and supports Wire execution without Typed materialization.
 
 `model.meta(...)` accepts a composed Entity Class, canonical identity spelling,
 or `EntityIdentity`. It returns local immutable metadata, not flattened inherited
 members or effective convenience aliases. Invalid spelling and unknown identity
-raise `MetamodelLookupError` with `metamodel-invalid-entity-reference` and
+raise `UsageError` with `metamodel-invalid-entity-reference` and
 `metamodel-entity-not-found`, respectively. The underlying class-free lookup
 protocol continues to answer absence.

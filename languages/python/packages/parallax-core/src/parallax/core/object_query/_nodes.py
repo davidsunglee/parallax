@@ -5,11 +5,12 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import ClassVar, Final, Literal, Protocol, Self
 
+from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.predicate import (
+    QUERY_EXPRESSION_INVALID,
     PredicateInterpretation,
     PredicateNode,
-    QueryDefinitionError,
     SubtypeSelection,
     canonical_subtype_selection,
 )
@@ -167,7 +168,7 @@ class OrderKey:
     lowering treats them as the ``asc`` and ``last`` defaults.
 
     A Sort Key is a query-definition construct, so a rejected placement
-    composition raises :class:`~parallax.core.predicate.QueryDefinitionError`. The
+    composition raises ``query-expression-invalid``. The
     relationship-declaration ordering term (``OrderTerm``) carries the same
     single-shot placement rule but is part of a model declaration rather than of
     a query, so it stays outside that family and raises a plain
@@ -189,12 +190,10 @@ class OrderKey:
 
     def _with_placement(self, placement: Literal["first", "last"]) -> OrderKey:
         if self.nulls is not None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{self.attr}: null placement is single-shot and is already "
-                    f"{self.nulls!r}; derive the key from the unplaced base"
-                ),
+            raise UsageError(
+                QUERY_EXPRESSION_INVALID,
+                f"{self.attr}: null placement is single-shot and is already "
+                f"{self.nulls!r}; derive the key from the unplaced base",
             )
         return OrderKey(attr=self.attr, direction=self.direction, nulls=placement)
 

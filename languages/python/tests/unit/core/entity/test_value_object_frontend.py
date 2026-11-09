@@ -16,10 +16,10 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import Attr, Entity, ValueObject, attr
+from parallax.core import Attr, Entity, UsageError, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float64, NeutralType, String
-from parallax.core.entity import EntityDefinitionError, Predicate
+from parallax.core.entity import Predicate
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._expressions import (
     AssignableScalarExpr,
@@ -39,9 +39,9 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
 )
-from parallax.core.predicate import QueryDefinitionError
 from parallax.core.predicate._interpretation import COMPARE
 from tests._support import value_object_models as vm
+from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_document
 from tests.unit.core.entity.value_object_bad_models import (
     build_copy_verb_value_object,
@@ -240,7 +240,7 @@ def test_field_access_refuses_unknown_members_and_nonnullable_null_checks() -> N
         _ = vm.Address.missing  # type: ignore[attr-defined] - deliberately undeclared member
     with pytest.raises(AttributeError, match="declares no member 'missing'"):
         _ = vm.Customer.address.missing
-    with pytest.raises(QueryDefinitionError, match="non-nullable member"):
+    with raises_code(UsageError, "query-expression-invalid", match="non-nullable member"):
         _field(vm.Address.city).is_null()
 
 
@@ -253,7 +253,7 @@ def test_an_entity_rooted_value_object_predicate_carries_the_dotted_canonical_pa
 
 
 def test_invalid_nested_operand_reports_the_complete_developer_input_rule() -> None:
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-expression-invalid") as caught:
         _ = vm.Customer.address.geo.elevation == "high"
     message = str(caught.value)
     assert "parallax.compatibility.Customer.address.geo.elevation" in message
@@ -263,7 +263,7 @@ def test_invalid_nested_operand_reports_the_complete_developer_input_rule() -> N
 
 
 def test_invalid_relative_operand_reports_the_complete_developer_input_rule() -> None:
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-expression-invalid") as caught:
         _field(vm.Geo.elevation).__eq__(None)
     message = str(caught.value)
     assert "elevation" in message
@@ -355,7 +355,7 @@ def test_a_value_object_scalar_admits_the_naming_and_type_shaping_options() -> N
 )
 def test_a_value_object_body_outside_the_grammar_is_rejected(build: object, code: str) -> None:
     assert callable(build)
-    with pytest.raises(EntityDefinitionError) as caught:
+    with pytest.raises(UsageError) as caught:
         build()
     assert caught.value.code == code
 
@@ -373,9 +373,8 @@ def test_a_value_object_still_declares_the_entity_only_reserved_spellings() -> N
 
 
 def test_the_framework_root_has_no_shape_to_edit() -> None:
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-annotation-invalid"):
         ValueObject().edit()
-    assert caught.value.code == "entity-annotation-invalid"
 
 
 def test_a_value_object_is_frozen_without_declaring_it() -> None:

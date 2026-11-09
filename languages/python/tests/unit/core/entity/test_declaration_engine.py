@@ -28,10 +28,10 @@ from parallax.core import (
     Bitemporal,
     ConcreteSubtype,
     Entity,
-    EntityDefinitionError,
     Rel,
     TablePerHierarchy,
     TxTemporal,
+    UsageError,
     ValueObject,
     attr,
     desc,
@@ -71,6 +71,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 from tests._support import frontend_probes, frontend_probes_stringized
+from tests._support.errors import raises_code
 
 
 class Warehouse(
@@ -286,12 +287,10 @@ def test_one_shape_key_is_minted_per_value_object_class_and_reused_by_occurrence
 def test_indices_that_are_not_a_tuple_of_index_values_are_refused(declared: object) -> None:
     # Both halves of the same rejection: the header option is a tuple, and every
     # entry in it is one `index(...)` built.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-header-invalid-value"):
 
         class Bad(Entity, table="bad", indices=declared):  # pyright: ignore[reportUnusedClass] - the declaration is refused, so nothing uses it
             id: Attr[int] = attr(primary_key=True)
-
-    assert caught.value.code == "entity-header-invalid-value"
 
 
 def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:
@@ -304,12 +303,10 @@ def test_a_many_value_object_occurrence_defaults_to_the_empty_tuple() -> None:
 
 
 def test_the_mint_token_is_the_only_way_to_declare_a_framework_root() -> None:
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-header-unknown-option"):
 
         class Counterfeit(Entity, _mint=object()):  # pyright: ignore[reportUnusedClass] - the counterfeit token is the rejection under test
             pass
-
-    assert caught.value.code == "entity-header-unknown-option"
 
 
 def _entity_binding_a_framework_name() -> type:
@@ -368,9 +365,8 @@ def test_the_framework_name_prefix_is_reserved_from_every_declaration_kind(
     # member a write reads off it in place of the declared value.
     assert set(_PREFIX_PROBES) == set(DeclarationKind)
     for declare in _PREFIX_PROBES[kind]:
-        with pytest.raises(EntityDefinitionError) as caught:
+        with raises_code(UsageError, "entity-reserved-member-name"):
             declare()
-        assert caught.value.code == "entity-reserved-member-name"
 
 
 class _SequenceSlots:
@@ -432,10 +428,9 @@ def test_no_declaration_may_lay_out_slots_of_its_own(
     # it, and scanning the one-shot iterator exhausts it before class creation
     # sees it.
     assert not isinstance(_SequenceSlots("x"), Iterable)
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name") as caught:
         declare(spelling)
-    assert caught.value.code == "entity-reserved-member-name"
-    assert "PrivateAttr" in caught.value.message
+    assert "PrivateAttr" in caught.value.args[1]
 
 
 def _entity_binding_a_private_container() -> type:
@@ -464,28 +459,26 @@ def test_neither_kind_may_bind_a_container_pydantic_keys_on(declare: Callable[[]
     # and written — a private-attribute read, a Pydantic model copy, and an edit
     # all reach it. The layout reservation above closes the slotted spelling; this
     # is the plain binding, which is a different route to the same collision.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
         declare()
-    assert caught.value.code == "entity-reserved-member-name"
 
 
 def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:
     assert is_declared_class(Entity, DeclarationKind.ENTITY)
     assert is_declared_class(ValueObject, DeclarationKind.VALUE_OBJECT)
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-base-invalid"):
         declaration_of(Entity)
-    assert caught.value.code == "entity-base-invalid"
 
 
 def test_both_declaration_lookups_refuse_a_class_the_engine_never_built() -> None:
     # The two lookups answer for one class fact, so they refuse together: an
     # ordinary Python class carries neither payload.
-    with pytest.raises(EntityDefinitionError) as declaration:
+    with raises_code(UsageError, "entity-base-invalid") as declaration:
         declaration_of(int)
-    with pytest.raises(EntityDefinitionError) as names:
+    with raises_code(UsageError, "entity-base-invalid") as names:
         members_of(int)
     assert declaration.value.code == names.value.code == "entity-base-invalid"
-    assert names.value.message == "int is not a Parallax Entity Class"
+    assert names.value.args[1] == "int is not a Parallax Entity Class"
 
 
 def test_a_relationship_target_spelled_as_nothing_at_all_is_refused() -> None:
@@ -502,10 +495,9 @@ def test_a_relationship_target_spelled_as_nothing_at_all_is_refused() -> None:
 
         return Blank
 
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-annotation-invalid") as caught:
         declare()
-    assert caught.value.code == "entity-annotation-invalid"
-    assert caught.value.message == "Blank.peer: a relationship target names a nonempty Entity"
+    assert caught.value.args[1] == "Blank.peer: a relationship target names a nonempty Entity"
 
 
 def test_member_correspondences_are_built_from_the_same_walk_as_the_declaration() -> None:

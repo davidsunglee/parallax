@@ -95,12 +95,10 @@ from parallax.core import (
     DomainModel,
     EditError,
     Entity,
-    EntityDefinitionError,
     IncludePath,
     Int32,
     ObjectQuery,
     Predicate,
-    QueryDefinitionError,
     Rel,
     SortKey,
     TablePerHierarchy,
@@ -520,13 +518,11 @@ def test_an_equality_literal_is_judged_at_typed_authoring() -> None:
     # `__eq__` keeps `object` for Python's protocol, but the expression still
     # resolves its member metadata and rejects a value outside that managed
     # value space before constructing a serialized Predicate literal.
-    with pytest.raises(QueryDefinitionError) as flat:
+    with raises_code(UsageError, "query-expression-invalid"):
         _ = SnapOrder.price == "abc"
-    assert flat.value.code == "query-expression-invalid"
 
-    with pytest.raises(QueryDefinitionError) as nested:
+    with raises_code(UsageError, "query-expression-invalid"):
         _ = SnapOrderStatus.primary_tag.label == 42
-    assert nested.value.code == "query-expression-invalid"
 
 
 def test_the_variance_phantom_exists_for_the_checker_alone() -> None:
@@ -630,9 +626,8 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
     assert document["orderBy"] == [
         {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc", "nulls": "first"}
     ]
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-expression-invalid"):
         key.nulls_last()
-    assert caught.value.code == "query-expression-invalid"
 
 
 # --------------------------------------------------------------------------- #
@@ -786,13 +781,11 @@ def test_the_unfiltered_query_survives_a_class_reached_through_a_type_parameter(
 def test_a_member_named_all_collides_with_the_query_root() -> None:
     # The runtime half: `all` is a reserved class-level name, reported against
     # the authored member the way every other reserved spelling is.
-    with pytest.raises(EntityDefinitionError) as caught:
+    with raises_code(UsageError, "entity-reserved-member-name"):
 
         class _Collides(Entity, table="collides", namespace=_NS):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
             id: Attr[int] = attr(primary_key=True)
             all: Attr[str]
-
-    assert caught.value.code == "entity-reserved-member-name"
 
 
 def test_a_declared_class_body_admits_no_stray_query_root_descriptor() -> None:
@@ -936,9 +929,8 @@ def test_a_relationship_hop_past_the_first_erases_and_binding_refuses_it() -> No
     # A continuation keeps its Python name and nothing else, so nothing about it
     # is typed — no suppression belongs on this line — and the serving model's
     # classes state the whole rule when an operation binds the path.
-    with pytest.raises(QueryDefinitionError, match="declares no relationship") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="declares no relationship"):
         accepted_read_query(Keeper.where(Keeper.all).include(Keeper.beasts.no_such_hop), _BESTIARY)
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_an_authored_chain_continues_past_the_second_hop() -> None:
@@ -969,7 +961,7 @@ def test_a_value_object_member_is_known_from_its_declared_shape() -> None:
 def test_a_second_narrow_clause_is_refused_at_the_clause_alone() -> None:
     # A method cannot make its own second call illegal, so single-shot is a
     # clause fact checked where the clause is authored.
-    with pytest.raises(ValueError, match="single-shot"):
+    with raises_code(UsageError, "query-clause-invalid", match="single-shot"):
         Animal.where(Animal.all).narrow(Dog).narrow(Cat)
 
 

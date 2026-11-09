@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from parallax.core.base import UsageError
 from parallax.core.metamodel import (
@@ -15,74 +15,80 @@ from parallax.core.metamodel import (
 )
 
 if TYPE_CHECKING:
-    from parallax.core.metamodel import (
-        EntityIdentity,
-        MemberIdentity,
-        ModelLocation,
-        ModelLocationKey,
-        RelationshipIdentity,
-    )
+    from parallax.core.metamodel import ModelLocation, ModelLocationKey
 
 __all__ = [
     "EDIT_CODES",
     "EDIT_CODE_BY_RULE",
-    "ENTITY_DEFINITION_CODES",
-    "ENTITY_ROW_CODES",
+    "ENTITY_ANNOTATION_INVALID",
+    "ENTITY_BASE_INVALID",
+    "ENTITY_CANONICAL_NAME_COLLISION",
+    "ENTITY_GRAPH_INVALID_ENTITY",
+    "ENTITY_GRAPH_INVALID_MEMBER",
+    "ENTITY_GRAPH_INVALID_VALUE",
+    "ENTITY_GRAPH_LAYOUT_MISMATCH",
+    "ENTITY_HEADER_INVALID_VALUE",
+    "ENTITY_HEADER_MISSING_OPTION",
+    "ENTITY_HEADER_UNKNOWN_OPTION",
+    "ENTITY_MEMBER_VALUE_INVALID",
+    "ENTITY_OPTION_CONTEXT_INVALID",
+    "ENTITY_OPTION_INVALID_VALUE",
+    "ENTITY_RELATIONSHIP_ANNOTATION_MISMATCH",
+    "ENTITY_RESERVED_MEMBER_NAME",
     "ENTITY_ROW_MALFORMED_PROVENANCE",
     "ENTITY_ROW_MEMBER_MISSING",
-    "GRAPH_CONSTRUCTION_CODES",
-    "METAMODEL_DEFINITION_CODES",
     "METAMODEL_DUPLICATE_ENTITY_CLASS",
     "METAMODEL_EMPTY",
     "METAMODEL_ENTITY_NOT_FOUND",
     "METAMODEL_INVALID_ENTITY_CLASS",
     "METAMODEL_INVALID_ENTITY_REFERENCE",
-    "METAMODEL_LOOKUP_CODES",
     "EditError",
     "EditViolation",
-    "EntityDefinitionError",
-    "EntityRowError",
-    "GraphConstructionError",
-    "MetamodelDefinitionError",
-    "MetamodelLookupError",
+    "EntityDefinitionCode",
+    "EntityRowCode",
+    "GraphConstructionCode",
+    "MetamodelDefinitionCode",
+    "MetamodelLookupCode",
     "UnloadedRelationshipError",
 ]
 
-ENTITY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "entity-header-unknown-option",
-        "entity-header-invalid-value",
-        "entity-header-missing-option",
-        "entity-base-invalid",
-        "entity-annotation-invalid",
-        "entity-member-value-invalid",
-        "entity-option-invalid-value",
-        "entity-option-context-invalid",
-        "entity-reserved-member-name",
-        "entity-canonical-name-collision",
-        "entity-relationship-annotation-mismatch",
-    }
-)
-"""The complete declaration-rejection vocabulary. Ten codes fire at a factory
-call or at class creation; ``entity-relationship-annotation-mismatch`` fires in
-the Domain Model constructor's Python realization phase."""
+type EntityDefinitionCode = Literal[
+    "entity-header-unknown-option",
+    "entity-header-invalid-value",
+    "entity-header-missing-option",
+    "entity-base-invalid",
+    "entity-annotation-invalid",
+    "entity-member-value-invalid",
+    "entity-option-invalid-value",
+    "entity-option-context-invalid",
+    "entity-reserved-member-name",
+    "entity-canonical-name-collision",
+    "entity-relationship-annotation-mismatch",
+]
+"""The declaration refusals the Python grammar raises as a
+:class:`~parallax.core.base.UsageError`. Ten fire at a factory call or at class
+creation; ``entity-relationship-annotation-mismatch`` fires in the Domain Model
+constructor's Python realization phase."""
 
+ENTITY_HEADER_UNKNOWN_OPTION: Final = "entity-header-unknown-option"
+ENTITY_HEADER_INVALID_VALUE: Final = "entity-header-invalid-value"
+ENTITY_HEADER_MISSING_OPTION: Final = "entity-header-missing-option"
+ENTITY_BASE_INVALID: Final = "entity-base-invalid"
+ENTITY_ANNOTATION_INVALID: Final = "entity-annotation-invalid"
+ENTITY_MEMBER_VALUE_INVALID: Final = "entity-member-value-invalid"
+ENTITY_OPTION_INVALID_VALUE: Final = "entity-option-invalid-value"
+ENTITY_OPTION_CONTEXT_INVALID: Final = "entity-option-context-invalid"
+ENTITY_RESERVED_MEMBER_NAME: Final = "entity-reserved-member-name"
+ENTITY_CANONICAL_NAME_COLLISION: Final = "entity-canonical-name-collision"
+ENTITY_RELATIONSHIP_ANNOTATION_MISMATCH: Final = "entity-relationship-annotation-mismatch"
 
-class EntityDefinitionError(TypeError):
-    """A declaration the Python grammar cannot accept.
-
-    ``code`` is a member of :data:`ENTITY_DEFINITION_CODES`; constructing one
-    with any other code is an implementation defect and raises
-    :class:`ValueError`.
-    """
-
-    def __init__(self, *, code: str, message: str) -> None:
-        if code not in ENTITY_DEFINITION_CODES:
-            raise ValueError(f"{code!r} is not an entity definition code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-
+type MetamodelDefinitionCode = Literal[
+    "metamodel-empty", "metamodel-invalid-entity-class", "metamodel-duplicate-entity-class"
+]
+"""The malformed Domain Model constructor calls, refused as a
+:class:`~parallax.core.base.UsageError` before any model exists. Two distinct
+classes declaring one Entity Identity are valid input here and become a
+whole-model issue instead."""
 
 METAMODEL_EMPTY: Final = "metamodel-empty"
 """A Domain Model was constructed over no source at all."""
@@ -91,139 +97,49 @@ METAMODEL_INVALID_ENTITY_CLASS: Final = "metamodel-invalid-entity-class"
 METAMODEL_DUPLICATE_ENTITY_CLASS: Final = "metamodel-duplicate-entity-class"
 """One class object was passed to the constructor more than once."""
 
-METAMODEL_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
-    {METAMODEL_EMPTY, METAMODEL_INVALID_ENTITY_CLASS, METAMODEL_DUPLICATE_ENTITY_CLASS}
-)
-"""The complete malformed-constructor-call vocabulary."""
+type MetamodelLookupCode = Literal[
+    "metamodel-invalid-entity-reference", "metamodel-entity-not-found"
+]
+"""The ``models.meta(...)`` lookups that find no Entity, refused as a
+:class:`~parallax.core.base.UsageError`. The class-free lookup protocol returns
+absence instead."""
 
 METAMODEL_INVALID_ENTITY_REFERENCE: Final = "metamodel-invalid-entity-reference"
 """A lookup string is not a canonical Entity spelling."""
 METAMODEL_ENTITY_NOT_FOUND: Final = "metamodel-entity-not-found"
 """A well-formed lookup key names no Entity of this model."""
 
-METAMODEL_LOOKUP_CODES: Final[frozenset[str]] = frozenset(
-    {METAMODEL_INVALID_ENTITY_REFERENCE, METAMODEL_ENTITY_NOT_FOUND}
-)
-"""The complete ``models.meta(...)`` failure vocabulary. The class-free lookup
-protocol returns absence instead and raises none of these."""
+type GraphConstructionCode = Literal[
+    "entity-graph-invalid-entity",
+    "entity-graph-invalid-member",
+    "entity-graph-invalid-value",
+    "entity-graph-layout-mismatch",
+]
+"""The ways the advanced Entity Graph Construction collaboration is driven
+outside its contract, each an :class:`~parallax.core.base.InternalError`
+naming the node and the identity at fault in its message. The collaboration
+checks every one itself, so no misuse of it surfaces as an assertion, a
+:class:`LookupError`, or a partially built graph."""
 
+ENTITY_GRAPH_INVALID_ENTITY: Final = "entity-graph-invalid-entity"
+ENTITY_GRAPH_INVALID_MEMBER: Final = "entity-graph-invalid-member"
+ENTITY_GRAPH_INVALID_VALUE: Final = "entity-graph-invalid-value"
+ENTITY_GRAPH_LAYOUT_MISMATCH: Final = "entity-graph-layout-mismatch"
 
-class MetamodelDefinitionError(TypeError):
-    """A Domain Model constructor call is malformed, before any model exists.
-
-    ``index`` is the zero-based position of the offending argument, and is
-    absent only for :data:`METAMODEL_EMPTY`, which is about the call rather than
-    about one argument. Two distinct classes declaring one Entity Identity are
-    valid input here and become a whole-model issue instead.
-    """
-
-    def __init__(self, *, code: str, message: str, index: int | None = None) -> None:
-        if code not in METAMODEL_DEFINITION_CODES:
-            raise ValueError(f"{code!r} is not a metamodel definition code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-        self.index = index
-
-
-class MetamodelLookupError(LookupError):
-    """A developer-facing ``models.meta(...)`` lookup found no Entity."""
-
-    def __init__(self, *, code: str, message: str) -> None:
-        if code not in METAMODEL_LOOKUP_CODES:
-            raise ValueError(f"{code!r} is not a metamodel lookup code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-
-
-GRAPH_CONSTRUCTION_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "entity-graph-invalid-entity",
-        "entity-graph-invalid-member",
-        "entity-graph-invalid-value",
-        "entity-graph-layout-mismatch",
-    }
-)
-"""The complete Entity Graph Construction misuse vocabulary. Every code names a
-caller contract the collaboration checks itself, so no misuse of it surfaces as
-an assertion, a :class:`LookupError`, or a partially built graph."""
-
-
-class GraphConstructionError(RuntimeError):
-    """The advanced Entity Graph Construction collaboration was driven outside
-    its contract.
-
-    A ``RuntimeError`` because every code describes caller misuse or an
-    implementation defect rather than rejected data: the same reasoning that puts
-    model-formation contract failures on ``RuntimeError`` while a stored-value
-    rejection stays a ``ValueError``.
-
-    ``index`` is the zero-based index of the graph node the failure is about —
-    the node whose row holds a refused value — absent for a failure that is
-    about no single node. ``identity`` is the structured Entity, member, or
-    Relationship Identity at fault, and ``cause`` the original conversion
-    failure when one exists. No graph and no partially filled Entity is ever
-    retained here.
-    """
-
-    def __init__(
-        self,
-        *,
-        code: str,
-        message: str,
-        index: int | None = None,
-        identity: EntityIdentity | MemberIdentity | RelationshipIdentity | None = None,
-        cause: Exception | None = None,
-    ) -> None:
-        if code not in GRAPH_CONSTRUCTION_CODES:
-            raise ValueError(f"{code!r} is not a graph construction code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-        self.index = index
-        self.identity = identity
-        self.cause = cause
-
+type EntityRowCode = Literal["entity-row-member-missing", "entity-row-malformed-provenance"]
+"""The values a Typed write cannot read as the row it resolved. Every code names
+a value its write could not read, so no misuse surfaces as an
+:class:`AttributeError`, a :class:`KeyError`, or a partially keyed row."""
 
 ENTITY_ROW_MEMBER_MISSING: Final = "entity-row-member-missing"
 """An operation selected a member it cannot emit: either the resolved identity
-does not declare it, or the value's class carries no attribute for one it does."""
+does not declare it, or the value's class carries no attribute for one it does.
+A :class:`~parallax.core.base.UsageError`, because a caller reaches it by
+handing a write an instance of another model's class."""
 ENTITY_ROW_MALFORMED_PROVENANCE: Final = "entity-row-malformed-provenance"
-"""The private Change Record slot holds something that is not a Change Record."""
-
-ENTITY_ROW_CODES: Final[frozenset[str]] = frozenset(
-    {
-        ENTITY_ROW_MEMBER_MISSING,
-        ENTITY_ROW_MALFORMED_PROVENANCE,
-    }
-)
-"""The complete refusal vocabulary of a value read as a Typed write's source.
-Every code names a value its write could not read, so no misuse surfaces as an
-:class:`AttributeError`, a :class:`KeyError`, or a partially keyed row."""
-
-
-class EntityRowError(RuntimeError):
-    """A value cannot be read as the row its Typed write resolved.
-
-    A ``RuntimeError`` for :class:`GraphConstructionError`'s reason: every code
-    describes first-party misuse or an implementation defect rather than rejected
-    developer input. The reading knows only that it received a value its
-    operation does not accept; the developer-facing steering for handing a
-    persistence verb an unedited value belongs to that verb, which knows what the
-    developer called.
-
-    ``identity`` is the resolved Entity Identity the refusal is about. Neither
-    the value, its class, nor any partially built row is ever retained here.
-    """
-
-    def __init__(self, *, code: str, message: str, identity: EntityIdentity | None = None) -> None:
-        if code not in ENTITY_ROW_CODES:
-            raise ValueError(f"{code!r} is not an entity row code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-        self.identity = identity
+"""The private Change Record slot holds something that is not a Change Record.
+An :class:`~parallax.core.base.InternalError`, because only first-party code
+writes that slot."""
 
 
 class UnloadedRelationshipError(UsageError, AttributeError):

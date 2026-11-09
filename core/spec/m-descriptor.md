@@ -528,43 +528,40 @@ carrying nothing a reader could not derive from its absence is normalized away.
 ## Descriptor ingestion
 
 Descriptor ingestion is a fixed three-phase contract. Each phase either passes
-the document forward or fails with that phase's error; no phase reports another
-phase's failures, no failing phase produces an Unresolved Metamodel, and only a
-document every phase accepts becomes an Unresolved Metamodel for semantic
-formation.
+the document forward or fails with that phase's Descriptor Error; no phase
+reports another phase's failures, no failing phase produces an Unresolved
+Metamodel, and only a document every phase accepts becomes an Unresolved
+Metamodel for semantic formation.
 
-| Phase | Judged against | Failure |
+| Phase | Judged against | Failure code |
 |---|---|---|
-| 1 — syntax | the format's grammar (JSON or YAML text) | `DescriptorSyntaxError` |
-| 2 — schema | [`metamodel.schema.json`](../schemas/metamodel.schema.json) (JSON Schema Draft 2020-12) | `DescriptorSchemaError` |
-| 3 — value | adapter normalization and the semantic rejections named under "Type spellings" | `DescriptorValueError` |
+| 1 — syntax | the format's grammar (JSON or YAML text) | `descriptor-invalid-syntax` |
+| 2 — schema | [`metamodel.schema.json`](../schemas/metamodel.schema.json) (JSON Schema Draft 2020-12) | `descriptor-schema-invalid` |
+| 3 — value | adapter normalization and the semantic rejections named under "Type spellings" | `descriptor-value-invalid` |
 
 Model Formation is beyond ingestion: every failure past the Unresolved seam
 is a representation-independent `MetamodelValidationError`
-(`m-model-formation`), never a `DescriptorError`.
+(`m-model-formation`), never a Descriptor Error.
+
+A Descriptor Error reports its phase's code and that phase's facts:
 
 ```text
-DescriptorError(ValueError)
-├── DescriptorSyntaxError
-│     code = "descriptor-invalid-syntax"
-│     format: json | yaml
-│     line, column: one-based source coordinates | absent
-│     cause: the parser failure, preserved
-├── DescriptorSchemaError
-│     code = "descriptor-schema-invalid"
-│     violations: nonempty immutable canonically ordered
-│                 sequence<DescriptorSchemaViolation>
-└── DescriptorValueError
-      code = "descriptor-value-invalid"
-      violations: nonempty immutable canonically ordered
-                  sequence<DescriptorValueViolation>
+syntax   code = "descriptor-invalid-syntax"
+         format: json | yaml
+         line, column: one-based source coordinates | absent
+         cause: the parser failure, preserved
+schema   code = "descriptor-schema-invalid"
+         violations: nonempty immutable canonically ordered
+                     sequence<Descriptor Violation>
+value    code = "descriptor-value-invalid"
+         violations: nonempty immutable canonically ordered
+                     sequence<Descriptor Violation>
 
-DescriptorSchemaViolation(path, rule, message)
-DescriptorValueViolation(path, rule, message)
+Descriptor Violation(path, rule, message)
 ```
 
-**Phase 1 — syntax.** Text that is not well-formed in its format raises
-`DescriptorSyntaxError` carrying the attempted `format`, optional one-based
+**Phase 1 — syntax.** Text that is not well-formed in its format fails with
+`descriptor-invalid-syntax`, reporting the attempted `format`, optional one-based
 `line`/`column` source coordinates, and the preserved parser `cause`. Source
 coordinates are parser-dependent, so a conforming adapter MAY omit them; the
 code and format are mandatory. Preserving a cause means retaining the original
@@ -573,8 +570,9 @@ chaining.
 
 **Phase 2 — schema.** The decoded document is validated against the complete
 canonical schema. A conforming adapter evaluates the whole document rather
-than stopping at the first failure and raises one `DescriptorSchemaError`
-carrying every violation. A `DescriptorSchemaViolation` is exactly:
+than stopping at the first failure and fails once with
+`descriptor-schema-invalid`, reporting every violation. A schema-phase
+Descriptor Violation is exactly:
 
 - `path` — the document path from the document root to the value the failed
   keyword applied to: a sequence of object member names and array indices. The
@@ -628,8 +626,9 @@ been authored, and no consumer of `m-metamodel` reads a profile.
 The same phase owns the
 representation-bound semantic rejections this specification names under
 "Type spellings": schema-valid text whose denoted core value is
-unconstructible raises one `DescriptorValueError` carrying every violation.
-A `DescriptorValueViolation` mirrors `DescriptorSchemaViolation` exactly —
+unconstructible fails once with `descriptor-value-invalid`, reporting every
+violation. A value-phase Descriptor Violation mirrors the schema phase's
+exactly —
 `path` is the document path to the value the rejection applies to, and
 `message` is explanatory text excluded from identity — except that `rule` is
 drawn from the closed vocabulary this specification owns rather than from
@@ -708,19 +707,19 @@ validation and no state change. Export is deterministic and all-or-none:
   primary-key index — is absent from the exported document. Writing it would
   put a member in the document that re-importing derives a second time.
 
-An unexpected conversion or serialization defect raises:
+An unexpected conversion or serialization defect fails with an export defect
+that reports:
 
 ```text
-DescriptorExportError(RuntimeError)
-  code = "descriptor-export-failed"
-  target: document | json | yaml
-  cause: the original defect, preserved
+code = "descriptor-export-failed"
+target: document | json | yaml
+cause: the original defect, preserved
 ```
 
-`DescriptorExportError` is an adapter-defect boundary like
-`FormationContractError` (`m-model-formation`), not a validation error: an
-accepted Metamodel is exportable by contract, so export performs no model
-validation and can fail only through an implementation defect. It leaves the
-accepted Metamodel unchanged, and it is never raised as or translated to a
-`DescriptorError`, whose three subtypes are ingestion failures over documents.
+An export defect is an adapter-defect boundary like a formation contract failure
+(`m-model-formation`), not a validation error: an accepted Metamodel is
+exportable by contract, so export performs no model validation and can fail only
+through an implementation defect. It leaves the accepted Metamodel unchanged,
+and it is never raised as or translated to a Descriptor Error, whose three
+phases are ingestion failures over documents.
 The reference harness asserts export byte-determinism over every corpus model.

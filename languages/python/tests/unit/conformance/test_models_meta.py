@@ -9,6 +9,7 @@ declaration: one composition answers every lookup this suite asks.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import get_args
 
 import pytest
 
@@ -17,16 +18,17 @@ from parallax.core import (
     Attr,
     DomainModel,
     Entity,
-    MetamodelLookupError,
     Rel,
+    UsageError,
     ValueObject,
     attr,
     index,
     rel,
 )
-from parallax.core.entity._errors import METAMODEL_LOOKUP_CODES
+from parallax.core.entity._errors import MetamodelLookupCode
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.metamodel import EntityIdentity, UnresolvedEntityDeclaration
+from tests._support.errors import raises_code
 
 _SPEC_CODES = frozenset({"metamodel-invalid-entity-reference", "metamodel-entity-not-found"})
 
@@ -68,9 +70,8 @@ def test_the_three_key_forms_answer_one_object() -> None:
 
 def test_a_bare_spelling_names_only_an_unnamespaced_entity() -> None:
     assert MODELS.meta("Ownerless").identity == EntityIdentity(None, "Ownerless")
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-entity-not-found"):
         MODELS.meta("Depot")
-    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_entities_enumerate_in_canonical_entity_order() -> None:
@@ -105,39 +106,33 @@ def test_lookup_is_local_and_never_exposes_an_inherited_or_foreign_member() -> N
 
 @pytest.mark.parametrize("spelling", ["", ".", ".Depot", "Depot.", "ops."])
 def test_a_malformed_spelling_is_an_invalid_entity_reference(spelling: str) -> None:
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-invalid-entity-reference"):
         MODELS.meta(spelling)
-    assert caught.value.code == "metamodel-invalid-entity-reference"
 
 
 def test_an_absent_identity_is_not_found() -> None:
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-entity-not-found"):
         MODELS.meta(EntityIdentity("ops", "Missing"))
-    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_a_class_this_model_did_not_compose_names_no_entity_of_it() -> None:
     class Foreign(Entity, table="foreign"):
         id: Attr[int] = attr(primary_key=True)
 
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-entity-not-found"):
         MODELS.meta(Foreign)
-    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_a_descriptor_backed_model_serves_the_same_metadata_and_composes_no_class() -> None:
     fixed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - unit test drives the model's private constructor
     assert [entity.identity.canonical for entity in fixed.entities] == ["ops.Depot", "ops.Zone"]
     assert fixed.meta("ops.Depot").identity == EntityIdentity("ops", "Depot")
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-entity-not-found"):
         fixed.meta(Depot)
-    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_the_lookup_code_set_is_closed() -> None:
-    assert METAMODEL_LOOKUP_CODES == _SPEC_CODES
-    with pytest.raises(ValueError, match="not a metamodel lookup code"):
-        MetamodelLookupError(code="metamodel-empty", message="wrong family")
+    assert frozenset(get_args(MetamodelLookupCode.__value__)) == _SPEC_CODES
 
 
 class _Source:

@@ -33,7 +33,6 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    QueryDefinitionError,
     Rel,
     TablePerHierarchy,
     attr,
@@ -171,9 +170,7 @@ def test_a_narrowed_path_continues_past_a_continuation_of_its_own() -> None:
 
 def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_binding() -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.bogus_relationship)
-    with pytest.raises(
-        QueryDefinitionError, match="SnapOrderItem declares no relationship"
-    ) as caught:
+    with pytest.raises(UsageError, match="SnapOrderItem declares no relationship") as caught:
         accepted_read_query(query, sm.SNAP_ORDERS_MODEL)
     assert caught.value.code == "query-path-invalid"
 
@@ -220,7 +217,7 @@ def test_include_retains_only_the_maximal_equivalent_path() -> None:
 
 
 def test_include_with_no_paths_raises() -> None:
-    with pytest.raises(QueryDefinitionError, match="at least one path"):
+    with raises_code(UsageError, "query-clause-invalid", match="at least one path"):
         sm.SnapOrder.where(sm.SnapOrder.all).include()
 
 
@@ -508,9 +505,8 @@ def test_narrow_alternatives_are_canonicalized_by_entity_identity() -> None:
 
 
 def test_narrow_constructor_requires_at_least_one_subtype() -> None:
-    with pytest.raises(QueryDefinitionError, match="at least one subtype") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="at least one subtype"):
         im.Document.is_a()
-    assert caught.value.code == "query-path-invalid"
 
 
 @pytest.mark.parametrize(
@@ -523,9 +519,8 @@ def test_narrow_constructor_requires_at_least_one_subtype() -> None:
     ids=["predicate", "object-query", "relationship-path"],
 )
 def test_python_narrowing_rejects_an_exact_duplicate_at_construction(build: Any) -> None:
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_code(UsageError, "query-path-invalid"):
         build()
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_model_aware_narrowing_rejects_overlapping_alternatives() -> None:
@@ -577,7 +572,7 @@ def test_query_level_narrow_fills_the_result_narrowing_clause() -> None:
 
 def test_query_level_narrow_is_single_shot() -> None:
     query = im.Document.where(im.Document.all).narrow(im.Invoice)
-    with pytest.raises(QueryDefinitionError, match="single-shot"):
+    with raises_code(UsageError, "query-clause-invalid", match="single-shot"):
         query.narrow(im.Receipt)
 
 
@@ -723,6 +718,5 @@ def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> N
 def test_a_narrow_clause_requires_at_least_one_subtype() -> None:
     # A segment records "no narrow" as an empty list, so accepting a narrow to
     # nothing would answer the un-narrowed query rather than refuse the request.
-    with pytest.raises(QueryDefinitionError, match="at least one subtype") as caught:
+    with raises_code(UsageError, "query-clause-invalid", match="at least one subtype"):
         im.Document.where(im.Document.all).narrow()
-    assert caught.value.code == "query-clause-invalid"

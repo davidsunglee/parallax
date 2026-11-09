@@ -41,7 +41,6 @@ from parallax.core import (
     Entity,
     Float32,
     Predicate,
-    QueryDefinitionError,
     Rel,
     TxTemporal,
     attr,
@@ -81,7 +80,7 @@ from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import PredicateNode, validate
 from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
 from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
-from parallax.snapshot import Database, ScopedDatabase, SnapshotConnectionError, TxnContext
+from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
 from tests._support.db_port import (
@@ -267,9 +266,8 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     database = own_root(
         Database.connect(RefusingAdapter(), descriptor_backed, clock=FixedClock(FIXED))
     ).using_database_login()
-    with pytest.raises(SnapshotConnectionError) as caught:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         database.find(Gizmo.where(Gizmo.id == 1))
-    assert caught.value.code == "snapshot-class-backed-model-required"
 
     # And the Wire read the same connection DOES serve runs end to end: the
     # capability is an executed read rather than a reachable namespace.
@@ -288,7 +286,7 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
     # serve. `connect` — the developer entry point — answers in its own words,
     # and the constructor beneath it refuses the same shape rather than failing
     # on an attribute a Metamodel does not carry.
-    with pytest.raises(SnapshotConnectionError) as caught:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         own_root(
             Database.connect(
                 RefusingAdapter(),
@@ -296,9 +294,8 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
                 clock=FixedClock(FIXED),
             )
         ).using_database_login()
-    assert caught.value.code == "snapshot-class-backed-model-required"
 
-    with pytest.raises(SnapshotConnectionError) as constructed:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         own_root(
             Database(
                 RefusingAdapter(),
@@ -306,7 +303,6 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
                 clock=FixedClock(FIXED),
             )
         ).using_database_login()
-    assert constructed.value.code == "snapshot-class-backed-model-required"
 
 
 def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> None:
@@ -318,9 +314,8 @@ def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> 
     database = own_root(
         Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
     ).using_database_login()
-    with pytest.raises(SnapshotConnectionError) as caught:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         database.find(Widget.where(Widget.id == 1))
-    assert caught.value.code == "snapshot-class-backed-model-required"
     assert port.calls == []
 
 
@@ -336,7 +331,7 @@ def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_f
 
     def body(tx: TxnContext) -> None:
         tx.insert(Gizmo(id=1))
-        with pytest.raises(SnapshotConnectionError):
+        with raises_code(UsageError, "snapshot-class-backed-model-required"):
             tx.find(Gizmo.where(Gizmo.id == 1))
         assert [type(op) for op in port.calls] == [BeginCall]
 
@@ -352,27 +347,29 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
     # standalone pair refuses a port that permits nothing at all, and the
     # participating pair leaves an opened transaction with no read on it.
     refusal = (
-        "this read is served under a model that composed no Entity Class, so it cannot "
-        "materialize a Snapshot (snapshot-class-backed-model-required)"
+        "snapshot-class-backed-model-required: this read is served under a model that "
+        "composed no Entity Class, so it cannot materialize a Snapshot"
     )
     query = Gizmo.where(Gizmo.id == 1)
-    doors: list[SnapshotConnectionError] = []
+    doors: list[UsageError] = []
 
     standalone = own_root(
         Database(RefusingAdapter(), CLASSLESS, clock=FixedClock(FIXED))
     ).using_database_login()
-    with pytest.raises(SnapshotConnectionError) as eager:
+    with raises_code(UsageError, "snapshot-class-backed-model-required") as eager:
         standalone.find(query)
     doors.append(eager.value)
-    with pytest.raises(SnapshotConnectionError) as streamed:
+    with raises_code(UsageError, "snapshot-class-backed-model-required") as streamed:
         standalone.stream(query).__enter__()
     doors.append(streamed.value)
 
     def read_inside(tx: TxnContext) -> None:
-        with pytest.raises(SnapshotConnectionError) as participating_eager:
+        with raises_code(UsageError, "snapshot-class-backed-model-required") as participating_eager:
             tx.find(query)
         doors.append(participating_eager.value)
-        with pytest.raises(SnapshotConnectionError) as participating_stream:
+        with raises_code(
+            UsageError, "snapshot-class-backed-model-required"
+        ) as participating_stream:
             tx.stream(query).__enter__()
         doors.append(participating_stream.value)
 
@@ -382,7 +379,6 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
     ).using_database_login().transact(read_inside)
 
     assert [str(door) for door in doors] == [refusal] * 4
-    assert [door.code for door in doors] == ["snapshot-class-backed-model-required"] * 4
     assert [type(op) for op in port.calls] == [BeginCall, CommitCall]
 
 
@@ -616,9 +612,8 @@ def test_a_prepared_operand_is_refused_under_another_declared_type_before_io(
     # Repriced declares the same member under another type; the operand already
     # rounded to Priced's declaration is not re-normalized for it.
     database = _db(REPRICED, RefusingAdapter())
-    with pytest.raises(QueryDefinitionError, match="prepared for NeutralType") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="prepared for NeutralType"):
         database.find(Priced.where(predicate))
-    assert caught.value.code == "query-expression-invalid"
 
 
 class _Level(enum.IntEnum):
@@ -725,9 +720,8 @@ def test_an_unfinished_operation_resolves_through_the_serving_models_classes(
 
 def test_an_unfinished_operation_is_refused_by_a_model_indexing_no_classes() -> None:
     database = _db(CLASSLESS, RefusingAdapter())
-    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         database.wire.find(Gizmo.where(_unfinished(Gizmo, "id", operands=(1,))))
-    assert caught.value.code == "query-expression-invalid"
 
 
 @pytest.mark.parametrize(
@@ -747,7 +741,7 @@ def test_an_unfinished_operation_is_refused_at_binding_before_io(
     names: tuple[str, ...], operands: tuple[object, ...], code: str, message: str
 ) -> None:
     database = _db(PRICED, RefusingAdapter())
-    with pytest.raises(QueryDefinitionError, match=message) as caught:
+    with pytest.raises(UsageError, match=message) as caught:
         database.find(Priced.where(_unfinished(Priced, *names, operands=operands)))
     assert caught.value.code == code
 
@@ -853,9 +847,10 @@ def test_an_illegal_element_scope_interior_is_refused_as_its_canonical_export_is
 )
 @pytest.mark.parametrize("method", ["like", "not_like", "starts_with", "ends_with", "contains"])
 def test_a_string_operation_refuses_a_none_pattern_at_authoring(subject: Any, method: str) -> None:
-    with pytest.raises(QueryDefinitionError, match="None is not a Predicate literal") as caught:
+    with raises_code(
+        UsageError, "query-expression-invalid", match="None is not a Predicate literal"
+    ):
         getattr(subject, method)(None)
-    assert caught.value.code == "query-expression-invalid"
 
 
 @pytest.mark.parametrize(
@@ -869,16 +864,14 @@ def test_an_unfinished_value_object_path_is_refused_where_its_names_resolve_noth
     names: tuple[str, ...], message: str
 ) -> None:
     query = vm.Customer.where(_unfinished(vm.Customer, *names, operands=("x",)))
-    with pytest.raises(QueryDefinitionError, match=message) as caught:
+    with raises_code(UsageError, "query-path-invalid", match=message):
         typed_resolved(query, vm.CUSTOMER_MODEL)
-    assert caught.value.code == "query-path-invalid"
 
 
 def test_an_unfinished_anchor_the_serving_model_composes_no_class_for_is_refused() -> None:
     query = Widget.where(cast("Predicate[Widget]", _unfinished(Gizmo, "id", operands=(1,))))
-    with pytest.raises(QueryDefinitionError, match="composes no Entity Class") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="composes no Entity Class"):
         typed_resolved(query, WIDGETS)
-    assert caught.value.code == "query-expression-invalid"
 
 
 # --------------------------------------------------------------------------- #
@@ -952,30 +945,26 @@ def test_a_first_hop_include_binds_on_a_classless_model_through_wire() -> None:
 def test_a_continuation_is_refused_on_a_classless_model_before_io() -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(sm.SnapOrder.items.statuses)
     database = _db(CLASSLESS_ORDERS, RefusingAdapter())
-    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         database.wire.find(query)
-    assert caught.value.code == "query-expression-invalid"
-    with pytest.raises(QueryDefinitionError, match="through Wire instead") as streamed:
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         database.wire.stream(query).__enter__()
-    assert streamed.value.code == "query-expression-invalid"
 
 
 def test_a_narrowed_continuation_is_refused_on_a_classless_model_as_any_other_is() -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(
         sm.SnapOrder.items.narrow(sm.SnapOrderItem).statuses
     )
-    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         _db(CLASSLESS_ORDERS, RefusingAdapter()).wire.find(query)
-    assert caught.value.code == "query-expression-invalid"
 
 
 def test_a_classless_model_refuses_a_continuation_before_reading_its_root() -> None:
     # The refusal is the model's own, so a root it does not even declare earns the
     # same answer rather than a complaint about that relationship.
     query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(cast("Any", deep.Keeper.animals.toys))
-    with pytest.raises(QueryDefinitionError, match="through Wire instead") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         typed_resolved(query, CLASSLESS_ORDERS)
-    assert caught.value.code == "query-expression-invalid"
 
 
 def test_the_canonical_spelling_of_a_refused_continuation_stays_available() -> None:
@@ -1007,20 +996,18 @@ def test_ordinary_typed_publication_refuses_a_classless_model_before_the_include
     path: Any,
 ) -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.id == 1).include(path)
-    with pytest.raises(SnapshotConnectionError) as caught:
+    with raises_code(UsageError, "snapshot-class-backed-model-required"):
         _db(CLASSLESS_ORDERS, RefusingAdapter()).find(query)
-    assert caught.value.code == "snapshot-class-backed-model-required"
 
 
 def test_a_reached_entity_the_class_index_omits_is_refused() -> None:
-    with pytest.raises(QueryDefinitionError, match="composes no Entity Class") as caught:
+    with raises_code(UsageError, "query-expression-invalid", match="composes no Entity Class"):
         include_path_node(
             authored_include_path(deep.Keeper.animals.toys),
             deep.Keeper.identity,
             model_of(deep.FAMILY),
             ClassIndex({}, {}),
         )
-    assert caught.value.code == "query-expression-invalid"
 
 
 def test_a_root_only_path_binds_with_no_class_index_at_all() -> None:
@@ -1042,9 +1029,8 @@ def test_an_include_refusal_lands_at_its_clause_position(bind: Any) -> None:
     # A predicate and a Sort Key precede Includes in the document, so each of
     # their refusals outranks a bad path; both flows keep that order.
     bad_path = deep.Keeper.where(deep.Keeper.all).include(_BAD_INCLUDE)
-    with pytest.raises(QueryDefinitionError, match="no_such_member") as include:
+    with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
         bind(bad_path, deep.FAMILY)
-    assert include.value.code == "query-path-invalid"
 
     bad_predicate = deep.Keeper.where(deep.Keeper.animals.id == 1).include(_BAD_INCLUDE)
     with raises_code(UsageError, "path-crosses-many"):
@@ -1069,5 +1055,5 @@ def test_a_bad_include_outranks_the_checks_that_follow_the_clause_gate() -> None
     scanned = Policy.where(Policy.all).as_of(valid_time=LATEST).history(TX_TIME)
     with pytest.raises(DeferredFeatureError):
         typed_resolved(scanned.include(Policy.coverages), POLICY_MODEL)
-    with pytest.raises(QueryDefinitionError, match="no_such_member"):
+    with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
         typed_resolved(scanned.include(Policy.coverages.no_such_member), POLICY_MODEL)

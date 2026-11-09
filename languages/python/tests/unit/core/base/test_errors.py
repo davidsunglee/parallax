@@ -29,12 +29,7 @@ from parallax.core.metamodel import EntityIdentity, EntityLocation, MetamodelIss
 from parallax.core.read_delivery import InvalidData, StoredDataIssue
 from parallax.core.read_delivery._page import invalid_result_refusal
 from parallax.core.write_plan import ObjectKey
-from parallax.descriptor import (
-    DescriptorError,
-    DescriptorSchemaError,
-    DescriptorSyntaxError,
-    DescriptorViolation,
-)
+from parallax.descriptor import DescriptorError, DescriptorViolation
 
 _ORDER = EntityIdentity("shop", "Order")
 
@@ -68,7 +63,11 @@ _KEPT: tuple[tuple[ParallaxError, type[ParallaxError], str], ...] = (
         "model-formation-rejected",
     ),
     (UnloadedRelationshipError("lines"), UsageError, "relationship-unloaded"),
-    (DescriptorSyntaxError("json", line=1, column=2), UsageError, "descriptor-invalid-syntax"),
+    (
+        DescriptorError("descriptor-invalid-syntax", "m", format="json", line=1, column=2),
+        UsageError,
+        "descriptor-invalid-syntax",
+    ),
     (NoResultFound("m"), ParallaxError, "no-result-found"),
     (TooManyResultsFound("m"), ParallaxError, "too-many-results-found"),
     (
@@ -202,10 +201,12 @@ def test_an_invalid_data_refusal_survives_pickling_still_frozen() -> None:
 
 
 def test_a_descriptor_error_survives_pickling_with_its_phase_fields() -> None:
-    syntax = _round_trip(DescriptorSyntaxError("yaml", line=3, column=4))
+    syntax = _round_trip(
+        DescriptorError("descriptor-invalid-syntax", "m", format="yaml", line=3, column=4)
+    )
     assert (syntax.format, syntax.line, syntax.column, syntax.violations) == ("yaml", 3, 4, ())
     violation = DescriptorViolation(path=("entities", 0), rule="required", message="m")
-    schema = _round_trip(DescriptorSchemaError((violation,)))
+    schema = _round_trip(DescriptorError("descriptor-schema-invalid", "m", violations=(violation,)))
     assert schema.violations == (violation,)
     bare = _round_trip(DescriptorError("descriptor-value-invalid", "m"))
     assert (bare.format, bare.violations) == (None, ())

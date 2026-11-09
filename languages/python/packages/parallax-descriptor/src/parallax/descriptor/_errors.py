@@ -13,9 +13,6 @@ __all__ = [
     "DescriptorCode",
     "DescriptorError",
     "DescriptorFormat",
-    "DescriptorSchemaError",
-    "DescriptorSyntaxError",
-    "DescriptorValueError",
     "DescriptorViolation",
     "canonical_violations",
 ]
@@ -124,78 +121,3 @@ def canonical_violations(
     for violation in violations:
         by_identity.setdefault((violation.path, violation.rule), violation)
     return tuple(sorted(by_identity.values(), key=lambda v: (_path_key(v.path), v.rule)))
-
-
-class DescriptorSyntaxError(DescriptorError):
-    """Phase 1 (syntax) ingestion failure: the text is not well-formed in its
-    declared format.
-
-    ``cause`` is the original parser failure, preserved both as this attribute
-    and through native exception chaining (``raise ... from cause``) at the
-    raise site.
-    """
-
-    cause: BaseException | None
-
-    def __init__(
-        self,
-        format: DescriptorFormat,
-        *,
-        line: int | None = None,
-        column: int | None = None,
-        cause: BaseException | None = None,
-    ) -> None:
-        where = "" if line is None else f" at line {line}, column {column}"
-        super().__init__(
-            DESCRIPTOR_INVALID_SYNTAX,
-            f"invalid {format} syntax{where}",
-            format=format,
-            line=line,
-            column=column,
-        )
-        self.cause = cause
-
-
-class DescriptorSchemaError(DescriptorError):
-    """Phase 2 (schema) ingestion failure: the decoded document violates
-    ``core/schemas/metamodel.schema.json``.
-
-    ``violations`` is nonempty: every failing keyword the whole document
-    evaluation found, since a conforming adapter never stops at the first
-    failure. Constructing one with no violation raises :class:`ValueError`: a
-    schema failure that names no keyword is not a report.
-    """
-
-    def __init__(self, violations: Sequence[DescriptorViolation]) -> None:
-        reported = tuple(violations)
-        if not reported:
-            raise ValueError("a descriptor schema failure reports at least one violation")
-        rules = ", ".join(sorted({violation.rule for violation in reported}))
-        super().__init__(
-            DESCRIPTOR_SCHEMA_INVALID,
-            f"{len(reported)} schema violation(s): {rules}",
-            violations=reported,
-        )
-
-
-class DescriptorValueError(DescriptorError):
-    """Phase 3 (value) ingestion failure: a schema-valid document carries a
-    value this specification names as semantically unconstructible (for
-    example a ``type`` spelling whose ``decimal`` parameters break the
-    ``m-core`` bounds or carry non-canonical digits).
-
-    ``violations`` is nonempty: every such rejection the whole document
-    evaluation found. Constructing one with no violation raises
-    :class:`ValueError`, mirroring :class:`DescriptorSchemaError`.
-    """
-
-    def __init__(self, violations: Sequence[DescriptorViolation]) -> None:
-        reported = tuple(violations)
-        if not reported:
-            raise ValueError("a descriptor value failure reports at least one violation")
-        rules = ", ".join(sorted({violation.rule for violation in reported}))
-        super().__init__(
-            DESCRIPTOR_VALUE_INVALID,
-            f"{len(reported)} value violation(s): {rules}",
-            violations=reported,
-        )

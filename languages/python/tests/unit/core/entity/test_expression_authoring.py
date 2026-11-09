@@ -19,7 +19,6 @@ from parallax.core import (
     DomainModel,
     Entity,
     Int32,
-    QueryDefinitionError,
     Rel,
     ValueObject,
     attr,
@@ -111,20 +110,22 @@ def test_collections_quantify_and_refuse_whole_value_use() -> None:
     for collection in (Basket.tags, Basket.parts):
         with pytest.raises(TypeError, match="no truth value"):
             bool(collection)
-    with pytest.raises(QueryDefinitionError, match="many Value Object is not one scalar value"):
+    with raises_code(
+        UsageError, "query-expression-invalid", match="many Value Object is not one scalar value"
+    ):
         _ = Basket.parts == ()
-    with pytest.raises(QueryDefinitionError, match="a Value Object is not one scalar value"):
+    with raises_code(
+        UsageError, "query-expression-invalid", match="a Value Object is not one scalar value"
+    ):
         _ = Part.note != None  # noqa: E711
 
 
 def test_a_scalar_element_is_read_only_inside_its_own_collections_quantifier() -> None:
-    with pytest.raises(QueryDefinitionError, match="read only inside") as unbound:
+    with raises_code(UsageError, "query-path-invalid", match="read only inside"):
         Basket.where(Basket.tags.element == "a")
-    assert unbound.value.code == "query-path-invalid"
-    with pytest.raises(QueryDefinitionError, match="not an element of") as foreign:
+    with raises_code(UsageError, "query-path-invalid", match="not an element of"):
         Basket.tags.any(Basket.marks.element == 1)
-    assert foreign.value.code == "query-path-invalid"
-    with pytest.raises(QueryDefinitionError, match="not an element of"):
+    with raises_code(UsageError, "query-path-invalid", match="not an element of"):
         Basket.parts.any(cast("Any", Basket.tags.element == "a"))
     nested = Basket.tags.any(Basket.marks.any(Basket.marks.element == 1))
     assert isinstance(nested.authored, AuthoredQuantifier)
@@ -142,10 +143,12 @@ def test_a_string_pattern_is_admitted_as_a_string_literal() -> None:
         lambda: Basket.tags.element.contains("\ud800"),
         lambda: Part.sku.like(cast("Any", 5)),
     ):
-        with pytest.raises(QueryDefinitionError, match="developer-input rule violated"):
+        with raises_code(
+            UsageError, "query-expression-invalid", match="developer-input rule violated"
+        ):
             known()
     deferred = Basket.where(Basket.owner.name.ends_with("\ud800"))
-    with pytest.raises(QueryDefinitionError, match="developer-input rule violated"):
+    with raises_code(UsageError, "query-expression-invalid", match="developer-input rule violated"):
         _resolved(deferred)
 
 
@@ -203,10 +206,9 @@ def test_a_match_nests_and_reads_its_own_targets_collections() -> None:
 
 
 def test_a_match_reads_no_collection_element_from_outside() -> None:
-    with pytest.raises(QueryDefinitionError, match="not inside a match") as caught:
+    with raises_code(UsageError, "query-path-invalid", match="not inside a match"):
         Basket.owner.exists(cast("Any", Basket.tags.element == "a"))
-    assert caught.value.code == "query-path-invalid"
-    with pytest.raises(QueryDefinitionError, match="not inside a match"):
+    with raises_code(UsageError, "query-path-invalid", match="not inside a match"):
         Basket.owner.manager.not_exists(cast("Any", Basket.tags.element == "a"))
 
 
@@ -355,5 +357,5 @@ def test_a_receiver_resolution_refuses_is_refused_by_the_export() -> None:
 
 
 def test_a_query_over_an_entity_the_serving_model_lacks_has_no_export() -> None:
-    with pytest.raises(QueryDefinitionError, match="declares no such Entity"):
+    with raises_code(UsageError, "query-expression-invalid", match="declares no such Entity"):
         object_query_node(Stranger.where(Stranger.id == 1), MODEL)

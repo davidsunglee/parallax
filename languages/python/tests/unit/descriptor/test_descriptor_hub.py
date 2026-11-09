@@ -27,8 +27,9 @@ from parallax.core import (
     Attr,
     DomainModel,
     Entity,
-    MetamodelLookupError,
+    InternalError,
     Rel,
+    UsageError,
     attr,
     index,
     rel,
@@ -36,10 +37,6 @@ from parallax.core import (
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor import (
     DescriptorError,
-    DescriptorExportError,
-    DescriptorSchemaError,
-    DescriptorSyntaxError,
-    DescriptorValueError,
     domain_model_from_document,
     domain_model_from_json,
     domain_model_from_yaml,
@@ -48,6 +45,7 @@ from parallax.descriptor import (
     export_yaml,
 )
 from parallax.descriptor import _hub as hub_module
+from tests._support.errors import raises_code
 
 _YAML = """
 entities:
@@ -145,9 +143,8 @@ def test_a_descriptor_backed_model_composes_no_class() -> None:
     # no Entity of it at all — the identity spelling is what it answers.
     _, author_class = _class_backed()
     built = domain_model_from_yaml(_YAML)
-    with pytest.raises(MetamodelLookupError) as caught:
+    with raises_code(UsageError, "metamodel-entity-not-found"):
         built.meta(author_class)
-    assert caught.value.code == "metamodel-entity-not-found"
 
 
 def test_the_text_doors_accept_utf8_bytes() -> None:
@@ -174,18 +171,17 @@ def test_repeated_document_export_is_structurally_equal_and_freshly_built() -> N
 # --------------------------------------------------------------------------- #
 def test_undecodable_bytes_fail_as_a_syntax_defect_of_the_declared_format() -> None:
     for door, spelling in ((domain_model_from_json, "json"), (domain_model_from_yaml, "yaml")):
-        with pytest.raises(DescriptorSyntaxError) as caught:
+        with raises_code(DescriptorError, "descriptor-invalid-syntax") as caught:
             door(b"\xff\xfe not utf-8")
-        assert caught.value.code == "descriptor-invalid-syntax"
         assert caught.value.format == spelling
-        assert isinstance(caught.value.cause, UnicodeDecodeError)
+        assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
 
 def test_malformed_text_fails_in_the_syntax_phase() -> None:
-    with pytest.raises(DescriptorSyntaxError) as caught:
+    with raises_code(DescriptorError, "descriptor-invalid-syntax") as caught:
         domain_model_from_json("{not json")
     assert caught.value.format == "json"
-    with pytest.raises(DescriptorSyntaxError) as caught:
+    with raises_code(DescriptorError, "descriptor-invalid-syntax") as caught:
         domain_model_from_yaml("entities: [\n")
     assert caught.value.format == "yaml"
 
@@ -193,17 +189,15 @@ def test_malformed_text_fails_in_the_syntax_phase() -> None:
 def test_the_document_door_has_no_syntax_phase() -> None:
     # Schema validation is its first gate, so a document that would be a syntax
     # failure as text is simply a schema failure here.
-    with pytest.raises(DescriptorSchemaError) as caught:
+    with raises_code(DescriptorError, "descriptor-schema-invalid") as caught:
         domain_model_from_document(cast("Mapping[str, object]", {"entity": "not a mapping"}))
-    assert caught.value.code == "descriptor-schema-invalid"
-    assert not isinstance(caught.value, DescriptorSyntaxError)
+    assert caught.value.format is None
 
 
 def test_a_schema_valid_but_unconstructible_value_fails_in_the_value_phase() -> None:
     text = _YAML.replace("type: string\n        maxLength: 200", "type: decimal(0,9)")
-    with pytest.raises(DescriptorValueError) as caught:
+    with raises_code(DescriptorError, "descriptor-value-invalid") as caught:
         domain_model_from_yaml(text)
-    assert caught.value.code == "descriptor-value-invalid"
     assert [v.rule for v in caught.value.violations] == ["type-spelling-invalid"]
 
 
@@ -293,7 +287,7 @@ def test_authoring_a_derived_endpoint_stays_an_ingestion_value_defect(
     temporality: str, name: str
 ) -> None:
     document = _with_attribute(_ledger(temporality), name)
-    with pytest.raises(DescriptorValueError) as caught:
+    with raises_code(DescriptorError, "descriptor-value-invalid") as caught:
         domain_model_from_document(document)
     assert [v.rule for v in caught.value.violations] == ["temporal-attribute-declared"]
 
@@ -444,11 +438,10 @@ def test_a_serialization_defect_surfaces_as_an_export_error_with_no_partial_outp
         safe_dump = dumps
 
     monkeypatch.setattr(hub_module, serializer, _Broken)
-    with pytest.raises(DescriptorExportError) as caught:
+    with raises_code(InternalError, "descriptor-export-failed") as caught:
         door(built)
-    assert caught.value.code == "descriptor-export-failed"
-    assert caught.value.target == target
-    assert isinstance(caught.value.cause, TypeError)
+    assert caught.value.args[1].startswith(f"[{target}] ")
+    assert isinstance(caught.value.__cause__, TypeError)
     assert not isinstance(caught.value, DescriptorError)
     monkeypatch.undo()
     assert export_document(built) == before

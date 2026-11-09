@@ -22,27 +22,28 @@ import datetime as dt
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 
-from parallax.core import Attr, Bitemporal, attr
+from parallax.core import Attr, Bitemporal, Entity, InternalError, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
     UNLOADED,
-    GraphConstructionError,
+    EntityGraphConstruction,
     lifecycle_state_of,
     relationship_value_of,
 )
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._errors import GRAPH_CONSTRUCTION_CODES
+from parallax.core.entity._errors import GraphConstructionCode
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import DomainModel, model_of
+from parallax.core.entity._model import DomainModel, class_index, model_of
 from parallax.core.metamodel import (
     EntityIdentity,
     RelationshipIdentity,
 )
 from tests._support import snapshot_models as sm
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._indexed_graph_support import (
     LiteralGraph,
@@ -72,10 +73,19 @@ _ITEM_UNLOADED: tuple[object, ...] = (UNLOADED, UNLOADED)
 _ONE_ORDER: Node = (_ORDER, _ORDER_MEMBERS, _ORDER_UNLOADED)
 
 
-def _refused(*nodes: Node, model: DomainModel = _ORDERS) -> GraphConstructionError:
-    with pytest.raises(GraphConstructionError) as refusal:
+def _refused(*nodes: Node, model: DomainModel = _ORDERS) -> InternalError:
+    with pytest.raises(InternalError) as refusal:
         published(model, *nodes)
     return refusal.value
+
+
+def _names_node(refusal: InternalError, node: int | None, *named: str) -> bool:
+    """Whether ``refusal`` names ``node``, or no node, and each of ``named``."""
+    message = refusal.args[1]
+    located = message.startswith("node ") is (node is not None)
+    if node is not None:
+        located = located and message.startswith(f"node {node}: ")
+    return located and all(name in message for name in named)
 
 
 class _CallerDefinedTuple(tuple[Any, ...]):
@@ -159,7 +169,7 @@ def test_an_absent_member_position_leaves_its_declared_default_in_place() -> Non
 def test_an_empty_graph_is_refused_because_it_has_no_root() -> None:
     refusal = _refused()
     assert refusal.code == "entity-graph-invalid-value"
-    assert refusal.index is None
+    assert _names_node(refusal, None)
 
 
 def test_a_node_of_an_entity_the_model_composed_no_class_for_is_refused() -> None:
@@ -169,32 +179,29 @@ def test_a_node_of_an_entity_the_model_composed_no_class_for_is_refused() -> Non
     graph = LiteralGraph(
         (*graph.layouts, foreign), (*graph.members, ()), (*graph.relationships, ())
     )
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-invalid-entity") as refusal:
         construction.publish(graph, _no_states)
-    assert refusal.value.code == "entity-graph-invalid-entity"
-    assert (refusal.value.index, refusal.value.identity) == (1, sm.Cat.identity)
+    assert _names_node(refusal.value, 1, sm.Cat.identity.canonical)
 
 
 def test_a_layout_this_model_does_not_lay_its_entity_out_by_is_refused() -> None:
     construction = graph_construction_for(_ORDERS)
     graph = literal_graph(construction, _ONE_ORDER)
     other = dataclasses.replace(graph.layouts[0], relationships=())
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-layout-mismatch") as refusal:
         construction.publish(LiteralGraph((other,), graph.members, graph.relationships), _no_states)
-    assert refusal.value.code == "entity-graph-layout-mismatch"
-    assert (refusal.value.index, refusal.value.identity) == (0, _ORDER)
+    assert _names_node(refusal.value, 0, _ORDER.canonical)
 
 
 @pytest.mark.parametrize("answer", [_ORDER, None], ids=["identity", "none"])
 def test_a_node_answering_no_layout_at_all_is_refused_as_a_mismatch(answer: object) -> None:
     construction = graph_construction_for(_ORDERS)
     graph = literal_graph(construction, _ONE_ORDER)
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-layout-mismatch") as refusal:
         construction.publish(
             LiteralGraph((cast("Any", answer),), graph.members, graph.relationships), _no_states
         )
-    assert refusal.value.code == "entity-graph-layout-mismatch"
-    assert refusal.value.index == 0
+    assert _names_node(refusal.value, 0)
 
 
 def test_an_equal_layout_from_another_catalog_of_one_model_is_accepted() -> None:
@@ -255,7 +262,7 @@ def test_a_member_row_that_is_not_an_exact_tuple_of_the_layout_width_is_refused(
     # to refuse is a row of any other width or kind.
     refusal = _refused(_ONE_ORDER, (_ORDER, members, _ORDER_UNLOADED))
     assert refusal.code == "entity-graph-invalid-member"
-    assert (refusal.index, refusal.identity) == (1, _ORDER)
+    assert _names_node(refusal, 1, _ORDER.canonical)
 
 
 @pytest.mark.parametrize(
@@ -274,7 +281,7 @@ def test_a_relationship_row_that_is_not_an_exact_tuple_of_the_layout_width_is_re
 ) -> None:
     refusal = _refused((_ORDER, _ORDER_MEMBERS, relationships))
     assert refusal.code == "entity-graph-invalid-member"
-    assert refusal.index == 0
+    assert _names_node(refusal, 0)
 
 
 def test_construction_does_not_rejudge_attribute_nullability() -> None:
@@ -311,13 +318,13 @@ def test_a_to_many_direction_takes_only_an_exact_tuple_of_node_indices(value: ob
         (_ORDER, _ORDER_MEMBERS, (value, UNLOADED)), (_ITEM, _ITEM_MEMBERS, _ITEM_UNLOADED)
     )
     assert refusal.code == "entity-graph-invalid-value"
-    assert (refusal.index, refusal.identity) == (0, _rel(_ORDER, "items"))
+    assert _names_node(refusal, 0, "items")
 
 
 def test_a_to_one_direction_refuses_a_tuple_of_node_indices() -> None:
     refusal = _refused(_ONE_ORDER, (_ITEM, _ITEM_MEMBERS, ((0,), UNLOADED)))
     assert refusal.code == "entity-graph-invalid-value"
-    assert (refusal.index, refusal.identity) == (1, _rel(_ITEM, "order"))
+    assert _names_node(refusal, 1, "order")
 
 
 @pytest.mark.parametrize(
@@ -332,7 +339,7 @@ def test_a_to_one_direction_refuses_a_tuple_of_node_indices() -> None:
 def test_a_to_one_value_naming_no_node_of_the_graph_is_refused(value: object) -> None:
     refusal = _refused(_ONE_ORDER, (_ITEM, _ITEM_MEMBERS, (value, UNLOADED)))
     assert refusal.code == "entity-graph-invalid-value"
-    assert (refusal.index, refusal.identity) == (1, _rel(_ITEM, "order"))
+    assert _names_node(refusal, 1, "order")
 
 
 @pytest.mark.parametrize(
@@ -348,7 +355,7 @@ def test_a_to_many_value_naming_no_node_of_the_graph_is_refused(value: object) -
         (_ORDER, _ORDER_MEMBERS, (value, UNLOADED)), (_ITEM, _ITEM_MEMBERS, _ITEM_UNLOADED)
     )
     assert refusal.code == "entity-graph-invalid-value"
-    assert (refusal.index, refusal.identity) == (0, _rel(_ORDER, "items"))
+    assert _names_node(refusal, 0, "items")
 
 
 # --------------------------------------------------------------------------- #
@@ -433,8 +440,7 @@ def test_a_refusal_at_any_value_object_depth_names_the_node_whose_row_holds_it()
     # refused value sits inside a nested occurrence's own row.
     refusal = _refused(_status(), _status(primary=_tag("x", details=[_tag("y")])))
     assert refusal.code == "entity-graph-invalid-value"
-    assert refusal.index == 1
-    assert cast("Any", refusal.identity).path == ("primaryTag", "details")
+    assert _names_node(refusal, 1, "primaryTag.details")
 
 
 def test_publication_resolves_no_class_facts_per_record(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -661,8 +667,9 @@ def test_a_callback_exception_propagates_unchanged_and_attaches_no_state() -> No
 )
 def test_a_state_count_other_than_the_node_count_attaches_none(states: tuple[str, ...]) -> None:
     kept, refusal = _kept_and_refused(lambda _instances: states)
-    assert isinstance(refusal, GraphConstructionError)
-    assert (refusal.code, refusal.index) == ("entity-graph-invalid-value", None)
+    assert isinstance(refusal, InternalError)
+    assert refusal.code == "entity-graph-invalid-value"
+    assert _names_node(refusal, None)
     assert [lifecycle_state_of(node) for node in kept] == [None, None]
 
 
@@ -696,16 +703,32 @@ def test_an_instance_a_failed_callback_kept_is_still_filled_and_still_state_free
 
 def test_reading_a_relationship_the_class_family_does_not_declare_is_refused() -> None:
     root = published(_ORDERS, _ONE_ORDER)
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-invalid-member"):
         relationship_value_of(root, _rel(_ORDER, "nosuch"))
-    assert refusal.value.code == "entity-graph-invalid-member"
+
+
+class _Composed(Entity, table="composed", name="Composed", namespace="parallax.test"):
+    id: Attr[int] = attr(primary_key=True)
+
+
+class _Uncomposed(Entity, table="uncomposed", name="Uncomposed", namespace="parallax.test"):
+    id: Attr[int] = attr(primary_key=True)
+
+
+def test_an_entity_the_class_index_holds_no_class_for_is_refused_at_construction() -> None:
+    classes = class_index(DomainModel(_Composed))
+    assert classes is not None
+    cataloged = CatalogedModel(model_of(DomainModel(_Composed, _Uncomposed)))
+    with raises_code(
+        InternalError, "entity-graph-invalid-entity", match="parallax.test.Uncomposed"
+    ):
+        EntityGraphConstruction(cataloged, classes)
 
 
 def test_an_entity_the_model_does_not_declare_is_refused_at_lookup() -> None:
-    with pytest.raises(GraphConstructionError) as refusal:
+    with raises_code(InternalError, "entity-graph-invalid-entity") as refusal:
         graph_construction_for(_ORDERS).facts_for(sm.Cat.identity)
-    assert refusal.value.code == "entity-graph-invalid-entity"
-    assert refusal.value.identity == sm.Cat.identity
+    assert sm.Cat.identity.canonical in refusal.value.args[1]
 
 
 # --------------------------------------------------------------------------- #
@@ -725,7 +748,5 @@ _SPEC_CODES = frozenset(
 )
 
 
-def test_the_code_set_is_closed_against_an_unlisted_code() -> None:
-    assert GRAPH_CONSTRUCTION_CODES == _SPEC_CODES
-    with pytest.raises(ValueError, match="not a graph construction code"):
-        GraphConstructionError(code="entity-graph-nosuch", message="invented")
+def test_the_code_set_is_closed() -> None:
+    assert frozenset(get_args(GraphConstructionCode.__value__)) == _SPEC_CODES
