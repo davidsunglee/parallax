@@ -111,12 +111,6 @@ def test_fixture_statements_refuse_infinity_for_an_ordinary_timestamp() -> None:
         provision.fixture_statements(_MODELS["event"], fixtures)
 
 
-# --------------------------------------------------------------------------- #
-# No corpus model combines inheritance with a value object, so a synthetic    #
-# table-per-hierarchy family proves an inherited one resolves by name.        #
-# --------------------------------------------------------------------------- #
-
-
 def test_fixture_statements_tph_resolves_an_inherited_value_object_by_name() -> None:
     meta = tph_family_with_a_value_object()
     fixtures = {"Leaf": [{"id": 1, "x": 2, "meta": {"a": 1}}]}

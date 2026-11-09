@@ -1,9 +1,10 @@
 """The declared matrix profiles (`parallax.conformance.profile`).
 
-An unprovisioned run reports its profile's dialect and refuses SQL, and the claim
-`describe` publishes, a profile's dialect, and a scoped control are each reached in
-a cold process without a container or the driver: deriving the claim must not need a
-database.
+An unprovisioned run reports its profile's dialect and refuses SQL. In a cold
+process, neither an unprovisioned run nor deriving a profile's dialects starts a
+container, and importing the conformance adapter, the CLI, the scoped-control
+protocols or the provisioner loads no driver until `describe`, a profile's dialect
+or the native control reaches it.
 """
 
 from __future__ import annotations
