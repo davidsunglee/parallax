@@ -91,6 +91,14 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core._execution._transaction._attempt",
         "parallax.core.sql_gen._compile",
     ): frozenset({"compile_read", "CompiledRead"}),
+    **{
+        (importer, "parallax.core.sql_gen._context"): frozenset({"SQL_GENERATION_FAILED"})
+        for importer in (
+            "parallax.core._execution._write_lowering",
+            "parallax.core.read_delivery._page_reader",
+            "parallax.core.read_delivery._row_decoding",
+        )
+    },
     (
         "parallax.core.read_delivery._row_converter",
         "parallax.core.sql_gen._inheritance",
@@ -566,6 +574,12 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._transaction._lifetime",
     ): frozenset({"TxnAttemptLifetime"}),
+    # The implied-conflict check admits the excess-row invariant failure beside
+    # the shortfall a case implies, and the facade exports no InternalError code.
+    (
+        "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._unit_work.effects",
+    ): frozenset({"CARDINALITY_CORRUPTION"}),
     (
         "parallax.conformance._simulated_write_steps",
         "parallax.core._execution._write_lowering",

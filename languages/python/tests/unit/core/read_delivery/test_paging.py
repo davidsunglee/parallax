@@ -22,13 +22,15 @@ from typing import cast
 import pytest
 
 from parallax.core import continuation
+from parallax.core.base import InternalError
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery._page_reader import PageReader
 from parallax.core.read_delivery._paging import PagingParameters, PagingPlan, page_decision
-from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -98,7 +100,11 @@ def test_the_smallest_page_still_reads_two_roots() -> None:
 
 def test_a_paging_root_without_an_evaluated_coordinate_is_refused() -> None:
     coordinates = cast("Callable[[object], object]", vars(PageReader)["_coordinates"])
-    with pytest.raises(SqlGenError, match="returned a root carrying no evaluated coordinate"):
+    with raises_code(
+        InternalError,
+        SQL_GENERATION_FAILED,
+        match="returned a root carrying no evaluated coordinate",
+    ):
         coordinates(SimpleNamespace(coordinates=(None,)))
 
 

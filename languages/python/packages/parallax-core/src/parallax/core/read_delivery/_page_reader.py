@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Any, Final, Never, Protocol, cast, overload
 
 from parallax.core import read_planning
+from parallax.core.base import InternalError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
 from parallax.core.entity._layout import CatalogedModel
@@ -47,8 +48,8 @@ from parallax.core.read_delivery._read_plan import (
 )
 from parallax.core.read_delivery._row_converter import FetchedRowObserver, ReadRowConverter, bind
 from parallax.core.read_delivery._row_decoding import row_coordinates
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.temporal_read import Pin, TemporalShape, resolved_query_pin
 
 __all__ = [
@@ -465,7 +466,10 @@ class PageReader:
     def _coordinates(root_read: _RootRead) -> tuple[ContinuationCoordinate, ...]:
         coordinates = root_read.coordinates
         if any(coordinate is None for coordinate in coordinates):
-            raise SqlGenError("a paging read returned a root carrying no evaluated coordinate")
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                "a paging read returned a root carrying no evaluated coordinate",
+            )
         return cast("tuple[ContinuationCoordinate, ...]", coordinates)
 
     def _build_page[Origin](

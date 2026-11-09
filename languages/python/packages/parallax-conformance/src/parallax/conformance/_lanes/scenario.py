@@ -60,6 +60,7 @@ from parallax.core import (
 from parallax.core._execution._planning import build_write_planner, build_write_preparation
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
     PreparedKeyedInstruction,
@@ -67,7 +68,13 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import ConflictError, InternalError, UsageError, normalize_instant
+from parallax.core.base import (
+    ConflictError,
+    InternalError,
+    UnsupportedError,
+    UsageError,
+    normalize_instant,
+)
 from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import (
@@ -95,9 +102,8 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     INSERT_MUTATIONS,
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
@@ -126,9 +132,9 @@ from parallax.core.write_plan import (
     ObjectStateKey,
     StateObservation,
     TemporalObservation,
-    WritePlanningError,
     object_state_key_from_observation,
 )
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
 
 __all__ = [
@@ -196,9 +202,8 @@ __all__ = [
 # must degrade to a reasoned `UnclassifiedEngineError`, never an uncaught crash of
 # the sweep.
 LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
-    WritePlanningError,
-    SqlGenError,
     UsageError,
+    UnsupportedError,
     InternalError,
     KeyError,
     TypeError,
@@ -708,15 +713,17 @@ def _unlicensed(instruction: PreparedKeyedInstruction, model: AcceptedMetamodel)
     if versioning.settles_against(entity) == "object":
         position = inheritance.view(model).entity(entity)
         assert position is not None  # the facet covers every accepted Entity
-        return WritePlanningError(
+        return InternalError(
+            WRITE_PLANNING_FAILED,
             f"{entity.name!r}: an addressed write row omits the primary-key member "
-            f"{position.primary_key.identity.name!r}, so it selects no row"
+            f"{position.primary_key.identity.name!r}, so it selects no row",
         )
-    return WritePlanningError(
+    return InternalError(
+        WRITE_PLANNING_FAILED,
         f"{entity.name!r}: a keyed {mutation!r} writes existing state this unit holds "
         "neither an insertion's authority nor the evidence of — a temporal close requires the "
         "Temporal Observation it addresses, gates on, and carries state forward from "
-        "(m-unit-work)"
+        "(m-unit-work)",
     )
 
 

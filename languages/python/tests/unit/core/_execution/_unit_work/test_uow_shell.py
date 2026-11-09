@@ -74,7 +74,7 @@ from parallax.core._execution._unit_work.write_runner import (
     ExecuteCountedStep,
     ExecuteWriteSteps,
 )
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, InternalError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
@@ -109,7 +109,6 @@ from parallax.core.write_plan import (
     TemporalObservation,
     VersionObservation,
     WritePlan,
-    WritePlanningError,
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.keys import VersionedObjectStateKey
@@ -117,6 +116,7 @@ from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     TemporalRowCoordinates,
 )
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import (
     NEW_LINEAGE,
@@ -998,13 +998,13 @@ def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
     def body(uow: UnitOfWork) -> None:
         uow.buffer(unclosable)
         for _ in range(2):
-            with pytest.raises(WritePlanningError):
+            with raises_code(InternalError, WRITE_PLANNING_FAILED):
                 uow.read(lambda: None)
         uow.buffer_insert(_balance_insert(2), insertion_advice=None)
 
     # The refused write is still buffered, so every flush refuses it again, the
     # commit flush included, rather than the attempt being doomed.
-    with pytest.raises(WritePlanningError):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED):
         _run(body, meta=_BALANCE)
 
 
@@ -1560,14 +1560,14 @@ def test_a_planning_refusal_before_a_predicate_write_keeps_the_buffer_and_the_at
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(unclosable)
-        with pytest.raises(WritePlanningError):
+        with raises_code(InternalError, WRITE_PLANNING_FAILED):
             uow.execute_predicate(_shell_predicate_write())
-        with pytest.raises(WritePlanningError):
+        with raises_code(InternalError, WRITE_PLANNING_FAILED):
             uow.read(lambda: None)
 
     # The refused write is still buffered, so every flush refuses it again, the
     # commit flush included, rather than the attempt being doomed.
-    with pytest.raises(WritePlanningError):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED):
         _run(
             body,
             meta=_PREDICATED,
@@ -1621,7 +1621,7 @@ def test_a_refused_predicate_step_fails_its_flush_without_dooming_or_restoring_e
 
     def body(uow: UnitOfWork) -> str:
         uow.buffer_insert(_tag_insert(2), insertion_advice=None)
-        with pytest.raises(WritePlanningError):
+        with raises_code(InternalError, WRITE_PLANNING_FAILED):
             uow.execute_predicate(_shell_predicate_write())
         return uow.read(lambda: "still usable")
 

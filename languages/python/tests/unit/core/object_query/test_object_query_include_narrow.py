@@ -35,6 +35,7 @@ from parallax.core import (
     Entity,
     Rel,
     TablePerHierarchy,
+    UnsupportedError,
     attr,
     rel,
 )
@@ -709,7 +710,7 @@ def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> N
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
-    with raises_code(UsageError, "execution-feature-deferred") as caught:
+    with raises_code(UnsupportedError, "execution-feature-deferred") as caught:
         resolve_read_query(object_query_node(query, POLICY_MODEL), model=model_of(POLICY_MODEL))
     assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 

@@ -13,6 +13,7 @@ from parallax.core.base._errors import (
     NoResultFound,
     ParallaxError,
     TooManyResultsFound,
+    UnsupportedError,
     UsageError,
 )
 from parallax.core.base._inference import infer_neutral_type
@@ -102,6 +103,7 @@ __all__ = [
     "Timestamp",
     "TooManyResultsFound",
     "UnknownFamilyTag",
+    "UnsupportedError",
     "UsageError",
     "Uuid",
     "adopt_frozen_map",

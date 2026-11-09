@@ -32,15 +32,15 @@ def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObject
 
     Target resolution follows the reference-position rule every validator and
     lowering site resolves a spelling by, so "read-query resolution accepted this
-    target" implies "planning resolves it". Raises
-    the :class:`QueryTargetError` when ``model``
-    declares no Entity for it,
-    a :class:`~parallax.core.base.UsageError` with the rule's code when a clause
-    is not applicable from that resolved root, and
-    :class:`~parallax.core._execution._features.DeferredFeatureError` when the
-    query is applicable but requires a Feature this implementation has not built
-    yet. Performs no SQL generation, Database Port or connection work,
-    transaction demarcation, or materialization.
+    target" implies "planning resolves it". Raises a
+    :class:`~parallax.core.base.UsageError` coded ``query-target-not-in-model``
+    when ``model`` declares no Entity for it, a ``UsageError`` with the rule's
+    code when a clause is not applicable from that resolved root, and an
+    :class:`~parallax.core.base.UnsupportedError` coded
+    ``execution-feature-deferred`` when the query is applicable but requires a
+    Feature this implementation has not built yet. Performs no SQL generation,
+    Database Port or connection work, transaction demarcation, or
+    materialization.
     """
     clauses = query.clauses if isinstance(query, InterpretedQuery) else query
     root = entity_by_name(model, clauses.target.canonical)

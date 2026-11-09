@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal
+from typing import Final, Literal
 
 from parallax.core.base import (
+    InternalError,
     NeutralType,
     UnknownFamilyTag,
+    UnsupportedError,
 )
 from parallax.core.dialect import ScalarResult
 from parallax.core.document_codec import MemberShape
@@ -33,8 +35,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
-from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
 from parallax.core.storage_layout import (
     ColumnContributor,
@@ -56,7 +58,9 @@ def entity_view(facet: InheritanceFacet, entity: EntityIdentity) -> InheritanceE
     """``entity``'s family-effective view; the facet covers every accepted Entity."""
     view = facet.entity(entity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise SqlGenError(f"{entity.canonical}: the model declares no such entity")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{entity.canonical}: the model declares no such entity"
+        )
     return view
 
 
@@ -64,7 +68,9 @@ def storage_entity_view(facet: StorageLayoutFacet, entity: EntityIdentity) -> En
     """``entity``'s prepared physical selection; accepted row owners are total."""
     view = facet.entity(entity)
     if view is None:  # pragma: no cover - the facet covers every accepted row owner
-        raise SqlGenError(f"{entity.canonical}: the model declares no storage layout")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{entity.canonical}: the model declares no storage layout"
+        )
     return view
 
 
@@ -72,7 +78,10 @@ def tag_column(layout: TableLayout, root: EntityIdentity) -> str:
     """The physical discriminator Column ``root``'s family discriminates by."""
     slot = layout.contribution(InheritanceDiscriminator(root))
     if slot is None:  # pragma: no cover - every table-per-hierarchy layout carries one
-        raise SqlGenError(f"{root.canonical}: this family's Table Layout has no discriminator")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{root.canonical}: this family's Table Layout has no discriminator",
+        )
     return slot.column.name
 
 
@@ -80,8 +89,9 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
     """The value ``concrete``'s rows carry in its family's shared tag column."""
     value = entity_view(facet, concrete).tag_value
     if value is None:  # pragma: no cover - a validated TPH concrete always declares one
-        raise SqlGenError(
-            f"{concrete.canonical}: table-per-hierarchy concrete subtype declares no tagValue"
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{concrete.canonical}: table-per-hierarchy concrete subtype declares no tagValue",
         )
     return value
 
@@ -815,8 +825,9 @@ class TpcsUnionReadPlan:
         for column in self.columns:
             if column.contributor == contributor:
                 return column
-        raise SqlGenError(  # pragma: no cover - a validated Sort Key names a projected member
-            f"{contributor} has no Column in the table-per-concrete-subtype union"
+        raise InternalError(  # pragma: no cover - a validated Sort Key names a projected member
+            SQL_GENERATION_FAILED,
+            f"{contributor} has no Column in the table-per-concrete-subtype union",
         )
 
 
@@ -918,7 +929,10 @@ def _plan_single_table_read(
     if shared is not None:
         document_slot = _structured_column_slot(table)
         if document_slot is None:  # pragma: no cover - a mapped document is a layout's own
-            raise SqlGenError(f"{table.table.name}: a shared document needs a Structured Column")
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                f"{table.table.name}: a shared document needs a Structured Column",
+            )
         columns = (
             *columns,
             ProjectedColumn(document_slot.contributor, shared.column, None, document=True),
@@ -980,6 +994,14 @@ def _projects_document_slot(
     return isinstance(contributor, RelationalDocument) and shared_document
 
 
+INHERITANCE_LOCKING_READ_UNSUPPORTED: Final = "inheritance-locking-read-unsupported"
+"""The code of the :class:`~parallax.core.base.UnsupportedError` a
+table-per-concrete-subtype union read that must take the shared row lock is
+refused by: PostgreSQL grants a locking clause over neither a `UNION` result
+nor any input of one, and the lock cannot be dropped, because it is what
+licenses a later ungated write (`m-sql`)."""
+
+
 def _plan_tpcs_union_read(
     position: InheritancePositionView,
     layout: PositionLayoutView,
@@ -1005,14 +1027,16 @@ def _plan_tpcs_union_read(
     reach for.
     """
     if shared_lock:
-        # A shared row lock is the one clause a derived-table wrap cannot rescue:
-        # PostgreSQL forbids a locking clause over a `UNION` result and over every
-        # input of one, and dropping it silently would leave a later ungated write
-        # unlicensed. Ordering and limiting have an outer select to land on, so
-        # only a requested lock refuses.
-        raise SqlGenError(
-            "a shared-lock suffix over a table-per-concrete-subtype union-all read "
-            "(2+ effective concretes) has no goldened lowering yet"
+        # A shared row lock is the one clause a derived-table wrap cannot rescue.
+        # Ordering and limiting have an outer select to land on, so only a
+        # requested lock refuses.
+        concretes = ", ".join(sorted(concrete.canonical for concrete in position.concrete_subtypes))
+        raise UnsupportedError(
+            INHERITANCE_LOCKING_READ_UNSUPPORTED,
+            f"a read of the table-per-concrete-subtype union over {concretes} under a shared "
+            "row lock: this version of Parallax cannot lock a union read's rows. Version the "
+            "family root, read one concrete subtype, or read without the lock, outside the "
+            "transaction",
         )
     # A branch storing no document of its own still reads the shared column the
     # union aliased for all of them.
@@ -1095,9 +1119,10 @@ def position_layout(
     """``concretes``' one logical contributor sequence and per-Table branch map."""
     view = storage.position(tuple(concretes))
     if view is None:  # pragma: no cover - a validated position is one canonical family
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"position {sorted(identity.canonical for identity in concretes)} "
-            "has no Position Layout"
+            "has no Position Layout",
         )
     return view
 
@@ -1113,8 +1138,9 @@ def _contributor_column(branches: Sequence[PositionBranch], index: int) -> str:
         slot = branch.slots[index]
         if slot is not None:
             return slot.column.name
-    raise SqlGenError(  # pragma: no cover - a Position Layout contributor is owned somewhere
-        "a table-per-concrete-subtype position contributor occupies no branch Column"
+    raise InternalError(  # pragma: no cover - a Position Layout contributor is owned somewhere
+        SQL_GENERATION_FAILED,
+        "a table-per-concrete-subtype position contributor occupies no branch Column",
     )
 
 

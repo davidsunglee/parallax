@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import JSON, FrozenMap, retain_document_value
+from parallax.core.base import JSON, FrozenMap, InternalError, retain_document_value
 from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import _managed as managed
@@ -44,7 +44,8 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._write import InsertStatementBuilder
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
@@ -62,6 +63,7 @@ from parallax.core.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests.unit._document_layout_support import PERSON, columns_model, document_model, entity
@@ -311,7 +313,7 @@ def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> Non
     builder = InsertStatementBuilder(first.slots, first.values, DOCUMENT, POSTGRES)
     builder.append(second.values)
 
-    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         builder.append(third.values[:1])
 
     statement = builder.finish()

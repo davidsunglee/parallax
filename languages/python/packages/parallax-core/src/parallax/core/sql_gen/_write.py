@@ -10,6 +10,7 @@ from parallax.core.base import (
     INFINITY_LITERAL,
     DocumentValue,
     FrozenMap,
+    InternalError,
     NeutralType,
     StructuredDocument,
 )
@@ -32,8 +33,8 @@ from parallax.core.metamodel import (
 from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
 from parallax.core.sql_gen._compile import compile_write_predicate
 from parallax.core.sql_gen._context import (
+    SQL_GENERATION_FAILED,
     LoweredStatement,
-    SqlGenError,
     StatementBuilder,
 )
 from parallax.core.storage_layout import EntityLayoutView
@@ -122,9 +123,10 @@ def _attribute(meta: Metamodel, identity: AttributeIdentity) -> AttributeMetadat
     entity = meta.entity(identity.entity)
     attribute = None if entity is None else entity.attribute(identity.name)
     if attribute is None:  # pragma: no cover - planned identities come from accepted metadata
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"{identity.entity.canonical}.{identity.name}: planned Attribute is not "
-            "accepted metadata"
+            "accepted metadata",
         )
     return attribute
 
@@ -182,9 +184,10 @@ def non_insert_parameter_ceiling(
     """
     target = step.target
     if isinstance(target, ResolvedMutationSelection):
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"{step.entity.canonical}: a predicate-selected step's binds are not bounded by its "
-            "shape"
+            "shape",
         )
     if isinstance(target, MilestoneTarget):
         ceiling = len(target.key_values) + 1 + len(target.end_values)
@@ -211,9 +214,10 @@ def _insert_payload(step: PlannedInsert, payload: StepPayload) -> InsertPayload:
         or payload.slots.entity != step.entity
         or payload.slots.presence != step.entries[0].row.presence
     ):
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"{step.entity.canonical}: an insert stores one prepared row per entry, under the "
-            "Row Slots its entries state"
+            "Row Slots its entries state",
         )
     return payload
 
@@ -226,16 +230,19 @@ def _assignment_payload(
         or payload.assignments is not step.assignments
         or payload.entity != step.entity
     ):
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"{step.entity.canonical}: a revising step stores the Assignment Payload prepared "
-            "from its own assignments"
+            "from its own assignments",
         )
     return payload
 
 
 def _require_no_payload(step: PlannedStep, payload: StepPayload) -> None:
     if payload is not None:
-        raise SqlGenError(f"{step.entity.canonical}: this step stores no prepared payload")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{step.entity.canonical}: this step stores no prepared payload"
+        )
 
 
 class InsertStatementBuilder:
@@ -298,9 +305,10 @@ class InsertStatementBuilder:
             holes = ", ".join(["?"] * len(slots.columns))
             return statement.finish(f"insert into {slots.table}({column_sql}) values ({holes})")
         if not dialect.binds_arrays:
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{slots.entity.canonical}: the {dialect.name!r} dialect binds no arrays, and "
-                "a multi-row insert has no other form here"
+                "a multi-row insert has no other form here",
             )
         element_types = slots.element_types
         for element_type, column in zip(element_types, slots.column_cells(rows), strict=True):
@@ -316,7 +324,9 @@ class InsertStatementBuilder:
 def _placed(slots: RowSlots, cells: tuple[object, ...]) -> tuple[object, ...]:
     """``cells`` as one row ``slots`` place: one cell per slot."""
     if len(cells) != len(slots.columns):
-        raise SqlGenError("a repeated bind pattern has inconsistent row widths")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a repeated bind pattern has inconsistent row widths"
+        )
     return cells
 
 
@@ -336,9 +346,10 @@ def _lower_insert(
             builder.append(cells)
         return builder.finish()
     if rest:
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"multi-entry insert on {step.entity.name!r}: a generated-value expression "
-            "folds into the statement itself, so it renders one row at a time (m-pk-gen)"
+            "folds into the statement itself, so it renders one row at a time (m-pk-gen)",
         )
     column_sql = ", ".join(dialect.quote(column) for column in slots.columns)
     table = slots.table
@@ -411,9 +422,10 @@ class GroupedEffectBuilder:
 
     def __init__(self, slots: EffectSlots, meta: Metamodel, dialect: Dialect) -> None:
         if not dialect.binds_arrays:
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{slots.entity.canonical}: the {dialect.name!r} dialect binds no arrays, and "
-                "a grouped effect has no other form"
+                "a grouped effect has no other form",
             )
         self._slots = slots
         self._meta = meta
@@ -431,16 +443,18 @@ class GroupedEffectBuilder:
             or type(step) is not slots.kind
             or step.entity != slots.entity
         ):
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{slots.entity.canonical}: a grouped effect holds effects of its shape's kind "
-                "and Entity"
+                "and Entity",
             )
         if _gated(step.concurrency) != (slots.gate_source is not None) or not _shaped_address(
             step, slots
         ):
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{slots.entity.canonical}: a grouped effect's step addresses or gates its row "
-                "otherwise than its shape"
+                "otherwise than its shape",
             )
         assigned: AssignmentPayload | None = None
         if isinstance(step, PlannedUpdate | PlannedClose | PlannedTemporalRevision):
@@ -454,9 +468,10 @@ class GroupedEffectBuilder:
                 )
                 for value, source in zip(assigned.values, slots.assignment_sources, strict=True)
             ):
-                raise SqlGenError(
+                raise InternalError(
+                    SQL_GENERATION_FAILED,
                     f"{slots.entity.canonical}: a grouped effect's step assigns a cell or path "
-                    "its shape does not place"
+                    "its shape does not place",
                 )
         else:
             _require_no_payload(step, payload)
@@ -467,7 +482,9 @@ class GroupedEffectBuilder:
     def finish(self) -> LoweredStatement:
         slots, meta, dialect = self._slots, self._meta, self._dialect
         if self._first is None:
-            raise SqlGenError(f"{slots.entity.canonical}: a grouped effect holds an effect")
+            raise InternalError(
+                SQL_GENERATION_FAILED, f"{slots.entity.canonical}: a grouped effect holds an effect"
+            )
         first, payload = self._first
         entity = _entity(meta, first.entity)
         view = _layout(meta, entity)
@@ -820,7 +837,9 @@ def _target_predicate(
             )
             compiled = compile_write_predicate(temporal, meta, dialect, entity)
             if compiled.lowered is None:  # pragma: no cover - compiler always retains proof
-                raise SqlGenError("compiled predicate carries no lowered statement")
+                raise InternalError(
+                    SQL_GENERATION_FAILED, "compiled predicate carries no lowered statement"
+                )
             ctx.append_fragment(compiled.lowered)
             if compiled.selection:
                 return f"{_physical_key(view, dialect)} in ({compiled.sql})"
@@ -935,8 +954,9 @@ def _gate(
         return ""
     slot = view.layout.contribution(concurrency.attribute)
     if slot is None:  # pragma: no cover - a gate names the target's own version Attribute
-        raise SqlGenError(
-            f"{view.entity.canonical}: the version gate's Attribute occupies no Column"
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{view.entity.canonical}: the version gate's Attribute occupies no Column",
         )
     _bind(ctx, concurrency.gate.observed_version, _attribute(meta, concurrency.attribute).type)
     return f"{dialect.quote(slot.column.name)} = ?"
@@ -983,9 +1003,10 @@ def _document_assignments(
     assignments: list[DocumentAssignment] = []
     for patch in patches:
         if patch.removes:
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{entity.identity.name!r}: a revising statement assigns values and removes no "
-                "document key"
+                "document key",
             )
         assignments.append(
             DocumentValueAssignment(patch.path, patch.value)
@@ -998,9 +1019,10 @@ def _document_assignments(
 def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: EntityMetadata) -> str:
     slot = view.layout.contribution(attribute)
     if slot is None:  # pragma: no cover - a planned Attribute always occupies a Column
-        raise SqlGenError(
+        raise InternalError(
+            SQL_GENERATION_FAILED,
             f"{entity.identity.name!r}: {attribute.name!r} occupies no Column of the target's "
-            "Table Layout"
+            "Table Layout",
         )
     return slot.column.name
 
@@ -1008,12 +1030,16 @@ def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: Entity
 def _entity(meta: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = meta.entity(identity)
     if entity is None:  # pragma: no cover - a planned step always names an accepted Entity
-        raise SqlGenError(f"{identity.canonical!r}: step target is not an accepted Entity")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{identity.canonical!r}: step target is not an accepted Entity"
+        )
     return entity
 
 
 def _layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView:
     view = entity_layout(meta, entity)
-    if view is None:
-        raise SqlGenError(f"{entity.identity.name!r}: write target has no effective table")
+    if view is None:  # pragma: no cover - write planning refuses a target with no effective table
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{entity.identity.name!r}: write target has no effective table"
+        )
     return view

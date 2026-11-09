@@ -18,7 +18,7 @@ from typing import cast
 import pytest
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, FrozenMap, NeutralType
+from parallax.core.base import INFINITY, JSON, FrozenMap, InternalError, NeutralType
 from parallax.core.document_codec import PreparedPatch
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -29,8 +29,9 @@ from parallax.core.metamodel import (
 )
 from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import PredecessorRow, WritePlanningError
+from parallax.core.write_plan import PredecessorRow
 from parallax.core.write_plan.payload import PatchedDocument, RowPayload
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
     NEW_LINEAGE,
@@ -41,6 +42,7 @@ from parallax.core.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
@@ -466,9 +468,9 @@ def test_prepared_cells_never_rebind_to_a_row_stating_other_state() -> None:
     preparer = LayoutPayloadPreparer(_EXPEDITIONS)
     source = _successor(CarriedFrom(_predecessor()))
     payload = preparer.row(_EXPEDITION, source)
-    with pytest.raises(WritePlanningError, match="rebind only"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="rebind only"):
         preparer.rebound(payload, _moved(source, _JAN, title="Inland Run"))
-    with pytest.raises(WritePlanningError, match="rebind only"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="rebind only"):
         preparer.rebound(payload, _successor(NEW_LINEAGE, in_z=_JAN))
 
 

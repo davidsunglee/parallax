@@ -15,13 +15,13 @@ import pytest
 from parallax.core import InternalError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
 )
 from parallax.core.base import INFINITY
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     TransactionInstant,
     WritePlanningRequest,
     WritePreconditionError,

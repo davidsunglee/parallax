@@ -41,7 +41,7 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     TemporalCoverageWrite,
 )
-from parallax.core.base import UsageError
+from parallax.core.base import InternalError, UsageError
 from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
@@ -81,7 +81,7 @@ from parallax.core.write_plan.plan import (
     WritePlan,
 )
 from parallax.core.write_plan.planned_rows import (
-    WritePlanningError,
+    WRITE_PLANNING_FAILED,
     entity_view,
     planned_assignments,
     planned_row,
@@ -773,11 +773,12 @@ def _close_group(
     held.clear()
 
 
-def _unobserved_close(entity: EntityMetadata) -> WritePlanningError:
-    return WritePlanningError(
+def _unobserved_close(entity: EntityMetadata) -> InternalError:
+    return InternalError(
+        WRITE_PLANNING_FAILED,
         f"{entity.identity.name!r}: a temporal write of existing coverage closes the "
         "current milestone, and every close requires the Temporal Observation it "
-        "addresses, gates on, and carries state forward from (m-unit-work)"
+        "addresses, gates on, and carries state forward from (m-unit-work)",
     )
 
 
@@ -869,9 +870,10 @@ def _require_unobserved(
     """
     if observation is None:
         return
-    raise WritePlanningError(
+    raise InternalError(
+        WRITE_PLANNING_FAILED,
         f"{entity.identity.name!r}: an unversioned Non-Temporal {mutation!r} carries no Write "
         "Observation, yet one was resolved for it — absence is structural (m-unit-work "
         "'unversioned Non-Temporal writes have no observation'), and settling this write "
-        "would discard the evidence rather than gate or advance anything with it"
+        "would discard the evidence rather than gate or advance anything with it",
     )

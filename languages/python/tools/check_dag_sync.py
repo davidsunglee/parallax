@@ -161,6 +161,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.db_port",
         "parallax.core.sql_gen",
         "parallax.core.write_plan",
+        "parallax.core._stored_data",
     }
 )
 
@@ -204,6 +205,20 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.relationship",
             "parallax.core.temporal_read",
             "parallax.core.concurrency",
+        }
+    ),
+    # The stored-data refusal and the records it reports, scoped apart from the
+    # read delivery that raises most of them: write lowering refuses to revise a
+    # stored document it did not read as an object, and that scope may not
+    # reach the read side. Its grants are what a record is stated in — accepted
+    # metadata, a temporal edge, and an object key — so every scope that judges
+    # stored data can name the refusal without inheriting delivery.
+    "parallax.core._stored_data": frozenset(
+        {
+            "parallax.core.base",
+            "parallax.core.metamodel",
+            "parallax.core.temporal_read",
+            "parallax.core.write_plan",
         }
     ),
     "parallax.descriptor._hub": frozenset({"parallax.core.entity"}),
@@ -330,24 +345,25 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.wire",
         }
     ),
-    # Read delivery's Python-only edges: the page node a stream advances by, and
-    # the two Entity children a positional member row is laid out against and
-    # spells absence with. Neither child carries the Entity frontend's closure,
-    # so delivery takes the layouts without the frontend; the frontend itself is
-    # not granted, because the value projections that would need it belong to
-    # the lifecycle publishing them.
+    # Read delivery's Python-only edges: the page node a stream advances by, the
+    # stored-data refusal vocabulary, and the two Entity children a positional
+    # member row is laid out against and spells absence with. Neither child
+    # carries the Entity frontend's closure, so delivery takes the layouts
+    # without the frontend; the frontend itself is not granted, because the value
+    # projections that would need it belong to the lifecycle publishing them.
     "parallax.core.read_delivery": frozenset(
         {
             "parallax.core.continuation",
+            "parallax.core._stored_data",
             "parallax.core.entity._construction_input",
             "parallax.core.entity._layout",
         }
     ),
-    # The Page, its view schema, the stored-data vocabulary, and Page-owned
-    # judgement, scoped apart from the rest of delivery so a lifecycle's
-    # publication can read judged Entity States without reaching SQL generation,
-    # the Database Port, or the execution lifecycle. Its grants are what a
-    # positional member row and its findings are stated in, and nothing else:
+    # The Page, its view schema, and Page-owned judgement, scoped apart from the
+    # rest of delivery so a lifecycle's publication can read judged Entity States
+    # without reaching SQL generation, the Database Port, or the execution
+    # lifecycle. Its grants are what a positional member row and its findings
+    # are stated in, and nothing else: the stored-data vocabulary names them,
     # read planning states the view keys, and the Concurrency Facet decides how
     # a row's version is judged. Sealed, because the delivery package around it
     # reaches every one of those exclusions.
@@ -355,6 +371,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.entity._construction_input",
             "parallax.core.entity._layout",
+            "parallax.core._stored_data",
             "parallax.core.base",
             "parallax.core.metamodel",
             "parallax.core.read_planning",

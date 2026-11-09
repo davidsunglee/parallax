@@ -14,7 +14,7 @@ from dataclasses import replace
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import DocumentValue, StructuredDocument
+from parallax.core.base import DocumentValue, InternalError, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
@@ -23,8 +23,9 @@ from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchem
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
 from parallax.core.read_planning import ResolvedReadProjection
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit._document_layout_support import columns_model, document_model, entity
@@ -106,7 +107,7 @@ def test_document_classification_reads_the_resolved_member_off_a_folded_carrier(
     assert set(column_classifiers) == {"address", "tags"}
     classify_address = column_classifiers["address"]
     assert classify_address(_COLUMNS_CELLS["address"])[0] == ("Oslo", ("NO",))
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         classify_address({"city": "Oslo"})
 
 
@@ -160,7 +161,7 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
         result_form="instance",
     )
     converter = bind(CatalogedModel(holder_model), compiled.result_contract, compiled.projection)
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         converter.record_row(
             (1, {"profile": {"label": "x"}}), PageBuilder(ViewSchema.of()), source=ROOT_LEVEL
         )
@@ -170,7 +171,7 @@ def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
     compiled = compile_read(
         oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"), result_form="instance"
     )
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         row_identity(compiled.result_contract, (1, {}))
 
 

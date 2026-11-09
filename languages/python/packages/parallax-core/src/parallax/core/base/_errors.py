@@ -11,6 +11,7 @@ __all__ = [
     "NoResultFound",
     "ParallaxError",
     "TooManyResultsFound",
+    "UnsupportedError",
     "UsageError",
 ]
 
@@ -70,8 +71,19 @@ def _restored(
 
 
 class UsageError(ParallaxError):
-    """The calling code asked for something Parallax refuses; correcting the
-    code, the declaration, or the input it passes is the fix."""
+    """The calling code asked for something that contradicts Parallax's
+    semantics; correcting the code, the declaration, or the input it passes is
+    the fix."""
+
+
+class UnsupportedError(ParallaxError):
+    """A reasonable request this version of Parallax, or the selected Dialect,
+    cannot serve yet.
+
+    Serving it would not change what the request means, so the calling code is
+    not wrong; it waits for the capability or avoids the gap another way. A
+    request that contradicts the semantics is a :class:`UsageError` instead.
+    """
 
 
 class InternalError(ParallaxError):

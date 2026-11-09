@@ -22,6 +22,7 @@ from parallax.core.base import (
     STRING,
     TIMESTAMP,
     FrozenMap,
+    InternalError,
     ManagedValue,
 )
 from parallax.core.base import Decimal as DecimalType
@@ -37,6 +38,7 @@ from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,
+    SQL_GENERATION_FAILED,
     AffixForm,
     ComparisonTextForm,
     ContinuationCarrierForm,
@@ -46,7 +48,6 @@ from parallax.core.sql_gen._context import (
     LoweredStatement,
     ManagedOperandForm,
     MembershipForm,
-    SqlGenError,
     StatementBuilder,
     _ExecutionValueMarker,  # pyright: ignore[reportPrivateUsage]
     _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
@@ -65,6 +66,7 @@ from parallax.core.sql_gen._planning import (
 from parallax.core.sql_gen._predicate import EntityRowScope, render_shared_sources
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.wire import loads
+from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.sql import read_position, resolved_as_stated
 from tests.unit._corpus_model_support import model as corpus_model
@@ -103,7 +105,7 @@ def test_statement_builder_rejects_a_bind_that_bypassed_role_classification() ->
     builder = _builder()
     builder._binds.append(1)  # pyright: ignore[reportPrivateUsage] - malformed compiler-product probe
 
-    with pytest.raises(SqlGenError, match="role-specific API"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="role-specific API"):
         builder.finish("select ?")
 
 
@@ -197,7 +199,7 @@ def test_selecting_a_scope_plan_is_idempotent_but_one_builder_renders_one_plan()
     other = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
     unselected = next(scope.scope_id for scope in other.lexical_scopes if scope.scope_id != root)
     for scope_id in (root, unselected):
-        with pytest.raises(SqlGenError, match="one statement plan"):
+        with raises_code(InternalError, SQL_GENERATION_FAILED, match="one statement plan"):
             builder.select_scope_plan(other, scope_id)
 
 
@@ -206,9 +208,13 @@ def test_a_source_reference_never_addresses_an_owner_result_binding() -> None:
     root = plan.root_scopes[None]
     builder = _row_builder(COLLECTIONS)
     render_shared_sources(plan, root, _basket_row(builder))
-    with pytest.raises(SqlGenError, match="owner_results reference addresses no source"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="owner_results reference addresses no source"
+    ):
         builder.source_binding(OwnerResultsRef(root, 0))  # pyright: ignore[reportArgumentType]
-    with pytest.raises(SqlGenError, match="source reference addresses no owner_results"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="source reference addresses no owner_results"
+    ):
         builder.owner_results_binding(SharedSourceRef(root, 0))  # pyright: ignore[reportArgumentType]
 
 
@@ -216,18 +222,22 @@ def test_a_selected_plan_s_missing_bindings_fail_early_and_at_finish() -> None:
     plan = _statement_plan(COLLECTIONS, "Basket", _OWNER_TAGGED)
     root = plan.root_scopes[None]
     builder = _row_builder(COLLECTIONS)
-    with pytest.raises(SqlGenError, match="no selected lexical plan"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="no selected lexical plan"):
         builder.source_binding(SharedSourceRef(root, 0))
     builder.select_scope_plan(plan, root)
-    with pytest.raises(SqlGenError, match="read before its join renders"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="read before its join renders"):
         builder.source_binding(SharedSourceRef(root, 0))
-    with pytest.raises(SqlGenError, match="shared source was never rendered"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="shared source was never rendered"
+    ):
         builder.finish("")
     partial = _row_builder(COLLECTIONS)
     partial.select_scope_plan(plan, root)
     owner = _basket_row(partial)
     partial.record_source_binding(SharedSourceRef(root, 0), target=owner, origin=owner)
-    with pytest.raises(SqlGenError, match="owner-results relation was never rendered"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="owner-results relation was never rendered"
+    ):
         partial.finish("")
 
 
@@ -236,14 +246,16 @@ def test_each_planned_entry_renders_once_per_statement() -> None:
     root = plan.root_scopes[None]
     builder = _row_builder(COLLECTIONS)
     builder.select_scope_plan(plan, root)
-    with pytest.raises(SqlGenError, match="read before their relation renders"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="read before their relation renders"
+    ):
         builder.owner_results_binding(OwnerResultsRef(root, 0))
     row = _basket_row(builder)
     builder.record_source_binding(SharedSourceRef(root, 0), target=row, origin=row)
-    with pytest.raises(SqlGenError, match="renders once per statement"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders once per statement"):
         builder.record_source_binding(SharedSourceRef(root, 0), target=row, origin=row)
     builder.record_owner_results_binding(OwnerResultsRef(root, 0), alias="r0", columns=("q0",))
-    with pytest.raises(SqlGenError, match="renders once per statement"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders once per statement"):
         builder.record_owner_results_binding(OwnerResultsRef(root, 0), alias="r1", columns=("q0",))
     builder.finish("")
 
@@ -567,7 +579,7 @@ def test_a_marker_fills_repeated_row_metadata_unless_it_expands() -> None:
         (keys, "a"),
         (_RepeatedTypedBindSpan(0, 1, 1, 2, STRING, "MANAGED"),),
     )
-    with pytest.raises(SqlGenError, match="repeated row-bind metadata"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="repeated row-bind metadata"):
         _template(expanding)
 
 
@@ -629,7 +641,7 @@ def test_discovery_refuses_a_marker_bound_outside_its_form(
 ) -> None:
     builder = _builder()
     bind(builder)
-    with pytest.raises(SqlGenError, match="classification its form selects"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="classification its form selects"):
         builder.finish("select ?").execution_value_positions()
 
 
@@ -655,16 +667,16 @@ def test_discovery_refuses_gathered_keys_in_two_forms() -> None:
     builder = _builder()
     builder.bind_deferred(("keys",), GatheredKeysForm(INT64, True))
     builder.bind_deferred(("keys",), GatheredKeysForm(STRING, True))
-    with pytest.raises(SqlGenError, match="exactly one bind form"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="exactly one bind form"):
         builder.finish("select ?, ?").execution_value_positions()
 
 
 def test_a_template_refuses_placeholders_that_disagree_with_its_key_positions() -> None:
     builder = _builder()
     builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
-    with pytest.raises(SqlGenError, match="disagree with its positions"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
         _template(builder.finish("select ?"))
-    with pytest.raises(SqlGenError, match="disagree with its positions"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
         _template(_builder().finish(f"select {EXPANDING_PLACEHOLDER}"))
 
 
@@ -673,7 +685,7 @@ def test_substitution_refuses_an_empty_expansion() -> None:
     builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
     statement = builder.finish("select ?")
     (group,) = statement.execution_value_positions()
-    with pytest.raises(SqlGenError, match="at least one element"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="at least one element"):
         statement.with_execution_values(((group, []),), sql="select")
 
 
@@ -702,7 +714,7 @@ def test_an_unrendered_marker_has_no_wire_projection(
     builder = _builder()
     builder.bind_deferred(source, form)
 
-    with pytest.raises(SqlGenError, match="until its template renders"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="until its template renders"):
         builder.finish("select ?").wire_binds()
 
 
@@ -836,7 +848,7 @@ def test_a_managed_row_binds_the_cells_its_write_admitted_without_judging_them()
 def test_untyped_bind_projection_rejects_invalid_wire_scalars(value: object) -> None:
     builder = _builder()
     builder.bind_structural(value)
-    with pytest.raises(SqlGenError, match="not an ordinary Wire value"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="not an ordinary Wire value"):
         builder.finish("select ?").wire_binds()
 
 
@@ -863,7 +875,7 @@ def test_finish_rejects_invalid_typed_descriptor_dimensions(
     )
     builder = _builder()
     builder.append_fragment(fragment)
-    with pytest.raises(SqlGenError, match="invalid dimensions or stride"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="invalid dimensions or stride"):
         builder.finish("select ?, ?")
 
 
@@ -918,7 +930,7 @@ def test_managed_infinity_binds_outside_typed_spans_and_observes_its_canonical_l
 
 
 def test_managed_row_binding_rejects_inconsistent_widths() -> None:
-    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         _builder().bind_managed_rows((("one",), ("two", "extra")), ((STRING, "MANAGED"),))
 
 
@@ -941,7 +953,7 @@ def test_a_refused_managed_row_binds_nothing_after_valid_scalar_document_and_ope
         builder.bind_managed_row(_mixed_row(1, dt.date(2024, 1, 1)), _MIXED_ROW)
         builder.bind_managed_row(_mixed_row(2, dt.date(2024, 1, 2)), _MIXED_ROW)
 
-    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         refused.bind_managed_row(_mixed_row(4, dt.date(2024, 1, 4))[:-1], _MIXED_ROW)
 
     expected = prefix.finish("values (?, ?, ?, ?), (?, ?, ?, ?)")
@@ -1042,7 +1054,7 @@ def test_wide_heterogeneous_rows_compact_each_slot_run_within_each_group() -> No
 
 
 def test_statement_builder_rejects_unproven_or_invalid_fragment_metadata() -> None:
-    with pytest.raises(SqlGenError, match="compiler fragment"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="compiler fragment"):
         _builder().append_fragment(LoweredStatement("", (), (), (), False))
 
     for spans, overrides, message in (
@@ -1059,5 +1071,5 @@ def test_statement_builder_rejects_unproven_or_invalid_fragment_metadata() -> No
     ):
         builder = _builder()
         builder.append_fragment(LoweredStatement("", ("value",), spans, overrides, True))
-        with pytest.raises(SqlGenError, match=message):
+        with raises_code(InternalError, SQL_GENERATION_FAILED, match=message):
             builder.finish("select ?")

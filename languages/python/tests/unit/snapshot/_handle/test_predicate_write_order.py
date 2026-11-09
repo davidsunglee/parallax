@@ -34,6 +34,7 @@ from typing import Final
 
 import pytest
 
+from parallax.core import UnsupportedError
 from parallax.core.base import UsageError
 from tests._support.db_port import (
     BeginCall,
@@ -434,17 +435,23 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend"),
-        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
+        _both(
+            _refused(UnsupportedError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")
+        ),
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend", assignments="undeclared"),
-        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
+        _both(
+            _refused(UnsupportedError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")
+        ),
     ),
     _Row(
         PredicateWriteScenario(
             CARD_PAYMENT_SELECTION, "amend", assignments="undeclared", wire_target="query"
         ),
-        _wire(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
+        _wire(
+            _refused(UnsupportedError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")
+        ),
     ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="undeclared"),
@@ -466,11 +473,15 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "replace"),
-        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
+        _both(
+            _refused(UnsupportedError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")
+        ),
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "replace", assignments="undeclared"),
-        _wire(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
+        _wire(
+            _refused(UnsupportedError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")
+        ),
     ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "replace", selection="inverted"),
@@ -527,7 +538,9 @@ _EMPTY_AMENDMENT: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(CARD_PAYMENT_SELECTION, "amend", assignments="none"),
-        _both(_refused(UsageError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")),
+        _both(
+            _refused(UnsupportedError, _FAMILY_REFUSAL, code="subtype-write-set-based-unsupported")
+        ),
     ),
     _Row(
         PredicateWriteScenario(POSITION_SELECTION, "amend", assignments="none"),

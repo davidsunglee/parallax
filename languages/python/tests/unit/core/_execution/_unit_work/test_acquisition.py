@@ -29,6 +29,7 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_coverage_by_key,
     consume_target,
 )
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
@@ -39,7 +40,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     FlushTrigger,
     TargetWriteInstruction,
     TransactionSettings,

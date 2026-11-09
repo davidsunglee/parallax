@@ -30,6 +30,7 @@ from parallax.core.base import (
     Float64,
     Int32,
     Int64,
+    InternalError,
     Json,
     NeutralType,
     String,
@@ -41,6 +42,7 @@ from parallax.core.base import (
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     JSON_NULL,
+    WRITE_RESULT_INTEGRITY_VIOLATED,
     AccessMode,
     ArrayBind,
     BeginFailed,
@@ -67,7 +69,6 @@ from parallax.core.db_port import (
     StatementNotExecuted,
     StructuredDocument,
     TransactionOutcome,
-    WriteResultIntegrityError,
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire._json import dump_document, prepared_loads
@@ -1051,9 +1052,10 @@ def _answered(
     for index, cursor in enumerate(recorded):
         outcome = cast("_Established", cursor.outcome)
         if isinstance(outcome, _Unexpected):
-            raise WriteResultIntegrityError(
+            raise InternalError(
+                WRITE_RESULT_INTEGRITY_VIOLATED,
                 f"PostgreSQL answered statement {index} of an ordered write with "
-                f"{outcome.description}, which no count-only statement produces"
+                f"{outcome.description}, which no count-only statement produces",
             )
         established.append(outcome)
     confirmed = _confirmed(established)

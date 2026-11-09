@@ -11,7 +11,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import inheritance
+from parallax.core import UnsupportedError, inheritance
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING, UsageError, typed_converter
@@ -171,13 +171,13 @@ families."""
 # any SQL, the SAME classification a keyless keyed write raises.              #
 # --------------------------------------------------------------------------- #
 def test_reject_predicate_write_raises_for_a_concrete_subtype() -> None:
-    with raises_code(UsageError, "subtype-write-set-based-unsupported") as caught:
+    with raises_code(UnsupportedError, "subtype-write-set-based-unsupported") as caught:
         inheritance.reject_predicate_write(_metadata("animal", "Dog"))
     assert caught.value.args[1].startswith("Dog: ")
 
 
 def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
-    with raises_code(UsageError, "subtype-write-set-based-unsupported"):
+    with raises_code(UnsupportedError, "subtype-write-set-based-unsupported"):
         inheritance.reject_predicate_write(_metadata("animal", "Animal"))
 
 
@@ -189,7 +189,7 @@ def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
 def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(stem: str, name: str) -> None:
     model = corpus_model(stem)
     entity = _metadata(stem, name)
-    with raises_code(UsageError, "subtype-write-set-based-unsupported") as caught:
+    with raises_code(UnsupportedError, "subtype-write-set-based-unsupported") as caught:
         inheritance.validate_subtype_write(model, entity, {"name": "Rex"})
     assert "primary-key attribute(s) ['id']" in str(caught.value)
 

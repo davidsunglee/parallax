@@ -6,7 +6,15 @@ from operator import itemgetter
 from typing import Final, cast
 
 from parallax.core import storage_layout
-from parallax.core.base import INFINITY, JSON, STRING, Json, ManagedValue, NeutralType
+from parallax.core.base import (
+    INFINITY,
+    JSON,
+    STRING,
+    InternalError,
+    Json,
+    ManagedValue,
+    NeutralType,
+)
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -40,7 +48,7 @@ from parallax.core.storage_layout import (
 )
 from parallax.core.write_plan.managed_row import occurrence_cells
 from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument
-from parallax.core.write_plan.planned_rows import WritePlanningError
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     ExactCount,
     Finite,
@@ -110,7 +118,9 @@ class StorageCatalog:
         if storage is None:
             view = self._layouts.entity(identity)
             if view is None:
-                raise WritePlanningError(f"{identity.name!r}: write target has no effective table")
+                raise InternalError(
+                    WRITE_PLANNING_FAILED, f"{identity.name!r}: write target has no effective table"
+                )
             storage = self._entities[identity] = EntityStorage(view)
         return storage
 
@@ -457,9 +467,10 @@ class RowSlots:
             documents.append(slot.document)
             element_types.append(_element_type(slot))
         if placed != presence.bit_count():
-            raise WritePlanningError(
+            raise InternalError(
+                WRITE_PLANNING_FAILED,
                 f"{storage.entity.canonical}: a planned member occupies no Column of the "
-                "target's Table Layout"
+                "target's Table Layout",
             )
         self.contributors: tuple[Hashable, ...] = tuple(contributors)
         self.columns: tuple[str, ...] = tuple(columns)
@@ -720,8 +731,9 @@ class EffectSlots:
                     cell if patch < 0 else cast("PatchedDocument", cell).patches[patch].value
                 )
         if len(cells) != len(columns):
-            raise WritePlanningError(
-                f"{self.entity.canonical}: a grouped effect gathers one cell per source column"
+            raise InternalError(
+                WRITE_PLANNING_FAILED,
+                f"{self.entity.canonical}: a grouped effect gathers one cell per source column",
             )
         for column, cell in zip(columns, cells, strict=True):
             column.append(cell)

@@ -44,7 +44,7 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
-from parallax.core import DomainModel, UsageError
+from parallax.core import DomainModel, UnsupportedError, UsageError
 from parallax.core._execution import _read_pipeline
 from parallax.core.base import INT64, ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
@@ -1473,7 +1473,9 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
         Policy.where(Policy.id == 1).history(TX_TIME).history(VALID_TIME).include(Policy.coverages)
     )
     with (
-        raises_code(UsageError, "execution-feature-deferred", match="snapshot-history-includes"),
+        raises_code(
+            UnsupportedError, "execution-feature-deferred", match="snapshot-history-includes"
+        ),
         own_root(Database(RefusingAdapter(), POLICY_MODEL))
         .using_database_login()
         .stream(query, batch_size=2),

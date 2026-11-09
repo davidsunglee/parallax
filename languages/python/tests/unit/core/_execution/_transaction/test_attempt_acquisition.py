@@ -37,6 +37,7 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
     consume_target,
 )
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
@@ -67,7 +68,6 @@ from parallax.core.read_delivery import InvalidDataError
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     OPTIMISTIC_LOCK_CONFLICT,
     PredicateSelection,
     PredicateWriteInstruction,

@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+from parallax.core._stored_data import (
+    CONTINUATION_ORDER_NOT_TOTAL,
+    MISSING_STORED_VALUE,
+    RESULT_DATA_INVALID,
+    InvalidData,
+    InvalidDataError,
+    StoredDataIssue,
+    StoredDataIssueCode,
+)
 from parallax.core.read_delivery._page._cadence import (
     INERT_OBSERVER,
     MaterializationObserver,
@@ -22,7 +31,6 @@ from parallax.core.read_delivery._page._rows import (
     PageRows,
     PageSchedule,
     RowKey,
-    StoredDataIssueCode,
     StoredDataIssueInput,
     attribute_state,
     dedupe_issues,
@@ -43,13 +51,7 @@ from parallax.core.read_delivery._page._rows import (
     with_identity_findings,
 )
 from parallax.core.read_delivery._page._stored_data import (
-    CONTINUATION_ORDER_NOT_TOTAL,
-    MISSING_STORED_VALUE,
-    RESULT_DATA_INVALID,
     STORED_DATA_DECODING_FAILED,
-    InvalidData,
-    InvalidDataError,
-    StoredDataIssue,
     invalid_result_refusal,
     member_spelling,
     undecodable_data_refusal,

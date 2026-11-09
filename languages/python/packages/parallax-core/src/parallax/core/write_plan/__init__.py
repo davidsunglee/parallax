@@ -14,7 +14,6 @@ from parallax.core.write_plan.observe import (
     VersionObservation,
 )
 from parallax.core.write_plan.plan import WritePlan
-from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.predecessor_rows import PredecessorRows, PredecessorRowsBuilder
 from parallax.core.write_plan.steps import SUPERSEDED, TERMINATED, PlannedClose, PlannedInsert
 
@@ -34,7 +33,6 @@ __all__ = [
     "TemporalObservation",
     "VersionObservation",
     "WritePlan",
-    "WritePlanningError",
     "object_state_key_from_observation",
     "whole",
 ]

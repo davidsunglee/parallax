@@ -23,19 +23,18 @@ from dataclasses import replace
 import pytest
 
 from parallax.core import ConflictError, InternalError, ParallaxError
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION, WRITE_RESULT_INVALID
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.predicate import TrueNode, validate_predicate
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     OPTIMISTIC_LOCK_CONFLICT,
     WRITE_PRECONDITION_FAILED,
     WritePreconditionError,
-    WriteResultError,
     allocated_keys,
     enforce_affected_rows,
     returns_allocated_keys,
 )
-from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from parallax.core.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
 from parallax.core.write_plan.steps import (
@@ -306,12 +305,10 @@ def test_the_allocated_key_is_read_from_the_one_row_its_insert_answered() -> Non
 def test_an_answer_the_insert_cannot_produce_is_a_result_invariant_failure(
     rows: list[tuple[object, ...]], reason: str
 ) -> None:
-    with pytest.raises(WriteResultError, match=reason) as raised:
+    with raises_code(InternalError, WRITE_RESULT_INVALID, match=reason) as raised:
         allocated_keys(_allocating(), rows)
-    assert (raised.value.entity, raised.value.expected, raised.value.actual) == (
-        _ACCOUNT,
-        1,
-        len(rows),
+    assert raised.value.args[1].startswith(
+        f"{_ACCOUNT.name}: the write answered {len(rows)} row(s) for 1 it opened — "
     )
 
 
@@ -325,7 +322,7 @@ def test_a_key_answered_twice_is_a_result_invariant_failure() -> None:
             for _ in range(2)
         ),
     )
-    with pytest.raises(WriteResultError, match="the key 8 twice"):
+    with raises_code(InternalError, WRITE_RESULT_INVALID, match="the key 8 twice"):
         allocated_keys(two, [(8,), (8,)])
 
 

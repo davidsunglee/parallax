@@ -21,7 +21,7 @@ import pytest
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
-from parallax.core import LATEST, TX_TIME
+from parallax.core import LATEST, TX_TIME, UnsupportedError
 from parallax.core._execution._unit_work.instructions import (
     SET_BASED_WRITE_TARGET_UNSUPPORTED,
 )
@@ -399,7 +399,7 @@ def test_the_wire_read_reports_a_deferred_feature_by_name() -> None:
             "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
         }
     )
-    with raises_code(UsageError, "execution-feature-deferred") as raised:
+    with raises_code(UnsupportedError, "execution-feature-deferred") as raised:
         _policy_db(ScriptedAdapter()).wire.find(query)
     assert "has deferred snapshot-history-includes and" in raised.value.args[1]
 
@@ -425,7 +425,7 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
         _insert_policy(tx)
         tx.wire.find(query)
 
-    with raises_contextualized(UsageError, code="execution-feature-deferred") as raised:
+    with raises_contextualized(UnsupportedError, code="execution-feature-deferred") as raised:
         _policy_db(port).transact(fn)
     assert "has deferred snapshot-history-includes and" in raised.value.args[1]
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]

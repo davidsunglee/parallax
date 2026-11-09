@@ -41,6 +41,7 @@ from parallax.core import (
     Entity,
     Rel,
     TablePerHierarchy,
+    UnsupportedError,
     ValueObject,
     attr,
     read_planning,
@@ -1176,7 +1177,9 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
             "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
         }
     )
-    with raises_code(UsageError, "execution-feature-deferred", match="snapshot-history-includes"):
+    with raises_code(
+        UnsupportedError, "execution-feature-deferred", match="snapshot-history-includes"
+    ):
         _find_history(query, policy, port)
 
 
@@ -1204,7 +1207,7 @@ def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
-    with raises_code(UsageError, "execution-feature-deferred") as caught:
+    with raises_code(UnsupportedError, "execution-feature-deferred") as caught:
         db.find(query)
     assert caught.value.code == "execution-feature-deferred"
     assert "has deferred snapshot-history-includes and" in caught.value.args[1]
@@ -1237,7 +1240,7 @@ def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
         .limit(5)
         .include(Policy.coverages)
     )
-    with raises_code(UsageError, "execution-feature-deferred") as caught:
+    with raises_code(UnsupportedError, "execution-feature-deferred") as caught:
         db.find(query)
     assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 

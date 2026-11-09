@@ -9,6 +9,7 @@ from parallax.core.base import (
     INFINITY,
     Bytes,
     DocumentReadOrdinals,
+    InternalError,
     ManagedValue,
 )
 from parallax.core.dialect import ArrayBind, Dialect
@@ -37,10 +38,10 @@ from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjecti
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,
+    SQL_GENERATION_FAILED,
     ExecutionValuePositions,
     GatheredKeysForm,
     LoweredStatement,
-    SqlGenError,
     StatementBuilder,
 )
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -245,13 +246,19 @@ def _execution_values(
             case ("predicate", wanted):
                 if operands is None:
                     if query is None:
-                        raise SqlGenError("a template of authored operands requires its query")
+                        raise InternalError(
+                            SQL_GENERATION_FAILED,
+                            "a template of authored operands requires its query",
+                        )
                     operands = predicate_operands(query.predicate)
                 while ordinal < wanted:
                     operand = next(operands, _EXHAUSTED)
                     ordinal += 1
                 if operand is _EXHAUSTED:
-                    raise SqlGenError("the query's predicate lacks an operand its template renders")
+                    raise InternalError(
+                        SQL_GENERATION_FAILED,
+                        "the query's predicate lacks an operand its template renders",
+                    )
                 yield group, _prepared_operand(group.form, operand)
             case _:
                 yield group, _execution_value(group, keys, query)
@@ -259,7 +266,9 @@ def _execution_values(
 
 def _gathered(keys: list[ManagedValue] | None) -> list[ManagedValue]:
     if not keys:
-        raise SqlGenError("a child read template requires at least one gathered key")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a child read template requires at least one gathered key"
+        )
     return keys
 
 
@@ -280,17 +289,26 @@ def _execution_value(
         case ("paging", at):
             seek = None if query is None or query.paging is None else query.paging.seek
             if seek is None:
-                raise SqlGenError("a continuing read template requires its current seek")
+                raise InternalError(
+                    SQL_GENERATION_FAILED, "a continuing read template requires its current seek"
+                )
             carrier = seek.coordinate.carriers[at]
             if carrier is None or carrier is INFINITY:
-                raise SqlGenError("a continuing read template renders only a finite carrier")
+                raise InternalError(
+                    SQL_GENERATION_FAILED,
+                    "a continuing read template renders only a finite carrier",
+                )
             return carrier
         case ("limit",):
             if query is None or query.paging is None or query.limit is None:
-                raise SqlGenError("a paged read template requires its current page cap")
+                raise InternalError(
+                    SQL_GENERATION_FAILED, "a paged read template requires its current page cap"
+                )
             return query.limit
         case source:  # pragma: no cover - authored operands stream in one traversal
-            raise SqlGenError(f"no execution value renders from {source!r}")
+            raise InternalError(
+                SQL_GENERATION_FAILED, f"no execution value renders from {source!r}"
+            )
 
 
 def _temporal_bound(
@@ -309,7 +327,9 @@ def _temporal_bound(
                 return start if bound == "start" else end
             case _:
                 break
-    raise SqlGenError(f"a temporal read template requires its current finite {bound}")
+    raise InternalError(
+        SQL_GENERATION_FAILED, f"a temporal read template requires its current finite {bound}"
+    )
 
 
 def compile_template(
@@ -347,7 +367,9 @@ def _template(compiled: CompiledRead) -> CompiledTemplate:
     )
     parts = tuple(statement.sql.split(EXPANDING_PLACEHOLDER))
     if len(parts) - 1 != len(expanding):
-        raise SqlGenError("a template's expanding placeholders disagree with its positions")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a template's expanding placeholders disagree with its positions"
+        )
     if not expanding:
         return CompiledTemplate(compiled, positions)
     return CompiledTemplate(compiled, positions, parts, tuple(number for _, number in expanding))
@@ -497,7 +519,9 @@ def _union_null_tail(
     scope: _EntityRowScope | None = None
     if shared_lock:
         if not isinstance(read_shape, _SingleTableReadPlan):  # pragma: no cover
-            raise SqlGenError("a locking continuation requires a single physical table")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a locking continuation requires a single physical table"
+            )
         layout = read_shape.layout.branches[0].layout
         scope = _EntityRowScope(statement_ctx, query.entity, layout)
         outer_list = _select_list(read_shape, dialect, scope.alias)
@@ -554,7 +578,9 @@ def _shared_lock_base_join[RowScope](
     join_terms: list[str] = []
     for slot in layout.physical_primary_key:
         if not isinstance(slot.contributor, AttributeIdentity):  # pragma: no cover
-            raise SqlGenError("a physical primary-key column must be Attribute-owned")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a physical primary-key column must be Attribute-owned"
+            )
         alias, neutral_type = select_list.selected_scalar(slot.contributor)
         base = dialect.render_scalar(base_alias, slot.column.name, neutral_type)
         ctx.bind_structural_all(base.binds)
@@ -605,7 +631,7 @@ def compile_write_predicate(
             statement = _normalize(ctx.finish(" ".join(parts)))
             return CompiledPredicate(statement.sql, statement.binds, statement, selection=True)
         case None:  # pragma: no cover - a write filter plan always selects its form
-            raise SqlGenError("a write filter was planned without a form")
+            raise InternalError(SQL_GENERATION_FAILED, "a write filter was planned without a form")
 
 
 def _render_selection(
@@ -693,7 +719,9 @@ def _render_seek(
         return ""
     if null_tail:
         if not terms:  # pragma: no cover - a NULL tail is selected from its leading term
-            raise SqlGenError("a NULL-tail continuation requires an ordering term")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a NULL-tail continuation requires an ordering term"
+            )
         return f"{subject(terms[0].member).extraction} is null"
     return _lower_seek(
         paging.seek,
@@ -1026,7 +1054,7 @@ def _render_tph_partitioned_read(
         return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
     if branch_list is None:  # pragma: no cover - a position names at least one concrete
-        raise SqlGenError("a partitioned read selects no variant")
+        raise InternalError(SQL_GENERATION_FAILED, "a partitioned read selects no variant")
     if not terms and limit is None:
         statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branches:
@@ -1118,7 +1146,9 @@ def _render_tpcs_union_read(
         branch_sqls.append(branch_sql)
         branch_statements.append(branch_ctx.finish(branch_sql))
     if union_list is None:  # pragma: no cover - a union position has several concretes
-        raise SqlGenError("a table-per-concrete-subtype union selects no branch")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a table-per-concrete-subtype union selects no branch"
+        )
 
     union = " union all ".join(branch_sqls)
     if not wrapped:
@@ -1230,5 +1260,7 @@ def _normalize(statement: LoweredStatement) -> LoweredStatement:
     """
     collapsed = " ".join(statement.sql.split())
     if collapsed != statement.sql:  # pragma: no cover - defends against a lowering bug
-        raise SqlGenError(f"emitted SQL is not canonical: {statement.sql!r}")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"emitted SQL is not canonical: {statement.sql!r}"
+        )
     return statement

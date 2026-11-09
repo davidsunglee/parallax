@@ -17,8 +17,14 @@ from typing import Final
 
 import pytest
 
-from parallax.core import continuation, read_planning
-from parallax.core.base import INFINITY, INFINITY_LITERAL, StructuredDocument, UsageError
+from parallax.core import UnsupportedError, continuation, read_planning
+from parallax.core.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    InternalError,
+    StructuredDocument,
+    UsageError,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
@@ -32,11 +38,14 @@ from parallax.core.object_query._resolved import (
 )
 from parallax.core.predicate import Comparison, FieldSubject, Or, PredicateNode, TrueNode
 from parallax.core.read_delivery._row_decoding import row_coordinates
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._compile import compile_template
-from parallax.core.sql_gen._context import LoweredStatement
-from parallax.core.sql_gen._inheritance import SingleTableReadPlan, TpcsUnionReadPlan
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED, LoweredStatement
+from parallax.core.sql_gen._inheritance import (
+    INHERITANCE_LOCKING_READ_UNSUPPORTED,
+    SingleTableReadPlan,
+    TpcsUnionReadPlan,
+)
 from parallax.core.sql_gen._planning import SharedSourceRef
 from parallax.core.sql_gen._seek import lowered_terms
 from parallax.descriptor import _records
@@ -145,7 +154,9 @@ def test_a_seek_over_more_terms_than_the_page_orders_by_is_refused_by_count() ->
             ContinuationTerm(key.member.identity, "asc", "last", False),
         ),
     )
-    with pytest.raises(SqlGenError, match="cannot be lowered against 1 ordering term"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="cannot be lowered against 1 ordering term"
+    ):
         _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
 
 
@@ -158,7 +169,11 @@ def test_a_seek_naming_another_member_at_a_position_is_refused_by_name() -> None
     other = entity_of(ORDERS, "Order").attribute("name")
     assert other is not None
     crossed = _crossed(node, (ContinuationTerm(other.identity, "asc", "last", False),))
-    with pytest.raises(SqlGenError, match=r"the seek's term 'name' .* the ordering term 'id'"):
+    with raises_code(
+        InternalError,
+        SQL_GENERATION_FAILED,
+        match=r"the seek's term 'name' .* the ordering term 'id'",
+    ):
         _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
 
 
@@ -172,7 +187,7 @@ def test_a_seek_agreeing_on_the_member_but_not_its_ordering_is_refused() -> None
     node = plan.after(ContinuationCoordinate((1,)), limit=2)
     key = node.order_by[0]
     crossed = _crossed(node, (ContinuationTerm(key.member.identity, "desc", "last", False),))
-    with pytest.raises(SqlGenError, match=r"'id' \(desc, .*'id' \(asc, "):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match=r"'id' \(desc, .*'id' \(asc, "):
         _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
 
 
@@ -242,7 +257,7 @@ def test_a_coordinate_carried_at_another_width_than_the_order_is_refused() -> No
             )
         ),
     )
-    with pytest.raises(SqlGenError, match="carrying 2 value"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="carrying 2 value"):
         _lowered(ORDERS, crossed)
 
 
@@ -403,7 +418,7 @@ def test_a_postgres_locking_continuation_refuses_multiple_concrete_tables() -> N
     page = _planned(
         TRAVERSAL, "Vehicle", OrderKey(attr="parallax.compatibility.Vehicle.dealerId")
     ).after(ContinuationCoordinate((3, 1)), limit=2)
-    with pytest.raises(SqlGenError, match="2\\+ effective concretes"):
+    with raises_code(UnsupportedError, INHERITANCE_LOCKING_READ_UNSUPPORTED):
         _lowered(TRAVERSAL, page, shared_lock=True)
 
 
@@ -904,7 +919,7 @@ def test_both_continuing_branches_of_a_union_render_its_branch_roots_through_fre
         builder = root.row.ctx
         assert builder.source_binding(SharedSourceRef(root.scope_id, 0)).origin is root.row
         (sibling,) = (scope_id for scope_id in branch_roots if scope_id != root.scope_id)
-        with pytest.raises(SqlGenError, match="no selected lexical plan"):
+        with raises_code(InternalError, SQL_GENERATION_FAILED, match="no selected lexical plan"):
             builder.source_binding(SharedSourceRef(sibling, 0))
 
 
@@ -1103,11 +1118,11 @@ def test_a_page_template_refuses_missing_or_mismatched_current_inputs() -> None:
         read_planning.plan(continued, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
     )
 
-    with pytest.raises(SqlGenError, match="current page cap"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="current page cap"):
         first.render()
-    with pytest.raises(SqlGenError, match="current seek"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="current seek"):
         after.render(query=plan.first(limit=2))
-    with pytest.raises(SqlGenError, match="only a finite carrier"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="only a finite carrier"):
         after.render(query=plan.after(ContinuationCoordinate((INFINITY,)), limit=2))
-    with pytest.raises(SqlGenError, match="until its template renders"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="until its template renders"):
         after.compiled.statement.wire_binds()

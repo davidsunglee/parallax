@@ -11,7 +11,7 @@ temporal keyed forms are pinned in
 ``tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py``. Planning
 refuses a materializing predicate write that reaches lowering, a mixed-shape
 multi-row instruction, and a milestone verb on a non-temporal entity with a loud
-``WritePlanningError``, preparation refuses an unsupported DB-computed marker
+``write-planning-failed`` ``InternalError``, preparation refuses an unsupported DB-computed marker
 before anything is buffered, and payload preparation refuses a target with no
 effective table the same way: each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
@@ -43,6 +43,7 @@ from parallax.core import (
     Attr,
     DomainModel,
     TxTemporal,
+    UnsupportedError,
     ValueObject,
     attr,
     concurrency,
@@ -57,13 +58,23 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._write_lowering import (
+    STORED_DOCUMENT_NOT_OBJECT,
     lowered,
     lowered_within,
     ordered_parameter_ceiling,
 )
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, DocumentValue, FrozenMap, UsageError
+from parallax.core.base import (
+    INT64,
+    JSON,
+    STRING,
+    TIMESTAMP,
+    DocumentValue,
+    FrozenMap,
+    InternalError,
+    UsageError,
+)
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES, Dialect
@@ -83,8 +94,10 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.read_delivery import InvalidDataError
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._context import (
+    SQL_GENERATION_FAILED,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
@@ -102,7 +115,6 @@ from parallax.core.write_plan import (
     PlannedInsert,
     StateObservation,
     VersionObservation,
-    WritePlanningError,
 )
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
@@ -113,7 +125,7 @@ from parallax.core.write_plan.payload import (
     WritePayloadPreparer,
 )
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup, WritePlan
-from parallax.core.write_plan.planned_rows import key_target
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED, key_target
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -202,7 +214,9 @@ def test_non_temporal_write_requires_an_effective_table() -> None:
     (declared,) = records("account").entities
     account = dataclasses.replace(declared, table=None)
     malformed = formed(_records.Metamodel(entities=(account,)))
-    with pytest.raises(WritePlanningError, match="write target has no effective table"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="write target has no effective table"
+    ):
         _lower(
             KeyedWriteInstruction(
                 "insert",
@@ -478,9 +492,8 @@ def _refused_at_preparation(
     exists to buffer, settle, or lower."""
     preparation = write_preparation_of(model)
     for prepare in (prepare_typed_write, prepare_wire_write):
-        with raises_code(UsageError, "write-instruction-invalid", match=match) as refused:
+        with raises_code(UsageError, "write-instruction-invalid", match=match):
             prepare(instruction, preparation)
-        assert not isinstance(refused.value, WritePlanningError)
     with raises_code(UsageError, "write-instruction-invalid", match=match):
         _lower(instruction, model)
 
@@ -565,7 +578,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # reject the `narrow` case before it can introduce an alias that unaliased
     # DML never declares (`m-sql` rule 1).
     write = PredicateWriteInstruction("delete", PredicateSelection("CardPayment", predicate))
-    with raises_code(UsageError, "subtype-write-set-based-unsupported"):
+    with raises_code(UnsupportedError, "subtype-write-set-based-unsupported"):
         _lower(write, PAYMENT)
 
 
@@ -1056,7 +1069,7 @@ def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
     # predicate whose bind was never supplied.
     wallet = entity_by_name(WALLET, "Wallet")
     assert wallet is not None
-    with pytest.raises(WritePlanningError, match="omits the primary-key member"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="omits the primary-key member"):
         key_target(
             wallet,
             (_attribute(WALLET, "Wallet", "id"),),
@@ -1202,7 +1215,7 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
             WriteRow(row=row, origin=NEW_LINEAGE),
         ),
     )
-    with pytest.raises(SqlGenError, match="one row at a time"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="one row at a time"):
         lowered(step, LayoutPayloadPreparer(PK_MAX), PK_MAX, POSTGRES)
 
 
@@ -1311,9 +1324,9 @@ def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None
         ),
     ]
     for step, payload in refused:
-        with pytest.raises(SqlGenError):
+        with raises_code(InternalError, SQL_GENERATION_FAILED):
             compile_write_step(step, payload, _CRATE_MODEL, POSTGRES)
-    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         compile_write_step(
             insert, InsertPayload(slots, (first, second[:-1])), _CRATE_MODEL, POSTGRES
         )
@@ -1361,7 +1374,7 @@ def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
     ):
         assert restated.prepared is backing
         step = PlannedInsert(entity=_CRATE, entries=(restated,))
-        with pytest.raises(SqlGenError, match="belongs to another entry"):
+        with raises_code(InternalError, SQL_GENERATION_FAILED, match="belongs to another entry"):
             lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
         with pytest.raises(ValueError, match="the payload prepared from it"):
             restated.with_prepared(backing)
@@ -1478,7 +1491,9 @@ def test_a_revision_patching_a_document_not_known_to_be_an_object_is_refused_onc
 ) -> None:
     step = _span_revision({"amount": 300}, predecessor_document_is_object=False)
     payloads = _CountingPreparer(_SPANS_DOCUMENT)
-    with pytest.raises(SqlGenError, match="not known to be an object"):
+    with raises_code(
+        InvalidDataError, STORED_DOCUMENT_NOT_OBJECT, match="not known to be an object"
+    ):
         lower(step, payloads, _SPANS_DOCUMENT)
     assert [assignments is step.assignments for assignments in payloads.prepared] == [True]
 
@@ -1539,7 +1554,12 @@ def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> 
     )
     port = ScriptedAdapter(Write(), Write())
     units: list[UnitOfWork] = []
-    with open_flush() as flush, pytest.raises(SqlGenError, match="not known to be an object"):
+    with (
+        open_flush() as flush,
+        raises_code(
+            InvalidDataError, STORED_DOCUMENT_NOT_OBJECT, match="not known to be an object"
+        ),
+    ):
         run_plan(port, plan, flush, _SPANS_DOCUMENT, units=units)
     assert [call.binds[-3] for call in port.calls if isinstance(call, WriteCall)] == [1, 2]
     (uow,) = units
@@ -1573,7 +1593,7 @@ def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
     removal = dataclasses.replace(
         prepared, values=(PatchedDocument((dataclasses.replace(score, removes=True),)),)
     )
-    with pytest.raises(SqlGenError, match="removes no document key"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="removes no document key"):
         compile_write_step(step, removal, document, POSTGRES)
 
 
@@ -1780,7 +1800,7 @@ def test_a_dialect_binding_no_arrays_inserts_one_entry_and_refuses_several() -> 
         expanding,
     )
     assert alone.sql.endswith("values (?, ?, ?, ?, ?, ?)")
-    with pytest.raises(SqlGenError, match="binds no arrays"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="binds no arrays"):
         lowered(
             PlannedInsert(entity=_BUILDER_LEDGER, entries=(_ledger_entry(1), _ledger_entry(2))),
             payloads,
@@ -1804,7 +1824,7 @@ def test_a_refused_entry_leaves_the_compiled_prefix_unchanged() -> None:
     entries = (_ledger_entry(1), _ledger_entry(2, memo=None))
     builder = _ledger_builder(*entries)
 
-    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         builder.append(_ledger_cells(_ledger_entry(3))[:-1])
 
     statement = builder.finish()
@@ -1882,7 +1902,7 @@ def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> 
     )
     statements = lowered_steps((step,), _scripted_rows({3: _narrower}), _BUILDER_MODEL, POSTGRES)
 
-    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         next(statements)
 
 
@@ -1893,7 +1913,7 @@ def test_a_multi_entry_generated_value_insert_is_refused() -> None:
     slots = LayoutPayloadPreparer(PK_MAX).row_slots(attendee, row.presence)
     cells = tuple(slots.cells(entry) for entry in entries)
 
-    with pytest.raises(SqlGenError, match="renders one row at a time"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders one row at a time"):
         compile_write_step(
             PlannedInsert(entity=attendee, entries=entries),
             InsertPayload(slots, cells),

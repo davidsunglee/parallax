@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, assert_never, cast
 
-from parallax.core.base import STRING, ManagedValue, NeutralType
+from parallax.core.base import STRING, InternalError, ManagedValue, NeutralType
 from parallax.core.dialect import ArrayBind, Dialect, ScalarResult
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet, root_metadata
@@ -44,11 +44,11 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
+    SQL_GENERATION_FAILED,
     AffixForm,
     ComparisonTextForm,
     ExecutionValueForm,
     MembershipForm,
-    SqlGenError,
     StatementBuilder,
     affix_form,
     comparison_text_form,
@@ -229,9 +229,10 @@ class EntityRowScope:
         """Render a validated direct-column Attribute by identity."""
         placement = self.layout.placement(attribute.identity)
         if not isinstance(placement, DirectColumn):  # pragma: no cover
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{attribute.identity!r} is not a direct Column of table "
-                f"{self.layout.table.name!r}, so it cannot carry a join correlation"
+                f"{self.layout.table.name!r}, so it cannot carry a join correlation",
             )
         return self.own_column(placement.slot.column.name)
 
@@ -253,7 +254,10 @@ class EntityRowScope:
             else:
                 cell = self.wrapped.get(attribute.identity)
                 if cell is None:  # pragma: no cover - a wrapped union selects every direct member
-                    raise SqlGenError(f"{attribute.identity} is not selected through the union")
+                    raise InternalError(
+                        SQL_GENERATION_FAILED,
+                        f"{attribute.identity} is not selected through the union",
+                    )
                 alias, result = cell
                 column = self.own_column(alias)
                 encoded = result.encoded
@@ -305,8 +309,11 @@ class EntityRowScope:
         the projection beside it can never disagree about the physical Table.
         """
         slot = self.layout.contribution(contributor)
-        if slot is None:
-            raise SqlGenError(f"{contributor} has no Column in table {self.layout.table.name!r}")
+        if slot is None:  # pragma: no cover - a resolved member occupies a Column here
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                f"{contributor} has no Column in table {self.layout.table.name!r}",
+            )
         return slot.column.name
 
     def next_alias(self) -> str:
@@ -428,7 +435,9 @@ def _occurrence(predicate: ResolvedPredicate, path: _PredicatePath) -> ResolvedP
             ) if slot == 0 and child is not None and not _relationship_body(predicate):
                 predicate = child
             case _:
-                raise SqlGenError(f"predicate path {path} addresses no occurrence")
+                raise InternalError(
+                    SQL_GENERATION_FAILED, f"predicate path {path} addresses no occurrence"
+                )
     return predicate
 
 
@@ -526,8 +535,9 @@ def _operand_term(plan: _StatementPlan, scope_id: _LexicalScopeId, scope: Entity
 def _placement(lexical: _LexicalScopePlan, path: _PredicatePath) -> _PredicatePlacement:
     placement = lexical.placements.get(path)
     if placement is None:
-        raise SqlGenError(
-            f"predicate occurrence {path} of lexical plan {lexical.scope_id} has no placement"
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"predicate occurrence {path} of lexical plan {lexical.scope_id} has no placement",
         )
     return placement
 
@@ -611,7 +621,7 @@ def _subject_reached_by(
                 reads_text=reads_text,
             )
         case _OwnerResultEvaluation():  # pragma: no cover - owner results hold quantifiers
-            raise SqlGenError("a scalar operation reads no owner result")
+            raise InternalError(SQL_GENERATION_FAILED, "a scalar operation reads no owner result")
 
 
 def _valued(value: _Value) -> _Emit:
@@ -645,7 +655,9 @@ def _subject_here(
     """``member`` as read from ``scope``'s current object or bound element."""
     if isinstance(position, ScalarElement):
         if not isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
-            raise SqlGenError(f"{member.identity} element is read outside its quantifier")
+            raise InternalError(
+                SQL_GENERATION_FAILED, f"{member.identity} element is read outside its quantifier"
+            )
         return _element_subject(member, scope)
     return _subject(member, scope)
 
@@ -682,10 +694,14 @@ def _subject(member: ResolvedPredicateMember, scope: PredicateScope) -> MemberSu
     or from the element a quantifier binds, relative to its occurrence.
     """
     if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
-        raise SqlGenError(f"{member.identity} is not read from a scalar element")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{member.identity} is not read from a scalar element"
+        )
     if isinstance(member, AttributeMetadata):
         if isinstance(scope, ValueObjectElementScope):
-            raise SqlGenError(f"{member.identity} is not read from a Value Object element")
+            raise InternalError(
+                SQL_GENERATION_FAILED, f"{member.identity} is not read from a Value Object element"
+            )
         return scope.subject_for(member)
     if isinstance(scope, EntityRowScope):
         vo, segments = _resolved_vo_path(member, scope)
@@ -715,7 +731,9 @@ def _element_subject(member: ResolvedPredicateMember, scope: ScalarElementScope)
     only where its JSON kind is the one that type's canonical encoding takes."""
     kind = encoded_json_kind(member.type)
     if kind is None:  # pragma: no cover - only Json lacks one kind, and no collection holds it
-        raise SqlGenError(f"{member.type!r} elements carry no single JSON kind")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{member.type!r} elements carry no single JSON kind"
+        )
     extraction, compared, binds = scope.dialect.scalar_element(
         scope.element_reference(), kind, member.type
     )
@@ -732,7 +750,9 @@ def _element_subject(member: ResolvedPredicateMember, scope: ScalarElementScope)
 def _relative_path(path: tuple[str, ...], container: OccurrenceMetadata) -> tuple[str, ...]:
     base = container.identity.path
     if path[: len(base)] != base:
-        raise SqlGenError("resolved element member is outside its resolved container")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "resolved element member is outside its resolved container"
+        )
     return path[len(base) :]
 
 
@@ -762,7 +782,9 @@ def _render_membership(
     array = scope.dialect.binds_arrays
     if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
-            raise SqlGenError("a deferred key set supports only positive membership")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a deferred key set supports only positive membership"
+            )
         scope.ctx.bind_deferred(("keys",), gathered_keys_form(values.neutral_type, array))
         if array:
             return f"{subject.compared} = any({scope.dialect.array_parameter(values.neutral_type)})"
@@ -813,7 +835,9 @@ def _bind_operand(
     """
     if source is not None:
         if framework:  # pragma: no cover - only generated comparisons bind a framework value
-            raise SqlGenError("a framework operand is never an authored execution value")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a framework operand is never an authored execution value"
+            )
         form: ExecutionValueForm = (
             comparison_text_form(subject.type)
             if _compares_text(subject)
@@ -984,7 +1008,9 @@ def _continue(
 
 def _absence(absent: str | None) -> str:
     if absent is None:  # pragma: no cover - an operation answers before the empty target
-        raise SqlGenError("a field is read through a relationship with no candidate")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a field is read through a relationship with no candidate"
+        )
     return absent
 
 
@@ -1195,7 +1221,9 @@ def _existence(
     taking its alias as it opens, so a later branch's alias follows everything
     the preceding one allocated."""
     if not isinstance(existence, _CandidateExistence):  # pragma: no cover - planned evaluations
-        raise SqlGenError("a relationship is evaluated without planned candidates")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a relationship is evaluated without planned candidates"
+        )
     fragments = [
         _candidate_exists(
             plan,
@@ -1345,10 +1373,12 @@ def _quantify(
 def _scalar_array_guard(member: ResolvedPredicateMember, scope: PredicateScope) -> str:
     """The guarded array a scalar collection's elements are unnested from."""
     if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
-        raise SqlGenError("a scalar element holds no collection")
+        raise InternalError(SQL_GENERATION_FAILED, "a scalar element holds no collection")
     if isinstance(member, AttributeMetadata):
         if not isinstance(scope, EntityRowScope):  # pragma: no cover - validated scopes
-            raise SqlGenError(f"{member.identity} is not read from a Value Object element")
+            raise InternalError(
+                SQL_GENERATION_FAILED, f"{member.identity} is not read from a Value Object element"
+            )
         placement = scope.layout.placement(member.identity)
         if isinstance(placement, DocumentPath):
             document, segments = scope.own_column(placement.slot.column.name), placement.path
@@ -1385,13 +1415,14 @@ def _occurrence_carrier(
     if isinstance(scope, EntityRowScope):
         vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
         if vo is None:
-            raise SqlGenError(
-                f"resolved Value Object {identity} is absent from the active position"
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                f"resolved Value Object {identity} is absent from the active position",
             )
         document, prefix = scope.document_root(vo)
         return document, (*prefix, *identity.path[1:])
     if isinstance(scope, ScalarElementScope):  # pragma: no cover - validated scopes
-        raise SqlGenError("a scalar element holds no Value Object")
+        raise InternalError(SQL_GENERATION_FAILED, "a scalar element holds no Value Object")
     return scope.element_reference(), _relative_path(identity.path, scope.container)
 
 
@@ -1440,7 +1471,7 @@ def _render_presence(
                 )
             sql = _continue(continuation, scope, present, "false", "false", sources=sources)
         case _OwnerResultEvaluation():  # pragma: no cover - owner results hold quantifiers
-            raise SqlGenError("a presence reads no owner result")
+            raise InternalError(SQL_GENERATION_FAILED, "a presence reads no owner result")
     return f"not {sql}" if presence.negated else sql
 
 
@@ -1492,7 +1523,9 @@ def _absent(target: EntityRowScope) -> str:
     Column, which no row holds null, reads null."""
     key = target.layout.physical_primary_key
     if not key:  # pragma: no cover - a joined target is a keyed table row
-        raise SqlGenError(f"{target.layout.table.name!r} has no physical primary key")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{target.layout.table.name!r} has no physical primary key"
+        )
     return f"{target.own_column(key[0].column.name)} is null"
 
 
@@ -1534,7 +1567,7 @@ def _render_narrow(
                     sources=lexical.execution_value_sources,
                 )
             case _:  # pragma: no cover - a reached narrowing holds no owner result
-                raise SqlGenError("a narrowing reads no owner result")
+                raise InternalError(SQL_GENERATION_FAILED, "a narrowing reads no owner result")
 
     if narrow.operand is None:
         return chain(
@@ -1555,7 +1588,9 @@ def _render_narrow(
 
 def _target_selection(terminal: _Terminal) -> _TargetSelection:
     if not isinstance(terminal, _TargetSelection):  # pragma: no cover - planned narrowings
-        raise SqlGenError("a narrowed target is evaluated without a planned selection")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a narrowed target is evaluated without a planned selection"
+        )
     return terminal
 
 
@@ -1621,7 +1656,9 @@ def _branch_narrow(
         placement.continuation.terminals[0] if isinstance(placement, _UnsharedEvaluation) else None
     )
     if not isinstance(terminal, _BranchSelection):  # pragma: no cover - planned narrowings
-        raise SqlGenError("a narrowing of the row is rendered without a planned selection")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a narrowing of the row is rendered without a planned selection"
+        )
     selection = terminal.selection
     operand = narrow.operand
     body = (*path, 0)
@@ -1645,13 +1682,18 @@ def _resolved_vo_path(
     identity = leaf.identity.value_object
     vo = _entity_view(scope.facet, identity.entity).applicable_value_object(identity.path[0])
     if vo is None:
-        raise SqlGenError(f"resolved Value Object {identity} is absent from the active position")
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"resolved Value Object {identity} is absent from the active position",
+        )
     return vo, (*identity.path[1:], leaf.identity.name)
 
 
 def _entity_row(scope: PredicateScope) -> EntityRowScope:
     if not isinstance(scope, EntityRowScope):  # pragma: no cover - a hop starts at an Entity
-        raise SqlGenError("a relationship is reached only from an Entity position")
+        raise InternalError(
+            SQL_GENERATION_FAILED, "a relationship is reached only from an Entity position"
+        )
     return scope
 
 

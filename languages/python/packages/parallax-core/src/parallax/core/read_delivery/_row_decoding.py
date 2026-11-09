@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import cast
 
 from parallax.core.base import (
+    InternalError,
     SqlNull,
     StructuredDocument,
     UnknownFamilyTag,
@@ -20,7 +21,7 @@ from parallax.core.document_codec import (
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, ValueObjectMetadata
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.read_delivery._convert import POSITIONAL_OUTPUT, MemberClassifier
-from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._inheritance import (
     FixedRowIdentity,
     LiteralRowIdentity,
@@ -118,7 +119,9 @@ def _own_document_classifier(member: AttributeMetadata | ValueObjectMetadata) ->
 
 def _shared_document_classifier(shape: MemberShape | None, member_name: str) -> MemberClassifier:
     if shape is None:  # pragma: no cover - a located resident belongs to its owner's shape
-        raise SqlGenError(f"the shared document member {member_name!r} has no shape")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"the shared document member {member_name!r} has no shape"
+        )
     return cast("MemberClassifier", entity_member_plan(shape, member_name, POSITIONAL_OUTPUT).value)
 
 
@@ -154,5 +157,8 @@ def _document_read(document_read: object) -> SqlNull | StructuredDocument:
     return document_read
 
 
-def _not_a_document_read(value: object) -> SqlGenError:
-    return SqlGenError(f"the database port returned {type(value).__name__}, not a DocumentRead")
+def _not_a_document_read(value: object) -> InternalError:
+    return InternalError(
+        SQL_GENERATION_FAILED,
+        f"the database port returned {type(value).__name__}, not a DocumentRead",
+    )

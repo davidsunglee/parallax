@@ -459,6 +459,13 @@ This lets a host correlate a later unique-index violation with the rollout
 without exposing the generator's internal physical-operation algebra, and gives
 an altered definition a distinct name so its target Index can be created and
 validated before the earlier Index is dropped.
+
+*Superseded in part (2026-11, [Python ADR 0015](../../languages/python/docs/adr/0015-parallax-errors-share-one-root-and-carry-a-code.md)):*
+the Python binding raises a Physical Index Name collision as an `InternalError`
+with code `physical-index-name-collision`, whose message names the Dialect
+Identity and every collision group with its definitions, rather than as a class
+of its own. The aggregated refusal and its backstop role stand.
+
 Every addition, removal, or alteration of an authored secondary Index is
 unilateral, including changes to its components or uniqueness. Such a change
 affects only a rebuildable physical access path or enforcement rule, destroys no

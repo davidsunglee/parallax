@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Final, cast
 
+from parallax.core._stored_data import StoredDataIssue, StoredDataIssueCode
 from parallax.core.concurrency import ConcurrencyFacet
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import AttributeIdentity
-from parallax.core.read_delivery._page._rows import StoredDataIssueCode, StoredDataIssueInput
-from parallax.core.read_delivery._page._stored_data import StoredDataIssue
+from parallax.core.read_delivery._page._rows import StoredDataIssueInput
 from parallax.core.temporal_read import (
     Edge,
     NonTemporal,

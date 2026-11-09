@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
+from parallax.core.base import InternalError
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.planned_rows import WritePlanningError
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
@@ -285,9 +286,10 @@ def _extends(
     )
 
 
-def _audit_refused(what: str) -> WritePlanningError:
-    return WritePlanningError(
+def _audit_refused(what: str) -> InternalError:
+    return InternalError(
+        WRITE_PLANNING_FAILED,
         f"{what} must state every value it adds or changes as an assignment, state no "
         "primary key, temporal bound, or optimistic version, and keep the origin, address, "
-        "gate, and affected-row policy it was given (m-unit-work)"
+        "gate, and affected-row policy it was given (m-unit-work)",
     )

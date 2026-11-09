@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from parallax.core.read_delivery._page import (
+from parallax.core._stored_data import (
     MISSING_STORED_VALUE,
     InvalidData,
     InvalidDataError,

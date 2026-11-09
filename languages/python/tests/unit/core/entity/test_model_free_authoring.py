@@ -43,6 +43,7 @@ from parallax.core import (
     Predicate,
     Rel,
     TxTemporal,
+    UnsupportedError,
     attr,
     inheritance,
     rel,
@@ -1051,7 +1052,7 @@ def test_a_missing_target_outranks_a_bad_include() -> None:
 
 def test_a_bad_include_outranks_the_checks_that_follow_the_clause_gate() -> None:
     scanned = Policy.where(Policy.all).as_of(valid_time=LATEST).history(TX_TIME)
-    with raises_code(UsageError, "execution-feature-deferred"):
+    with raises_code(UnsupportedError, "execution-feature-deferred"):
         typed_resolved(scanned.include(Policy.coverages), POLICY_MODEL)
     with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
         typed_resolved(scanned.include(Policy.coverages.no_such_member), POLICY_MODEL)

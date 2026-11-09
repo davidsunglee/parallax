@@ -54,6 +54,7 @@ __all__ = [
     "ISOLATION_LEVELS",
     "JSON_NULL",
     "RESOURCE_LOGGER_NAME",
+    "WRITE_RESULT_INTEGRITY_VIOLATED",
     "AccessMode",
     "AcquisitionReason",
     "ArrayBind",
@@ -115,7 +116,6 @@ __all__ = [
     "StatementNotExecuted",
     "StructuredDocument",
     "TransactionOutcome",
-    "WriteResultIntegrityError",
     "isolation_level",
     "report_resource_issues",
     "report_route_readiness",
@@ -208,15 +208,17 @@ type OrderedWriteTransport = Callable[[Sequence[CanonicalWriteStatement]], Order
 in one invocation, answered with exact original-order outcomes."""
 
 
-class WriteResultIntegrityError(RuntimeError):
-    """A write answered a result its own presented statements contradict — an
-    ordered write transport result, or the source ordinals a grouped effect
-    returned: a broken adapter contract, never a database failure, and never
-    retriable.
+WRITE_RESULT_INTEGRITY_VIOLATED: Final = "write-result-integrity-violated"
+"""The code of the :class:`~parallax.core.base.InternalError` a write is refused
+by where it answered a result its own presented statements contradict — an
+ordered write transport result, or the source ordinals a grouped effect
+returned: a broken adapter contract, never a database failure, and never
+retriable. An adapter raises it for a result its driver answered that no
+presented statement produces.
 
-    Its message is bounded structure — positions, counts, and type names — and
-    copies no statement, bind, or outcome value.
-    """
+Its message is bounded structure — positions, counts, and type names — and
+copies no statement, bind, or outcome value.
+"""
 
 
 # The closed portable isolation vocabulary (m-db-port). Each level names the

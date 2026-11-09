@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
+from typing import Final, cast
 
+from parallax.core.base import InternalError
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -20,7 +21,7 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = [
-    "WritePlanningError",
+    "WRITE_PLANNING_FAILED",
     "entity_view",
     "key_target",
     "key_tuple",
@@ -29,10 +30,11 @@ __all__ = [
 ]
 
 
-class WritePlanningError(ValueError):
-    """A buffered write cannot be settled into a Planned Step — a caller
-    wiring defect the planner refuses loudly rather than settling wrongly
-    (e.g. an addressed row omitting the key it selects by)."""
+WRITE_PLANNING_FAILED: Final = "write-planning-failed"
+"""The code of the :class:`~parallax.core.base.InternalError` a buffered write
+that cannot be settled into a Planned Step, or prepared for its statement, is
+refused by — a caller wiring defect the planner refuses loudly rather than
+settling wrongly (e.g. an addressed row omitting the key it selects by)."""
 
 
 def planned_row(
@@ -118,9 +120,10 @@ def key_tuple(
     for attribute in key_attributes:
         value = row.cell(attribute)
         if value is absent:
-            raise WritePlanningError(
+            raise InternalError(
+                WRITE_PLANNING_FAILED,
                 f"{entity.identity.name!r}: an addressed write row omits the primary-key "
-                f"member {attribute.name!r}, so it selects no row"
+                f"member {attribute.name!r}, so it selects no row",
             )
         values.append(value)
     return tuple(values)

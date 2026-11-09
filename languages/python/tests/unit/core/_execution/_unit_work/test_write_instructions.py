@@ -35,6 +35,7 @@ from parallax.core import (
     Int32,
     TablePerHierarchy,
     TxTemporal,
+    UnsupportedError,
     attr,
     inheritance,
 )
@@ -1207,7 +1208,7 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
             "assignments": [{"attr": "Payment.amount", "value": 1.00}],
         }
     )
-    with raises_code(UsageError, "subtype-write-set-based-unsupported"):
+    with raises_code(UnsupportedError, "subtype-write-set-based-unsupported"):
         wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
 
 

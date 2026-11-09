@@ -8,17 +8,27 @@ error pickles from its state whatever its subclass's constructor takes.
 `is_transient` answers whether a later attempt of the same work may succeed once
 Parallax's own retries are spent; it is `False` unless the owner of a class
 knows better from facts it already holds. Below the root stand `UsageError`
-(the calling code must change), `ConflictError` (stored state another writer
-changed) and `InternalError` (an invariant failed). They and `NoResultFound`
-and `TooManyResultsFound` live in `parallax.core.base`, the lowest scope, so
-every distribution can raise them.
+(the calling code must change), `UnsupportedError` (a reasonable request this
+version of Parallax, or the selected Dialect, cannot serve), `ConflictError`
+(stored state another writer changed) and `InternalError` (an invariant
+failed). They and `NoResultFound` and `TooManyResultsFound` live in
+`parallax.core.base`, the lowest scope, so every distribution can raise them.
+
+`UsageError` and `UnsupportedError` are siblings, told apart by one rule: a
+refusal is an `UnsupportedError` when Parallax could serve the request without
+changing what it means, and a `UsageError` when the request contradicts the
+semantics, so the calling code must change. A capability gap therefore never
+reads as the caller's mistake, and an application can route the two apart:
+an unsupported request waits for a release or avoids the gap another way.
 
 An error class stays public only if an application handles it differently from
 its parent, or reads fields only it has. Anything else is a `code` on a parent
 and its class is deleted rather than hidden. Applications import every kept
-class from `parallax.core`, except `DescriptorError`, which stays with the
-descriptor ingestion that alone raises it and imports from
-`parallax.descriptor`. A kept class whose reason another field carries has one
+class from `parallax.core`, except two that stay with the one operation that
+raises them: `DescriptorError`, imported from `parallax.descriptor`, and
+`UnsupportedSchemaEvolutionError`, the `UnsupportedError` carrying the
+refusing Dialect's identity and every operation it cannot render, imported
+from `parallax.evolution`. A kept class whose reason another field carries has one
 constant code and never restates that field in it.
 
 A code is lowercase words joined by hyphens, named subject then outcome. The

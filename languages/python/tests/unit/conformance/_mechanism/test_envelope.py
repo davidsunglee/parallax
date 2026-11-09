@@ -11,16 +11,16 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 
-import pytest
-
 from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.envelope import Emission
-from parallax.core.base import STRING, NeutralType
+from parallax.core.base import STRING, InternalError, NeutralType
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._context import (
+    SQL_GENERATION_FAILED,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage] - unit test builds sql_gen's private bind records directly
 )
+from tests._support.errors import raises_code
 
 _UPDATE = "update account set balance = ?"
 
@@ -65,5 +65,5 @@ def test_emissions_keep_each_steps_statements_in_order_under_its_pointer() -> No
 
 def test_an_unannotated_non_wire_carrier_cannot_be_reported() -> None:
     statement = LoweredStatement("insert into shift(span) values (?)", (dt.timedelta(hours=1),))
-    with pytest.raises(SqlGenError, match="is not an ordinary Wire value"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="is not an ordinary Wire value"):
         Emission("/write", statement).to_json()

@@ -34,7 +34,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument
+from parallax.core.base import SQL_NULL, DocumentValue, InternalError, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
@@ -46,10 +46,11 @@ from parallax.core.read_delivery._page import (
     page_rows,
 )
 from parallax.core.read_delivery._row_converter import bind
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.temporal_read import Pin
 from tests._support.document_reads import folded_names
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
 from tests.unit._prepared_read_support import convert_cells, result_row
@@ -297,7 +298,7 @@ def test_an_occurrence_column_requires_a_folded_document_read() -> None:
     }
     prepared = bind(CatalogedModel(_TWIN_COLUMNS), compiled.result_contract, compiled.projection)
     builder = PageBuilder(ViewSchema.of())
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         index, *_ = prepared.record_row(tuple(folded), builder, source=ROOT_LEVEL)
         observed_roots(builder.finish((index,), Pin()), _TWIN_COLUMNS)
 

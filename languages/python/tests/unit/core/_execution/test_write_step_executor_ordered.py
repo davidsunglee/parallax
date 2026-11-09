@@ -27,15 +27,16 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.core import ConflictError, InternalError
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor, lowered
 from parallax.core._execution._write_step_executor import OrderedInvocation
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    WRITE_RESULT_INTEGRITY_VIOLATED,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
     StatementFailed,
     StatementNotExecuted,
-    WriteResultIntegrityError,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -58,8 +59,9 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
-from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.unit_work import CARDINALITY_CORRUPTION, OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
+from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import (
@@ -435,7 +437,8 @@ def test_a_malformed_result_outranks_the_earlier_shortfall_it_reports(
     provider = RecordingLifecycleProvider()
     port = ScriptedAdapter(Ordered(result), ordered=True)
     executed = _execute(port, close(1), close(2), provider=provider)
-    assert isinstance(executed.raised, WriteResultIntegrityError)
+    assert isinstance(executed.raised, InternalError)
+    assert executed.raised.code == WRITE_RESULT_INTEGRITY_VIOLATED
     # The diagnostic is structure, never a statement or a value it was handed.
     assert "update" not in str(executed.raised)
     calls = _finished_calls(provider)
@@ -539,7 +542,7 @@ def test_a_later_lowering_failure_presents_the_prefix_then_propagates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     steps = (close(1), close(2), close(3), close(4))
-    failure = SqlGenError("the third close cannot be rendered")
+    failure = InternalError(SQL_GENERATION_FAILED, "the third close cannot be rendered")
     _failing_at(monkeypatch, steps[2], failure)
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1, 1))), ordered=True)
     executed = _execute(port, *steps)
@@ -571,7 +574,7 @@ def test_a_prefix_failure_wins_over_the_lowering_failure_it_overtook(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     steps = (close(1), close(2), close(3))
-    overtaken = SqlGenError("never raised")
+    overtaken = InternalError(SQL_GENERATION_FAILED, "never raised")
     _failing_at(monkeypatch, steps[1], overtaken)
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((0,))), ordered=True)
     executed = _execute(port, *steps)
@@ -586,7 +589,7 @@ def test_a_failure_lowering_the_first_effect_presents_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     steps = (close(1), close(2))
-    failure = SqlGenError("the first close cannot be rendered")
+    failure = InternalError(SQL_GENERATION_FAILED, "the first close cannot be rendered")
     _failing_at(monkeypatch, steps[0], failure)
     port = ScriptedAdapter(ordered=True)
     executed = _execute(port, *steps)
@@ -619,7 +622,8 @@ def test_a_statement_exceeding_its_promised_parameter_ceiling_is_a_lowering_fail
     )
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1,))), ordered=True)
     executed = _execute(port, *steps)
-    assert isinstance(executed.raised, SqlGenError)
+    assert isinstance(executed.raised, InternalError)
+    assert executed.raised.code == SQL_GENERATION_FAILED
     assert "exceeds the 3" in str(executed.raised)
     # It was selected on that promise, so the prefix drains rather than the
     # step falling back to a call of its own.

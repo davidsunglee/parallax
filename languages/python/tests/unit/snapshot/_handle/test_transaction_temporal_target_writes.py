@@ -25,6 +25,7 @@ import pytest
 from parallax.core import Attr, ConflictError, DomainModel, Entity, InternalError, UsageError, attr
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core.base import DocumentValue
 from parallax.core.db_error import DatabaseError
@@ -35,7 +36,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ROLLBACK_ONLY,
     WritePreconditionError,

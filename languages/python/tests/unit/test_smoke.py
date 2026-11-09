@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import json
-import pkgutil
 import subprocess
 import sys
 
@@ -18,7 +16,7 @@ import parallax.descriptor
 import parallax.postgres
 import parallax.snapshot
 from parallax.conformance import cli
-from tests._support.distributions import TOP_PACKAGE_NAMES
+from tests._support.distributions import TOP_PACKAGE_NAMES, importable_submodules
 from tests._support.repo import PY_ROOT
 
 _PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
@@ -76,32 +74,13 @@ def test_top_package_public_surfaces() -> None:
     assert parallax.conformance.__all__ == []
 
 
-def _needs_an_absent_driver_build(module: str) -> bool:
-    """Whether ``module`` is a compiled loader variant whose psycopg build is not installed.
-
-    Each variant extends one psycopg build's C loader, so it imports only beside
-    that build; the adapter imports the one psycopg selected.
-    """
-    prefix = "parallax.postgres._cloaders_"
-    return (
-        module.startswith(prefix)
-        and importlib.util.find_spec(f"psycopg_{module.removeprefix(prefix)}") is None
-    )
-
-
 def test_every_scope_submodule_imports() -> None:
     """Every enforcement-scope skeleton under the five packages imports cleanly."""
     imported: list[str] = []
     for name in TOP_PACKAGE_NAMES:
-        spec = importlib.util.find_spec(name)
-        assert spec is not None
-        assert spec.submodule_search_locations is not None
-        search_path = list(spec.submodule_search_locations)
-        for info in pkgutil.walk_packages(search_path, prefix=f"{name}."):
-            if _needs_an_absent_driver_build(info.name):
-                continue
-            importlib.import_module(info.name)
-            imported.append(info.name)
+        for module in importable_submodules(name):
+            importlib.import_module(module)
+            imported.append(module)
     # Sanity: the core spine skeleton alone contributes many scopes.
     assert "parallax.core.base" in imported
     assert "parallax.core.predicate" in imported

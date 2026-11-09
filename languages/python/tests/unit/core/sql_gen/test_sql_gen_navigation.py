@@ -22,16 +22,15 @@ import pytest
 
 from parallax.core import inheritance, read_planning, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, STRING, UsageError
+from parallax.core.base import INFINITY, STRING, InternalError, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
 from parallax.core.object_query import AsOf
 from parallax.core.predicate._resolved import ResolvedAnd
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen._context import StatementBuilder
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED, StatementBuilder
 from parallax.core.sql_gen._planning import EvaluationContext, StatementPlan, plan_statement
 from parallax.core.sql_gen._predicate import EntityRowScope, render_predicate, render_shared_sources
 from tests._support.errors import raises_code
@@ -1790,13 +1789,13 @@ def test_a_rendered_path_names_one_planned_occurrence_and_refuses_any_other() ->
     assert _rendered_at(plan, family, "Basket", (1, 0, 0)).startswith(
         "exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ?"
     )
-    with pytest.raises(SqlGenError, match="addresses no occurrence"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="addresses no occurrence"):
         _rendered_at(plan, family, "Basket", (2,))
     root = plan.lexical_scopes[plan.root_scopes[None]]
     unplaced = dataclasses.replace(
         plan, lexical_scopes=(dataclasses.replace(root, placements=MappingProxyType({})),)
     )
-    with pytest.raises(SqlGenError, match="has no placement"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="has no placement"):
         _rendered_at(unplaced, family, "Basket", ())
 
 

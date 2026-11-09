@@ -18,13 +18,13 @@ from collections.abc import Callable, Mapping
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
-from typing import TypeAliasType, get_args
+from typing import Final, TypeAliasType, get_args
 
 import pytest
 from griffe import Alias, Class, GriffeLoader, Module
 
 from parallax import snapshot
-from parallax.core import read_delivery, wire
+from parallax.core import ParallaxError, read_delivery, wire
 from parallax.core.base import JSON
 from parallax.snapshot import (
     ReadOnlyTxnContext,
@@ -33,6 +33,7 @@ from parallax.snapshot import (
     WireDatabaseView,
     WireTransactionView,
 )
+from tests._support.distributions import TOP_PACKAGE_NAMES, importable_submodules
 
 _SNAPSHOT = Path(__file__).parent / "public_api.json"
 
@@ -181,3 +182,122 @@ def test_unit_work_exports_the_codes_a_refused_write_instruction_carries() -> No
     assert {"WRITE_INSTRUCTION_INVALID", "WriteRejectionCode"} <= set(
         _public_api("parallax.core.unit_work")
     )
+
+
+_ERROR_SURFACE: Final[dict[str, frozenset[str]]] = {
+    "parallax.core": frozenset(
+        {
+            "ParallaxError",
+            "UsageError",
+            "UnsupportedError",
+            "EditError",
+            "MetamodelValidationError",
+            "UnloadedRelationshipError",
+            "NoResultFound",
+            "TooManyResultsFound",
+            "InvalidDataError",
+            "ConflictError",
+            "WritePreconditionError",
+            "PublicationConflictError",
+            "DatabaseError",
+            "ConnectionAcquisitionError",
+            "DatabaseStartupError",
+            "CredentialResolutionError",
+            "TransactionRollbackError",
+            "InternalError",
+        }
+    ),
+    "parallax.descriptor": frozenset({"DescriptorError"}),
+    "parallax.evolution.schema_delta": frozenset({"UnsupportedSchemaEvolutionError"}),
+}
+"""Every exception class an application may catch, by the module that defines
+its import home."""
+
+_EXECUTION_WRAPPER: Final = "parallax.core._execution._adoption.ExecutionFailure"
+"""The execution-boundary wrapper, the one exported exception outside the root."""
+
+_MODULE_PRIVATE_CARRIERS: Final = frozenset(
+    {
+        "parallax.core.auto_retry._RetryCandidate",
+        "parallax.core.base._neutral.JsonCarrierFailure",
+        "parallax.core.document_codec._leaf.LeafEncodingError",
+        "parallax.core.document_codec._plan.AuthoringRefusal",
+        "parallax.core.document_codec._plan._Refused",
+        "parallax.core.entity._row_fill._InvalidOccurrence",
+        "parallax.core.wire._codec._JsonFailure",
+        "parallax.core.wire._json._HostSpellingChangesMeaning",
+        "parallax.postgres._connection.IncompatibleSessionError",
+        "parallax.postgres._context._Condition",
+        "parallax.postgres._context._FellBack",
+        "parallax.postgres._pool_metrics._MalformedStatistics",
+        "parallax.postgres._route.ProbeMismatch",
+        "parallax.postgres._startup._ReadinessFailure",
+        "parallax.snapshot._publication._graph_view._RowsIncompatible",
+    }
+)
+"""Exceptions raised and caught inside their own distribution, which no caller
+ever receives."""
+
+
+def _qualified(kind: type) -> str:
+    return f"{kind.__module__}.{kind.__qualname__}"
+
+
+def _error_surface() -> frozenset[type[BaseException]]:
+    return frozenset(
+        getattr(import_module(module), name)
+        for module, names in _ERROR_SURFACE.items()
+        for name in names
+    )
+
+
+def _exported_exceptions() -> dict[str, type[BaseException]]:
+    expected: dict[str, list[str]] = json.loads(_SNAPSHOT.read_text())
+    modules = {recorded for recorded in expected if ":" not in recorded}
+    exported: dict[str, type[BaseException]] = {}
+    for module in sorted({*modules, "parallax.core.unit_work"}):
+        for name in _public_api(module):
+            value = getattr(import_module(module), name)
+            if isinstance(value, type) and issubclass(value, BaseException):
+                exported[f"{module}.{name}"] = value
+    return exported
+
+
+def _shipped_exceptions() -> list[type[BaseException]]:
+    for package in TOP_PACKAGE_NAMES:
+        if package != "parallax.conformance":
+            for module in importable_submodules(package):
+                import_module(module)
+    pending: list[type[BaseException]] = [BaseException]
+    shipped: list[type[BaseException]] = []
+    while pending:
+        kind = pending.pop()
+        pending.extend(kind.__subclasses__())
+        if kind.__module__.startswith("parallax.") and not kind.__module__.startswith(
+            "parallax.conformance"
+        ):
+            shipped.append(kind)
+    return shipped
+
+
+def test_every_application_error_is_rooted_in_parallax_error() -> None:
+    assert all(issubclass(kind, ParallaxError) for kind in _error_surface())
+    assert len(_error_surface()) == 20
+    assert {
+        name for name in _public_api("parallax.core") if name.endswith(("Error", "Found"))
+    } == _ERROR_SURFACE["parallax.core"]
+
+
+def test_no_public_module_exports_an_exception_outside_the_error_surface() -> None:
+    surface = _error_surface()
+    assert {
+        exported: kind
+        for exported, kind in _exported_exceptions().items()
+        if kind not in surface and _qualified(kind) != _EXECUTION_WRAPPER
+    } == {}
+
+
+def test_every_shipped_exception_is_a_parallax_error_or_a_module_private_carrier() -> None:
+    assert {
+        _qualified(kind) for kind in _shipped_exceptions() if not issubclass(kind, ParallaxError)
+    } == _MODULE_PRIVATE_CARRIERS | {_EXECUTION_WRAPPER}

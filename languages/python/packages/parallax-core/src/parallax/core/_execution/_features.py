@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.base import UsageError
+from parallax.core.base import UnsupportedError
 from parallax.core.object_query import AsOfRange, History, QueryClauses
 
 __all__ = ["EXECUTION_FEATURE_DEFERRED", "deferred_feature_refusal", "deferred_features"]
@@ -20,9 +20,9 @@ found first.
 """
 
 
-def deferred_feature_refusal(features: frozenset[str]) -> UsageError:
+def deferred_feature_refusal(features: frozenset[str]) -> UnsupportedError:
     """The refusal of a read requiring the Deferred Execution ``features``."""
-    return UsageError(
+    return UnsupportedError(
         EXECUTION_FEATURE_DEFERRED,
         f"this Snapshot implementation has deferred {', '.join(sorted(features))} "
         "and cannot execute this query yet",

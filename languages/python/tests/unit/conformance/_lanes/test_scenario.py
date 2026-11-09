@@ -47,6 +47,7 @@ from parallax.core.base import (
     INFINITY,
     INT64,
     Decimal,
+    InternalError,
     String,
     TemporalBound,
     UsageError,
@@ -68,7 +69,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     MISSING_TARGET,
@@ -88,10 +89,10 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
-    WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.managed_row import named_members
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
@@ -1367,7 +1368,11 @@ def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error(
 @pytest.mark.parametrize(
     ("raised_failure", "translated"),
     [
-        pytest.param(lambda: SqlGenError("no such lowering"), True, id="lowering-diagnostic"),
+        pytest.param(
+            lambda: InternalError(SQL_GENERATION_FAILED, "no such lowering"),
+            True,
+            id="lowering-diagnostic",
+        ),
         pytest.param(lambda: RuntimeError("a defect"), False, id="defect"),
         pytest.param(KeyboardInterrupt, False, id="interruption"),
     ],
@@ -3851,7 +3856,8 @@ def test_a_compiled_temporal_write_no_evidence_licenses_is_refused_when_submitte
     )
     with pytest.raises(UnclassifiedEngineError, match="temporal close requires") as raised:
         scenario.compile_write_sequence_case(case, "postgres")
-    assert isinstance(raised.value.__cause__, WritePlanningError)
+    cause = raised.value.__cause__
+    assert isinstance(cause, InternalError) and cause.code == WRITE_PLANNING_FAILED
     assert admitted == []
 
 
@@ -3878,7 +3884,8 @@ def test_a_compiled_unversioned_write_naming_no_key_is_refused_for_its_missing_k
         UnclassifiedEngineError, match="omits the primary-key member 'id'"
     ) as raised:
         scenario.compile_write_sequence_case(case, "postgres")
-    assert isinstance(raised.value.__cause__, WritePlanningError)
+    cause = raised.value.__cause__
+    assert isinstance(cause, InternalError) and cause.code == WRITE_PLANNING_FAILED
     assert admitted == []
 
 

@@ -10,8 +10,10 @@ from parallax.core._execution._unit_work.effects import (
     returns_allocated_keys,
 )
 from parallax.core._execution._write_lowering import LoweringCursor
+from parallax.core.base import InternalError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    WRITE_RESULT_INTEGRITY_VIOLATED,
     DatabaseConnection,
     OrderedWriteResult,
     OrderedWriteResultComplete,
@@ -19,7 +21,6 @@ from parallax.core.db_port import (
     OrderedWriteTransport,
     StatementFailed,
     StatementNotExecuted,
-    WriteResultIntegrityError,
 )
 from parallax.core.diagnostics import qualified_type
 from parallax.core.dialect import Dialect
@@ -477,8 +478,8 @@ def _step_counts(rows: Sequence[object], presented: int) -> list[int]:
     return counts
 
 
-def _grouped_integrity(problem: str) -> WriteResultIntegrityError:
-    return WriteResultIntegrityError(f"a grouped effect's result {problem}")
+def _grouped_integrity(problem: str) -> InternalError:
+    return InternalError(WRITE_RESULT_INTEGRITY_VIOLATED, f"a grouped effect's result {problem}")
 
 
 def _raise_held(failure: Exception | None) -> None:
@@ -488,8 +489,10 @@ def _raise_held(failure: Exception | None) -> None:
         raise failure
 
 
-def _integrity(problem: str) -> WriteResultIntegrityError:
-    return WriteResultIntegrityError(f"an ordered write transport result {problem}")
+def _integrity(problem: str) -> InternalError:
+    return InternalError(
+        WRITE_RESULT_INTEGRITY_VIOLATED, f"an ordered write transport result {problem}"
+    )
 
 
 def _validate_ordered_result(result: object, presented: int) -> None:

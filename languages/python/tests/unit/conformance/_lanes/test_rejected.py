@@ -15,7 +15,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._lanes import rejected
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.base import UsageError
+from parallax.core.base import UnsupportedError, UsageError
 from tests._support.case_corpus import case as corpus_case
 
 
@@ -42,6 +42,19 @@ def test_a_refusal_whose_code_the_schema_names_a_rule_by_is_that_rule() -> None:
     case = _synthetic_rejected({})
     refusal = UsageError("narrow-outside-position", "a narrow broadens its position")
     assert rejected.rejected_rule(refusal, case) == "narrow-outside-position"
+
+
+def test_a_rule_raised_as_a_capability_gap_is_that_rule() -> None:
+    refusal = UnsupportedError("subtype-write-set-based-unsupported", "a set-based family write")
+    assert (
+        rejected.rejected_rule(refusal, _synthetic_rejected({}))
+        == "subtype-write-set-based-unsupported"
+    )
+
+
+def test_run_rejected_case_write_dispatch_classifies_a_capability_gap_rule() -> None:
+    case = _load_case("m-inheritance-089")
+    assert rejected.run_rejected_case(case) == "subtype-write-set-based-unsupported"
 
 
 @pytest.mark.parametrize(

@@ -37,6 +37,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY as OPEN_BOUND
+from parallax.core.base import InternalError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
@@ -61,10 +62,10 @@ from parallax.core.write_plan import (
     PredecessorRow,
     StateObservation,
     TemporalObservation,
-    WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import TemporalRowCoordinates
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -405,7 +406,9 @@ def test_temporal_close_requires_an_effective_table() -> None:
     )
     (declared,) = BALANCE.entities
     balance = dataclasses.replace(declared, table=None)
-    with pytest.raises(WritePlanningError, match="write target has no effective table"):
+    with raises_code(
+        InternalError, WRITE_PLANNING_FAILED, match="write target has no effective table"
+    ):
         lowered(
             close,
             LayoutPayloadPreparer(formed(Metamodel(entities=(balance,)))),

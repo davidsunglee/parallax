@@ -17,15 +17,15 @@ import pytest
 
 from parallax.core import continuation, read_planning
 from parallax.core import predicate as oa
-from parallax.core.base import STRING
+from parallax.core.base import STRING, InternalError
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import AsOf, object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._inheritance import (
     ProjectedColumn,
     SingleTableReadPlan,
@@ -33,6 +33,7 @@ from parallax.core.sql_gen._inheritance import (
 )
 from parallax.core.sql_gen._select_list import SelectListBuilder
 from parallax.core.storage_layout import RelationalDocument
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._plan_reuse_support import reaches_compilation_state
@@ -111,16 +112,16 @@ def test_two_lists_disagreeing_on_their_cells_are_refused() -> None:
     renamed.emit(ProjectedColumn(owner, "title", STRING), table_alias="t0")
 
     first.require_agreement(first)
-    with pytest.raises(SqlGenError, match="disagree on their cells"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on their cells"):
         first.require_agreement(longer)
-    with pytest.raises(SqlGenError, match="disagree on the cell 'label'"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on the cell 'label'"):
         first.require_agreement(renamed)
 
 
 def test_a_contributor_no_scalar_cell_carries_is_refused_by_name() -> None:
     select_list = SelectListBuilder(POSTGRES)
     select_list.emit_variant("First")
-    with pytest.raises(SqlGenError, match="has no scalar cell"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="has no scalar cell"):
         select_list.selected_scalar(AttributeIdentity(_FIRST, "id"))
 
 
@@ -180,7 +181,7 @@ def test_union_branches_selecting_different_cells_are_refused(
         variants.append(variant)
 
     monkeypatch.setattr(SelectListBuilder, "emit_variant", doubled_after_the_first_branch)
-    with pytest.raises(SqlGenError, match="disagree on their cells"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on their cells"):
         compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
 
 
@@ -202,7 +203,7 @@ def test_union_branches_naming_one_contributor_differently_are_refused(
         )
 
     monkeypatch.setattr(SelectListBuilder, "emit_branch", renamed_in_a_later_branch)
-    with pytest.raises(SqlGenError, match="disagree on the cell 'id'"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on the cell 'id'"):
         compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
 
 
@@ -218,7 +219,7 @@ def test_a_null_tail_branch_selecting_other_cells_than_the_ordinary_branch_is_re
         return statement, select_list
 
     monkeypatch.setattr(sql_compile, "_render_read_branch", widened_tail)
-    with pytest.raises(SqlGenError, match="disagree on their cells"):
+    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on their cells"):
         _continuing()
 
 
@@ -229,7 +230,9 @@ def test_a_page_capturing_no_coordinate_for_its_ordering_terms_is_refused(
         del args
 
     monkeypatch.setattr(sql_compile, "_emit_coordinates", captured_nothing)
-    with pytest.raises(SqlGenError, match="does not capture its ordering terms"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="does not capture its ordering terms"
+    ):
         _continuing()
 
 
@@ -253,7 +256,9 @@ def test_a_select_list_carrying_no_cell_for_a_fetched_member_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _without_column(monkeypatch, lambda column: column.column == "sku")
-    with pytest.raises(SqlGenError, match="carries no source for the fetched member 'sku'"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="carries no source for the fetched member 'sku'"
+    ):
         compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
@@ -269,7 +274,9 @@ def test_a_select_list_carrying_no_planned_shared_document_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _without_column(monkeypatch, lambda column: isinstance(column.contributor, RelationalDocument))
-    with pytest.raises(SqlGenError, match="read without its shared document"):
+    with raises_code(
+        InternalError, SQL_GENERATION_FAILED, match="read without its shared document"
+    ):
         compile_read(
             oa.TrueNode(),
             DOCUMENT_LAYOUT,

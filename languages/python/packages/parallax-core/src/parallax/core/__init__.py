@@ -3,6 +3,7 @@ from __future__ import annotations
 from parallax.core._execution._publication import PublicationConflictError
 from parallax.core._execution._transaction._runner import TransactionRollbackError
 from parallax.core._execution._unit_work.effects import WritePreconditionError
+from parallax.core._stored_data import InvalidDataError
 from parallax.core.base import (
     ConflictError,
     InternalError,
@@ -10,6 +11,7 @@ from parallax.core.base import (
     ParallaxError,
     TemporalBound,
     TooManyResultsFound,
+    UnsupportedError,
     UsageError,
 )
 from parallax.core.db_error import DatabaseError
@@ -57,7 +59,6 @@ from parallax.core.entity import (
 )
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
-from parallax.core.read_delivery import InvalidDataError
 from parallax.core.temporal_read import Edge, Pin
 
 __all__ = [
@@ -109,6 +110,7 @@ __all__ = [
     "TransactionRollbackError",
     "TxTemporal",
     "UnloadedRelationshipError",
+    "UnsupportedError",
     "UsageError",
     "ValueObject",
     "WritePreconditionError",

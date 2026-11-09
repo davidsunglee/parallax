@@ -22,14 +22,15 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import ConflictError, InternalError, storage_layout
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    WRITE_RESULT_INTEGRITY_VIOLATED,
     ArrayBind,
     DatabaseConnection,
     OrderedWriteResultComplete,
     OrderedWriteTransport,
-    WriteResultIntegrityError,
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
@@ -37,12 +38,11 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     DatabaseWriteRowsCompleted,
 )
+from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.unit_work import (
-    CARDINALITY_CORRUPTION,
     OPTIMISTIC_LOCK_CONFLICT,
     WritePreconditionError,
 )
-from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
@@ -253,13 +253,13 @@ def test_a_malformed_result_is_refused_before_any_step_is_enforced(
     # The first step is short too; the malformed row still outranks it.
     provider = RecordingLifecycleProvider() if observed else None
     raised = _run(_Port(rows), _grouped(_wallets(1, 2)), provider=provider)
-    assert isinstance(raised, WriteResultIntegrityError)
+    assert isinstance(raised, InternalError) and raised.code == WRITE_RESULT_INTEGRITY_VIOLATED
     assert "grouped effect" in str(raised)
 
 
 def test_a_malformed_result_diagnostic_copies_no_value() -> None:
     raised = _run(_Port([("secret-text",)]), _grouped(_wallets(1, 2)))
-    assert isinstance(raised, WriteResultIntegrityError)
+    assert isinstance(raised, InternalError) and raised.code == WRITE_RESULT_INTEGRITY_VIOLATED
     assert "secret-text" not in str(raised)
 
 

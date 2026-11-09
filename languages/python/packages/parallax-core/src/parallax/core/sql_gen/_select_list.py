@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, NamedTuple
 
-from parallax.core.base import JSON, DocumentReadOrdinals, NeutralType
+from parallax.core.base import JSON, DocumentReadOrdinals, InternalError, NeutralType
 from parallax.core.dialect import Dialect, RenderedScalarCell, ScalarResult, scalar_result
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, ValueObjectMetadata
 from parallax.core.read_planning import ResolvedReadProjection
-from parallax.core.sql_gen._context import SqlGenError
+from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.sql_gen._inheritance import (
     CellSource,
     DocumentMemberSource,
@@ -151,7 +151,9 @@ class SelectListBuilder:
             )
             return
         if column.type is None:  # pragma: no cover - formation types every scalar contributor
-            raise SqlGenError("a table-per-concrete-subtype scalar contributor has no type")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a table-per-concrete-subtype scalar contributor has no type"
+            )
         if column.owned:
             self._emit_scalar(
                 self._dialect.render_scalar(
@@ -211,11 +213,14 @@ class SelectListBuilder:
         placeholder answers for its contributor exactly as an owner does.
         """
         if len(other._cells) != len(self._cells) or other.document_reads != self.document_reads:
-            raise SqlGenError("two select lists of one read disagree on their cells")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "two select lists of one read disagree on their cells"
+            )
         for mine, theirs in zip(self._cells, other._cells, strict=True):
             if mine != theirs:
-                raise SqlGenError(
-                    f"two select lists of one read disagree on the cell {mine.alias!r}"
+                raise InternalError(
+                    SQL_GENERATION_FAILED,
+                    f"two select lists of one read disagree on the cell {mine.alias!r}",
                 )
 
     def scalar_cells(self) -> Mapping[ColumnContributor, tuple[str, ScalarResult]]:
@@ -232,7 +237,9 @@ class SelectListBuilder:
         for cell in self._cells:
             if cell.role == contributor and cell.neutral_type is not None:
                 return cell.alias, cell.neutral_type
-        raise SqlGenError(f"{contributor} has no scalar cell in the read's select list")
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{contributor} has no scalar cell in the read's select list"
+        )
 
     def result_contract(
         self,
@@ -282,7 +289,9 @@ class SelectListBuilder:
         if [self._cells[ordinal].alias for ordinal in coordinate_ordinals] != [
             term.alias for term in coordinates
         ]:
-            raise SqlGenError("the read's select list does not capture its ordering terms")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "the read's select list does not capture its ordering terms"
+            )
         position = frozenset(shape.concrete_types)
         sources = _SourceFactory(by_contributor, self._cells, shared_ordinal, shape, projection)
         entity_sources: list[EntitySources] = []
@@ -430,9 +439,10 @@ class _SourceFactory:
         if isinstance(member, AttributeMetadata) or self._projection.includes_value_object(
             member.identity
         ):
-            raise SqlGenError(
+            raise InternalError(
+                SQL_GENERATION_FAILED,
                 f"{entity.canonical}: the read's select list carries no source for "
-                f"the fetched member {member.storage.name!r}"
+                f"the fetched member {member.storage.name!r}",
             )
         return None
 
@@ -444,7 +454,9 @@ class _SourceFactory:
 
     def _document(self, member_name: str) -> DocumentMemberSource:
         if self._shared_ordinal is None:
-            raise SqlGenError("a document resident is read without its shared document")
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a document resident is read without its shared document"
+            )
         source = self._documents.get(member_name)
         if source is None:
             source = self._documents[member_name] = DocumentMemberSource(

@@ -11,13 +11,13 @@ from decimal import Decimal as PyDecimal
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr, storage_layout
-from parallax.core.base import INT32, INT64, JSON, STRING, FrozenMap
+from parallax.core.base import INT32, INT64, JSON, STRING, FrozenMap, InternalError
 from parallax.core.entity import Document
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
 from parallax.core.storage_layout import InheritanceDiscriminator, RelationalDocument
 from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape, StorageCatalog
-from parallax.core.write_plan import WritePlanningError
+from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
@@ -35,6 +35,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
     WriteRow,
 )
+from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 
@@ -297,9 +298,9 @@ def test_one_presence_shares_one_slots_and_the_cache_retains_a_bounded_number() 
 
 def test_a_member_without_a_column_is_refused_and_a_tableless_entity_has_no_storage() -> None:
     catalog = StorageCatalog(_META)
-    with pytest.raises(WritePlanningError, match="occupies no Column"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="occupies no Column"):
         catalog.entity(_PEG).row_slots(1 << 30)
-    with pytest.raises(WritePlanningError, match="no effective table"):
+    with raises_code(InternalError, WRITE_PLANNING_FAILED, match="no effective table"):
         catalog.entity(EntityIdentity(_NS, "Nowhere"))
 
 
