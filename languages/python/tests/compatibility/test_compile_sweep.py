@@ -77,30 +77,19 @@ class _RefusingPort(ConnectsAsItself):
 def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
     """The reason a reachable case is not in the compile-exercised set.
 
-    Run-only cases are classified first, independent of shape. Error cases are
-    divided between the single-connection run lane and the provider's
-    two-connection proof. Remaining non-read shapes receive their write-path
-    classification, while unsupported reads report the compiler diagnostic.
+    Error cases are classified first: a two-connection choreography is left to
+    the provider's proof, and a single-connection trigger must compile to the
+    error that names the run lane. Other run-only cases follow, independent of
+    shape. Remaining non-read shapes receive their write-path classification,
+    while unsupported reads report the compiler diagnostic.
     """
-    if envelope.get("status") == "run-only":
-        # Declared `compileEligibility: run-only` covers query-result-dependent
-        # reads and writes and pk-gen sequence reservations: `run` (never
-        # `compile`) is the ONLY lane that ever grades these — the
-        # m-conformance-adapter envelope already answers
-        # `run-only` without attempting any lowering at all, so this is classified
-        # first, shape-agnostically, before any shape-specific fallback text.
-        # `test_run_only_cases_are_never_compiled` asserts the envelope.
-        reason = envelope.get("diagnostics", [{}])[0].get("message", "")
-        return (
-            f"declared compile-run-only ({reason}); graded by run instead (m-conformance-adapter)"
-        )
     if case.shape == "error":
         # An error case's trigger DML is authored, not compiled (m-case-format), so
         # neither sub-shape ever joins the compile-exercised set: this is a lane
-        # classification. The single-connection statement trigger is graded by the
-        # error run lane; the two-connection choreography is
-        # run-only and driven by the provider contract proof's barrier-synchronized
-        # sessions, which the single-connection adapter lanes cannot hold.
+        # classification. The two-connection choreography is run-only and driven
+        # by the provider contract proof's barrier-synchronized sessions, which the
+        # single-connection adapter lanes cannot hold; the single-connection
+        # statement trigger is graded by the error run lane.
         if engine.eligibility(case) is not None:
             return (
                 "two-connection m-db-error choreography (deadlock / lock-wait / "
@@ -109,9 +98,22 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
                 "not the single-connection adapter lanes"
             )
         assert envelope["status"] == "error", envelope
+        assert "authored, not compiled" in envelope["diagnostics"][0]["message"], envelope
         return (
             "error-shape trigger DML is authored, not compiled (m-case-format); graded "
             "end-to-end by the error run lane (test_run_sweep.test_error_run_sweep)"
+        )
+    if envelope.get("status") == "run-only":
+        # Declared `compileEligibility: run-only` covers query-result-dependent
+        # reads and writes and pk-gen sequence reservations: `run` (never
+        # `compile`) is the ONLY lane that ever grades these — the
+        # m-conformance-adapter envelope already answers
+        # `run-only` without attempting any lowering at all, so this is classified
+        # before any shape-specific fallback text.
+        # `test_run_only_cases_are_never_compiled` asserts the envelope.
+        reason = envelope.get("diagnostics", [{}])[0].get("message", "")
+        return (
+            f"declared compile-run-only ({reason}); graded by run instead (m-conformance-adapter)"
         )
     if case.shape == "boundary":
         # Every boundary case (m-auto-retry / m-concurrency bounded automatic
