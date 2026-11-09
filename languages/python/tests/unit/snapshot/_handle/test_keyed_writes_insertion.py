@@ -901,6 +901,80 @@ def test_a_removal_composed_of_several_pending_writes_admits_a_reinsertion() -> 
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert", "delete", "insert"]
 
 
+_SPLIT_STORED = _rectangle(_JAN, _SEP)
+_SPLIT_HEAD = _rectangle(_JAN, _MAR, "150.00")
+_SPLIT_TAIL = _rectangle(_MAR, _SEP)
+
+
+def _split_at_march(tx: TxnContext) -> WherePosition:
+    """Insert and store [January, September), then reassign it until March, so
+    the next flush leaves two rows continuing the insertion: the head ending in
+    March and the tail ending in September."""
+    first = _position()
+    tx.insert(first, valid_from=_JAN, until=_SEP)
+    _read_at(tx, _MAR)
+    tx.amend(first.edit(value=Decimal("150.00")), until=_MAR)
+    return first
+
+
+def _split_script(*rest: Read | Write) -> Transact:
+    return Transact(
+        Write(), Read(rows=[_SPLIT_STORED]), Read(rows=[_SPLIT_STORED]), Write(times=2), *rest
+    )
+
+
+def test_a_removal_reaching_only_the_earlier_ending_row_refuses_every_reinsertion() -> None:
+    port = ScriptedAdapter(_split_script(Read(rows=[_SPLIT_TAIL]), Read(rows=[_SPLIT_HEAD])))
+
+    def fn(tx: TxnContext) -> None:
+        first = _split_at_march(tx)
+        _read_at(tx, _MAY)
+        tx.terminate(first, until=_MAR)
+        for _attempt in range(2):
+            _refused_as_a_repeat(lambda: tx.insert(_position("300.00"), valid_from=_JAN))
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _transact(port, fn)
+
+
+def test_a_flushed_removal_of_the_latest_ending_row_narrows_what_a_reinsertion_must_remove() -> (
+    None
+):
+    # Removing the tail refuses a reinsertion until it flushes. The head is
+    # then all the insertion still stores, so a removal reaching only March
+    # admits the reinsertion, which executes after it.
+    port = ScriptedAdapter(
+        _split_script(
+            Read(rows=[_SPLIT_TAIL]),
+            Read(rows=[]),
+            Write(),
+            Read(rows=[_SPLIT_HEAD]),
+            Read(rows=[_SPLIT_HEAD]),
+            Write(times=2),
+        )
+    )
+
+    def fn(tx: TxnContext) -> None:
+        first = _split_at_march(tx)
+        tx.terminate(_read_at(tx, _MAR))
+        for _attempt in range(2):
+            _refused_as_a_repeat(lambda: tx.insert(_position("300.00"), valid_from=_JAN))
+        _read_at(tx, _JAN)
+        tx.terminate(first, until=_MAR)
+        tx.insert(_position("300.00"), valid_from=_JAN)
+
+    _transact(port, fn)
+    *_split, tail_removal, head_removal, reinsertion = _writes(port)
+    assert tail_removal.sql.startswith("delete from where_position")
+    assert tail_removal.binds[1] == _SEP
+    assert head_removal.sql.startswith("delete from where_position")
+    assert head_removal.binds[1] == _MAR
+    assert inserted_rows(reinsertion) == (
+        (1, "A", Decimal("300.00"), _JAN, INFINITY_INSTANT, FIXED, INFINITY_INSTANT),
+    )
+
+
 def test_removing_a_row_no_insertion_opened_leaves_the_insertions_standing() -> None:
     # The attempt rewrites a stored object twice — its second write removes the
     # row its first opened, which no insertion tags — while an insertion of
