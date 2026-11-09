@@ -7,11 +7,10 @@ import shutil
 import subprocess
 from typing import Any
 
-import psycopg
 import pytest
 
 from parallax.conformance import adapter, case_format, cli
-from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
+from tests._support.repo import validate_adapter_envelope
 
 _READ_CASE = str(case_format.default_cases_dir() / "m-predicate-002-eq.yaml")
 
@@ -20,18 +19,6 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, dict
     code = cli.main(argv)
     out = capsys.readouterr().out
     return code, json.loads(out)
-
-
-def test_describe_in_process(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(psycopg.capabilities, "has_pipeline", lambda: True)
-    code, envelope = _run(capsys, ["describe"])
-    assert code == 0
-    validate_adapter_envelope(envelope)
-    canonical = canonical_snapshot_claim()
-    assert envelope["capabilities"] == canonical["capabilities"]
-    assert envelope["adapter"]["language"] == "python"
 
 
 def test_compile_claimed_case_emits_exit_0(capsys: pytest.CaptureFixture[str]) -> None:

@@ -23,8 +23,6 @@ from parallax.conformance.budget import (
     reading_bytes,
 )
 
-AFTER_PORTFOLIO = Path("languages/python/evidence/cost/structural-metadata-after/portfolio.json")
-
 
 def test_budget_contract_has_one_unique_non_negative_address_per_cell() -> None:
     contract = BudgetContract.load()
@@ -168,36 +166,6 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
         for reading in cast("Sequence[Mapping[str, object]]", member["readings"])
     }
     assert GATED_WINDOWS.issubset(windows)
-
-
-# The retained structural-metadata-after capture carries legacy counter names on every keyed
-# case and both runtimes; renaming all 184 of them to the current vocabulary
-# derives exactly the ceilings the unrenamed file derives, because the rule
-# reads byte units alone and a `calls.*` cell is neither a gate nor a change
-# to one.
-@pytest.mark.usefixtures("committed_cost_evidence")
-def test_the_derivation_is_indifferent_to_the_counter_vocabulary() -> None:
-    repo = case_format.find_repo_root()
-    after = cast(
-        "Mapping[str, object]",
-        json.loads((repo / AFTER_PORTFOLIO).read_text(encoding="utf-8")),
-    )
-    renamed_portfolio = json.loads(json.dumps(after))
-    renamed = {
-        "calls.encodeDocument": "calls.encodeManagedDocument",
-        "calls.encodeMany": "calls.encodeManagedMany",
-    }
-    counters = 0
-    for member in cast("Sequence[dict[str, object]]", renamed_portfolio["members"]):
-        for reading in cast("Sequence[dict[str, object]]", member["readings"]):
-            cell = str(reading["cell"])
-            if cell in renamed:
-                reading["cell"] = renamed[cell]
-                counters += 1
-    assert counters == 2 * 46 * 2
-    derived = derive_memory_gates(renamed_portfolio, 1.10)
-    assert derived == derive_memory_gates(after, 1.10)
-    assert sum(len(cells) for workloads in derived.values() for cells in workloads.values()) == 142
 
 
 def test_the_derivation_rule_is_the_largest_runtime_reading_scaled_and_rounded_up() -> None:

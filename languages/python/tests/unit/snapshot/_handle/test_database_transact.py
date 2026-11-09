@@ -20,7 +20,7 @@ from decimal import Decimal
 
 import pytest
 
-from parallax.conformance.scripted_clock import FixedClock
+from parallax.conformance.scripted_clock import FixedClock, ScriptedClock
 from parallax.core import (
     Attr,
     ConflictError,
@@ -63,6 +63,7 @@ from tests.unit._transact_support import (
     account_db,
     db_for,
     deadlock,
+    new_account,
 )
 
 _A = prepare_model(ACCOUNT, edition="a")
@@ -171,6 +172,19 @@ def test_an_optimistic_conflict_exhausts_its_bound() -> None:
         )
     assert port.calls.count(BeginCall()) == 3
     assert "3 attempts (max_retries=2)" in "".join(excinfo.value.__notes__)
+
+
+def test_a_retry_that_reaches_no_timestamp_requiring_work_captures_no_instant() -> None:
+    # Each attempt captures its Transaction Instant lazily, so neither the failed
+    # attempt nor its retry asks the clock for one when no write needs a
+    # Transaction-Time boundary.
+    clock = ScriptedClock([FIXED])
+    port = ScriptedAdapter(Transact(Write(raises=deadlock())), Transact(Write()))
+    own_root(Database.connect(port, ACCOUNT, clock=clock)).using_database_login().transact(
+        lambda tx: tx.insert(new_account())
+    )
+    assert port.calls.count(BeginCall()) == 2
+    assert clock.now() == FIXED
 
 
 def test_the_removed_conflict_opt_in_is_an_unknown_keyword() -> None:

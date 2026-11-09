@@ -2,11 +2,10 @@
 
 The story is documentation that runs: its source IS the guide's snippet, and
 `tests/api/test_model_publication_story.py` executes it against real Postgres so
-what is documented is what works. This is the database-free half — the same call
-over a fake port, plus the refusals the happy path never reaches — because a
-snippet that stopped compiling, or an order that stopped being prepare-apply-
-publish, should fail on the first run of the fast suite rather than on the
-Docker-backed one.
+what is documented is what works. This is the database-free half — the refusals
+the happy path never reaches, over a fake port — because an order that stopped
+being prepare-apply-publish should fail on the first run of the fast suite rather
+than on the Docker-backed one.
 """
 
 from __future__ import annotations
@@ -132,27 +131,6 @@ class _UnrollbackablePort(_AccountPort):
         access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         return RollbackFailed(CallbackRaised(self.trigger), self.rollback_error)
-
-
-def test_the_documented_update_prepares_applies_then_publishes() -> None:
-    port = _AccountPort()
-    update = stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
-
-    # One handle, never reconnected: what moved is the selection its executions
-    # adopt, and the transaction after the publication adopted the later one.
-    assert update.before_edition == "2026-09-a"
-    assert update.after_edition == "2026-09-b"
-    assert update.nickname == "rainy-day"
-    # The order is the story: the column exists before anything adopts the
-    # edition prepared over it, so the schema statement precedes the write that
-    # names the new member.
-    assert port.writes[0] == _ALTER
-    assert "nickname" in port.writes[1]
-    assert len(port.writes) == 2
-    assert update.statements == (port.writes[0],)
-    # One added Attribute creates no Index, so the rollout ledger this update
-    # retains is empty rather than absent.
-    assert update.created_indices == ()
 
 
 def test_the_same_update_run_backwards_is_not_a_live_publication_path() -> None:

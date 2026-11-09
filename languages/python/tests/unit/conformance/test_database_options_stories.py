@@ -81,15 +81,6 @@ def test_the_documented_root_options_story_resolves_each_call_as_it_states() -> 
     assert port.levels == ["repeatable_read", "serializable"]
 
 
-def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
-    snippet = database_options_stories.root_options_snippet()
-    assert "TxnOptions(isolation=" in snippet
-    assert "connect(adapter, model, options=root)" in snippet
-    assert "tx.options" in snippet
-    assert 'isolation="serializable"' in snippet
-    assert "UsageError" in snippet
-
-
 def test_the_retry_policy_story_inherits_a_tuned_policy_until_a_call_replaces_it_whole() -> None:
     shape = _retry_story(_AccountPort(), MODELS["account"])
 

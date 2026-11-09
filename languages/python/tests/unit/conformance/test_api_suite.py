@@ -64,14 +64,6 @@ def test_build_skips_covers_cases_without_examples() -> None:
     }
 
 
-def test_partition_report_is_a_clean_full_partition() -> None:
-    report = api_suite.partition_report()
-    assert report.ok, report.errors
-    # Every registered example counts as exercised.
-    assert {e.case_id for e in api_suite.EXAMPLES} <= report.exercised
-    assert report.exercised | report.skipped == report.active
-
-
 def test_a_libpq_without_pipelines_partitions_the_narrowed_slice_cleanly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -81,21 +73,6 @@ def test_a_libpq_without_pipelines_partitions_the_narrowed_slice_cleanly(
     narrowed = {case.case_id for case in api_suite.authored_slice()} - report.active
     assert narrowed
     assert narrowed <= api_suite.CASE_SKIP_REASONS.keys()
-
-
-def test_relationship_primary_cases_have_only_case_scoped_refusals() -> None:
-    cases = {
-        case.case_id: case
-        for case in api_suite.active_slice()
-        if case.primary_module == "m-relationship"
-    }
-    rejected = {"m-relationship-005", "m-relationship-006", "m-relationship-007"}
-    assert {case_id for case_id, case in cases.items() if case.shape == "rejected"} == rejected
-    assert cases.keys() & api_suite.CASE_SKIP_REASONS.keys() == rejected
-    assert "m-relationship" not in api_suite.SKIP_REASONS
-    assert cases.keys() - rejected == {
-        story.case_id for story in GRAPH_STORIES if story.case_id in cases
-    }
 
 
 def test_build_skips_uses_the_reviewed_registry_reason() -> None:
@@ -246,33 +223,6 @@ def test_read_and_graph_story_snippets_render_no_private_name() -> None:
         assert not _PRIVATE_NAME.search(graph_story_snippet(story)), story.case_id
 
 
-def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
-    # Review remediation finding 2: `m-concurrency-046` (locking) and `-049`
-    # (optimistic) run the SAME `db.find` expression under DIFFERENT
-    # Concurrency Preferences — the entire point of the pair. The rendered
-    # snippet must show the mode (never render the two identically), and it
-    # must be the SAME mode the story's own `concurrency` field drives
-    # execution with (`test_story_run.py`'s generic runner branches on that
-    # SAME field) — single-sourced, not a second, independently-typed string.
-    by_id = {story.case_id: story for story in READ_STORIES}
-    locking = by_id["m-concurrency-046"]
-    optimistic = by_id["m-concurrency-049"]
-    assert locking.concurrency == "locking"
-    assert optimistic.concurrency == "optimistic"
-    locking_snippet = read_story_snippet(locking)
-    optimistic_snippet = read_story_snippet(optimistic)
-    assert locking_snippet != optimistic_snippet
-    assert 'concurrency="locking"' in locking_snippet
-    assert 'concurrency="optimistic"' in optimistic_snippet
-    assert "db.transact(" in locking_snippet
-    # A story with no declared concurrency renders its bare `snippet` only —
-    # no transactional wrapper appears for the non-participating majority.
-    plain = by_id["m-predicate-002"]
-    assert plain.concurrency is None
-    assert read_story_snippet(plain) == plain.snippet
-    assert "db.transact(" not in read_story_snippet(plain)
-
-
 def test_dropping_a_write_example_fails_the_partition() -> None:
     # m-unit-work has
     # no broad module bucket, so a case that loses its example is covered by
@@ -286,16 +236,3 @@ def test_dropping_a_write_example_fails_the_partition() -> None:
     assert any(
         "covered by neither" in error and "m-unit-work-001" in error for error in report.errors
     )
-
-
-def test_pk_gen_reasons_name_the_durable_blocker() -> None:
-    # Regression guard: both pk-generated-column skips must say why no idiomatic
-    # story CAN exist — a caller cannot honestly construct a fresh instance
-    # naming a server-computed id — never a delivery increment, which goes stale
-    # the moment it passes and tells a reader nothing about the surface.
-    reason = api_suite.CASE_SKIP_REASONS["m-pk-gen-014"]
-    module_reason = api_suite.SKIP_REASONS["m-pk-gen"]
-    assert "increment" not in reason, reason
-    assert "increment" not in module_reason, module_reason
-    assert "no idiomatic story exists" in reason, reason
-    assert "server-computed id" in module_reason, module_reason

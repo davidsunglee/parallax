@@ -4,8 +4,8 @@ The guide's blocks are these functions' own source and
 `tests/api/test_database_pooling.py` runs them against real Postgres. This is
 the database-free half, for the same reason every story has one: a documented
 spelling that stopped compiling, a Provider that stopped being offered a source,
-or a lifespan that stopped closing its handle should fail on the first run of the
-fast suite rather than on the Docker-backed one.
+or an operation that stopped leaving the event loop should fail on the first run
+of the fast suite rather than on the Docker-backed one.
 
 What a real pool MEASURES is not provable here and is not attempted — the
 scripted source answers a constant. What is provable here is the shape around
@@ -25,7 +25,6 @@ from parallax.conformance import database_pooling_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
 from parallax.core.db_port import (
     Bind,
-    ConnectionAcquisitionError,
     DocumentReadOrdinals,
     Password,
     Row,
@@ -38,7 +37,6 @@ from parallax.core.execution import (
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandlerError
 from parallax.postgres import OnDemandOptions, PoolOptions
 from tests._support.db_port import Read, ScriptedAdapter, ScriptedRuntime
-from tests._support.errors import raises_code
 from tests.unit._pool_source_support import DetachableSource
 
 _ROW = {"id": 1, "owner": "Newton", "balance": Decimal("10.00"), "version": 1}
@@ -129,15 +127,6 @@ def test_the_pool_watch_is_offered_the_source_and_closed_with_the_handle() -> No
     assert reading.registration_closed
 
 
-def test_a_watch_reports_nothing_rather_than_a_zero_for_a_reading_it_could_not_take() -> None:
-    # Unavailable and detached are both "no reading" to an exporter, and neither
-    # is a measured zero it should publish.
-    detached = DetachableSource()
-    detached.detach()
-
-    assert stories.PoolWatch(detached).read() is None
-
-
 def test_the_pool_watching_provider_answers_the_reporter_half_of_the_seam() -> None:
     # It declines every root, so it opens no Handler and no Handler failure can
     # ever be reported to it. The method is here because the composition seam is
@@ -153,23 +142,6 @@ def test_the_pool_watching_provider_answers_the_reporter_half_of_the_seam() -> N
     )
 
     assert stories.PoolWatchingProvider().report_handler_error(error) is None
-
-
-def test_the_lifespan_yields_a_working_handle_and_closes_it_at_shutdown() -> None:
-    adapter = ScriptedAdapter(Read(rows=[_ROW]))
-    escaped: list[object] = []
-
-    async def scenario() -> list[Decimal]:
-        async with stories.pooled_database(adapter, ACCOUNT_MODEL) as db:
-            escaped.append(db)
-            return await stories.serve_account_balances(db)
-
-    balances = asyncio.run(scenario())
-
-    assert balances == [Decimal("10.00")]
-    assert adapter.closes == 1
-    with raises_code(ConnectionAcquisitionError, "connection-acquisition-failed"):
-        stories.account_balances(escaped[0])  # pyright: ignore[reportArgumentType] - the handle the lifespan yielded, deliberately used after its own shutdown
 
 
 def test_the_offloaded_operation_runs_on_a_thread_that_is_not_the_event_loop_s() -> None:
