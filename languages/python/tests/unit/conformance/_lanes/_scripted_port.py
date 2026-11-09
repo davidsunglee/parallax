@@ -40,22 +40,17 @@ class ScriptedPort(ConnectsAsItself):
     Every method here is a plain synchronous, in-memory call that never blocks
     on real I/O, so there is nothing for an interleaved execution's termination
     ladder to unblock: an execution wrapping this port declares that trust
-    truthfully rather than as a shortcut around it.
+    truthfully rather than as a shortcut around it."""
 
-    ``dialect`` is a constructor argument rather than the class attribute every
-    other double declares, because the two-session pins hand the peer session a
-    DIFFERENT dialect from the main port's, so a statement's own spelling names
-    the connection that compiled it."""
+    dialect: Dialect = POSTGRES
 
     def __init__(
         self,
         *,
-        dialect: Dialect = POSTGRES,
         read_rows: Sequence[list[MappingRow]] = (),
         write_affected: Sequence[int] = (),
         raise_on_read: BaseException | None = None,
     ) -> None:
-        self.dialect = dialect
         self._read_rows = [list(rows) for rows in read_rows]
         self._write_affected = list(write_affected)
         self._raise_on_read = raise_on_read
