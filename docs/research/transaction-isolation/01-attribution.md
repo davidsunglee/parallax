@@ -11,7 +11,7 @@ status: complete
 
 This note attributes each measured change to the checkpoint that isolates it.
 Every number below is read from the capture reports under
-[`captures/`](captures/), or was read from the full reports archived outside
+[`captures/`](https://github.com/davidsunglee/parallax/tree/2a4edd441/docs/research/transaction-isolation/captures) at commit `2a4edd441`, or was read from the full reports archived outside
 git ([`00-index.md`](00-index.md#raw-reports-and-rewritten-commits)) and is
 now kept in a retained summary. Each section links the files it uses. [`00-index.md`](00-index.md) owns the
 drivers, their digests, and the checkpoint arms. The isolation-default
@@ -78,13 +78,13 @@ question is treated separately in
 ## C0: current behavior at Read Committed and Repeatable Read
 
 Arms: `7b465769` at explicit RC and at explicit RR
-([RC](captures/C0/7b465769dc87-read_committed/provenance.json),
-[RR](captures/C0/7b465769dc87-repeatable_read/provenance.json)). This
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-read_committed/provenance.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-repeatable_read/provenance.json)). This
 checkpoint isolates the level alone, under the selective retry policy.
 
 **Contention**
-([RC](captures/C0/7b465769dc87-read_committed/contention.json),
-[RR](captures/C0/7b465769dc87-repeatable_read/contention.json)):
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-read_committed/contention.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-repeatable_read/contention.json)):
 
 | Hot key | RC | RR |
 |---|---|---|
@@ -103,8 +103,8 @@ checkpoint isolates the level alone, under the selective retry policy.
 - RC's p99 is short because its failures are fast.
 
 **Traces**
-([RC](captures/C0/7b465769dc87-read_committed/lock_snapshot_trace.json),
-[RR](captures/C0/7b465769dc87-repeatable_read/lock_snapshot_trace.json)):
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-read_committed/lock_snapshot_trace.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-repeatable_read/lock_snapshot_trace.json)):
 
 | Schedule | RC, either bound | RR, `max_retries=0` | RR, default bound |
 |---|---|---|---|
@@ -114,8 +114,8 @@ checkpoint isolates the level alone, under the selective retry policy.
 | Unchanged guard, then a peer's close | waits, then commits | waits, then `40001` | commits on attempt 2 |
 
 **Guard WAL and replay**
-([RC](captures/C0/7b465769dc87-read_committed/guard_wal.json),
-[RR](captures/C0/7b465769dc87-repeatable_read/guard_wal.json)):
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-read_committed/guard_wal.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-repeatable_read/guard_wal.json)):
 
 - WAL per write is identical at both levels, and in every later arm. The
   bytes are deterministic for the statements issued.
@@ -133,8 +133,8 @@ checkpoint isolates the level alone, under the selective retry policy.
   No value changes, so this is replay cost with no semantic conflict.
 
 **Transaction-held stream churn**
-([RC](captures/C0/7b465769dc87-read_committed/stream_churn.json),
-[RR](captures/C0/7b465769dc87-repeatable_read/stream_churn.json)). The reader
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-read_committed/stream_churn.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-repeatable_read/stream_churn.json)). The reader
 streams 20,000 accounts in pages of 500 beside two writers.
 
 | Slow consumer, about 19 s | RC | RR |
@@ -153,8 +153,8 @@ streams 20,000 accounts in pages of 500 beside two writers.
   pages.
 
 **End-to-end writes**
-([RC](captures/C0/7b465769dc87-read_committed/end_to_end_writes.json),
-[RR](captures/C0/7b465769dc87-repeatable_read/end_to_end_writes.json)):
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-read_committed/end_to_end_writes.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C0/7b465769dc87-repeatable_read/end_to_end_writes.json)):
 
 - Statements per invocation are identical at both levels:
 
@@ -171,8 +171,8 @@ streams 20,000 accounts in pages of 500 beside two writers.
 ## C1: writable versus read-only reads
 
 Arms: `3850203e9`, where read-only transactions landed, once at RC and once at
-RR ([RC](captures/C1/3850203e9cad-read_committed/stream_churn.json),
-[RR](captures/C1/3850203e9cad-repeatable_read/stream_churn.json)). Each arm
+RR ([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C1/3850203e9cad-read_committed/stream_churn.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C1/3850203e9cad-repeatable_read/stream_churn.json)). Each arm
 runs writable-held, read-only-held, and standalone streams at one level. At
 this commit a read-only stream still built deferred read evidence, through the
 same branch a standalone read took. So this checkpoint attributes the
@@ -205,8 +205,8 @@ read-only transaction itself, not evidence removal; C5 attributes that.
 ## C2: existing versus strict source admission
 
 Arms: `3850203e9` and `44e78b3e2` at RC, both retaining evidence
-([A](captures/C2/3850203e9cad-read_committed/end_to_end_writes.json),
-[B](captures/C2/44e78b3e25d6-read_committed/end_to_end_writes.json)).
+([A](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C2/3850203e9cad-read_committed/end_to_end_writes.json),
+[B](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C2/44e78b3e25d6-read_committed/end_to_end_writes.json)).
 
 - Statements per invocation are identical across arms for all nine
   workflow/target cells.
@@ -231,8 +231,8 @@ licensing read.
 
 Arms: `563e54eae`, the complete conditional family, and `ef923969b`, automatic
 replay that is still immediate. Both run at RC
-([A](captures/C3/563e54eaed18-read_committed/contention.json),
-[B](captures/C3/ef923969b801-read_committed/contention.json)).
+([A](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C3/563e54eaed18-read_committed/contention.json),
+[B](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C3/ef923969b801-read_committed/contention.json)).
 
 | Hot key | Selective | Automatic, immediate |
 |---|---|---|
@@ -251,8 +251,8 @@ replay that is still immediate. Both run at RC
 - In the traces, the RC gate race now commits on its second attempt at the
   default bound. At `max_retries=0` it still surfaces the conflict. Every
   other schedule is unchanged
-  ([A](captures/C3/563e54eaed18-read_committed/lock_snapshot_trace.json),
-  [B](captures/C3/ef923969b801-read_committed/lock_snapshot_trace.json)).
+  ([A](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C3/563e54eaed18-read_committed/lock_snapshot_trace.json),
+  [B](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C3/ef923969b801-read_committed/lock_snapshot_trace.json)).
 - At RR the C0 baseline already replayed this race as `40001`. So this is the
   behavior RR's serialization retries concealed. RC and RR now treat a
   current-attempt gate race alike.
@@ -262,8 +262,8 @@ replay that is still immediate. Both run at RC
 Arms: `ef923969b`, immediate, and `e3785f21a`. At `e3785f21a` the backoff
 mechanics, unchanged from where they landed, run once per candidate with the
 base and cap substituted. Both run at RC
-([immediate](captures/C4/ef923969b801-read_committed/contention.json),
-[grid](captures/C4/e3785f21ad23-read_committed/contention.json)). Full jitter
+([immediate](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C4/ef923969b801-read_committed/contention.json),
+[grid](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C4/e3785f21ad23-read_committed/contention.json)). Full jitter
 draws `uniform(0, min(cap, base × 2^(attempt−1)))` after the failed attempt
 has released its connection.
 
@@ -284,8 +284,8 @@ has released its connection.
   they match the immediate arm. Hot completion is 0.217 against 0.214, and
   disjoint p50 spans 4.00–4.17 ms across every run that never waits.
 - **Guard WAL** is identical across the arms
-  ([immediate](captures/C4/ef923969b801-read_committed/guard_wal.json),
-  [grid](captures/C4/e3785f21ad23-read_committed/guard_wal.json)). At RC the
+  ([immediate](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C4/ef923969b801-read_committed/guard_wal.json),
+  [grid](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C4/e3785f21ad23-read_committed/guard_wal.json)). At RC the
   guard/guard schedule never conflicts, so its replay figures cannot separate
   the arms.
 - **Every candidate beats immediate replay** on exhaustion, attempts, and
@@ -317,8 +317,8 @@ has released its connection.
 ## C5: standalone and read-only reads before and after evidence removal
 
 Arms: `e3785f21a` and `7ab69577a` at RC
-([A](captures/C5/e3785f21ad23-read_committed/read_retention.json),
-[B](captures/C5/7ab69577aa2b-read_committed/read_retention.json)).
+([A](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C5/e3785f21ad23-read_committed/read_retention.json),
+[B](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C5/7ab69577aa2b-read_committed/read_retention.json)).
 `read_retention` reads 2,000 roots in pages of 500. It covers 32 cells:
 standalone and read-only placements, Typed and Wire, eager and stream, over
 four subjects.
@@ -347,8 +347,8 @@ four subjects.
   First-root latency is unchanged within noise. Treat the timing as within
   noise of a modest improvement.
 - **Delivery instrument** on CPython 3.14
-  ([A](captures/C5/e3785f21ad23-read_committed/snapshot_delivery.json),
-  [B](captures/C5/7ab69577aa2b-read_committed/snapshot_delivery.json)):
+  ([A](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C5/e3785f21ad23-read_committed/snapshot_delivery.json),
+  [B](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C5/7ab69577aa2b-read_committed/snapshot_delivery.json)):
 
   | | Conventional fan-out | Versioned document | Bitemporal current |
   |---|---|---|---|
@@ -357,8 +357,8 @@ four subjects.
   | Streamed page-128 peak | −14.2% | −16.5% | −20.8% |
 
 - **Stream churn**
-  ([A](captures/C5/e3785f21ad23-read_committed/stream_churn.json),
-  [B](captures/C5/7ab69577aa2b-read_committed/stream_churn.json)):
+  ([A](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C5/e3785f21ad23-read_committed/stream_churn.json),
+  [B](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C5/7ab69577aa2b-read_committed/stream_churn.json)):
   - Fast-consumer client peaks fall from 0.63 to 0.45 MB standalone and from
     0.58 to 0.46 MB read-only-held. The writable-held peak, 0.84 to 0.83 MB,
     is unchanged.
@@ -370,10 +370,10 @@ four subjects.
 
 Arms: `7b465769` and `b04687c3f`, the selected backoff's landing commit,
 captured as `8886e730c` with an identical code tree, each at RC and at RR
-([`7b465769` RC](captures/C6/7b465769dc87-read_committed/provenance.json),
-[`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/provenance.json),
-[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/provenance.json),
-[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/provenance.json)).
+([`7b465769` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-read_committed/provenance.json),
+[`7b465769` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-repeatable_read/provenance.json),
+[`b04687c3f` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-read_committed/provenance.json),
+[`b04687c3f` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-repeatable_read/provenance.json)).
 
 **Noise caveat.** Outside load slowed two sets of RC runs.
 
@@ -390,10 +390,10 @@ show no such disturbance.
 columns measure the fixed 8/25 ms backoff, which `0581fd395` replaced with the
 duration-scaled one. The `7b465769` columns stand as the C0 source's
 behavior
-([`7b465769` RC](captures/C6/7b465769dc87-read_committed/contention.json),
-[`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/contention.json),
-[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/contention.json),
-[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/contention.json)):
+([`7b465769` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-read_committed/contention.json),
+[`7b465769` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-repeatable_read/contention.json),
+[`b04687c3f` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-read_committed/contention.json),
+[`b04687c3f` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-repeatable_read/contention.json)):
 
 | Hot key | RC `7b465769` | RC `b04687c3f` | RR `7b465769` | RR `b04687c3f` |
 |---|---|---|---|---|
@@ -412,10 +412,10 @@ behavior
   and 1.72 against 1.62 attempts per success.
 
 **Traces**
-([`7b465769` RC](captures/C6/7b465769dc87-read_committed/lock_snapshot_trace.json),
-[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/lock_snapshot_trace.json),
-[`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/lock_snapshot_trace.json),
-[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/lock_snapshot_trace.json)):
+([`7b465769` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-read_committed/lock_snapshot_trace.json),
+[`b04687c3f` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-read_committed/lock_snapshot_trace.json),
+[`7b465769` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-repeatable_read/lock_snapshot_trace.json),
+[`b04687c3f` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-repeatable_read/lock_snapshot_trace.json)):
 
 - The RC gate race now commits on attempt 2 at the default bound.
 - Every other schedule is unchanged at each level, as tabulated in C0. That
@@ -423,8 +423,8 @@ behavior
   before failing its precondition.
 
 **Guard replay at RR** — *superseded by C7 for the final design*, as above
-([`7b465769`](captures/C6/7b465769dc87-repeatable_read/guard_wal.json),
-[`b04687c3f`](captures/C6/8886e730c2f9-repeatable_read/guard_wal.json)):
+([`7b465769`](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-repeatable_read/guard_wal.json),
+[`b04687c3f`](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-repeatable_read/guard_wal.json)):
 
 - At the default bound, commits rise from 382 to 400 of 400. Attempts per
   success fall from 1.52 to 1.06, and p99 from 13.9 to 1.9 ms.
@@ -432,10 +432,10 @@ behavior
 - RC stays at 400 of 400 on first attempts. WAL per write is unchanged.
 
 **Stream churn**
-([`7b465769` RC](captures/C6/7b465769dc87-read_committed/stream_churn.json),
-[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/stream_churn.json),
-[`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/stream_churn.json),
-[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/stream_churn.json)):
+([`7b465769` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-read_committed/stream_churn.json),
+[`b04687c3f` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-read_committed/stream_churn.json),
+[`7b465769` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-repeatable_read/stream_churn.json),
+[`b04687c3f` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-repeatable_read/stream_churn.json)):
 
 - The RR slow transaction-held stream still holds back cleanup:
   - oldest snapshot age p50 4,425 at `7b465769` and 3,818 at `b04687c3f`;
@@ -448,10 +448,10 @@ behavior
 - The final design does not change the RR retention cost of a held stream.
 
 **End-to-end writes**
-([`7b465769` RC](captures/C6/7b465769dc87-read_committed/end_to_end_writes.json),
-[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/end_to_end_writes.json),
-[`7b465769` RR](captures/C6/7b465769dc87-repeatable_read/end_to_end_writes.json),
-[`b04687c3f` RR](captures/C6/8886e730c2f9-repeatable_read/end_to_end_writes.json)):
+([`7b465769` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-read_committed/end_to_end_writes.json),
+[`b04687c3f` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-read_committed/end_to_end_writes.json),
+[`7b465769` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-repeatable_read/end_to_end_writes.json),
+[`b04687c3f` RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-repeatable_read/end_to_end_writes.json)):
 
 - Statements per invocation are unchanged.
 - The median traced peak per invocation rose by 1.1–1.2 KB on every workflow
@@ -462,8 +462,8 @@ behavior
 - Latency differences are within noise.
 
 **Delivery instrument** on CPython 3.14
-([`7b465769` RC](captures/C6/7b465769dc87-read_committed/snapshot_delivery.json),
-[`b04687c3f` RC](captures/C6/8886e730c2f9-read_committed/snapshot_delivery.json)):
+([`7b465769` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/7b465769dc87-read_committed/snapshot_delivery.json),
+[`b04687c3f` RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C6/8886e730c2f9-read_committed/snapshot_delivery.json)):
 
 - Eager retained memory falls 21%, 40%, and 56%, and eager peak 11%, 23%, and
   36%, for conventional fan-out, the versioned document, and bitemporal
@@ -474,14 +474,14 @@ behavior
 ## C7: fixed versus duration-scaled replay backoff across environments
 
 Arms: `0581fd395`, where the duration-scaled backoff landed, at RC and at RR
-([RC](captures/C7/0581fd3959c3-read_committed/provenance.json),
-[RR](captures/C7/0581fd3959c3-repeatable_read/provenance.json)). Every later
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C7/0581fd3959c3-read_committed/provenance.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C7/0581fd3959c3-repeatable_read/provenance.json)). Every later
 commit is tooling, captures, or docs, so `0581fd395` is the final design. Each
 arm runs the contention writers and the guard/guard replay in three simulated
 environments, with immediate replay, the fixed 8/25 ms and 8/400 ms windows,
 and the arm's own scaled window substituted for the default-bound runs
-([RC contention](captures/C7/0581fd3959c3-read_committed/contention.json),
-[RR contention](captures/C7/0581fd3959c3-repeatable_read/contention.json)).
+([RC contention](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C7/0581fd3959c3-read_committed/contention.json),
+[RR contention](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C7/0581fd3959c3-repeatable_read/contention.json)).
 
 The scaled window after attempt *n*, whose failed attempt took *d*, is the
 longer of `min(25 ms, 8 ms × 2^(n−1))` and `min(8, 0.25 × 2^(n−1)) × d`,
@@ -577,8 +577,8 @@ outside RC local, where its undisturbed fixed 8/25 ran at 800/s against 791/s
 for the scaled policy.
 
 **Guard/guard replay**
-([RC](captures/C7/0581fd3959c3-read_committed/guard_wal.json),
-[RR](captures/C7/0581fd3959c3-repeatable_read/guard_wal.json)):
+([RC](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C7/0581fd3959c3-read_committed/guard_wal.json),
+[RR](https://github.com/davidsunglee/parallax/blob/2a4edd441/docs/research/transaction-isolation/captures/C7/0581fd3959c3-repeatable_read/guard_wal.json)):
 
 - At RC every policy commits 400 of 400 on first attempts in every
   environment.

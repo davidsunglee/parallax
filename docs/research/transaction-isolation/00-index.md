@@ -16,7 +16,11 @@ two-session witnesses: compatibility cases graded on every `just check`, and a
 few evaluation-only scripts. Performance is measured by drivers that run
 against pinned package sources in paired captures. The captures are
 calibration evidence, not gates; nothing here except the corpus cases is read by
-a check.
+a check. The evaluation scripts, the drivers, and the retained captures are no
+longer in the tree: commit `2a4edd441` holds their final versions, under
+[`scripts/`](https://github.com/davidsunglee/parallax/tree/2a4edd441/docs/research/transaction-isolation/scripts) and
+[`captures/`](https://github.com/davidsunglee/parallax/tree/2a4edd441/docs/research/transaction-isolation/captures). Every script and capture
+path below is relative to this directory at that commit.
 
 Python performance is PostgreSQL performance. MariaDB results come from the
 reference harness and are labeled harness/native evidence, not Python
@@ -40,7 +44,7 @@ each write's affected rows and the final table state
 ([`m-case-format`](../../../core/spec/m-case-format.md) *Error cases*). Where
 the engines reach different outcomes, each engine has its own case. That the
 golden statements are Parallax's emission is checked by the compile-graded
-corpus and by the two scripts below that read statements off the real API.
+corpus, and was checked by the two scripts below that read statements off the real API.
 
 | Schedule | Cases | PostgreSQL | MariaDB |
 |---|---|---|---|
@@ -96,9 +100,9 @@ asserts their run matrices, complete policies, sample counts, attempts within ea
 policy's bound, and the absence of failures of the drivers' own API use. It provisions
 nothing and judges no timing percentile or conflict count.
 
-The workloads are frozen at these digests (SHA-256). A later change to a driver
-records its new digest here with the reason; `provenance.json` records the
-digests a capture actually ran.
+The workloads are frozen at these digests (SHA-256), the drivers' final
+versions at `2a4edd441`. The paragraphs after the table record why each driver
+changed; `provenance.json` records the digests a capture actually ran.
 
 | File | SHA-256 |
 |---|---|
@@ -296,7 +300,7 @@ weighs them for the default.
 
 ## Reproducing
 
-From `languages/python`:
+From `languages/python`, in a checkout of `2a4edd441`:
 
 ```sh
 uv run python ../../docs/research/transaction-isolation/scripts/predicate_in_place.py --compare
@@ -309,13 +313,14 @@ A later checkpoint names its arms, for example
 `capture.py C3 --arm <commit> --arm <commit>`; an arm takes `@repeatable_read`
 to measure at that level.
 
-Those commands run the current drivers, which need an arm with the public Retry
-Policy. Reproducing a retained capture starts in a separate checkout of the
+Those commands run the drivers' final versions, which need an arm with the
+public Retry Policy. Reproducing a retained capture starts in a separate checkout of the
 provenance-recorded `capture.commit` and runs that checkout's `scripts/capture.py`; no
-option selects an older capturing tree, and running current drivers against older
+option selects an older capturing tree, and running the final drivers against older
 packages is not a reproduction.
 
-The retry smokes run from `languages/python`, with `$SMOKE` an existing directory:
+The retry smokes run from `languages/python`, in a checkout of `2a4edd441`, with
+`$SMOKE` an existing directory:
 
 ```sh
 uv run python ../../docs/research/transaction-isolation/scripts/contention.py --smoke --isolation read_committed --backoff-grid --out "$SMOKE/grid.json"

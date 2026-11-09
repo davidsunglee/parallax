@@ -17,7 +17,6 @@ import instance_state_reading
 import lifecycle_overhead
 import production_origins as origins
 import snapshot_delivery_reading
-import time_interval_runtime
 import write_lowering_reading
 from parallax.conformance.budget import BudgetContract
 
@@ -247,13 +246,6 @@ _CHILDREN: Final = [
         "measure",
         lambda: instance_state_reading.main([instance_state_reading.SCENARIOS[0].name]),
     ),
-    (
-        time_interval_runtime,
-        "reading_document",
-        lambda: time_interval_runtime.main(
-            ["read", time_interval_runtime.support.CELLS[0].id, "--warmups", "0", "--measured", "1"]
-        ),
-    ),
 ]
 
 
@@ -275,7 +267,6 @@ def test_a_measurement_child_refuses_foreign_production_code_before_measuring(
 _MEASURED: Final[dict[str, object]] = {
     "_geometry": (1.0, "KiB", [1.0]),
     "measure": {},
-    "reading_document": {},
 }
 
 
@@ -294,7 +285,7 @@ def test_a_measurement_child_refuses_foreign_production_code_loaded_while_measur
         entry()
 
 
-@pytest.mark.parametrize(("module", "measuring", "entry"), [*_CHILDREN[:3], _CHILDREN[4]])
+@pytest.mark.parametrize(("module", "measuring", "entry"), _CHILDREN[:3])
 def test_a_measurement_child_reports_what_it_loaded_once_it_has_measured(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

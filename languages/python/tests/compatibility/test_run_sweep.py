@@ -45,7 +45,6 @@ from tests._support.driver_writes import (
     assert_driver_write_document_nulls,
     assert_driver_write_zero_signs,
 )
-from tests._support.lane_evidence import capture_rounds, capture_scenario
 from tests._support.repo import validate_adapter_envelope
 from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
@@ -1039,7 +1038,6 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     run = engine.run_interleaved_scenario_case(
         case, profile_run.port, profile_run.interleaved_execution
     )
-    capture_scenario(case, run)
 
     assert_write_emissions_equal_goldens(
         case,
@@ -1378,7 +1376,6 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
             isolation=case_format.effective_options(case).isolation,
             lock_waits=concurrency_runner.lock_waits_on(observer),
         )
-    capture_rounds(case, run)
     for round_spec, round_outcomes in zip(rounds, run.rounds, strict=True):
         for node, step in round_spec.items():
             if step.blocks:

@@ -18,7 +18,13 @@ import pytest
 
 from parallax.conformance import engine
 from tests._support.case_corpus import case as corpus_case
-from tests._support.corpus import CollectionKinds, case_document, compare_graph, compare_rows
+from tests._support.corpus import (
+    CollectionKinds,
+    case_document,
+    compare_graph,
+    compare_rows,
+    compare_rows_in_order,
+)
 
 
 def _authored_graph(case_id: str) -> tuple[dict[str, Any], CollectionKinds]:
@@ -179,6 +185,14 @@ def test_a_run_returning_a_strict_subset_of_the_expected_rows_fails_the_row_grad
     expected: list[dict[str, Any]] = [{"id": 1}, {"id": 2}]
     with pytest.raises(AssertionError, match=r"^row count: "):
         compare_rows(expected[:1], expected)
+
+
+def test_rows_compare_as_a_multiset_but_streamed_rows_stay_ordered() -> None:
+    expected: list[dict[str, Any]] = [{"id": 1}, {"id": 2}]
+    reordered = list(reversed(expected))
+    compare_rows(reordered, expected)
+    with pytest.raises(AssertionError):
+        compare_rows_in_order(reordered, expected)
 
 
 @pytest.mark.parametrize(
