@@ -65,8 +65,6 @@ from parallax.core.entity._expressions import (
 from parallax.core.entity._model import ClassIndex, model_of
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.execution import (
-    DeferredFeatureError,
-    QueryTargetError,
     ServingModel,
     prepare_model,
 )
@@ -249,7 +247,7 @@ def test_a_query_whose_target_the_connected_model_does_not_declare_is_refused() 
     database = own_root(
         Database.connect(port, DomainModel(Gizmo), clock=FixedClock(FIXED))
     ).using_database_login()
-    with pytest.raises(QueryTargetError) as caught:
+    with raises_code(UsageError, "query-target-not-in-model") as caught:
         database.find(Widget.where(Widget.id == 1))
     assert caught.value.code == "query-target-not-in-model"
 
@@ -1047,13 +1045,13 @@ def test_an_include_refusal_lands_at_its_clause_position(bind: Any) -> None:
 
 def test_a_missing_target_outranks_a_bad_include() -> None:
     query = deep.Keeper.where(deep.Keeper.all).include(_BAD_INCLUDE)
-    with pytest.raises(QueryTargetError):
+    with raises_code(UsageError, "query-target-not-in-model"):
         typed_resolved(query, WIDGETS)
 
 
 def test_a_bad_include_outranks_the_checks_that_follow_the_clause_gate() -> None:
     scanned = Policy.where(Policy.all).as_of(valid_time=LATEST).history(TX_TIME)
-    with pytest.raises(DeferredFeatureError):
+    with raises_code(UsageError, "execution-feature-deferred"):
         typed_resolved(scanned.include(Policy.coverages), POLICY_MODEL)
     with raises_code(UsageError, "query-path-invalid", match="no_such_member"):
         typed_resolved(scanned.include(Policy.coverages.no_such_member), POLICY_MODEL)

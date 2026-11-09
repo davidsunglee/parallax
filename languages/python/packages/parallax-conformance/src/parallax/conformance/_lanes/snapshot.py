@@ -50,7 +50,6 @@ from parallax.core import (
 )
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core.base import UsageError
-from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
@@ -638,7 +637,7 @@ def _grade_mutate_step(
     expected = step.get("expectError")
     try:
         validate_source_pin(identity, source.pin)
-    except TransactionTimePinReadOnlyError as exc:
+    except UsageError as exc:
         if expected != exc.code:
             declared = f"expectError {expected!r}" if expected is not None else "no expectError"
             raise UnclassifiedEngineError(

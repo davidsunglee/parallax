@@ -32,14 +32,12 @@ from parallax.conformance.boundary_runner import (
 from parallax.conformance.class_models import MODELS
 from parallax.core import ConflictError, Entity
 from parallax.core._execution._unit_work.effects import shortfall
+from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import AcquisitionReason, ConnectionAcquisitionError
 from parallax.core.execution import (
     ExecutionFailure,
     ServingModel,
-    TransactionAccessModeError,
-    TransactionAuthorityError,
-    TransactionOptionConflictError,
     prepare_model,
 )
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
@@ -120,16 +118,16 @@ def _assert_outcome(
         with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
             run()
     elif outcome == "option-conflict":
-        with raises_contextualized(TransactionOptionConflictError):
+        with raises_contextualized(UsageError, code="transaction-option-conflict"):
             run()
         assert _persisted_amount(verify_db, target) == target.baseline, (
             "a refused joining option dooms the boundary it tried to renegotiate"
         )
     elif outcome == "authority-mismatch":
-        with raises_contextualized(TransactionAuthorityError):
+        with raises_contextualized(UsageError, code="transaction-authority-mismatch"):
             run()
     elif outcome == "access-mode-mismatch":
-        with raises_contextualized(TransactionAccessModeError) as refused:
+        with raises_contextualized(UsageError, code="transaction-access-mode-mismatch") as refused:
             run()
         assert refused.value.code == "transaction-access-mode-mismatch"
         assert _persisted_amount(verify_db, target) == target.baseline, (
@@ -421,9 +419,9 @@ def _grade(
 
 
 _ABORT = BoundaryAbort("scripted")
-_OPTION_REFUSAL = TransactionOptionConflictError("refused")
-_AUTHORITY_REFUSAL = TransactionAuthorityError("refused")
-_ACCESS_MODE_REFUSAL = TransactionAccessModeError("refused")
+_OPTION_REFUSAL = UsageError("transaction-option-conflict", "refused")
+_AUTHORITY_REFUSAL = UsageError("transaction-authority-mismatch", "refused")
+_ACCESS_MODE_REFUSAL = UsageError("transaction-access-mode-mismatch", "refused")
 _ACQUISITION_FAULT = "connection-acquisition-failure"
 
 

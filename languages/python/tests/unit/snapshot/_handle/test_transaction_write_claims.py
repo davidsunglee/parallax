@@ -12,10 +12,9 @@ import pytest
 
 from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import INT64
+from parallax.core.base import INT64, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import Database, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -30,6 +29,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     BALANCE,
@@ -211,10 +211,9 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
         tx.delete(node)
         tx.amend(node.edit(balance=Decimal("125.00")))
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
+    with raises_contextualized(UsageError, code="write-evidence-already-claimed") as refusal:
         account_db(port).transact(fn)
-    assert refusal.value.code == "write-evidence-already-claimed"
-    assert refusal.value.object_key.primary_key == (("id", 1),)
+    assert " {'id': 1}: " in refusal.value.args[1]
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
@@ -227,7 +226,7 @@ def test_a_refused_amendment_after_a_deletion_of_its_state_leaves_the_deletion_e
         if representation == "typed":
             node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
             tx.delete(node)
-            with pytest.raises(WriteEvidenceError) as refusal:
+            with pytest.raises(UsageError) as refusal:
                 tx.amend(node.edit(balance=Decimal("125.00")))
         else:
             source = tx.wire.find(
@@ -235,7 +234,7 @@ def test_a_refused_amendment_after_a_deletion_of_its_state_leaves_the_deletion_e
             ).result()
             assert source is not None
             tx.wire.delete(source)
-            with pytest.raises(WriteEvidenceError) as refusal:
+            with pytest.raises(UsageError) as refusal:
                 tx.wire.amend(source, {"balance": "125.00"})
         assert refusal.value.code == "write-evidence-already-claimed"
 
@@ -307,11 +306,10 @@ def test_a_destruction_over_another_window_of_the_same_state_is_refused() -> Non
         tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
         tx.terminate(late, until=_UNTIL)
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
+    with raises_contextualized(UsageError, code="write-evidence-already-claimed"):
         own_root(
             Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
-    assert refusal.value.code == "write-evidence-already-claimed"
 
 
 def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable() -> None:
@@ -323,9 +321,8 @@ def test_a_refused_composition_leaves_the_earlier_write_pending_and_executable()
         early = _position_at(tx, _VALID_FROM)
         late = _position_at(tx, _OTHER_FROM)
         tx.amend(early.edit(value=Decimal("9.00")), until=_UNTIL)
-        with pytest.raises(WriteEvidenceError) as refusal:
+        with raises_code(UsageError, "write-evidence-already-claimed"):
             tx.terminate(late)
-        assert refusal.value.code == "write-evidence-already-claimed"
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -431,10 +428,9 @@ def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> No
         tx.delete(node)
         tx.amend(node.edit(name="Grace"))
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
+    with raises_contextualized(UsageError, code="write-evidence-already-claimed") as refusal:
         db_for(PERSON, port).transact(fn)
-    assert refusal.value.code == "write-evidence-already-claimed"
-    assert refusal.value.object_key.primary_key == (("id", 1),)
+    assert " {'id': 1}: " in refusal.value.args[1]
 
 
 def test_two_unversioned_updates_of_one_object_merge_into_one_write() -> None:

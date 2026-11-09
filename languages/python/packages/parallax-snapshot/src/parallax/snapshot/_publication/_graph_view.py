@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
-from typing import cast
+from typing import Final, cast
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.base import InternalError
@@ -18,6 +18,7 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery._page import (
     ABSENT,
     EntityState,
+    InvalidDataError,
     InvalidRootInput,
     PageRows,
     PageSchedule,
@@ -26,6 +27,7 @@ from parallax.core.read_delivery._page import (
     entity_state,
     exact_stored_equal,
     layout_order_key,
+    member_spelling,
     overlapping_reach,
     reach_into,
     same_stored_values,
@@ -34,33 +36,32 @@ from parallax.core.read_delivery._page import (
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan import ObjectKey
 
-__all__ = ["GraphView", "SnapshotConsistencyError"]
+__all__ = ["SNAPSHOT_FETCHED_ROW_CONFLICT", "GraphView", "fetched_row_refusal"]
 
-SNAPSHOT_FETCHED_ROW_CONFLICT = "snapshot-fetched-row-conflict"
+SNAPSHOT_FETCHED_ROW_CONFLICT: Final = "snapshot-fetched-row-conflict"
+"""Two fetched rows one root reached under one row key hold unequal stored
+values."""
 
 
-class SnapshotConsistencyError(RuntimeError):
-    """Two fetched rows one root reached under one row key hold unequal stored values."""
+def fetched_row_refusal(
+    object_key: ObjectKey,
+    coordinates: tuple[object, ...],
+    members: tuple[MemberIdentity, ...],
+    fetched_rows: tuple[tuple[int, int], tuple[int, int]],
+) -> InvalidDataError:
+    """The refusal of a root whose ``fetched_rows`` — each a ``(source,
+    ordinal)`` position — disagree on ``members`` under one row key.
 
-    __slots__ = ("code", "coordinates", "fetched_rows", "members", "object_key")
-
-    def __init__(
-        self,
-        *,
-        object_key: ObjectKey,
-        coordinates: tuple[object, ...],
-        members: tuple[MemberIdentity, ...],
-        fetched_rows: tuple[tuple[int, int], tuple[int, int]],
-    ) -> None:
-        super().__init__(
-            f"{object_key.entity.canonical}: fetched rows disagree "
-            f"({SNAPSHOT_FETCHED_ROW_CONFLICT})"
-        )
-        self.code = SNAPSHOT_FETCHED_ROW_CONFLICT
-        self.object_key = object_key
-        self.coordinates = coordinates
-        self.members = members
-        self.fetched_rows = fetched_rows
+    The message names the object, the milestone ``coordinates`` where there are
+    any, the members, and the two positions, never the stored values."""
+    at = f" at {coordinates!r}" if coordinates else ""
+    left, right = fetched_rows
+    return InvalidDataError(
+        SNAPSHOT_FETCHED_ROW_CONFLICT,
+        f"{object_key.entity.canonical} {dict(object_key.primary_key)!r}{at}: fetched rows "
+        f"{left} and {right} hold unequal stored values for "
+        f"{', '.join(member_spelling(member) for member in members)}",
+    )
 
 
 class _RowsIncompatible(Exception):
@@ -621,7 +622,7 @@ class GraphView:
             "canonical stored-values ordering retained no disagreement"
         )  # pragma: no cover
 
-    def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
+    def _conflict(self, left: int, right: int) -> InvalidDataError:
         rows = self._rows
         left_layout = rows.layouts[left]
         right_layout = rows.layouts[right]
@@ -661,11 +662,11 @@ class GraphView:
                 )
             )
         )
-        return SnapshotConsistencyError(
-            object_key=ObjectKey(left_layout.concrete, key_values),
-            coordinates=() if row_key is None else row_key.coordinates,
-            members=differing,
-            fetched_rows=cast("tuple[tuple[int, int], tuple[int, int]]", positions),
+        return fetched_row_refusal(
+            ObjectKey(left_layout.concrete, key_values),
+            () if row_key is None else row_key.coordinates,
+            differing,
+            cast("tuple[tuple[int, int], tuple[int, int]]", positions),
         )
 
     def _allocation(

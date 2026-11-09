@@ -40,10 +40,8 @@ from parallax.core import (
 )
 from parallax.core.base import UsageError
 from parallax.core.entity import UnloadedRelationshipError, model_of
-from parallax.core.execution import KeyedWriteValueError
 from parallax.core.object_query import TX_TIME
 from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import (
     ScopedDatabase,
     SharingScope,
@@ -433,20 +431,16 @@ def test_a_shared_document_from_another_attempt_is_refused_at_the_write_door(
         db.transact(lambda tx: tx.wire.find(_REPEATED, sharing_scope="page").results()),
     )
 
-    with raises_contextualized(WriteEvidenceError) as refused:
+    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
         db.transact(lambda tx: tx.wire.amend(published[0], {"total": "6.00"}))
-
-    assert refused.value.code == "write-evidence-unavailable"
 
 
 def test_a_shared_node_from_another_attempt_is_refused_at_the_write_door(profile_run: Any) -> None:
     db = _db(profile_run)
     published = db.transact(lambda tx: tx.find(_REPEATED, sharing_scope="page").results())
 
-    with raises_contextualized(WriteEvidenceError) as refused:
+    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
         db.transact(lambda tx: tx.amend(published[0].edit(total=Decimal("6.00"))))
-
-    assert refused.value.code == "write-evidence-unavailable"
 
 
 def test_valid_roots_share_beside_an_invalid_one(profile_run: Any) -> None:
@@ -498,9 +492,8 @@ def test_an_invalid_nodes_write_is_refused_and_its_neighbours_admitted(profile_r
             "list[Any]", tx.find(_BESIDE_AN_INVALID_ROOT, sharing_scope="page").checked().results()
         )
         for edited in (invalid.data.edit(note="moved"), invalid.data.buyer.edit(name="Grace")):
-            with pytest.raises(KeyedWriteValueError) as refused:
+            with raises_code(UsageError, "write-value-not-stored"):
                 tx.amend(edited)
-            assert refused.value.code == "write-value-not-stored"
         tx.amend(_by_id(first.buyer.purchases, _INVALID).edit(note="moved"))
         tx.amend(first.buyer.edit(name="Grace"))
 

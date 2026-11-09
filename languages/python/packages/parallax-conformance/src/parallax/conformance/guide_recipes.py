@@ -305,7 +305,8 @@ def customers_and_orders_from_one_snapshot(
 
 
 def amend_a_value_read_earlier(db: ScopedDatabase, customer: Customer, email: str) -> None:
-    """Refused with ``WriteEvidenceError``: ``customer`` was read outside this transaction."""
+    """Refused with ``write-evidence-unavailable``: ``customer`` was read outside this
+    transaction."""
     db.transact(lambda tx: tx.amend(customer.edit(email=email)))
 
 
@@ -567,7 +568,7 @@ def correct_a_price_as_recorded_then(
     end: dt.datetime,
     recorded_at: dt.datetime,
 ) -> None:
-    """Refused with ``TransactionTimePinReadOnlyError``: the value was read at a past
+    """Refused with ``transaction-time-pin-read-only``: the value was read at a past
     Transaction Time."""
 
     def correct(tx: TxnContext) -> None:
@@ -908,7 +909,7 @@ def place_two_orders(db: ScopedDatabase, first: Order, second: Order) -> tuple[b
 
 
 def place_two_orders_together(db: ScopedDatabase, first: Order, second: Order) -> tuple[bool, bool]:
-    """Refused with ``TransactionOptionConflictError``: each check names Serializable, and
+    """Refused with ``transaction-option-conflict``: each check names Serializable, and
     this transaction runs at the scope's default level."""
     return db.transact(lambda tx: place_two_orders(db, first, second))
 

@@ -20,7 +20,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import models
-from parallax.core import Edge, Pin, UndeclaredAxisError, read_planning
+from parallax.core import Edge, Pin, read_planning
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, UsageError
@@ -60,12 +60,12 @@ from parallax.core.predicate._resolved import (
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     Bitemporal,
-    TemporalReadError,
     TemporalShape,
     TimeInterval,
     inject_resolved_as_of,
     inject_sourced_as_of,
     milestone_edge,
+    milestone_edge_or_none,
     perspective_terms,
     propagated_selections,
     resolve_perspective,
@@ -164,13 +164,15 @@ def test_temporal_injection_rejects_incomplete_resolved_products() -> None:
         ),
     )
 
-    with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
+    with raises_code(
+        UsageError, "temporal-read-invalid", match="temporal axis member is undeclared"
+    ):
         inject_resolved_as_of(
             ResolvedConstant(True),
             (ResolvedLatestSelection(axis),),
             without_end,
         )
-    with pytest.raises(TemporalReadError, match="not a managed datetime"):
+    with raises_code(UsageError, "temporal-read-invalid", match="not a managed datetime"):
         resolved_query_pin((ResolvedAsOfSelection(axis, 1),))
     with pytest.raises(AssertionError):
         inject_resolved_as_of(
@@ -495,13 +497,13 @@ def test_a_transaction_time_edge_reads_one_start_and_declares_no_valid_time() ->
     assert edge.tx_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time_or_none == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.valid_time_or_none is None
-    with pytest.raises(UndeclaredAxisError, match="valid_time"):
+    with raises_code(UsageError, "temporal-axis-undeclared", match="valid_time"):
         _ = edge.valid_time
 
 
 def test_edge_tx_time_accessor_raises_when_undeclared() -> None:
     edge = Edge(valid_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    with pytest.raises(UndeclaredAxisError, match="tx_time"):
+    with raises_code(UsageError, "temporal-axis-undeclared", match="tx_time"):
         _ = edge.tx_time
 
 
@@ -517,7 +519,7 @@ def test_edge_equality_and_hashing() -> None:
 
 def test_a_non_temporal_family_has_no_edge_and_reads_nothing() -> None:
     rows = _AxisCells(txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    with pytest.raises(TemporalReadError, match="Non-Temporal family"):
+    with raises_code(UsageError, "temporal-read-invalid", match="Non-Temporal family"):
         milestone_edge(_shape(ORDERS), rows, "milestone")
     assert rows.reads == []
 
@@ -531,13 +533,24 @@ def test_a_start_that_is_not_an_instant_is_refused_under_the_family_roots_name(
     stored: object,
 ) -> None:
     starts = {} if stored is _UNREAD else {"txStart": stored}
-    with pytest.raises(TemporalReadError, match=r"Balance\.txStart: .*not a timestamp instant"):
+    with raises_code(
+        UsageError, "temporal-read-invalid", match=r"Balance\.txStart: .*not a timestamp instant"
+    ):
         milestone_edge(_shape(BALANCE), _AxisCells(**starts), "milestone")
+
+
+def test_an_undecodable_edge_reads_as_none_and_an_invalid_instant_still_refuses() -> None:
+    # Where no temporal edge decoded a judged state reports none; an instant the
+    # timestamp space refuses is a different refusal, and it propagates.
+    assert milestone_edge_or_none(_shape(BALANCE), _AxisCells(txStart="noon"), "m") is None
+    naive = _AxisCells(txStart=dt.datetime(2024, 6, 1))
+    with raises_code(UsageError, "instant-invalid", match="naive datetime"):
+        milestone_edge_or_none(_shape(BALANCE), naive, "m")
 
 
 def test_a_bitemporal_edge_refuses_a_missing_valid_time_start() -> None:
     rows = _AxisCells(txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    with pytest.raises(TemporalReadError, match=r"Position\.validStart"):
+    with raises_code(UsageError, "temporal-read-invalid", match=r"Position\.validStart"):
         milestone_edge(_shape(POSITION), rows, "milestone")
 
 
@@ -579,7 +592,7 @@ def test_a_predecessor_rows_edge_normalizes_an_offset_instant_to_utc() -> None:
 
 
 def test_a_predecessor_row_missing_its_start_member_is_refused() -> None:
-    with pytest.raises(TemporalReadError, match="not a timestamp instant"):
+    with raises_code(UsageError, "temporal-read-invalid", match="not a timestamp instant"):
         milestone_edge(_shape(BALANCE), PredecessorRow({"id": 1}), None)
 
 
@@ -696,7 +709,7 @@ def test_an_empty_or_reversed_interval_is_refused_with_a_plain_value_error(
 ) -> None:
     with pytest.raises(ValueError, match="start < end") as caught:
         TimeInterval(MAR, end)
-    assert not isinstance(caught.value, TemporalReadError)
+    assert not isinstance(caught.value, UsageError)
 
 
 def test_intervals_are_immutable_values_equal_by_their_endpoints() -> None:
@@ -1072,7 +1085,9 @@ _NOT_ENDPOINTS = [
 @pytest.mark.parametrize("stored", _NOT_ENDPOINTS)
 def test_a_valid_time_start_that_is_not_an_instant_is_refused_by_name(stored: object) -> None:
     cells = {"validEnd": INFINITY} | ({} if stored is _UNREAD else {"validStart": stored})
-    with pytest.raises(TemporalReadError, match=r"Position\.validStart: .*interval endpoint"):
+    with raises_code(
+        UsageError, "temporal-read-invalid", match=r"Position\.validStart: .*interval endpoint"
+    ):
         valid_time_coverage(_shape(POSITION), _AxisCells(**cells), "milestone")
 
 
@@ -1083,7 +1098,9 @@ def test_a_valid_time_end_that_is_neither_an_instant_nor_infinity_is_refused_by_
     stored: object,
 ) -> None:
     cells = {"validStart": JAN} | ({} if stored is _UNREAD else {"validEnd": stored})
-    with pytest.raises(TemporalReadError, match=r"Position\.validEnd: .*interval endpoint"):
+    with raises_code(
+        UsageError, "temporal-read-invalid", match=r"Position\.validEnd: .*interval endpoint"
+    ):
         valid_time_coverage(_shape(POSITION), _AxisCells(**cells), "milestone")
 
 
@@ -1094,7 +1111,7 @@ def test_an_empty_or_reversed_stored_coverage_is_refused_by_the_interval(
     rows = _AxisCells(validStart=MAR, validEnd=end)
     with pytest.raises(ValueError, match="start < end") as caught:
         valid_time_coverage(_shape(POSITION), rows, "milestone")
-    assert not isinstance(caught.value, TemporalReadError)
+    assert not isinstance(caught.value, UsageError)
 
 
 def test_coverage_is_computed_on_demand_and_retains_only_its_endpoints() -> None:
@@ -1283,7 +1300,7 @@ def test_perspective_construction_refuses_a_coordinate_that_is_not_a_managed_dat
         ResolvedAsOfSelection(_source_axis(TemporalDimension.TRANSACTION_TIME), 1),
     )
 
-    with pytest.raises(TemporalReadError, match="not a managed datetime"):
+    with raises_code(UsageError, "temporal-read-invalid", match="not a managed datetime"):
         resolve_perspective(LEASE, model=_LEASE_MODEL, root_selections=selections)
 
 

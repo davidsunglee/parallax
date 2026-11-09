@@ -8,7 +8,11 @@ from typing import cast, final
 from weakref import WeakValueDictionary
 
 from parallax.core import concurrency
-from parallax.core._execution._unit_work._errors import WriteEvidenceError
+from parallax.core._execution._unit_work._errors import (
+    WRITE_EVIDENCE_CONSUMED,
+    WRITE_EVIDENCE_UNAVAILABLE,
+    write_evidence_refusal,
+)
 from parallax.core._execution._unit_work._write_ownership import (
     InsertionComposition,
     KeyedWriteRefusalAdvice,
@@ -292,7 +296,8 @@ class SourceAuthority:
     ) -> SettledEvidence | None:
         """What a keyed write of ``target`` against existing state settles
         against, read off its source's ``read_evidence``, or
-        :class:`~parallax.core._execution._unit_work._errors.WriteEvidenceError`
+        a :class:`~parallax.core.base.UsageError` with a
+        :data:`~parallax.core._execution._unit_work._errors.WriteEvidenceCode`
         where this attempt cannot use it.
 
         One resolution serves the address, the gate, the version advance, and
@@ -322,18 +327,15 @@ class SourceAuthority:
         restore a state the attempt itself replaced.
         """
         self._lifetime.ensure_open()
-        identity = target.identity.canonical
         if read_evidence is None or read_evidence.participation is not self._participation:
-            raise WriteEvidenceError(
-                code="write-evidence-unavailable",
-                message=(
-                    f"{identity}: a keyed write is licensed only by a read of THIS transaction "
-                    "attempt, and the value handed to the verb came from no such read — a "
-                    "standalone read, a read-only transaction, and an earlier attempt license "
-                    "nothing here; read the row through this transaction and write what that "
-                    "read returned, or state the revision you observed through the `*_if` verb"
-                ),
-                object_key=object_key,
+            raise write_evidence_refusal(
+                WRITE_EVIDENCE_UNAVAILABLE,
+                object_key,
+                "a keyed write is licensed only by a read of THIS transaction "
+                "attempt, and the value handed to the verb came from no such read — a "
+                "standalone read, a read-only transaction, and an earlier attempt license "
+                "nothing here; read the row through this transaction and write what that "
+                "read returned, or state the revision you observed through the `*_if` verb",
             )
         observation = read_evidence.observation
         settled = settled_evidence(
@@ -347,39 +349,33 @@ class SourceAuthority:
             self._versioning.effective_strategy(target.identity, self._preference) == "optimistic"
             and observation is None
         ):
-            raise WriteEvidenceError(
-                code="write-evidence-unavailable",
-                message=(
-                    f"{identity}: the Optimistic strategy gates this write on the state its "
-                    "source observed, and the value handed to the verb carries no retained "
-                    "observation; read the row through a `find` and write what it returned"
-                ),
-                object_key=object_key,
+            raise write_evidence_refusal(
+                WRITE_EVIDENCE_UNAVAILABLE,
+                object_key,
+                "the Optimistic strategy gates this write on the state its "
+                "source observed, and the value handed to the verb carries no retained "
+                "observation; read the row through a `find` and write what it returned",
             )
         if settled is None:
             return None
         resolved = self._resolve_source(read_evidence)
         if resolved is _SourceRefusal.STALE:
-            raise WriteEvidenceError(
-                code="write-evidence-consumed",
-                message=(
-                    f"{identity}: this transaction has since changed the state this value "
-                    "observed, so its evidence no longer describes the stored row; read the row "
-                    "again and write what that read returns"
-                ),
-                object_key=object_key,
+            raise write_evidence_refusal(
+                WRITE_EVIDENCE_CONSUMED,
+                object_key,
+                "this transaction has since changed the state this value "
+                "observed, so its evidence no longer describes the stored row; read the row "
+                "again and write what that read returns",
             )
         if resolved is _SourceRefusal.ENDED:
-            raise WriteEvidenceError(
-                code="write-evidence-consumed",
-                message=(
-                    f"{identity}: a write this transaction completed left nothing of what this "
-                    "value's source read — a deletion of its object, or the coverage at the "
-                    "Valid-Time instant it was read at — so the source authorizes no further "
-                    "write, whatever was inserted there since; read the row again and write "
-                    "what that read returns"
-                ),
-                object_key=object_key,
+            raise write_evidence_refusal(
+                WRITE_EVIDENCE_CONSUMED,
+                object_key,
+                "a write this transaction completed left nothing of what this "
+                "value's source read — a deletion of its object, or the coverage at the "
+                "Valid-Time instant it was read at — so the source authorizes no further "
+                "write, whatever was inserted there since; read the row again and write "
+                "what that read returns",
             )
         return resolved
 

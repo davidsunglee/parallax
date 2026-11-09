@@ -2,38 +2,34 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.base import UsageError
 from parallax.core.write_plan.keys import ObjectKey
 
 __all__ = [
-    "KEYED_WRITE_VALUE_CODES",
-    "WRITE_EVIDENCE_CODES",
-    "KeyedWriteValueError",
-    "UnobservedVersionError",
-    "WriteEvidenceError",
-    "WriteEvidenceErrorCode",
+    "VERSION_UNOBSERVED",
+    "WRITE_EVIDENCE_ALREADY_CLAIMED",
+    "WRITE_EVIDENCE_CONSUMED",
+    "WRITE_EVIDENCE_INSERTED",
+    "WRITE_EVIDENCE_UNAVAILABLE",
+    "WRITE_VALUE_ALREADY_STORED",
+    "WRITE_VALUE_FOREIGN_LIFECYCLE",
+    "WRITE_VALUE_NOT_STORED",
+    "KeyedWriteValueCode",
+    "WriteEvidenceCode",
+    "write_evidence_refusal",
 ]
 
+VERSION_UNOBSERVED: Final = "version-unobserved"
+"""A keyed update or delete of an explicitly versioned row reached settlement
+carrying no observed version, refused before any DML runs under either
+Effective Concurrency Strategy.
 
-class UnobservedVersionError(RuntimeError):
-    """A keyed update or delete of an explicitly versioned row reached
-    settlement carrying no observed version, raised before any DML runs under
-    either Effective Concurrency Strategy.
+The new version is computed from the observed one, and the framework never
+issues an implicit resolving read on behalf of a keyed write, so this is a
+read-before-write programming error.
+"""
 
-    The new version is computed from the observed one, and the framework never
-    issues an implicit resolving read on behalf of a keyed write, so this is a
-    read-before-write programming error.
-    """
-
-    def __init__(self, entity: EntityIdentity) -> None:
-        super().__init__(
-            f"{entity.name}: a keyed update/delete of a versioned row requires the version its "
-            "source observed (a prior find) — the framework never issues an implicit "
-            "resolving read on behalf of a keyed write"
-        )
-
-
-type WriteEvidenceErrorCode = Literal[
+type WriteEvidenceCode = Literal[
     "write-evidence-unavailable",
     "write-evidence-consumed",
     "write-evidence-already-claimed",
@@ -50,80 +46,47 @@ or a write already buffered in this unit
 of work claimed the scope this one settles against, for an intent this one
 cannot join. The fourth refuses a caller's own condition on an
 object this attempt inserted, which only that insertion's source or a read
-addresses. A conflict the database discovers later is a different thing
-entirely and keeps its own flush-time classification.
+addresses.
+
+Each is raised synchronously at the verb, before any buffering and before any
+database access, and its message names the object the write addressed. A
+conflict the database discovers later is a different thing entirely and keeps
+its own flush-time classification.
 """
 
-WRITE_EVIDENCE_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "write-evidence-unavailable",
-        "write-evidence-consumed",
-        "write-evidence-already-claimed",
-        "write-evidence-inserted",
-    }
-)
-"""The complete set of codes :class:`WriteEvidenceError` carries."""
+WRITE_EVIDENCE_UNAVAILABLE: Final = "write-evidence-unavailable"
+WRITE_EVIDENCE_CONSUMED: Final = "write-evidence-consumed"
+WRITE_EVIDENCE_ALREADY_CLAIMED: Final = "write-evidence-already-claimed"
+WRITE_EVIDENCE_INSERTED: Final = "write-evidence-inserted"
 
 
-class WriteEvidenceError(LookupError):
-    """A keyed write verb was handed a source whose write evidence it cannot use.
-
-    A ``LookupError`` because every code reports that the evidence this write
-    needs is not there for it to use: never recorded for this source, recorded
-    and no longer reaching a protected state, or still live but claimed by an
-    intent this unit of work
-    already buffered at the scope this write settles against, which this one
-    cannot join. ``object_key`` is the object the write addressed, always
-    visible so a caller can say WHICH write was refused; the Read Evidence and the
-    claim scope behind it stay implementation state.
-
-    Raised synchronously at the verb, before any buffering and before any
-    database access. A conflict the database discovers later is a different
-    thing entirely and keeps its own flush-time classification.
-    """
-
-    def __init__(
-        self, *, code: WriteEvidenceErrorCode, message: str, object_key: ObjectKey
-    ) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code: Final = code
-        self.message: Final = message
-        self.object_key: Final = object_key
+def write_evidence_refusal(
+    code: WriteEvidenceCode, object_key: ObjectKey, reason: str
+) -> UsageError:
+    """The write-evidence refusal of a write addressing ``object_key``, which
+    the message names so a caller can say WHICH write was refused."""
+    return UsageError(
+        code,
+        f"{object_key.entity.canonical} {dict(object_key.primary_key)!r}: {reason}",
+    )
 
 
-KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "write-value-not-stored",
-        "write-value-already-stored",
-        "write-value-foreign-lifecycle",
-    }
-)
-"""The complete keyed-write value refusal vocabulary (`m-unit-work` "Write value
-provenance"). The three answer to the three
+type KeyedWriteValueCode = Literal[
+    "write-value-not-stored",
+    "write-value-already-stored",
+    "write-value-foreign-lifecycle",
+]
+"""The keyed-write value refusals (`m-unit-work` "Write value provenance").
+
+The three answer to the three
 :data:`~parallax.core._execution._keyed_writes.Provenance` answers — no managed
 source published this value, this verb's own source did, another managed
-source did — so a refused value carries exactly one of them."""
+source did — so a refused value carries exactly one of them. The value itself
+is never retained: what the refusal is about is which source published it, and
+the message names the Entity the write addressed and the verb that does accept
+the value.
+"""
 
-
-class KeyedWriteValueError(ValueError):
-    """A keyed write verb was handed a value whose PROVENANCE it does not accept.
-
-    A ``ValueError`` for
-    :class:`~parallax.core.execution.TransactionTimePinReadOnlyError`'s reason,
-    which is the sibling this shares a vocabulary with: both report a neutral
-    application-lifecycle refusal of an argument a caller supplied, so a caller
-    catching one kind of refused write value catches the other the same way.
-
-    ``code`` is the neutral `m-unit-work` refusal and ``identity`` the Entity
-    Identity the write addressed. The value itself is never retained: what the
-    refusal is about is which source published it, and the message names the verb
-    that does accept it.
-    """
-
-    def __init__(self, *, code: str, message: str, identity: EntityIdentity) -> None:
-        if code not in KEYED_WRITE_VALUE_CODES:
-            raise ValueError(f"{code!r} is not a keyed write value code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-        self.identity = identity
+WRITE_VALUE_NOT_STORED: Final = "write-value-not-stored"
+WRITE_VALUE_ALREADY_STORED: Final = "write-value-already-stored"
+WRITE_VALUE_FOREIGN_LIFECYCLE: Final = "write-value-foreign-lifecycle"

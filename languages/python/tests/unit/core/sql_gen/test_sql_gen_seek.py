@@ -18,7 +18,7 @@ from typing import Final
 import pytest
 
 from parallax.core import continuation, read_planning
-from parallax.core.base import INFINITY, INFINITY_LITERAL, StructuredDocument
+from parallax.core.base import INFINITY, INFINITY_LITERAL, StructuredDocument, UsageError
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
@@ -39,8 +39,8 @@ from parallax.core.sql_gen._context import LoweredStatement
 from parallax.core.sql_gen._inheritance import SingleTableReadPlan, TpcsUnionReadPlan
 from parallax.core.sql_gen._planning import SharedSourceRef
 from parallax.core.sql_gen._seek import lowered_terms
-from parallax.core.wire import WireEncodingError
 from parallax.descriptor import _records
+from tests._support.errors import raises_code
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
@@ -771,7 +771,7 @@ def test_a_direct_column_carrier_outside_its_declared_type_has_no_reported_form(
     plan = _planned(ORDERS, "Order", OrderKey(attr=_ORDER_NAME))
     node = plan.after(ContinuationCoordinate((object(), 1)), limit=2)
     statement = _lowered(ORDERS, node)
-    with pytest.raises(WireEncodingError):
+    with raises_code(UsageError, "wire-encoding-failed"):
         statement.wire_binds()
 
 

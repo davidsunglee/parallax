@@ -43,7 +43,6 @@ from parallax.core.db_port import (
     ConnectionAcquisitionError,
     DatabaseConnection,
     Invalidated,
-    InvalidAuthorizationError,
     MappingRow,
     PipelineStatement,
     ReleaseUnconfirmed,
@@ -665,7 +664,7 @@ def test_controlled_role_restoration_failure_reports_invalidation_and_retires() 
 def test_controlled_runtime_rejects_a_foreign_authorization_value() -> None:
     runtime = _adapter(_FakeConnection()).open()
 
-    with pytest.raises(InvalidAuthorizationError, match="requires a PostgresRole"):
+    with raises_code(UsageError, "authorization-invalid", match="requires a PostgresRole"):
         runtime.principal_source(cast("Any", "tenant_reader"))
 
 

@@ -5,12 +5,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from parallax.conformance.story_models import Account
+from parallax.core import UsageError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
 from parallax.core.execution import (
+    TRANSACTION_OPTION_CONFLICT,
     AdaptiveBackoff,
     RetryPolicy,
-    TransactionOptionConflictError,
     TxnOptions,
 )
 from parallax.snapshot import TxnContext, connect
@@ -70,7 +71,9 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
             refused = False
             try:
                 db.transact(joined_body, isolation="repeatable_read")
-            except TransactionOptionConflictError:
+            except UsageError as refusal:
+                if refusal.code != TRANSACTION_OPTION_CONFLICT:
+                    raise
                 refused = True
             return ResolvedOptions(
                 inherited=inherited,
@@ -118,7 +121,9 @@ def a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole(
             refused = False
             try:
                 db.transact(joined_body, retry=RetryPolicy(max_retries=1, backoff=tuned.backoff))
-            except TransactionOptionConflictError:
+            except UsageError as refusal:
+                if refusal.code != TRANSACTION_OPTION_CONFLICT:
+                    raise
                 refused = True
             return ResolvedRetryPolicies(
                 inherited=inherited,

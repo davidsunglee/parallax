@@ -11,7 +11,9 @@ import psycopg
 from psycopg.rows import TupleRow, tuple_row
 
 from parallax.conformance._database_control import TerminationReport
+from parallax.core.base import UsageError
 from parallax.core.db_port import (
+    AUTHORIZATION_INVALID,
     AccessMode,
     CleanupCode,
     CleanupIssue,
@@ -21,7 +23,6 @@ from parallax.core.db_port import (
     ConnectionContextSource,
     DatabaseConnection,
     Invalidated,
-    InvalidAuthorizationError,
     ReleaseUnconfirmed,
     Returned,
     Route,
@@ -438,8 +439,8 @@ class ControlledRuntime:
 
     def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
         if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the boundary
-            raise InvalidAuthorizationError(
-                "PostgreSQL principal execution requires a PostgresRole"
+            raise UsageError(
+                AUTHORIZATION_INVALID, "PostgreSQL principal execution requires a PostgresRole"
             )
         return _ControlledContextSource(self, authorization)
 

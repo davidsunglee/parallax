@@ -49,6 +49,7 @@ from parallax.core.base import (
     Decimal,
     String,
     TemporalBound,
+    UsageError,
 )
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_error import DatabaseError
@@ -60,7 +61,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
     RetryPolicy,
-    TransactionTimePinReadOnlyError,
     TxnOptions,
 )
 from parallax.core.execution_lifecycle import DatabaseCallStarted
@@ -81,9 +81,7 @@ from parallax.core.unit_work import (
     ReadAuthorizedWrite,
     RetainedObservation,
     UnitOfWork,
-    UnobservedVersionError,
     WriteEffectCode,
-    WriteEvidenceError,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -1362,7 +1360,7 @@ def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error(
     with pytest.raises(UnclassifiedEngineError, match="cannot admit this write") as raised:
         scenario.compile_scenario_case(case, "postgres")
     refusal = raised.value.__cause__
-    assert isinstance(refusal, WriteEvidenceError)
+    assert isinstance(refusal, UsageError)
     assert refusal.code == "write-evidence-already-claimed"
 
 
@@ -1453,9 +1451,11 @@ def test_a_write_its_public_verb_refuses_never_reaches_the_port(
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    with pytest.raises(WriteEvidenceError) as refused:
+    with pytest.raises(UnclassifiedEngineError) as raised:
         scenario.run_scenario_case(case, port)
-    assert refused.value.code == "write-evidence-already-claimed"
+    refusal = raised.value.__cause__
+    assert isinstance(refusal, UsageError)
+    assert refusal.code == "write-evidence-already-claimed"
     assert port.writes == []
 
 
@@ -3822,7 +3822,7 @@ def test_a_compiled_versioned_write_no_evidence_licenses_is_refused_when_submitt
         UnclassifiedEngineError, match="requires the version its source observed"
     ) as raised:
         scenario.compile_write_sequence_case(case, "postgres")
-    assert isinstance(raised.value.__cause__, UnobservedVersionError)
+    assert isinstance(raised.value.__cause__, UsageError)
     assert [named_members(instruction.rows[0])["id"] for instruction in submitted] == [1]
     assert admitted == []
 
@@ -4468,8 +4468,11 @@ def test_a_historical_read_never_replaces_a_current_source(
     port = FakeWritePort(read_script=[[row], [old]])
 
     if on == 1:
-        with pytest.raises(TransactionTimePinReadOnlyError):
+        with pytest.raises(UnclassifiedEngineError) as raised:
             scenario.run_scenario_case(case, port)
+        refusal = raised.value.__cause__
+        assert isinstance(refusal, UsageError)
+        assert refusal.code == "transaction-time-pin-read-only"
         assert port.writes == [] and port.rollbacks == 1 and port.commits == 0
     else:
         run = scenario.run_scenario_case(case, port)

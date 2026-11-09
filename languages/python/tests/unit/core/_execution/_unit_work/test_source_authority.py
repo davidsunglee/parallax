@@ -43,7 +43,6 @@ from parallax.core.unit_work import (
     RetainedObservation,
     TransactionSettings,
     UnitOfWork,
-    WriteEvidenceError,
     admitted_write,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
@@ -122,7 +121,7 @@ def _resolved(
         return authority.resolve_read_evidence(
             _entity(meta, key.entity.name), source, mutation="amend", object_key=key
         )
-    except WriteEvidenceError as refused:
+    except UsageError as refused:
         return refused.code
 
 

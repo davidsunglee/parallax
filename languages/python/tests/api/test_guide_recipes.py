@@ -146,9 +146,6 @@ from parallax.core.execution import (
     AdaptiveBackoff,
     ExecutionFailure,
     RetryPolicy,
-    TransactionAccessModeError,
-    TransactionOptionConflictError,
-    TransactionTimePinReadOnlyError,
     TxnOptions,
 )
 from parallax.core.execution_lifecycle import (
@@ -168,7 +165,6 @@ from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ROLLBACK_ONLY,
     WRITE_INSTRUCTION_INVALID,
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from parallax.postgres import PostgresAdapter
@@ -183,6 +179,7 @@ from parallax.snapshot import (
     pin_of,
 )
 from tests._support.db_port import ConnectsAsItself, projected_row
+from tests._support.errors import raises_code
 from tests._support.retry import TINY_BACKOFF
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
@@ -525,7 +522,7 @@ def test_only_a_read_in_the_writing_transaction_licenses_an_amendment(profile_ru
     with pytest.raises(ExecutionFailure) as refused:
         amend_a_value_read_earlier(db, shown, "ada@example.net")
 
-    assert isinstance(refused.value.cause, WriteEvidenceError)
+    assert isinstance(refused.value.cause, UsageError)
     assert refused.value.cause.code == "write-evidence-unavailable"
     assert look_up_a_customer(db, 1).email == "ada@example.com"
 
@@ -970,7 +967,7 @@ def test_a_value_read_at_a_past_transaction_time_cannot_be_corrected(profile_run
     with pytest.raises(ExecutionFailure) as refused:
         correct_a_price_as_recorded_then(db, "TEA-1", Decimal("9.50"), _JAN, _APR, _T2)
 
-    assert isinstance(refused.value.cause, TransactionTimePinReadOnlyError)
+    assert isinstance(refused.value.cause, UsageError)
     assert refused.value.cause.code == "transaction-time-pin-read-only"
     assert _price_milestones(db, "TEA-1") == stored
 
@@ -1157,7 +1154,7 @@ def test_a_writable_call_inside_a_read_only_callback_is_refused_and_leaves_it_us
     _seed_customers(db)
 
     def read(rtx: ReadOnlyTxnContext) -> str:
-        with pytest.raises(TransactionAccessModeError):
+        with raises_code(UsageError, "transaction-access-mode-mismatch"):
             db.transact(lambda tx: None)
         return rtx.find(Customer.where(Customer.id == 1)).result().name
 
@@ -1558,7 +1555,7 @@ def test_a_join_must_name_the_options_its_transaction_resolved(profile_run: Any)
     with pytest.raises(ExecutionFailure) as refused:
         place_two_orders_together(db, _order(20, 1, "50.00"), _order(21, 1, "60.00"))
 
-    assert isinstance(refused.value.cause, TransactionOptionConflictError)
+    assert isinstance(refused.value.cause, UsageError)
     assert sorted(order.id for order in orders_of(db, 1)) == [10, 11]
 
     # The second check sees the first order, pending in the same transaction,
@@ -2173,7 +2170,7 @@ def test_a_join_naming_another_level_runs_through_the_shipped_surface() -> None:
     with pytest.raises(ExecutionFailure) as refused:
         place_two_orders_together(db, _order(13, 1, "50.00"), _order(14, 1, "60.00"))
 
-    assert isinstance(refused.value.cause, TransactionOptionConflictError)
+    assert isinstance(refused.value.cause, UsageError)
 
 
 def test_a_family_stored_per_subtype_runs_through_the_shipped_surface() -> None:

@@ -30,10 +30,10 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Order
+from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.execution import (
-    QueryTargetError,
     ServingModel,
     prepare_model,
 )
@@ -69,6 +69,7 @@ from tests._support.db_port import (
     Transact,
     Write,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT
@@ -220,7 +221,7 @@ def test_a_stream_refused_at_the_gate_opens_no_root() -> None:
     # call, exactly as it is for a find.
     recorder = RecordingLifecycleProvider()
     stream = _accounts(ScriptedAdapter(), recorder).stream(_active_orders())
-    with pytest.raises(QueryTargetError), stream:
+    with raises_code(UsageError, "query-target-not-in-model"), stream:
         pass  # pragma: no cover - entering is what raises
     assert recorder.roots == ()
 

@@ -4,6 +4,7 @@ from collections.abc import Callable, Generator, Iterator
 from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.core import continuation, read_planning
+from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -11,17 +12,18 @@ from parallax.core.execution_lifecycle._activity import (
     StreamActivity,
     StreamBatchActivity,
 )
-from parallax.core.metamodel import AttributeIdentity, Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import QueryClauses
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.read_delivery._delivery import temporal_shape
 from parallax.core.read_delivery._page import (
-    INTERPRETER_OWNED_ATTRIBUTES,
+    CONTINUATION_ORDER_NOT_TOTAL,
     InvalidData,
+    InvalidDataError,
     invalid_result_refusal,
 )
 from parallax.core.read_delivery._page_reader import StreamPageResult
-from parallax.core.read_delivery._paging import At, PagingPlan
+from parallax.core.read_delivery._paging import At, PagingPlan, TieFound
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.temporal_read import (
     Pin,
@@ -31,11 +33,10 @@ from parallax.core.temporal_read import (
 )
 
 __all__ = [
-    "StreamContinuationError",
+    "STREAM_STATE_INVALID",
     "StreamDelivery",
     "StreamRead",
     "StreamScope",
-    "StreamStateError",
     "check_batch_size",
 ]
 
@@ -138,20 +139,20 @@ def check_batch_size(batch_size: int) -> None:
         raise ValueError(f"batch_size requires a positive built-in int (got {batch_size!r})")
 
 
-class StreamStateError(RuntimeError):
-    """A stream was asked for something its own rules refuse.
+STREAM_STATE_INVALID: Final = "stream-state-invalid"
+"""A stream was asked for something its own rules refuse.
 
-    Every case is a rule about the stream rather than about the data: entering
-    one twice, taking a second view or a second pass, or reaching one outside
-    its scope. The message names the rule; nothing about the stream's internals
-    is reported.
-    """
+Every case is a rule about the stream rather than about the data: entering one
+twice, taking a second view or a second pass, or reaching one outside its
+scope. The message names the rule; nothing about the stream's internals is
+reported.
+"""
 
 
-class StreamContinuationError(RuntimeError):
-    """A delivery reached two roots the database placed at ONE coordinate.
+def _continuation_tie_refusal(tie: TieFound) -> InvalidDataError:
+    """The refusal of a delivery that reached two roots stored at ONE coordinate.
 
-    Deliberately not a :class:`StreamStateError`: nothing about the stream was
+    Not a :data:`STREAM_STATE_INVALID` refusal: nothing about the stream was
     misused, and nothing the caller can do differently avoids it. The
     Continuation Order is total over storage the model describes, so what this
     reports is storage that has lost a constraint the order rests on — and a
@@ -159,67 +160,19 @@ class StreamContinuationError(RuntimeError):
     loop, none of which a delivery may do.
 
     Every root before the tie is published first, so this arrives after the
-    maximal strictly ordered prefix and :attr:`ordinal` is the position of the
-    first root that could not be delivered. :attr:`terms` is the order that
-    turned out not to be total, and :attr:`coordinate` is an inert copy of where
-    that root stood — readable and comparable, with no public constructor
-    turning it back into pagination authority, and kept out of the message, the
-    default repr, lifecycle events, and default logging. A one-root lookahead
-    proves that at LEAST two roots tie, so no count of them is reported.
-
-    Frozen by hand for :class:`InvalidDataError`'s own reason: a frozen
-    dataclass would also refuse :meth:`add_note`, and ``__slots__`` restricts
-    nothing on a :class:`BaseException`.
+    maximal strictly ordered prefix, and the message names the order that turned
+    out not to be total and the ordinal of the first root that could not be
+    delivered. A one-root lookahead proves that at LEAST two roots tie, so no
+    count of them is reported.
     """
-
-    code: Final[str] = "snapshot-stream-continuation-order-not-total"
-
-    _terms: tuple[AttributeIdentity, ...]
-    _coordinate: tuple[object, ...]
-    _ordinal: int
-
-    def __init__(
-        self,
-        *,
-        terms: tuple[AttributeIdentity, ...],
-        coordinate: tuple[object, ...],
-        ordinal: int,
-    ) -> None:
-        order = ", ".join(f"{identity.entity.canonical}.{identity.name}" for identity in terms)
-        super().__init__(
-            f"the delivery cannot continue past result {ordinal}: two adjacent roots stand "
-            f"at one Continuation Order coordinate, so ({order}) is not total over the "
-            f"stored data"
-        )
-        object.__setattr__(self, "_terms", terms)
-        object.__setattr__(self, "_coordinate", coordinate)
-        object.__setattr__(self, "_ordinal", ordinal)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        if name not in INTERPRETER_OWNED_ATTRIBUTES:
-            raise AttributeError(f"StreamContinuationError is frozen; cannot assign {name!r}")
-        super().__setattr__(name, value)
-
-    def __delattr__(self, name: str) -> None:
-        if name not in INTERPRETER_OWNED_ATTRIBUTES:
-            raise AttributeError(f"StreamContinuationError is frozen; cannot delete {name!r}")
-        super().__delattr__(name)
-
-    @property
-    def terms(self) -> tuple[AttributeIdentity, ...]:
-        return self._terms
-
-    @property
-    def coordinate(self) -> tuple[object, ...]:
-        """An inert copy of the coordinate both tied roots stood at, positionally
-        aligned with :attr:`terms`."""
-        return self._coordinate
-
-    @property
-    def ordinal(self) -> int:
-        """The zero-based position, in the delivery, of the first root that could
-        not be delivered."""
-        return self._ordinal
+    order = ", ".join(f"{identity.entity.canonical}.{identity.name}" for identity in tie.terms)
+    return InvalidDataError(
+        CONTINUATION_ORDER_NOT_TOTAL,
+        f"the delivery cannot continue past result {tie.ordinal}: two adjacent roots stand "
+        f"at one Continuation Order coordinate, so ({order}) is not total over the "
+        f"stored data",
+        coordinate=tie.coordinate,
+    )
 
 
 class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, Any]]:
@@ -404,13 +357,13 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
 
     def _require(self, rule: str, /, *allowed: _State) -> None:
         if self._state not in allowed:
-            raise StreamStateError(rule)
+            raise UsageError(STREAM_STATE_INVALID, rule)
 
     def _begun(self) -> R:
         read = self._read
         # Reachable from an entered scope alone.
         if read is None:  # pragma: no cover - see above
-            raise StreamStateError(_IN_SCOPE)
+            raise UsageError(STREAM_STATE_INVALID, _IN_SCOPE)
         return read
 
     def _advance(self, pages: Generator[object], /) -> object:
@@ -516,7 +469,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         read = self._read
         # Draining is reachable from an entered scope alone.
         if paging is None or publication is None or read is None:  # pragma: no cover - see above
-            raise StreamStateError(_IN_SCOPE)
+            raise UsageError(STREAM_STATE_INVALID, _IN_SCOPE)
         coordinate: ContinuationCoordinate | None = None
         emitted = 0
         while True:
@@ -553,11 +506,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
             if resume_from is not None:
                 coordinate = resume_from
             if tie is not None:
-                raise StreamContinuationError(
-                    terms=tie.terms,
-                    coordinate=tie.coordinate,
-                    ordinal=tie.ordinal,
-                )
+                raise _continuation_tie_refusal(tie)
             if exhausted:
                 return
 

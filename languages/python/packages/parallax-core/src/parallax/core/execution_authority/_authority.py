@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Final, Protocol
 
 from parallax.core._execution._unit_work.strategy import DatabaseLoginActor, SubjectActor
+from parallax.core.base import UsageError
 from parallax.core.db_port import (
+    AUTHORIZATION_INVALID,
     ConnectionContextSource,
     DatabaseRuntime,
-    InvalidAuthorizationError,
 )
 
 __all__ = [
+    "PRINCIPAL_INVALID",
     "ExecutionAuthority",
-    "InvalidPrincipalError",
     "Principal",
     "capture_database_login",
     "capture_principal",
@@ -30,8 +31,10 @@ class Principal[Authorization](Protocol):
     def database_authorization(self) -> Authorization: ...
 
 
-class InvalidPrincipalError(ValueError):
-    """A Principal cannot be captured for the selected database runtime."""
+PRINCIPAL_INVALID: Final = "principal-invalid"
+"""A Principal cannot be captured for the selected database runtime: its subject
+is no Subject Actor, or the runtime refused its authorization's shape, which is
+the refusal's ``__cause__``."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -57,13 +60,15 @@ def capture_principal[Authorization](
     try:
         actor = SubjectActor(subject)
     except ValueError as error:
-        raise InvalidPrincipalError(str(error)) from error
+        raise UsageError(PRINCIPAL_INVALID, str(error)) from error
 
     authorization = principal.database_authorization
     try:
         source = runtime.principal_source(authorization)
-    except InvalidAuthorizationError as error:
-        raise InvalidPrincipalError(str(error)) from error
+    except UsageError as error:
+        if error.code != AUTHORIZATION_INVALID:
+            raise
+        raise UsageError(PRINCIPAL_INVALID, error.args[1]) from error
     return PrincipalAuthority(actor, authorization, source)
 
 

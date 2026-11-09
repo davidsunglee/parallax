@@ -16,22 +16,21 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, cast
 
-import pytest
-
 from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.core.base import UsageError
 from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
 from parallax.core.read_delivery import InvalidDataError
-from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _CASE_ID = "m-execution-lifecycle-004"
@@ -141,9 +140,8 @@ def test_a_typed_value_read_under_a_states_the_revision_a_write_under_b_is_check
     def body(tx: TxnContext) -> str:
         # No read of this attempt produced the value, so it licenses no source
         # write; the version it published is what the target write states.
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-unavailable"):
             tx.amend(account.edit(balance=account.balance + Decimal("1.00")))
-        assert refused.value.code == "write-evidence-unavailable"
         tx.amend_if(
             Account,
             Account.balance.set(account.balance + Decimal("1.00")),
@@ -166,9 +164,8 @@ def test_a_wire_value_read_under_a_states_the_revision_a_write_under_b_is_checke
     serving.publish(b, expected=a)
 
     def body(tx: TxnContext) -> str:
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-unavailable"):
             tx.wire.amend(node, {"balance": "260.00"})
-        assert refused.value.code == "write-evidence-unavailable"
         tx.wire.amend_if(
             _ACCOUNT,
             {"id": node["id"], "balance": "260.00"},

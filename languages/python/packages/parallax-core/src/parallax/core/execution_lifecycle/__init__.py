@@ -11,9 +11,9 @@ from parallax.core.execution_lifecycle._diagnostics import (
     DirectFailure,
 )
 from parallax.core.execution_lifecycle._errors import (
+    LIFECYCLE_PROVIDER_FAILED,
+    LIFECYCLE_REENTERED,
     ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProviderError,
-    ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
     AcquisitionFailed,
@@ -91,6 +91,8 @@ from parallax.core.execution_lifecycle._pool_observation import (
 )
 
 __all__ = [
+    "LIFECYCLE_PROVIDER_FAILED",
+    "LIFECYCLE_REENTERED",
     "AcquisitionFailed",
     "AcquisitionFinished",
     "AcquisitionOutcome",
@@ -122,8 +124,6 @@ __all__ = [
     "ExecutionLifecycleHandler",
     "ExecutionLifecycleHandlerError",
     "ExecutionLifecycleProvider",
-    "ExecutionLifecycleProviderError",
-    "ExecutionLifecycleReentryError",
     "FanoutLifecycleProvider",
     "FlushCompleted",
     "FlushFailed",

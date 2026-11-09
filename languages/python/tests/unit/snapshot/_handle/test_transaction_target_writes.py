@@ -26,7 +26,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
 from parallax.core.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from parallax.snapshot import TxnContext
@@ -45,6 +44,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests.unit._transact_support import (
     FIND_SQL_LOCKED,
     FIND_SQL_UNLOCKED,
@@ -466,14 +466,14 @@ def test_exact_window_target_and_observed_writes_compose_into_one_statement(
         if not deletes:
             tx.amend(source.edit(owner="Again"))
             return
-        with pytest.raises(WriteEvidenceError) as refused:
+        with pytest.raises(UsageError) as refused:
             tx.amend(source.edit(owner="Again"))
         ended.append(refused.value)
 
     account_db(port).transact(fn)
     assert _calls(port)[1] == statement
     if deletes:
-        assert cast("WriteEvidenceError", ended[0]).code == "write-evidence-consumed"
+        assert cast("UsageError", ended[0]).code == "write-evidence-consumed"
     else:
         assert _calls(port)[3] == WriteCall(_GATED_OWNER, ("Again", 5, 1, 4))
 
@@ -503,9 +503,8 @@ def test_a_write_assigning_after_a_destruction_of_its_state_is_refused(
     def fn(tx: TxnContext) -> None:
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         first(tx, source)
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-already-claimed"):
             second(tx, source)
-        assert refused.value.code == "write-evidence-already-claimed"
 
     account_db(port).transact(fn)
     assert _calls(port)[1] == WriteCall(_GATED_DELETE, (1, 3))
@@ -523,9 +522,8 @@ def test_a_second_stated_revision_of_one_object_is_refused_and_the_first_still_r
 
     def fn(tx: TxnContext) -> None:
         _patch(tx, balance="150.00")
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-already-claimed"):
             _patch(tx, version=4, owner="Bo")
-        assert refused.value.code == "write-evidence-already-claimed"
 
     account_db(port).transact(fn, concurrency=concurrency)
     assert _calls(port) == (
@@ -548,7 +546,7 @@ def test_a_target_and_an_observed_write_of_two_states_of_one_object_are_refused(
         source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         first, second = (_p, _o) if target_first else (_o, _p)
         first(tx, source)
-        with pytest.raises(WriteEvidenceError, match="already buffered"):
+        with pytest.raises(UsageError, match="already buffered"):
             second(tx, source)
 
     account_db(port).transact(fn)
@@ -575,12 +573,11 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused(
         tx.insert(inserted)
         if flushed:
             tx.find(mm.Account.where(mm.Account.id == 2))
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-inserted"):
             if representation == "typed":
                 _replace(tx, "typed", version=1)
             else:
                 _patch(tx, version=1, balance="2.00")
-        assert refused.value.code == "write-evidence-inserted"
         tx.wire.amend_if("Account", {"id": 1}, version=1)
         tx.amend(inserted.edit(balance=Decimal("2.00")))
 
@@ -598,9 +595,8 @@ def test_a_deletion_of_an_object_this_attempt_inserted_is_refused(
 
     def fn(tx: TxnContext) -> None:
         tx.insert(mm.Account(id=1, owner="Ada", balance=Decimal("1.00")))
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-inserted"):
             _delete(tx, representation, version=1)
-        assert refused.value.code == "write-evidence-inserted"
 
     account_db(port).transact(fn)
     assert [type(call) for call in _calls(port)] == [WriteCall]
@@ -613,7 +609,7 @@ def test_a_cancelled_insertion_of_an_object_still_refuses_a_target_write_of_it()
         inserted = mm.Account(id=1, owner="Ada", balance=Decimal("1.00"))
         tx.insert(inserted)
         tx.delete(inserted)
-        with pytest.raises(WriteEvidenceError, match="inserted the object"):
+        with pytest.raises(UsageError, match="inserted the object"):
             _patch(tx, version=1, balance="2.00")
 
     account_db(port).transact(fn)

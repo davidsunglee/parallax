@@ -25,7 +25,6 @@ from parallax.core.db_port import (
     ConnectionContextSource,
     DatabaseConnection,
     DocumentReadOrdinals,
-    InvalidAuthorizationError,
     PipelineStatement,
     RoutePolicy,
     Row,
@@ -86,10 +85,6 @@ def test_a_connection_context_source_declares_resource_free_context_creation() -
             raise AssertionError("the structural check must perform no I/O")
 
     assert isinstance(_Source(), ConnectionContextSource)
-
-
-def test_invalid_authorization_is_a_caller_value_error() -> None:
-    assert issubclass(InvalidAuthorizationError, ValueError)
 
 
 def test_an_acquisition_names_one_of_eight_reasons_for_granting_nothing() -> None:

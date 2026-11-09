@@ -84,7 +84,7 @@ from psycopg.rows import TupleRow
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import LATEST, DomainModel, Entity
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -95,7 +95,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import (
     ExecutionFailure,
-    KeyedWriteValueError,
     ServingModel,
     prepare_model,
 )
@@ -860,7 +859,7 @@ class _Insertion:
         as a repeat of the insertion still stored."""
         try:
             self.tx.insert(_instance(_KEY, "reinserted"), valid_from=_ORIGIN)
-        except KeyedWriteValueError as refused:
+        except UsageError as refused:
             if refused.code != "write-value-already-stored":
                 raise
             return False

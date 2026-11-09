@@ -55,7 +55,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument
+from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument, UsageError
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES, scalar_result
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -88,7 +88,6 @@ from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.temporal_read import (
     Bitemporal,
     Pin,
-    TemporalReadError,
     TimeInterval,
     valid_time_coverage,
 )
@@ -108,6 +107,7 @@ from parallax.descriptor._records import ValueObject as DescriptorValueObject
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
 from tests._support.document_reads import folded_names
+from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit import _read_projection_support as projection_support
@@ -1246,10 +1246,10 @@ def test_a_rejected_valid_time_end_has_no_coverage_on_either_carrier(
     page, index, shape = _milestone_page(entity, _milestone(entity, thru_z=stored))
     rows = page_rows(page)
 
-    with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
+    with raises_code(UsageError, "temporal-read-invalid", match=r"\.validEnd: .*interval endpoint"):
         valid_time_coverage(shape, rows, index)
     judged = _JudgedRow(rows.layouts[index], entity_state(rows, index).member_row)
-    with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
+    with raises_code(UsageError, "temporal-read-invalid", match=r"\.validEnd: .*interval endpoint"):
         valid_time_coverage(shape, judged, None)
 
 
@@ -1257,7 +1257,9 @@ def test_a_rejected_valid_time_end_has_no_coverage_on_either_carrier(
 def test_a_null_valid_time_start_has_no_coverage_on_the_page(entity: str) -> None:
     page, index, shape = _milestone_page(entity, _milestone(entity, from_z=None))
 
-    with pytest.raises(TemporalReadError, match=r"\.validStart: .*interval endpoint"):
+    with raises_code(
+        UsageError, "temporal-read-invalid", match=r"\.validStart: .*interval endpoint"
+    ):
         valid_time_coverage(shape, page_rows(page), index)
 
 

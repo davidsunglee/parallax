@@ -11,7 +11,7 @@ from parallax.core.read_delivery._page import (
     entity_state,
     page_rows,
     release_finished_rows,
-    stored_data_refusal,
+    undecodable_data_refusal,
 )
 
 __all__ = [
@@ -35,7 +35,7 @@ def publishable_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     for position, root in enumerate(rows.roots):
         state = entity_state(rows, root)
         if state.findings:
-            raise stored_data_refusal(state.findings[0])
+            raise undecodable_data_refusal(state.findings[0])
         release_finished_rows(page, raw_rows, position, (root,))
         yield state.member_row
 
@@ -59,7 +59,7 @@ def admitted_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     for position, root in enumerate(rows.roots):
         state = attribute_state(rows, root)
         if state.findings:
-            raise stored_data_refusal(state.findings[0])
+            raise undecodable_data_refusal(state.findings[0])
         release_finished_rows(page, raw_rows, position, (root,))
         yield state.member_row
 
@@ -75,5 +75,5 @@ def completed_member_rows(
     for row in rows:
         member_row, findings = complete(row)
         if findings:
-            raise stored_data_refusal(findings[0])
+            raise undecodable_data_refusal(findings[0])
         yield member_row

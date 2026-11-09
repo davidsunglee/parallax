@@ -62,7 +62,7 @@ from parallax.core.entity._expressions import AuthoredMemberPath, UnfinishedOper
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution import QueryTargetError, ServingModel, prepare_model
+from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.metamodel import UnresolvedEntityDeclaration
 from parallax.core.predicate._interpretation import COMPARE
 from parallax.core.unit_work import (
@@ -772,7 +772,7 @@ def test_a_read_of_a_target_the_connected_model_does_not_declare_keeps_its_refus
     def fn(tx: TxnContext) -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
-    with raises_contextualized(QueryTargetError) as caught:
+    with raises_contextualized(UsageError, code="query-target-not-in-model") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)

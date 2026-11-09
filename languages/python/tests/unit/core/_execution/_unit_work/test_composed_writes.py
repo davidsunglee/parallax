@@ -24,7 +24,7 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     TargetWrite,
 )
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     AdmittedWrite,
@@ -32,7 +32,6 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
     RetainedObservation,
-    WriteEvidenceError,
     WritePlanningRequest,
     admitted_write,
 )
@@ -63,6 +62,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admit,
@@ -219,11 +219,10 @@ def test_an_assignment_after_a_destruction_over_its_coverage_is_refused() -> Non
     # An assignment after a destruction over the same coverage resurrects
     # nothing, so admission refuses it rather than composing or keeping both.
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
-    with pytest.raises(WriteEvidenceError) as refused:
+    with raises_code(UsageError, "write-evidence-already-claimed"):
         admitted_writes(
             _BALANCE, [_write("terminate", stale), _write("amend", current, value="1.00")]
         )
-    assert refused.value.code == "write-evidence-already-claimed"
 
 
 @pytest.mark.parametrize(

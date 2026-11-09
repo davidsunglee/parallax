@@ -32,6 +32,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
+from parallax.core.base import UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
@@ -40,7 +41,6 @@ from parallax.core.unit_work import (
     ReadEvidence,
     TransactionSettings,
     UnitOfWork,
-    WriteEvidenceError,
     admitted_write,
     object_key,
 )
@@ -190,9 +190,9 @@ class _Production:
             settled = self.uow.source_authority.resolve_read_evidence(
                 self._entity(source), source, mutation="amend", object_key=source.object_key
             )
-        except WriteEvidenceError as refused:
+        except UsageError as refused:
             assert refused.code == "write-evidence-consumed"
-            return "stale" if "has since changed the state" in refused.message else "ended"
+            return "stale" if "has since changed the state" in refused.args[1] else "ended"
         assert isinstance(settled, ObjectKey | VersionedObjectStateKey)
         return settled
 

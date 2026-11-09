@@ -36,7 +36,7 @@ from parallax.conformance.snapshot_recipes import (
 )
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
 from parallax.core import TX_TIME
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.db_port import (
     Bind,
     Committed,
@@ -49,10 +49,10 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.read_delivery import StreamStateError
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import Database, ScopedDatabase, connect, edge_of, is_view_loaded
 from tests._support.db_port import ConnectsAsItself, projected_row
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _ACCOUNT = MODELS["account"]
@@ -272,10 +272,10 @@ def test_a_streamed_delivery_is_scope_bound_and_single_pass(profile_run: Any) ->
 
     with db.stream(Order.where(Order.all), batch_size=2) as orders:
         assert [order.id for order in orders] == [1, 2, 3]
-        with pytest.raises(StreamStateError, match="single-pass"):
+        with raises_code(UsageError, "stream-state-invalid", match="single-pass"):
             iter(orders)
     escaped = db.stream(Order.where(Order.all), batch_size=2)
-    with pytest.raises(StreamStateError, match="own scope"):
+    with raises_code(UsageError, "stream-state-invalid", match="own scope"):
         escaped.pin  # noqa: B018 - the access itself is the assertion
 
 

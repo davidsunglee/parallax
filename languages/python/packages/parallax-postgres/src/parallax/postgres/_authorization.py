@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg.sql import SQL, Composed, Identifier
 
-from parallax.core.db_port import InvalidAuthorizationError
+from parallax.core.base import UsageError
+from parallax.core.db_port import AUTHORIZATION_INVALID
 from parallax.postgres._connection import (
     _complete_first_send,  # pyright: ignore[reportPrivateUsage] - the lease's shared first-send markers
     _start_first_send,  # pyright: ignore[reportPrivateUsage] - the lease's shared first-send markers
@@ -28,9 +29,9 @@ class PostgresRole:
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the public boundary
-            raise InvalidAuthorizationError("a PostgreSQL role name must be a string")
+            raise UsageError(AUTHORIZATION_INVALID, "a PostgreSQL role name must be a string")
         if not self.name:
-            raise InvalidAuthorizationError("a PostgreSQL role name must not be empty")
+            raise UsageError(AUTHORIZATION_INVALID, "a PostgreSQL role name must not be empty")
 
 
 def _role_statement(role: PostgresRole) -> Composed:

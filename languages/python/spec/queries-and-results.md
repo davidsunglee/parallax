@@ -89,7 +89,7 @@ outside the fixed overloads conservatively retains the original result type.
 Python authoring refusals are `UsageError`s whose `query-*` codes name the rule,
 with structured context excluding literal values and internal model state.
 A query's target absent from the connected model is instead
-`QueryTargetError(query-target-not-in-model)` before I/O. Queries hold no model
+`UsageError(query-target-not-in-model)` before I/O. Queries hold no model
 identity and can be executed against any model that accepts their target.
 
 Each operation consuming a Typed predicate binds it to the model that operation
@@ -154,13 +154,14 @@ values as bytes, null as `None`, and absent stored members as
 Invalid hydrated values are inspectable but carry no write authority.
 
 Inspection first requires a published Snapshot node; a plain Entity value raises
-`SnapshotInspectionError(snapshot-node-required)` before path validation.
+`UsageError(snapshot-node-required)` before path validation.
 Failure during graph construction becomes
-`SnapshotMaterializationError(snapshot-materialization-failed)` once, preserving
+`InternalError(snapshot-materialization-failed)` once, preserving
 its cause and withholding the graph. Other read failures keep their owner's
 classification. Fetched rows of one logical row with unequal stored values use
-`SnapshotConsistencyError(snapshot-fetched-row-conflict)`, whose `fetched_rows`
-name the two fetched row positions, without raw payload evidence. Its whole
+`InvalidDataError(snapshot-fetched-row-conflict)`, whose message names the
+object, the differing members, and the two fetched row positions, without raw
+payload evidence. Its whole
 eager result is withheld; a stream preserves earlier roots and withholds the
 conflicting root. These read failures remain subject to the
 [execution failure boundary](execution.md#transactions-and-failure-boundaries).
@@ -185,7 +186,7 @@ milestone-set root's holds its own milestone's instants, or is the empty `Pin()`
 where a milestone start did not decode. `edge_of` returns the node's own
 milestone `Edge`, decoded from its published starts; repeated calls return equal
 `Edge` values, not necessarily one object. A non-temporal node raises
-`SnapshotInspectionError` with `snapshot-pin-unavailable` from `pin_of` and
+`UsageError` with `snapshot-pin-unavailable` from `pin_of` and
 `snapshot-edge-unavailable` from `edge_of`. The node an insert returned, plain
 or unpickled data, a nested Value Object mapping, and an `InvalidData` record
 raise `snapshot-node-required`; inspect a record's hydrated `data` instead.
@@ -214,7 +215,7 @@ its selection across all pages; a transactional one inherits the transaction's.
 Exactly one default or checked iterator may be selected. Entering twice,
 selecting another view, repeating iteration, advancing after scope exit, or
 reading `pin` / `edition` outside the entered scope raises
-`StreamStateError`. The default iterator raises at invalid roots;
+`UsageError(stream-state-invalid)`. The default iterator raises at invalid roots;
 the checked iterator returns their records. There are no arity accessors or
 whole-stream projection.
 
@@ -223,12 +224,13 @@ it counts root positions. It is a per-call option only. Under `sharing_scope="pa
 each page is its own sharing boundary, so it also changes which roots share an
 object and what a shared Typed instance incidentally loaded. Core determines page
 stability and continuation ordering. A non-total continuation raises
-`StreamContinuationError` with code
-`snapshot-stream-continuation-order-not-total`; its coordinate is diagnostic
-data excluded from default messages and logging.
+`InvalidDataError` with code `snapshot-stream-continuation-order-not-total`,
+whose message names the Continuation Order and the ordinal; its `coordinate` is
+diagnostic data excluded from the message, the default repr, and default
+logging.
 
 Typed stream `wire(value, at=...)` is available only while delivery is paused
 at a yielded root, including the final yielded root before the next advance.
 Before the first yield, during advance, after exhaustion or failure, and after
-scope exit it raises `StreamStateError`. It neither advances nor reads.
+scope exit it raises `UsageError(stream-state-invalid)`. It neither advances nor reads.
 Its input and requested-position rules are the eager projection rules.

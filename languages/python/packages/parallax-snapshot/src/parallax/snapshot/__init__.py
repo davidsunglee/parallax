@@ -1,7 +1,6 @@
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import WireValue
 from parallax.snapshot._handle._database import Database, ScopedDatabase, connect
-from parallax.snapshot._handle._errors import SnapshotMaterializationError
 from parallax.snapshot._handle._read import (
     CheckedSnapshot,
     SharingScope,
@@ -16,14 +15,12 @@ from parallax.snapshot._handle._wire import (
 )
 from parallax.snapshot._handle._wire_writes import WireChanges, WirePredicateTarget
 from parallax.snapshot._inspection import (
-    SnapshotInspectionError,
     is_view_loaded,
     required_pin,
     typed_edge_of,
     typed_pin_of,
     view,
 )
-from parallax.snapshot._publication._graph_view import SnapshotConsistencyError
 from parallax.snapshot._publication._wire import (
     WireEntity,
     required_wire_provenance,
@@ -37,9 +34,6 @@ __all__ = [
     "ScopedDatabase",
     "SharingScope",
     "Snapshot",
-    "SnapshotConsistencyError",
-    "SnapshotInspectionError",
-    "SnapshotMaterializationError",
     "SnapshotStream",
     "TxnContext",
     "WireChanges",
@@ -87,8 +81,8 @@ def pin_of(node: object) -> Pin:
     milestone's instants, or the empty ``Pin()`` where a start did not decode.
     Inspection performs no I/O and grants no write authority.
 
-    Raises :class:`SnapshotInspectionError`: ``snapshot-pin-unavailable`` for a
-    non-temporal node, and ``snapshot-node-required`` for anything no read
+    Raises a :class:`~parallax.core.UsageError`: ``snapshot-pin-unavailable``
+    for a non-temporal node, and ``snapshot-node-required`` for anything no read
     published, including an insert answer, a plain mapping or copy, a nested
     Value Object mapping, and the ``InvalidData`` wrapper itself.
     """

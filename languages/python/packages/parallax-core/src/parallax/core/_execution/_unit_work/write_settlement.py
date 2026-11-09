@@ -4,7 +4,7 @@ from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core._execution._unit_work._errors import UnobservedVersionError
+from parallax.core._execution._unit_work._errors import VERSION_UNOBSERVED
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -41,6 +41,7 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     TemporalCoverageWrite,
 )
+from parallax.core.base import UsageError
 from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
@@ -830,10 +831,15 @@ def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:
 
 def require_observed_version(entity: EntityIdentity, observation: StateObservation | None) -> int:
     """The version a keyed update or delete of an explicitly versioned row of
-    ``entity`` advances from, or :class:`UnobservedVersionError` where the
+    ``entity`` advances from; refused with :data:`VERSION_UNOBSERVED` where the
     write reached settlement observing none."""
     if not isinstance(observation, VersionObservation):
-        raise UnobservedVersionError(entity)
+        raise UsageError(
+            VERSION_UNOBSERVED,
+            f"{entity.name}: a keyed update/delete of a versioned row requires the version its "
+            "source observed (a prior find) — the framework never issues an implicit "
+            "resolving read on behalf of a keyed write",
+        )
     return observation.observed_version
 
 

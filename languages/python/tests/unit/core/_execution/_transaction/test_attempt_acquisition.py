@@ -61,11 +61,9 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
     AttributeIdentity,
-    ValueObjectAttributeIdentity,
-    ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.read_delivery import InvalidDataError
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
@@ -91,6 +89,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit import _family_predecessor_support as family
 from tests.unit.core._execution import _shared_coverage_support as shared
@@ -174,7 +173,7 @@ def test_several_target_rows_are_corruption_with_their_count_once_the_read_has_c
 
 def test_a_unique_target_row_holding_invalid_stored_data_is_refused_inside_its_read() -> None:
     recorder = RecordingLifecycleProvider()
-    with raises_contextualized(StoredDataDecodingError):
+    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed"):
         _ledger_write([_ledger(balance=1.0)], recorder)
     (outcome,) = _read_outcomes(recorder.roots[-1].events)
     assert isinstance(outcome, ReadFailed)
@@ -578,8 +577,8 @@ def _judged(acquire: Any) -> object:
     """The member rows an acquisition hands its consumer, or the refusal it raised."""
     try:
         return acquire()
-    except StoredDataDecodingError as refused:
-        return (refused.message, refused.entity, refused.member)
+    except InvalidDataError as refused:
+        return refused.args[1]
 
 
 def _member_rows(
@@ -692,9 +691,8 @@ def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -
     ordinary, retaining = seen
     assert retaining == ordinary
     assert ordinary == (
-        "parallax.execution.DocumentHull holds invalid stored data (stored-data-attribute-null)",
-        metadata.identity,
-        AttributeIdentity(metadata.identity, "amount"),
+        "parallax.execution.DocumentHull holds invalid stored data at amount "
+        "(stored-data-attribute-null)"
     )
 
 
@@ -788,10 +786,10 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
         assert [type(call) for call in port.calls] == [BeginCall]
         called.append("returned")
 
-    with raises_contextualized(StoredDataDecodingError) as refused:
+    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed") as refused:
         scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="optimistic")
     assert called == ["returned"]
-    assert refused.value.member == AttributeIdentity(metadata.identity, "tags")
+    assert " at tags (" in refused.value.args[1]
 
 
 _INVALID_COLLECTIONS: Final[dict[str, object]] = {
@@ -833,11 +831,7 @@ def test_a_retaining_read_judges_a_top_level_collection_as_a_coverage_read_judge
     ordinary, retaining = seen
     invalid = f"{metadata.identity.canonical} holds invalid stored data"
     assert retaining == ordinary
-    assert ordinary == (
-        f"{invalid} (stored-data-leaf-undecodable)",
-        metadata.identity,
-        AttributeIdentity(metadata.identity, "tags"),
-    )
+    assert ordinary == f"{invalid} at tags (stored-data-leaf-undecodable)"
 
 
 _INVALID_SPECS: Final[dict[str, tuple[dict[str, object], str]]] = {
@@ -876,12 +870,10 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
         )
         called.append("returned")
 
-    with raises_contextualized(StoredDataDecodingError) as refused:
+    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed") as refused:
         scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="locking")
     assert called == ["returned"]
-    assert refused.value.member == ValueObjectAttributeIdentity(
-        ValueObjectIdentity(metadata.identity, ("spec",)), failing
-    )
+    assert f" at spec.{failing} (" in refused.value.args[1]
     events = recorder.roots[-1].events
     (read,) = [event for event in events if isinstance(event, ReadStarted)]
     flush = next(index for index, event in enumerate(events) if isinstance(event, FlushStarted))
@@ -949,10 +941,10 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
         row = {**row, "thru_z": None}
     port = ScriptedAdapter(Transact(Read(rows=[row])))
     metadata, _key = _hull_keys(entity)
-    refused: list[StoredDataDecodingError] = []
+    refused: list[InvalidDataError] = []
 
     def fn(tx: TxnAttempt) -> None:
-        with pytest.raises(StoredDataDecodingError) as caught:
+        with raises_code(InvalidDataError, "stored-data-decoding-failed") as caught:
             tx.uow.buffer_target(
                 prepare_wire_write(
                     TargetWriteInstruction(
@@ -972,7 +964,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
     member = (
         "tags" if attribute == "collection" else "amount" if entity is DocumentHull else "validEnd"
     )
-    assert failure.member == AttributeIdentity(metadata.identity, member)
+    assert f" at {member} (" in failure.args[1]
 
 
 # --------------------------------------------------------------------------- #
@@ -1006,7 +998,7 @@ def test_a_later_writes_retained_row_fails_its_completion_before_the_span_binds_
         tx.uow.buffer_target(_hull_target(metadata, 1))
         tx.uow.buffer_target(_hull_target(metadata, 2))
 
-    with raises_contextualized(StoredDataDecodingError):
+    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed"):
         scope(port, _HULLS).transact(fn, itself, concurrency="locking")
     # No coverage read, no write of either object, and no retry.
     assert [type(call) for call in port.calls] == [BeginCall, ReadCall, ReadCall, RollbackCall]
@@ -1052,7 +1044,7 @@ def test_an_invalid_later_row_of_a_shared_read_fails_before_an_earlier_write_bin
     second["payload"] = StructuredDocument({"amount": "x", "label": "k2"})
     # The scripted write would make the first write's close a conflict.
     port = ScriptedAdapter(Transact(Read(rows=[first, second]), Write(affected=0)))
-    with raises_contextualized(StoredDataDecodingError):
+    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed"):
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareDoc, 1, 1), (shared.ShareDoc, 2, 1)),
             itself,
@@ -1365,7 +1357,7 @@ def test_a_family_members_retained_invalid_occurrence_stays_pending_until_its_co
     }
     port = ScriptedAdapter(Transact(Read(rows=[_family_row(strategy, layout, "Holding", invalid)])))
     metadata, key, key_attribute = _family_member(strategy, layout, "Holding")
-    refused: list[StoredDataDecodingError] = []
+    refused: list[InvalidDataError] = []
 
     def fn(tx: TxnAttempt) -> None:
         count, retained, document = tx.uow.acquire_rows(
@@ -1375,15 +1367,13 @@ def test_a_family_members_retained_invalid_occurrence_stays_pending_until_its_co
         completion = CompletionRequest(
             metadata, key_attribute, (retained,), None if document is None else (document,)
         )
-        with pytest.raises(StoredDataDecodingError) as caught:
+        with raises_code(InvalidDataError, "stored-data-decoding-failed") as caught:
             tx.uow.acquire_rows(completion, _member_rows)
         refused.append(caught.value)
 
     scope(port, family.MODEL).transact(fn, itself, concurrency="locking")
     (failure,) = refused
-    assert failure.member == ValueObjectAttributeIdentity(
-        ValueObjectIdentity(metadata.identity, ("home",)), "city"
-    )
+    assert " at home.city (" in failure.args[1]
     assert [type(call) for call in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
@@ -1407,10 +1397,10 @@ def test_a_family_members_retaining_read_refuses_an_invalid_attribute_at_the_rea
         member = "validEnd"
     port = ScriptedAdapter(Transact(Read(rows=[row])))
     metadata, key, _key_attribute = _family_member(strategy, layout, "Holding")
-    refused: list[StoredDataDecodingError] = []
+    refused: list[InvalidDataError] = []
 
     def fn(tx: TxnAttempt) -> None:
-        with pytest.raises(StoredDataDecodingError) as caught:
+        with raises_code(InvalidDataError, "stored-data-decoding-failed") as caught:
             tx.uow.acquire_rows(
                 TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
             )
@@ -1422,4 +1412,4 @@ def test_a_family_members_retaining_read_refuses_an_invalid_attribute_at_the_rea
     assert view is not None
     attribute = view.applicable_attribute(member)
     assert attribute is not None
-    assert failure.member == attribute.identity
+    assert f" at {attribute.identity.name} (" in failure.args[1]

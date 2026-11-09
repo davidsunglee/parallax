@@ -16,7 +16,7 @@ from parallax.core.read_delivery._page import (
     page_schedule,
     release_finished_rows,
     release_page_rows,
-    stored_data_refusal,
+    undecodable_data_refusal,
 )
 from parallax.core.temporal_read import Edge, Pin, TemporalShape
 from parallax.snapshot._publication._graph_view import GraphView
@@ -61,7 +61,7 @@ def require_publishable(root: GraphView) -> None:
     """Refuse an issue-bearing root before identity or object derivation."""
     issue = publication_issue(root)
     if issue is not None:
-        raise stored_data_refusal(issue)
+        raise undecodable_data_refusal(issue)
 
 
 def milestone_pin(edge: Edge) -> Pin:

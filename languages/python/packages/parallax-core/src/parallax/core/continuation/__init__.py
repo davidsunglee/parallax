@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Final
 
+from parallax.core.base import InternalError
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -23,11 +25,12 @@ from parallax.core.object_query._resolved import (
 from parallax.core.temporal_read import ranked_axes, scans_resolved_axis
 from parallax.core.temporal_read import view as temporal_view
 
-__all__ = ["ContinuationError", "ContinuationPlan", "ordered", "plan"]
+__all__ = ["ContinuationPlan", "ordered", "plan"]
 
 
-class ContinuationError(ValueError):
-    """A query no page node can be composed for."""
+CONTINUATION_PLANNING_FAILED: Final = "continuation-planning-failed"
+"""A page node cannot be composed from what the accepted model and the plan's
+own coordinates guarantee."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +91,10 @@ class ContinuationPlan:
         the comparisons a page actually admits roots through.
         """
         if len(coordinate.carriers) != len(self._terms):
-            raise ContinuationError(
+            raise InternalError(
+                CONTINUATION_PLANNING_FAILED,
                 f"the Continuation Order has {len(self._terms)} term(s) and the coordinate "
-                f"carries {len(coordinate.carriers)}"
+                f"carries {len(coordinate.carriers)}",
             )
         seek = ResolvedSeek(tuple(term.portable for term in self._terms), coordinate)
         return self._page(Paging(seek=seek), limit=limit)
@@ -162,7 +166,10 @@ def _milestone_edge(
         return ()
     shape = temporal_view(model).shape(entity.identity)
     if shape is None:  # pragma: no cover - the Temporal Facet covers every accepted Entity
-        raise ContinuationError(f"{entity.identity.canonical}: the model declares no such Entity")
+        raise InternalError(
+            CONTINUATION_PLANNING_FAILED,
+            f"{entity.identity.canonical}: the model declares no such Entity",
+        )
     return tuple(axis.start_attribute for axis in ranked_axes(shape))
 
 
@@ -186,7 +193,9 @@ def _attribute(identity: AttributeIdentity, model: Metamodel) -> AttributeMetada
     entity = model.entity(identity.entity)
     attribute = None if entity is None else _applicable(entity, identity.name, model)
     if attribute is None:  # pragma: no cover - the term's identity names an accepted member
-        raise ContinuationError(f"{identity}: the model declares no such Attribute")
+        raise InternalError(
+            CONTINUATION_PLANNING_FAILED, f"{identity}: the model declares no such Attribute"
+        )
     return attribute
 
 
@@ -199,5 +208,8 @@ def _applicable(entity: EntityMetadata, name: str, model: Metamodel) -> Attribut
 def _family_view(entity: EntityMetadata, model: Metamodel) -> InheritanceEntityView:
     position = inheritance_view(model).entity(entity.identity)
     if position is None:  # pragma: no cover - the Inheritance Facet covers every accepted Entity
-        raise ContinuationError(f"{entity.identity.canonical}: the model declares no such Entity")
+        raise InternalError(
+            CONTINUATION_PLANNING_FAILED,
+            f"{entity.identity.canonical}: the model declares no such Entity",
+        )
     return position

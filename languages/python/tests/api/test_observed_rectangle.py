@@ -54,7 +54,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
-    WriteEvidenceError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import raises_code
@@ -698,7 +697,7 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
                     _log_update(tx, by_id(tx, 2), representation, "changed")
                     by_id(tx, 2)
                     continue
-                with pytest.raises(WriteEvidenceError) as refused:
+                with pytest.raises(UsageError) as refused:
                     _log_update(tx, root, representation, "stale")
                 refusals.append(refused.value.code)
 

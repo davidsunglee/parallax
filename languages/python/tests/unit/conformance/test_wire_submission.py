@@ -20,13 +20,11 @@ from parallax.conformance._wire_submission import (
     read_submissions,
 )
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.db_port import ArrayBind, MappingRow
-from parallax.core.execution import KeyedWriteValueError, RetryPolicy, ServingModel, prepare_model
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.execution import RetryPolicy, ServingModel, prepare_model
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.unit_work import KeyedWriteInstruction, WriteEvidenceError
-from parallax.core.write_plan import ObjectKey
+from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.snapshot import Database, TxnContext
 from tests._support.retry import fast_retry
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
@@ -305,7 +303,7 @@ def test_a_refused_insert_opens_no_pointer_to_an_earlier_insertion() -> None:
     def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
         insert = _entry("insert", {"id": 90, "owner": "Ada", "balance": "10.00"})
         submitter.submit(_one(model, insert, step=0))
-        with pytest.raises(KeyedWriteValueError, match="write-value-already-stored"):
+        with pytest.raises(UsageError, match="write-value-already-stored"):
             submitter.submit(_one(model, insert, step=1))
         submitter.submit(
             _one(
@@ -327,11 +325,7 @@ def test_only_the_declared_evidence_error_is_a_refused_outcome(
     port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
 
     def refuse(*args: object, **kwargs: object) -> Any:
-        raise WriteEvidenceError(
-            code="write-evidence-unavailable",
-            message="test refusal",
-            object_key=ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),)),
-        )
+        raise UsageError("write-evidence-unavailable", "test refusal")
 
     from parallax.snapshot import WireTransactionView
 
@@ -347,7 +341,7 @@ def test_only_the_declared_evidence_error_is_a_refused_outcome(
     if expected == "write-evidence-unavailable":
         assert _run("account", port, body) == (Refused("/scenario/1/write/0", expected),)
     else:
-        with pytest.raises(WriteEvidenceError):
+        with pytest.raises(UsageError):
             _run("account", port, body)
     assert port.writes == []
 

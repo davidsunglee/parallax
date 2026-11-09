@@ -22,11 +22,9 @@ from parallax.core.execution import (
     ExecutionFailure,
     ReadOnlyTxnOptions,
     RetryPolicy,
-    TransactionAccessModeError,
-    TransactionOptionConflictError,
     TxnOptions,
 )
-from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
+from parallax.core.unit_work import WritePreconditionError
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import (
     Database,
@@ -138,8 +136,8 @@ before calling it, or run it in a transaction of its own once the first has comm
 
 A failure while the transaction sends its writes, such as a `DatabaseError` or a
 conflict, dooms it in the same way, even when the callback catches it. A refusal a write
-verb raises before anything is sent, such as `WriteEvidenceError`, leaves the transaction
-usable.
+verb raises before anything is sent, such as a `UsageError` with a `write-evidence-*`
+code, leaves the transaction usable.
 
 ## Read-only and read-write transactions
 
@@ -156,8 +154,8 @@ transaction behave.
   nothing, even for an unversioned entity such as `Customer`, which a read inside
   `transact` locks, and it has no pending writes to send.
 - **A call joins only a transaction of its own kind.** `transact` inside a `read_only`
-  callback, or `read_only` inside a `transact` one, raises `TransactionAccessModeError`
-  before its callback runs. Catching it leaves the transaction usable.
+  callback, or `read_only` inside a `transact` one, raises a `UsageError` with code
+  `transaction-access-mode-mismatch` before its callback runs. Catching it leaves the transaction usable.
 - **A standalone read stays standalone.** `db.find` and `db.stream` called inside either
   callback read on a connection of their own, outside the transaction. Inside `transact`,
   they don't see the transaction's pending writes.
@@ -336,7 +334,7 @@ reads nothing, which is why only entities with no version and no history accept 
 
 The licence must come from the attempt that writes. A value read by a standalone read, a
 read-only transaction or an earlier attempt took part in nothing this attempt can stand
-on, so amending it raises `WriteEvidenceError`. That rule is what makes retries safe: a
+on, so amending it raises a `UsageError` with code `write-evidence-unavailable`. That rule is what makes retries safe: a
 re-run reads again, so every observed licence is taken afresh, while a revision you
 stated stays exactly what you stated. The next section turns on that difference.
 
@@ -533,7 +531,8 @@ attempt and every joined call. In a read-only transaction, `rtx.options` holds a
 
 A joined call never changes the options of the transaction it joins. Leaving an option
 out inherits the transaction's value, and naming the same value is accepted. Naming a
-different one raises `TransactionOptionConflictError` before the joined callback runs.
+different one raises a `UsageError` with code `transaction-option-conflict` before the
+joined callback runs.
 Levels are exact: a join that names Read Committed inside a Serializable transaction
 conflicts, rather than being satisfied by the stronger level. The scope's and root's
 defaults play no part in the comparison, so a join that names the default conflicts with
@@ -547,7 +546,7 @@ def place_two_orders(db: ScopedDatabase, first: Order, second: Order) -> tuple[b
 
 
 def place_two_orders_together(db: ScopedDatabase, first: Order, second: Order) -> tuple[bool, bool]:
-    """Refused with ``TransactionOptionConflictError``: each check names Serializable, and
+    """Refused with ``transaction-option-conflict``: each check names Serializable, and
     this transaction runs at the scope's default level."""
     return db.transact(lambda tx: place_two_orders(db, first, second))
 
@@ -564,7 +563,7 @@ Called alone, `place_two_orders` runs each check in a transaction of its own, so
 first order can commit while the second is declined. `place_two_orders_together` runs at
 the scope's default, Read Committed here, so the first check's `isolation="serializable"`
 is refused, and the call raises an `ExecutionFailure` whose `cause` is that
-`TransactionOptionConflictError`. In `place_two_orders_together_serializably`, both
+`transaction-option-conflict` refusal. In `place_two_orders_together_serializably`, both
 checks join. Against the 170.00 of orders and the 250.00 limit from
 [Isolation levels](#isolation-levels), orders of 50.00 and 60.00 return `(True, False)`:
 the second check's read sees the first order, pending in the same transaction, and

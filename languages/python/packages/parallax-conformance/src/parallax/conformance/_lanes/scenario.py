@@ -6,7 +6,7 @@ import functools
 import itertools
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Final, Literal, Never, cast
+from typing import Final, Literal, Never, cast, get_args
 
 from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance._actual_wire import ActualWireProjection
@@ -96,7 +96,6 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     CARDINALITY_CORRUPTION,
     INSERT_MUTATIONS,
@@ -104,6 +103,7 @@ from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,
     TEMPORAL_CONFLICT,
+    VERSION_UNOBSERVED,
     WRITE_PRECONDITION_FAILED,
     InsertionIdentity,
     KeyedWriteInstruction,
@@ -114,9 +114,8 @@ from parallax.core.unit_work import (
     SubjectActor,
     TransactionSettings,
     UnitOfWork,
-    UnobservedVersionError,
     WriteEffectCode,
-    WriteEvidenceError,
+    WriteEvidenceCode,
     admitted_write,
     object_key,
     settled_evidence,
@@ -191,15 +190,14 @@ __all__ = [
 # The failures the write lanes convert to a neutral :class:`UnclassifiedEngineError`, so
 # the adapter reports a ``*-failed`` diagnostic rather than leaking a
 # lower-layer exception type across the conformance seam.
-# `UnobservedVersionError` is Unit of Work's own refusal of a versioned write
-# that observed nothing. A deferred witness (the auto-retry boundary forms) that
-# reaches this engine-local write path without a recorded observation must
-# degrade to a reasoned `UnclassifiedEngineError`, never an uncaught crash of the sweep.
+# Unit of Work's own `version-unobserved` refusal of a versioned write that
+# observed nothing is a `UsageError`. A deferred witness (the auto-retry boundary
+# forms) that reaches this engine-local write path without a recorded observation
+# must degrade to a reasoned `UnclassifiedEngineError`, never an uncaught crash of
+# the sweep.
 LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     WritePlanningError,
-    UnobservedVersionError,
     SqlGenError,
-    TemporalReadError,
     UsageError,
     InternalError,
     KeyError,
@@ -683,7 +681,9 @@ def _composition_refusal() -> Generator[None]:
     production refusal."""
     try:
         yield
-    except WriteEvidenceError as refusal:
+    except UsageError as refusal:
+        if refusal.code not in get_args(WriteEvidenceCode.__value__):
+            raise
         raise UnclassifiedEngineError(
             f"a simulated transaction cannot admit this write beside the ones it already "
             f"buffered — {refusal}"
@@ -700,7 +700,11 @@ def _unlicensed(instruction: PreparedKeyedInstruction, model: AcceptedMetamodel)
     mutation = instruction.mutation
     versioning = concurrency_view(model)
     if versioning.version_attribute(entity) is not None:
-        return UnobservedVersionError(entity)
+        return UsageError(
+            VERSION_UNOBSERVED,
+            f"{entity.name}: a keyed update/delete of a versioned row requires the version "
+            "its source observed",
+        )
     if versioning.settles_against(entity) == "object":
         position = inheritance.view(model).entity(entity)
         assert position is not None  # the facet covers every accepted Entity

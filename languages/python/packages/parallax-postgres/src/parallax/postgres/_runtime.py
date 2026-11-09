@@ -7,12 +7,13 @@ from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
+from parallax.core.base import UsageError
 from parallax.core.db_port import (
+    AUTHORIZATION_INVALID,
     CleanupIssue,
     ConnectionAcquisitionError,
     ConnectionContext,
     ConnectionContextSource,
-    InvalidAuthorizationError,
     PoolMetricsSource,
     ReleaseUnconfirmed,
     Route,
@@ -117,8 +118,8 @@ class PostgresRuntime:
     def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
         """Bind execution under ``authorization`` without acquiring."""
         if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the public boundary
-            raise InvalidAuthorizationError(
-                "PostgreSQL principal execution requires a PostgresRole"
+            raise UsageError(
+                AUTHORIZATION_INVALID, "PostgreSQL principal execution requires a PostgresRole"
             )
         return _PostgresContextSource(self, authorization)
 

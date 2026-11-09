@@ -32,7 +32,6 @@ import pytest
 
 from parallax.core.base import UsageError
 from parallax.core.unit_work import (
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from tests._support.db_port import (
@@ -147,7 +146,7 @@ _POSITION_REQUIRES_START: Final = (
 )
 _NAIVE: Final = "a naive datetime is not a valid `timestamp`; attach a tzinfo"
 _INSERTED: Final = (
-    "write-evidence-inserted: parallax.compatibility.Account: this transaction inserted the "
+    "parallax.compatibility.Account {'id': 1}: this transaction inserted the "
     "object this write addresses, so no caller's revision describes it; until the transaction "
     "commits, write it through the value the insert took or a read of it"
 )
@@ -985,11 +984,11 @@ def test_the_payload_is_judged_once_the_window_and_revision_admit_the_write(row:
 _PENDING_REFUSED: Final[tuple[_Row, ...]] = (
     _Row(
         TargetWriteScenario(_ACCOUNT, "amend", pending="addressed"),
-        _both(_refused(WriteEvidenceError, _INSERTED, code="write-evidence-inserted")),
+        _both(_refused(UsageError, _INSERTED, code="write-evidence-inserted")),
     ),
     _Row(
         TargetWriteScenario(_ACCOUNT, "delete", pending="addressed"),
-        _both(_refused(WriteEvidenceError, _INSERTED, code="write-evidence-inserted")),
+        _both(_refused(UsageError, _INSERTED, code="write-evidence-inserted")),
     ),
     _Row(
         TargetWriteScenario(

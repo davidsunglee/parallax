@@ -18,7 +18,6 @@ from parallax.core.unit_work import (
     STALE_WRITE,
     TEMPORAL_CONFLICT,
     WRITE_PRECONDITION_FAILED,
-    WriteEvidenceError,
 )
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.repo import REPO_ROOT
@@ -156,7 +155,7 @@ def test_a_keyed_replacement_reaches_the_source_replacement_verb() -> None:
     ]
 
 
-def test_a_refusal_other_than_the_one_a_submission_declares_propagates() -> None:
+def test_a_refusal_other_than_the_one_a_submission_declares_is_unclassified() -> None:
     case = _state_graded(
         [
             _FIND,
@@ -170,8 +169,11 @@ def test_a_refusal_other_than_the_one_a_submission_declares_propagates() -> None
         ],
         {"g": {"outcome": "committed"}},
     )
-    with pytest.raises(WriteEvidenceError, match="write-evidence-already-claimed"):
+    with pytest.raises(UnclassifiedEngineError) as raised:
         scenario.run_scenario_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW]))
+    refusal = raised.value.__cause__
+    assert isinstance(refusal, UsageError)
+    assert refusal.code == "write-evidence-already-claimed"
 
 
 @pytest.mark.parametrize(

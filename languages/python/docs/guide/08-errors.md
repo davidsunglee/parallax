@@ -42,19 +42,12 @@ from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import (
     ExecutionFailure,
-    InvalidPrincipalError,
-    KeyedWriteValueError,
     PublicationConflictError,
-    QueryTargetError,
-    TransactionAccessModeError,
-    TransactionAuthorityError,
-    TransactionOptionConflictError,
     TransactionRollbackError,
-    TransactionTimePinReadOnlyError,
 )
 from parallax.core.metamodel import MetamodelIssue
-from parallax.core.read_delivery import InvalidData, InvalidDataError, StreamStateError
-from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
+from parallax.core.read_delivery import InvalidData, InvalidDataError
+from parallax.core.unit_work import WritePreconditionError
 from parallax.evolution import SchemaDelta
 from parallax.snapshot import ScopedDatabase, TxnContext, is_view_loaded
 ```
@@ -67,8 +60,8 @@ Two rules decide where you catch an error.
 **A refusal raised before any work runs reaches you as itself.** Creating an entity
 class, building a `DomainModel`, building a query and editing a value each check what
 you wrote on the spot. A standalone read also checks its query against the model before
-it reads: `db.find` raises `QueryTargetError` itself when the model declares no entity
-for the query's target.
+it reads: `db.find` raises a `UsageError` itself, with code `query-target-not-in-model`,
+when the model declares no entity for the query's target.
 
 **Anything that escapes a transaction, or fails while a read runs against the database,
 reaches you as an `ExecutionFailure`.** Its `cause` is the original error, which is also
@@ -78,7 +71,8 @@ Once the error leaves the callback, `transact` wraps it. So a handler around `tr
 `read_only` or a standalone read looks at `failure.cause`, as the examples below do.
 
 Catching an error inside the callback doesn't always leave the transaction usable. A
-refusal a verb raises before anything is sent, such as `WriteEvidenceError`, does. A
+refusal a verb raises before anything is sent, such as a `UsageError` with a
+`write-evidence-*` code, does. A
 failure while the transaction sends its writes, or a failure that escapes a joined call,
 makes the transaction rollback-only: every later read or write raises a `UsageError`
 whose `code` is `"transaction-rollback-only"`, and the transaction rolls back however
@@ -108,14 +102,16 @@ tool can report them without parsing messages.
   its attribute declares can't be compared with it, `limit(-1)` isn't positive, and
   `as_of(...)` on `Customer` asks for history that `Customer` doesn't keep. Whether the
   model declares the query's target can only be checked when the query runs, so that
-  refusal, `QueryTargetError`, comes before anything is read.
+  refusal, a `UsageError` with code `query-target-not-in-model`, comes before anything is
+  read.
 - **A write.** A write verb checks what it is handed before it buffers anything.
-  `WriteEvidenceError` means the value carries no licence this attempt can use (see
-  [No blind writes](05-transactions.md#no-blind-writes)). `KeyedWriteValueError` means
+  Each refusal is a `UsageError` whose `code` says why. A `write-evidence-*` code means
+  the value carries no licence this attempt can use (see
+  [No blind writes](05-transactions.md#no-blind-writes)). A `write-value-*` code means
   the verb was handed a value it can't take, and its message names the verb that does:
   `tx.amend` of a value you constructed rather than read names `tx.insert`, and
-  `tx.insert` of a value a read returned names `tx.amend`. A `UsageError` means the
-  write breaks a rule, and its `code` names the rule: `"write-instruction-invalid"` for
+  `tx.insert` of a value a read returned names `tx.amend`. Otherwise the write breaks a
+  rule, and its `code` names the rule: `"write-instruction-invalid"` for
   a write its target can't mean, such as `tx.delete` on a temporal entity, whose message
   names `terminate`, or a target write on an entity with no revision;
   `"set-based-write-target-unsupported"` for a
@@ -124,7 +120,7 @@ tool can report them without parsing messages.
   [declared read-only](02-modeling.md#entities-and-keys). Caught inside the callback,
   that refusal leaves the transaction usable, and the writes buffered before and after
   it still commit. If it escapes, it reaches you as the `cause` of an `ExecutionFailure`.
-  `TransactionTimePinReadOnlyError` means the value was read as of a past Transaction
+  `"transaction-time-pin-read-only"` means the value was read as of a past Transaction
   Time, which [can't be rewritten](04-writing.md#correct-the-past).
 
 A release check can report every problem in a model at once:
@@ -428,14 +424,14 @@ of an `ExecutionFailure`:
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, query, edit or write, such as a class's or query's `UsageError`, `MetamodelValidationError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or a write's `UsageError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, query, edit or write, such as a class's, query's or write's `UsageError`, `MetamodelValidationError` or `EditError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
 | A `UsageError` whose `code` is `"read-only-write-target"` | by the write verb, before anything is buffered | No | Leave the entity's rows to the system that owns them, or drop `persistence=READ_ONLY` if your application owns them |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |
-| `StreamStateError` | when a stream is used outside its `with` block, entered twice or iterated twice | No | Consume each stream once, inside its `with` block |
+| A `UsageError` whose `code` is `"stream-state-invalid"` | when a stream is used outside its `with` block, entered twice or iterated twice | No | Consume each stream once, inside its `with` block |
 | `InvalidDataError` | by the accessor, after the read | No | Repair the stored data; read with `checked()` to carry on past it |
-| `TransactionAccessModeError`, `TransactionOptionConflictError` or `TransactionAuthorityError` | when a nested call can't join the running transaction, before its callback runs | No | Call the matching kind of transaction, name the same options or none, or run as the same actor |
-| `InvalidPrincipalError` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
+| A `UsageError` whose `code` is `"transaction-access-mode-mismatch"`, `"transaction-option-conflict"` or `"transaction-authority-mismatch"` | when a nested call can't join the running transaction, before its callback runs | No | Call the matching kind of transaction, name the same options or none, or run as the same actor |
+| A `UsageError` whose `code` is `"principal-invalid"` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
 | A `UsageError` whose `code` is `"transaction-rollback-only"` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
 | `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
 | A `ConflictError` whose `code` is `"optimistic-lock-conflict"`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to the Retry Policy's `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |

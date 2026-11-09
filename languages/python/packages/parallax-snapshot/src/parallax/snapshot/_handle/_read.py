@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 from parallax.core import read_planning
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.base import NoResultFound, TooManyResultsFound, UsageError
+from parallax.core.base import InternalError, NoResultFound, TooManyResultsFound, UsageError
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._authored_resolver import include_path_node
 from parallax.core.entity._expressions import authored_include_path
@@ -28,9 +28,14 @@ if TYPE_CHECKING:
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.snapshot._handle._errors import (
     SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
-    SnapshotMaterializationError,
+    SNAPSHOT_MATERIALIZATION_FAILED,
 )
-from parallax.snapshot._inspection import SnapshotInspectionError
+from parallax.snapshot._inspection import (
+    SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
+    SNAPSHOT_WIRE_AT_UNREQUESTED,
+    SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
+    inspection_refusal,
+)
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots, publish_shared_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
@@ -212,10 +217,10 @@ class Snapshot[T]:
         includes = self._includes
         wire = self._wire
         if projection is None or includes is None or wire is None:
-            raise SnapshotInspectionError(
-                code="snapshot-wire-envelope-ineligible",
-                message="Wire projection is available only on a Typed Snapshot",
-                operation="Snapshot.wire",
+            raise inspection_refusal(
+                SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
+                "Snapshot.wire",
+                "Wire projection is available only on a Typed Snapshot",
             )
         if value is _WIRE_ALL:
             if at is not _WIRE_AT_OMITTED:
@@ -304,10 +309,10 @@ def wire_position(
     meta = construction.cataloged.meta
     root = meta.entity(includes.queried)
     if root is None:  # pragma: no cover - the tree came from this exact model
-        raise SnapshotInspectionError(
-            code="snapshot-wire-at-unrequested",
-            message=f"the retained model declares no query root {includes.queried.canonical}",
-            operation=operation,
+        raise inspection_refusal(
+            SNAPSHOT_WIRE_AT_UNREQUESTED,
+            operation,
+            f"the retained model declares no query root {includes.queried.canonical}",
         )
     try:
         bound = include_path_node(
@@ -316,16 +321,16 @@ def wire_position(
         resolved = validate_include_path(bound, meta, root_position(meta, root))
         position = includes.requested_position(resolved)
     except Exception as error:
-        raise SnapshotInspectionError(
-            code="snapshot-wire-at-unrequested",
-            message=f"the requested projection position is not part of this read: {error}",
-            operation=operation,
+        raise inspection_refusal(
+            SNAPSHOT_WIRE_AT_UNREQUESTED,
+            operation,
+            f"the requested projection position is not part of this read: {error}",
         ) from error
     if position is None:
-        raise SnapshotInspectionError(
-            code="snapshot-wire-at-unrequested",
-            message="the requested projection position is not an exact prefix of this read",
-            operation=operation,
+        raise inspection_refusal(
+            SNAPSHOT_WIRE_AT_UNREQUESTED,
+            operation,
+            "the requested projection position is not an exact prefix of this read",
         )
     return position
 
@@ -362,13 +367,10 @@ def _project_eager_values(
                 reader = InstanceReader(projection)
             concrete = reader.concrete(node)
             if not includes.admits(position, concrete):
-                raise SnapshotInspectionError(
-                    code="snapshot-wire-at-concrete-mismatch",
-                    message=(
-                        f"{concrete.canonical} is not admitted at requested position {position}"
-                    ),
-                    operation="Snapshot.wire",
-                    entity=concrete,
+                raise inspection_refusal(
+                    SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
+                    "Snapshot.wire",
+                    f"{concrete.canonical} is not admitted at requested position {position}",
                 )
             if renderer is None:
                 encoder = wire_scalar_cache()
@@ -654,10 +656,9 @@ def typed_publication(
             try:
                 return publisher(root, ordinal)
             except Exception as exc:
-                raise SnapshotMaterializationError(
-                    "the read succeeded but its Entity graph could not be built "
-                    "(snapshot-materialization-failed)",
-                    cause=exc,
+                raise InternalError(
+                    SNAPSHOT_MATERIALIZATION_FAILED,
+                    "the read succeeded but its Entity graph could not be built",
                 ) from exc
 
         if sharing_scope == "page":

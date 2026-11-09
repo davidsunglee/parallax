@@ -21,13 +21,13 @@ from uuid import uuid4
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.base import UsageError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProviderError,
     FanoutLifecycleProvider,
     ReadStarted,
     RootExecution,
@@ -38,6 +38,7 @@ from tests._support.db_port import (
     Read,
     ScriptedAdapter,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW
 
@@ -191,7 +192,7 @@ def test_a_child_opening_failure_aborts_the_root_and_discards_what_opened() -> N
     port = ScriptedAdapter()
     db = _db(port, FanoutLifecycleProvider([first, failing, later]))
 
-    with pytest.raises(ExecutionLifecycleProviderError):
+    with raises_code(UsageError, "lifecycle-provider-failed"):
         db.find(mm.Account.where(mm.Account.id == 7)).result()
     # The handler the first child had already answered is discarded unused, and
     # the child after the failure is never asked at all.

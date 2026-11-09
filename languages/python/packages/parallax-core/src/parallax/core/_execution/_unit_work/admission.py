@@ -7,7 +7,11 @@ from enum import Enum
 from typing import Final
 
 from parallax.core import inheritance, temporal_read
-from parallax.core._execution._unit_work._errors import WriteEvidenceError
+from parallax.core._execution._unit_work._errors import (
+    WRITE_EVIDENCE_ALREADY_CLAIMED,
+    WRITE_EVIDENCE_INSERTED,
+    write_evidence_refusal,
+)
 from parallax.core._execution._unit_work._write_ownership import (
     InsertionComposition,
     KeyedWriteRefusalAdvice,
@@ -52,6 +56,7 @@ from parallax.core._execution._unit_work.write_items import (
     compose_temporal_write,
     temporal_intent,
 )
+from parallax.core.base import UsageError
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
@@ -308,7 +313,7 @@ class WriteAdmission:
         intent = keyed_intent(instruction)
         assert intent is not None  # a write against existing coverage is no insert
         if not self._admits_temporal(item, key, intent):
-            raise _already_claimed(instruction.target, key)
+            raise _already_claimed(key)
         folded = self._folded(item)
         if folded is not None:
             return folded
@@ -384,20 +389,18 @@ class WriteAdmission:
         scope = item.claim_scope
         key = item.object_key
         if self._authority.has_admitted_insertion(key):
-            raise WriteEvidenceError(
-                code="write-evidence-inserted",
-                message=(
-                    f"{target.identity.canonical}: this transaction inserted the object this write "
-                    "addresses, so no caller's revision describes it; until the transaction "
-                    "commits, write it through the value the insert took or a read of it"
-                ),
-                object_key=key,
+            raise write_evidence_refusal(
+                WRITE_EVIDENCE_INSERTED,
+                key,
+                "this transaction inserted the object this write addresses, so no caller's "
+                "revision describes it; until the transaction commits, write it through the "
+                "value the insert took or a read of it",
             )
         intent = keyed_intent(instruction)
         assert intent is not None  # a target write is no insert
         if self._is_temporal(target):
             if not self._admits_temporal(item, key, intent):
-                raise _already_claimed(target, key)
+                raise _already_claimed(key)
             if not self._states_window(key, instruction.valid_time_window):
                 item = confirm_target(item)
             self._note_removal(instruction, key)
@@ -406,7 +409,7 @@ class WriteAdmission:
         held = self._objects().get(key)
         verdict = admits(self._held_intent(scope), intent)
         if (held is not None and held != scope) or verdict == "incompatible":
-            raise _already_claimed(target, key)
+            raise _already_claimed(key)
         if scope not in self._claims:
             item = confirm_target(item)
         self._note_removal(instruction, key)
@@ -423,7 +426,7 @@ class WriteAdmission:
         item = self._authority.resolve_insertion_authorized_write(item)
         position = self._pending_insert_position(item.object_key)
         if position is not None and not self._opening_admits(position, item.instruction):
-            raise _already_claimed(item.instruction.target, item.object_key)
+            raise _already_claimed(item.object_key)
         return item
 
     def _check_keyed_claim(
@@ -442,16 +445,14 @@ class WriteAdmission:
         verdict = admits(self._held_intent(scope), intent)
         if conditioned in (None, scope) and verdict != "incompatible":
             return verdict
-        raise WriteEvidenceError(
-            code="write-evidence-already-claimed",
-            message=(
-                f"{item.instruction.target.identity.canonical}: a write already buffered in this "
-                "transaction claims what this one settles against, for an intent it cannot be "
-                "combined with — a different Valid-Time region composes no interval, and an "
-                "assignment after a destructive intent resurrects nothing; read the row through "
-                "this transaction to flush the buffered intent and settle against fresh state"
-            ),
-            object_key=claimed,
+        raise write_evidence_refusal(
+            WRITE_EVIDENCE_ALREADY_CLAIMED,
+            claimed,
+            "a write already buffered in this transaction claims what this one settles "
+            "against, for an intent it cannot be combined with — a different Valid-Time region "
+            "composes no interval, and an assignment after a destructive intent resurrects "
+            "nothing; read the row through this transaction to flush the buffered intent and "
+            "settle against fresh state",
         )
 
     def _claim(self, scope: ClaimScope, position: int, key: ObjectKey) -> None:
@@ -986,15 +987,12 @@ def _coalesced(
     )
 
 
-def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:
-    return WriteEvidenceError(
-        code="write-evidence-already-claimed",
-        message=(
-            f"{target.identity.canonical}: a write already buffered in this transaction cannot "
-            "be composed with this one — an assignment after a destructive intent over its "
-            "window resurrects nothing, and a destructive intent composes only with writes of "
-            "exactly its own window; read the row through this transaction to flush the "
-            "buffered intent and settle against fresh state"
-        ),
-        object_key=key,
+def _already_claimed(key: ObjectKey) -> UsageError:
+    return write_evidence_refusal(
+        WRITE_EVIDENCE_ALREADY_CLAIMED,
+        key,
+        "a write already buffered in this transaction cannot be composed with this one — an "
+        "assignment after a destructive intent over its window resurrects nothing, and a "
+        "destructive intent composes only with writes of exactly its own window; read the row "
+        "through this transaction to flush the buffered intent and settle against fresh state",
     )

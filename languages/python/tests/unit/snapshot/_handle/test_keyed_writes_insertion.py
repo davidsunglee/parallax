@@ -35,9 +35,8 @@ from parallax.core.base import DocumentValue, StructuredDocument, UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
-from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import MISSING_TARGET, WriteEvidenceError
+from parallax.core.unit_work import MISSING_TARGET
 from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm
@@ -245,9 +244,8 @@ def test_an_edit_over_coverage_a_pending_destruction_removed_is_refused() -> Non
         opened = _position()
         tx.insert(opened, valid_from=_JAN)
         tx.terminate(opened, until=_MAY)
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-already-claimed"):
             tx.amend(opened.edit(value=Decimal("150.00")))
-        assert refused.value.code == "write-evidence-already-claimed"
 
     _transact(port, fn)
     assert _opened(port) == [(Decimal("100.00"), _MAY, INFINITY_INSTANT)]
@@ -257,9 +255,8 @@ def test_an_edit_over_coverage_a_pending_destruction_removed_is_refused() -> Non
 # Authority belongs to the admitted source, not to the key.                     #
 # --------------------------------------------------------------------------- #
 def _refused_as_not_stored(write: Callable[[], object]) -> None:
-    with pytest.raises(KeyedWriteValueError) as refused:
+    with raises_code(UsageError, "write-value-not-stored"):
         write()
-    assert refused.value.code == "write-value-not-stored"
 
 
 def test_a_draft_derived_before_the_insertion_carries_no_authority() -> None:
@@ -671,9 +668,8 @@ def _low(tx: TxnContext) -> None:
 
 
 def _refused_as_a_repeat(write: Callable[[], object]) -> None:
-    with pytest.raises(KeyedWriteValueError) as refused:
+    with raises_code(UsageError, "write-value-already-stored"):
         write()
-    assert refused.value.code == "write-value-already-stored"
 
 
 class _Abandoned(Exception):
@@ -848,9 +844,8 @@ def test_a_pending_assignment_alone_leaves_a_stored_insertion_standing() -> None
         tx.insert(first)
         tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
         tx.amend(first.edit(value=Decimal("2.00")))
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-already-stored"):
             tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("3.00")))
-        assert refused.value.code == "write-value-already-stored"
 
     db_for(BALANCE, port).transact(fn)
     assert len(_writes(port)) == 2
@@ -1052,9 +1047,8 @@ def test_a_reinsertion_at_identical_coordinates_revives_no_earlier_observation()
         tx.terminate(first)
         tx.insert(_position("200.00"), valid_from=_JAN)
         fresh = _read_at(tx, _MAR)
-        with pytest.raises(WriteEvidenceError) as refused:
+        with raises_code(UsageError, "write-evidence-consumed"):
             tx.amend(earlier.edit(value=Decimal("1.00")))
-        assert refused.value.code == "write-evidence-consumed"
         tx.amend(fresh.edit(value=Decimal("250.00")))
 
     _transact(port, fn)
@@ -1076,9 +1070,8 @@ def test_a_pending_assignment_alone_leaves_a_stored_bitemporal_insertion_standin
         tx.insert(first, valid_from=_JAN)
         _read_at(tx, _MAR)
         tx.amend(first.edit(value=Decimal("150.00")))
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-already-stored"):
             tx.insert(_position("200.00"), valid_from=_JAN)
-        assert refused.value.code == "write-value-already-stored"
 
     _transact(port, fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert", "update"]
@@ -1105,9 +1098,8 @@ def test_removing_a_bitemporal_row_no_insertion_opened_leaves_the_insertions_sta
         tx.insert(WherePosition(id=9, acct_num="B", value=Decimal("5.00")), valid_from=_JAN)
         tx.amend(_read_at(tx, _MAR).edit(value=Decimal("150.00")))
         tx.terminate(_read_at(tx, _MAR))
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-already-stored"):
             tx.insert(WherePosition(id=9, acct_num="B", value=Decimal("6.00")), valid_from=_JAN)
-        assert refused.value.code == "write-value-already-stored"
 
     _transact(port, fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
@@ -1284,7 +1276,7 @@ def test_a_replacement_over_coverage_a_pending_destruction_removed_is_refused() 
         opened = _position()
         tx.insert(opened, valid_from=_JAN, until=_MAY)
         tx.terminate(opened, until=_MAR)
-        with pytest.raises(WriteEvidenceError):
+        with pytest.raises(UsageError):
             tx.replace(opened.edit(value=Decimal("300.00")), until=_AUG)
 
     _transact(port, fn)

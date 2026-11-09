@@ -2,50 +2,31 @@ from __future__ import annotations
 
 from typing import Final
 
+from parallax.core.base import UsageError
 from parallax.core.object_query import AsOfRange, History, QueryClauses
 
-__all__ = ["DeferredFeatureError", "deferred_features"]
+__all__ = ["EXECUTION_FEATURE_DEFERRED", "deferred_feature_refusal", "deferred_features"]
 
 _DEFERRED_EXECUTION_FEATURES: Final[frozenset[str]] = frozenset({"snapshot-history-includes"})
 
+EXECUTION_FEATURE_DEFERRED: Final = "execution-feature-deferred"
+"""A valid modeled read whose execution this implementation has deferred.
 
-class DeferredFeatureError(RuntimeError):
-    """A valid modeled read whose execution this implementation has deferred.
+Nothing about the query is wrong: it is well formed and legal against the
+connected model, and a later release executing the named Features runs it
+unchanged. The refusal names EVERY Feature the query matched, in ascending
+order, so a caller reads the complete reason rather than whichever match was
+found first.
+"""
 
-    Nothing about the query is wrong: it is well formed and legal against the
-    connected model, and a later release executing the named
-    Features runs it unchanged. That is why this is a ``RuntimeError`` rather
-    than a definition or rejection error, and why it is disjoint from a
-    lifecycle's refusal of a model it could never materialize any read from.
 
-    :data:`code` and :data:`features` are its whole public state; it retains
-    neither the query, the model, nor the Database. ``features``
-    is NONEMPTY and ascending, listing EVERY Feature the query matched, so a
-    caller reads the complete reason rather than whichever match was found
-    first. The constructor enforces the nonemptiness: an empty match set is the
-    ordinary answer for a query this implementation executes, so raising it
-    would name no deferral at all, and this class is exported — a caller can
-    reach the constructor directly.
-
-    Raised before SQL generation, connection acquisition, Database Port access,
-    and — on a participating read — before the unit of work's force-flush, so a
-    deferred read never becomes a side effect.
-    """
-
-    code: Final[str] = "execution-feature-deferred"
-
-    def __init__(self, features: frozenset[str]) -> None:
-        if not features:
-            raise ValueError(
-                "a deferred-feature refusal names at least one Feature; an empty match "
-                "set means the query is executable and nothing is refused"
-            )
-        ordered = tuple(sorted(features))
-        super().__init__(
-            f"{self.code}: this Snapshot implementation has deferred "
-            f"{', '.join(ordered)} and cannot execute this query yet"
-        )
-        self.features: tuple[str, ...] = ordered
+def deferred_feature_refusal(features: frozenset[str]) -> UsageError:
+    """The refusal of a read requiring the Deferred Execution ``features``."""
+    return UsageError(
+        EXECUTION_FEATURE_DEFERRED,
+        f"this Snapshot implementation has deferred {', '.join(sorted(features))} "
+        "and cannot execute this query yet",
+    )
 
 
 def deferred_features(query: QueryClauses) -> frozenset[str]:

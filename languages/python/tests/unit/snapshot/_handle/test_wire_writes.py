@@ -36,17 +36,11 @@ from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
-from parallax.core.execution import (
-    KeyedWriteValueError,
-    TransactionTimePinReadOnlyError,
-)
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
     Snapshot,
-    SnapshotInspectionError,
     TxnContext,
     WireEntity,
     connect,
@@ -946,10 +940,9 @@ def test_an_insert_refuses_a_value_a_read_published() -> None:
 
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
-        with pytest.raises(KeyedWriteValueError) as refusal:
+        with raises_code(UsageError, "write-value-already-stored") as refusal:
             tx.wire.insert("parallax.compatibility.Account", node)
-        assert refusal.value.code == "write-value-already-stored"
-        assert "tx.wire.amend(value, {...})" in refusal.value.message
+        assert "tx.wire.amend(value, {...})" in refusal.value.args[1]
 
     db_for(ACCOUNT, port).transact(fn)
 
@@ -966,7 +959,7 @@ def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() ->
     }
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(TransactionTimePinReadOnlyError) as refusal:
+        with raises_code(UsageError, "transaction-time-pin-read-only") as refusal:
             tx.wire.insert("parallax.compatibility.Balance", _node(tx, pinned))
         assert refusal.value.code == "transaction-time-pin-read-only"
 
@@ -1052,7 +1045,7 @@ def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
     }
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(TransactionTimePinReadOnlyError):
+        with raises_code(UsageError, "transaction-time-pin-read-only"):
             tx.wire.terminate(_node(tx, pinned))
 
     db_for(BALANCE, port).transact(fn)
@@ -1080,9 +1073,8 @@ def test_a_standalone_unversioned_wire_source_has_no_usable_evidence() -> None:
     standalone = _standalone(db, _PERSON_QUERY)
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteEvidenceError) as exc_info:
+        with raises_code(UsageError, "write-evidence-unavailable"):
             tx.wire.amend(standalone, {"name": "Grace"})
-        assert exc_info.value.code == "write-evidence-unavailable"
 
     db.transact(fn)
     assert _writes(port) == []
@@ -1097,9 +1089,8 @@ def test_a_standalone_versioned_wire_source_licenses_no_write(
     standalone = _standalone(db, _ACCOUNT_QUERY)
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteEvidenceError) as exc_info:
+        with raises_code(UsageError, "write-evidence-unavailable"):
             tx.wire.amend(standalone, {"balance": "125.00"})
-        assert exc_info.value.code == "write-evidence-unavailable"
 
     db.transact(fn, concurrency=concurrency)
     assert _writes(port) == []
@@ -1199,9 +1190,8 @@ def test_two_sources_of_one_deleted_version_both_end(first_verb: str, second_ver
         write(tx, second_verb, sources[1], "Ana")
         tx.wire.find(_ACCOUNT_QUERY).results()
         for source in sources:
-            with pytest.raises(WriteEvidenceError) as exc_info:
+            with raises_code(UsageError, "write-evidence-consumed"):
                 tx.wire.amend(source, {"balance": "150.00"})
-            assert exc_info.value.code == "write-evidence-consumed"
 
     db_for(ACCOUNT, port).transact(fn)
     assert len(_writes(port)) == 1
@@ -1235,9 +1225,8 @@ def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchron
     def fn(tx: TxnContext) -> None:
         node = _node(tx, _POSITION_QUERY)
         tx.wire.amend(node, {"value": "300.00"}, until=_UNTIL)
-        with pytest.raises(WriteEvidenceError) as exc_info:
+        with raises_code(UsageError, "write-evidence-already-claimed"):
             tx.wire.terminate(node, until=_OTHER_UNTIL)
-        assert exc_info.value.code == "write-evidence-already-claimed"
 
     own_root(
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
@@ -1453,7 +1442,7 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", opened)
 
-    with raises_contextualized(KeyedWriteValueError, match="write-value-already-stored"):
+    with raises_contextualized(UsageError, match="write-value-already-stored"):
         db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
 
@@ -1470,11 +1459,10 @@ def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> 
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
 
-    with raises_contextualized(KeyedWriteValueError) as refusal:
+    with raises_contextualized(UsageError, code="write-value-already-stored") as refusal:
         db_for(PERSON, port).transact(fn)
-    assert refusal.value.code == "write-value-already-stored"
-    assert "already buffered an insert of" in refusal.value.message
-    assert "tx.wire.amend(opened, {...})" in refusal.value.message
+    assert "already buffered an insert of" in refusal.value.args[1]
+    assert "tx.wire.amend(opened, {...})" in refusal.value.args[1]
     assert _writes(port) == []
 
 
@@ -1493,8 +1481,8 @@ def test_a_wire_insert_of_an_object_a_typed_insert_opened_is_refused() -> None:
         tx.insert(inserted)
         try:
             tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Grace"})
-        except KeyedWriteValueError as refusal:
-            refused.append(refusal.message)
+        except UsageError as refusal:
+            refused.append(refusal.args[1])
             tx.amend(inserted.edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
@@ -1516,8 +1504,8 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         try:
             tx.insert(mm.Person(id=9, name="Grace"))
-        except KeyedWriteValueError as refusal:
-            refused.append(refusal.message)
+        except UsageError as refusal:
+            refused.append(refusal.args[1])
             tx.wire.amend(opened, {"name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
@@ -1536,9 +1524,8 @@ def test_a_typed_value_of_an_object_a_wire_insert_opened_carries_no_authority() 
 
     def fn(tx: TxnContext) -> None:
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
-        with pytest.raises(KeyedWriteValueError) as refusal:
+        with raises_code(UsageError, "write-value-not-stored"):
             tx.amend(mm.Person(id=9, name="Newton").edit(name="Grace"))
-        assert refusal.value.code == "write-value-not-stored"
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
@@ -1786,12 +1773,10 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
     assert stored_provenance_of(opened[0]) is None
     provenance = cast("Any", opened[0])._provenance
     assert (provenance.entity.name, provenance.root_conformance) == ("CardPayment", None)
-    with pytest.raises(SnapshotInspectionError, match="an insert answered") as refusal:
+    with raises_code(UsageError, "snapshot-node-required", match="an insert answered"):
         edge_of(opened[0])
-    assert refusal.value.code == "snapshot-node-required"
-    with pytest.raises(SnapshotInspectionError, match="an insert answered") as refusal:
+    with raises_code(UsageError, "snapshot-node-required", match="an insert answered"):
         pin_of(opened[0])
-    assert refusal.value.code == "snapshot-node-required"
     authority = authoring_of(opened[0])
     assert authority is not None
     assert authority.object_key.entity.name == "CardPayment"

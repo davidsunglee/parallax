@@ -41,5 +41,5 @@ def test_the_documented_story_refuses_the_source_write_and_gates_the_target_one(
 def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
     snippet = source_admission_stories.source_admission_snippet()
     assert "db.read_only(" in snippet
-    assert "except WriteEvidenceError:" in snippet
+    assert "except UsageError as refusal:" in snippet
     assert "version=reviewed.version" in snippet

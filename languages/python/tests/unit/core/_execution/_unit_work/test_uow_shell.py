@@ -96,7 +96,6 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     WriteAssignment,
-    WriteEvidenceError,
     WritePlanner,
     WritePlanningRequest,
     WritePreconditionError,
@@ -594,10 +593,9 @@ def _balance_update(key: int) -> ReadAuthorizedWrite:
     )
 
 
-def _refused_as_claimed(uow: UnitOfWork, item: ReadAuthorizedWrite) -> WriteEvidenceError:
-    with pytest.raises(WriteEvidenceError) as refusal:
+def _refused_as_claimed(uow: UnitOfWork, item: ReadAuthorizedWrite) -> UsageError:
+    with raises_code(UsageError, "write-evidence-already-claimed") as refusal:
         uow.buffer(item)
-    assert refusal.value.code == "write-evidence-already-claimed"
     return refusal.value
 
 
@@ -631,8 +629,7 @@ def test_a_retained_observation_claims_its_state_and_compatible_intents_combine(
         uow.buffer(_account_write("delete", 1, 7))
         uow.buffer(_account_write("delete", 1, 7))
         refusal = _refused_as_claimed(uow, _account_write("amend", 1, 7))
-        assert refusal.object_key == corpus_object_key("Account", ("id", 1))
-        assert "parallax.compatibility.Account" in refusal.message
+        assert refusal.args[1].startswith("parallax.compatibility.Account {'id': 1}: ")
 
     _run(body, steps=simulated)
     assert _kinds(simulated) == ["delete"]

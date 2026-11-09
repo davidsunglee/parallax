@@ -78,7 +78,6 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
-    SnapshotInspectionError,
     TxnContext,
     WireEntity,
     connect,
@@ -1593,16 +1592,14 @@ def test_a_non_temporal_wire_read_node_stands_on_no_milestone_and_at_no_pin() ->
         .result()
     )
     order = EntityIdentity("parallax.compatibility", "Order")
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-edge-unavailable") as refusal:
         edge_of(root)
-    assert refusal.value.code == "snapshot-edge-unavailable"
-    assert refusal.value.operation == "edge_of"
-    assert refusal.value.entity == order
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    assert refusal.value.args[1].startswith("edge_of: ")
+    assert order.canonical in refusal.value.args[1]
+    with raises_code(UsageError, "snapshot-pin-unavailable") as refusal:
         pin_of(root)
-    assert refusal.value.code == "snapshot-pin-unavailable"
-    assert refusal.value.operation == "pin_of"
-    assert refusal.value.entity == order
+    assert refusal.value.args[1].startswith("pin_of: ")
+    assert order.canonical in refusal.value.args[1]
 
 
 def _unpublished_inputs() -> dict[str, object]:
@@ -1627,11 +1624,9 @@ def _unpublished_inputs() -> dict[str, object]:
 def test_a_value_no_wire_read_published_is_not_inspectable(
     operation: str, inspect: Callable[[object], object], name: str
 ) -> None:
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-node-required") as refusal:
         inspect(_unpublished_inputs()[name])
-    assert refusal.value.code == "snapshot-node-required"
-    assert refusal.value.operation == operation
-    assert refusal.value.entity is None
+    assert refusal.value.args[1].startswith(f"{operation}: ")
 
 
 @pytest.mark.parametrize(
@@ -1640,18 +1635,18 @@ def test_a_value_no_wire_read_published_is_not_inspectable(
 def test_the_node_an_insert_answered_is_not_inspectable_even_for_a_temporal_entity(
     operation: str, inspect: Callable[[object], object]
 ) -> None:
-    refusals: list[SnapshotInspectionError] = []
+    refusals: list[UsageError] = []
 
     def fn(tx: TxnContext) -> None:
         node = tx.wire.insert(
             "parallax.compatibility.Balance", {"id": 1, "acctNum": "A-1", "value": "5.00"}
         )
-        with pytest.raises(SnapshotInspectionError) as refusal:
+        with pytest.raises(UsageError) as refusal:
             inspect(node)
         refusals.append(refusal.value)
 
     db_for(BALANCE, ScriptedAdapter(Transact(Write()))).transact(fn)
     (refusal,) = refusals
     assert refusal.code == "snapshot-node-required"
-    assert refusal.operation == operation
-    assert refusal.entity == EntityIdentity("parallax.compatibility", "Balance")
+    assert refusal.args[1].startswith(f"{operation}: ")
+    assert "parallax.compatibility.Balance" in refusal.args[1]

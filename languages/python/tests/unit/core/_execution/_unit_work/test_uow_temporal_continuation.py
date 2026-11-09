@@ -54,7 +54,6 @@ from parallax.core.unit_work import (
     TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
-    WriteEvidenceError,
     admitted_write,
     object_key,
 )
@@ -514,9 +513,8 @@ def test_a_caller_beside_a_continuing_source_states_the_start_of_the_row_held_th
     session.uow.buffer(
         admitted_write(_write(_FEB, _MAR, value="150.00"), source, source.key.object)
     )
-    with pytest.raises(WriteEvidenceError) as refused:
+    with raises_code(UsageError, "write-evidence-already-claimed"):
         session.uow.buffer_target(_target(_JUN, _AUG, _T0, value="175.00"))
-    assert refused.value.code == "write-evidence-already-claimed"
     session.uow.buffer_target(_target(_JUN, _AUG, _NOW, value="175.00"))
     _flush_buffered(session)
     assert session.stored() == [

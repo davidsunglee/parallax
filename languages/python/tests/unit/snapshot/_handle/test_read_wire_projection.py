@@ -42,7 +42,7 @@ from parallax.core import (
     read_planning as deep_fetch_module,
 )
 from parallax.core._execution import _read_query as read_query_module
-from parallax.core.base import INFINITY, TIMESTAMP
+from parallax.core.base import INFINITY, TIMESTAMP, UsageError
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.metamodel import EntityIdentity
@@ -54,7 +54,6 @@ from parallax.snapshot import (
     Database,
     ScopedDatabase,
     Snapshot,
-    SnapshotInspectionError,
     SnapshotStream,
     WireEntity,
     edge_of,
@@ -66,6 +65,7 @@ from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication import _wire_render
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.errors import raises_code
 from tests.unit import _deep_include_support as deep
 
 
@@ -320,16 +320,14 @@ def test_element_projection_refuses_edited_and_unpublished_values() -> None:
     customer = snapshot.result()
     root.close()
 
-    with pytest.raises(SnapshotInspectionError) as edited:
+    with raises_code(UsageError, "snapshot-wire-input-edited"):
         snapshot.wire(customer.edit(name="Grace"), at=vo.Customer.depots)
-    assert edited.value.code == "snapshot-wire-input-edited"
 
-    with pytest.raises(SnapshotInspectionError) as unpublished:
+    with raises_code(UsageError, "snapshot-node-required"):
         snapshot.wire(
             vo.Customer(id=2, name="Lin", address=None),
             at=vo.Customer.depots,
         )
-    assert unpublished.value.code == "snapshot-node-required"
 
 
 def _recorded_correspondence_checks(monkeypatch: pytest.MonkeyPatch) -> list[EntityIdentity]:
@@ -384,9 +382,8 @@ def test_element_projection_refuses_a_mismatched_published_layout_before_positio
     root.close()
     foreign_root.close()
 
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-wire-input-incompatible"):
         cast("Any", snapshot).wire(foreign, at=vo.Customer.locations)
-    assert refusal.value.code == "snapshot-wire-input-incompatible"
     assert checked == [_ForeignCustomer.identity]
 
 
@@ -493,17 +490,14 @@ def test_explicit_position_is_strict_and_admits_the_requested_concrete() -> None
     projected = snapshot.wire(customer.locations[0], at=vo.Customer.locations)
     assert projected["label"] == "Home"
 
-    with pytest.raises(SnapshotInspectionError) as unrequested:
+    with raises_code(UsageError, "snapshot-wire-at-unrequested"):
         snapshot.wire(customer.locations[0], at=vo.Customer.depots)
-    assert unrequested.value.code == "snapshot-wire-at-unrequested"
 
-    with pytest.raises(SnapshotInspectionError) as invalid_path:
+    with raises_code(UsageError, "snapshot-wire-at-unrequested"):
         snapshot.wire(customer, at=vo.Customer.locations.unknown)
-    assert invalid_path.value.code == "snapshot-wire-at-unrequested"
 
-    with pytest.raises(SnapshotInspectionError) as wrong_concrete:
+    with raises_code(UsageError, "snapshot-wire-at-concrete-mismatch"):
         snapshot.wire(customer, at=vo.Customer.locations)
-    assert wrong_concrete.value.code == "snapshot-wire-at-concrete-mismatch"
     root.close()
 
 
@@ -526,9 +520,8 @@ def _refuse_unrequested_positions(project: Any, order: Any) -> None:
         Order.items.no_such_member,
         Order.items.statuses.order.items.no_such_member,
     ):
-        with pytest.raises(SnapshotInspectionError) as refusal:
+        with raises_code(UsageError, "snapshot-wire-at-unrequested"):
             project(item, at=position)
-        assert refusal.value.code == "snapshot-wire-at-unrequested"
 
 
 def test_an_eager_projection_binds_a_requested_position_at_any_depth() -> None:
@@ -568,9 +561,8 @@ def test_a_projection_position_spells_renamed_and_inherited_members_as_the_read_
     assert toy.maker is not None
     assert snapshot.wire(toy, at=deep.Keeper.animals.toys)["id"] == 10
     assert snapshot.wire(toy.maker, at=deep.Keeper.animals.toys.maker)["id"] == 100
-    with pytest.raises(SnapshotInspectionError) as sibling:
+    with raises_code(UsageError, "snapshot-wire-at-unrequested"):
         snapshot.wire(dog, at=deep.Cat.gear)
-    assert sibling.value.code == "snapshot-wire-at-unrequested"
 
 
 def test_wire_envelopes_are_ineligible_even_when_empty() -> None:
@@ -578,9 +570,8 @@ def test_wire_envelopes_are_ineligible_even_when_empty() -> None:
     wire = db.wire.find(deserialize_query({"target": "Customer", "predicate": {"true": {}}}))
     root.close()
 
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-wire-envelope-ineligible"):
         cast("Any", wire).wire()
-    assert refusal.value.code == "snapshot-wire-envelope-ineligible"
 
 
 def test_whole_result_projection_accepts_no_position_override() -> None:
@@ -636,9 +627,8 @@ def test_projection_uses_the_retained_model_for_equivalent_positions() -> None:
     )
     assert equivalent["_type"] == "parallax.compatibility.Dog"
     assert snapshot.edition == "old"
-    with pytest.raises(SnapshotInspectionError) as subset:
+    with raises_code(UsageError, "snapshot-wire-at-unrequested"):
         snapshot.wire(pet, at=AnimalOwnerPerson.pets.narrow(Dog))
-    assert subset.value.code == "snapshot-wire-at-unrequested"
     root.close()
 
 

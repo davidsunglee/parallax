@@ -53,7 +53,6 @@ from parallax.core.unit_work import (
     RetainedObservation,
     TransactionSettings,
     UnitOfWork,
-    WriteEvidenceError,
     admitted_write,
 )
 from parallax.core.write_plan import (
@@ -158,7 +157,7 @@ def _write(
 
 
 def _refusal(write: Callable[[], object]) -> str:
-    with pytest.raises(WriteEvidenceError) as refused:
+    with pytest.raises(UsageError) as refused:
         write()
     return refused.value.code
 
@@ -171,7 +170,7 @@ def _resolved(uow: UnitOfWork, meta: Metamodel, source: ReadEvidence) -> object:
         return uow.source_authority.resolve_read_evidence(
             entity, source, mutation="amend", object_key=source.object_key
         )
-    except WriteEvidenceError as refused:
+    except UsageError as refused:
         return refused.code
 
 
