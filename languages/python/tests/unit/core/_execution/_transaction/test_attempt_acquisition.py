@@ -76,7 +76,6 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey
 from parallax.descriptor import domain_model_from_document
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -164,7 +163,7 @@ def test_several_target_rows_are_corruption_with_their_count_once_the_read_has_c
     # The second row's payload is invalid stored data, which judging it would
     # refuse; neither root is judged, so the count alone decides.
     recorder = RecordingLifecycleProvider()
-    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION) as corrupt:
+    with raises_code(InternalError, CARDINALITY_CORRUPTION) as corrupt:
         _ledger_write([_ledger(), _ledger(balance=1.0)], recorder)
     assert "affected 2 row(s), expected 1" in str(corrupt.value)
     (outcome,) = _read_outcomes(recorder.roots[-1].events)
@@ -173,7 +172,7 @@ def test_several_target_rows_are_corruption_with_their_count_once_the_read_has_c
 
 def test_a_unique_target_row_holding_invalid_stored_data_is_refused_inside_its_read() -> None:
     recorder = RecordingLifecycleProvider()
-    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed"):
+    with raises_code(InvalidDataError, "stored-data-decoding-failed"):
         _ledger_write([_ledger(balance=1.0)], recorder)
     (outcome,) = _read_outcomes(recorder.roots[-1].events)
     assert isinstance(outcome, ReadFailed)
@@ -189,7 +188,7 @@ def test_a_unique_valid_target_row_supplies_the_revision_the_caller_states() -> 
 def test_a_failing_target_read_fails_before_any_count_is_taken() -> None:
     failure = DatabaseError(category="connectionDead", native_code="08006", message="gone")
     port = ScriptedAdapter(Transact(Read(raises=failure)))
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         scope(port).transact(
             lambda tx: tx.uow.buffer_target(_patch()), itself, concurrency="locking"
         )
@@ -209,7 +208,7 @@ def test_a_conversion_failure_of_a_several_root_target_read_precedes_its_count(
 
     monkeypatch.setattr(ReadRowConverter, "record_row", failing)
     port = ScriptedAdapter(Transact(Read(rows=[_account(), _account()])))
-    with raises_contextualized(ValueError, match="does not convert"):
+    with pytest.raises(ValueError, match="does not convert"):
         scope(port).transact(
             lambda tx: tx.uow.buffer_target(_patch()), itself, concurrency="locking"
         )
@@ -755,7 +754,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
         assert [type(call) for call in port.calls] == [BeginCall, ReadCall]
         raise _Stopped
 
-    with raises_contextualized(_Stopped):
+    with pytest.raises(_Stopped):
         scope(port, _HULLS).transact(fn, itself, concurrency="locking")
 
 
@@ -786,7 +785,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
         assert [type(call) for call in port.calls] == [BeginCall]
         called.append("returned")
 
-    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed") as refused:
+    with raises_code(InvalidDataError, "stored-data-decoding-failed") as refused:
         scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="optimistic")
     assert called == ["returned"]
     assert " at tags (" in refused.value.args[1]
@@ -870,7 +869,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
         )
         called.append("returned")
 
-    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed") as refused:
+    with raises_code(InvalidDataError, "stored-data-decoding-failed") as refused:
         scope(port, _HULLS, provider=recorder).transact(fn, itself, concurrency="locking")
     assert called == ["returned"]
     assert f" at spec.{failing} (" in refused.value.args[1]
@@ -998,7 +997,7 @@ def test_a_later_writes_retained_row_fails_its_completion_before_the_span_binds_
         tx.uow.buffer_target(_hull_target(metadata, 1))
         tx.uow.buffer_target(_hull_target(metadata, 2))
 
-    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed"):
+    with raises_code(InvalidDataError, "stored-data-decoding-failed"):
         scope(port, _HULLS).transact(fn, itself, concurrency="locking")
     # No coverage read, no write of either object, and no retry.
     assert [type(call) for call in port.calls] == [BeginCall, ReadCall, ReadCall, RollbackCall]
@@ -1044,7 +1043,7 @@ def test_an_invalid_later_row_of_a_shared_read_fails_before_an_earlier_write_bin
     second["payload"] = StructuredDocument({"amount": "x", "label": "k2"})
     # The scripted write would make the first write's close a conflict.
     port = ScriptedAdapter(Transact(Read(rows=[first, second]), Write(affected=0)))
-    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed"):
+    with raises_code(InvalidDataError, "stored-data-decoding-failed"):
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareDoc, 1, 1), (shared.ShareDoc, 2, 1)),
             itself,
@@ -1065,7 +1064,7 @@ def test_a_ready_writes_failure_precedes_the_read_its_successor_waits_for() -> N
             Read(raises=deadlock),
         )
     )
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64)),
             itself,
@@ -1087,7 +1086,7 @@ def test_a_later_reads_failure_leaves_the_writes_completed_before_it() -> None:
             Read(raises=deadlock),
         )
     )
-    with raises_contextualized(DatabaseError) as raised:
+    with pytest.raises(DatabaseError) as raised:
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64), (shared.ShareCols, 3, 1)),
             itself,
@@ -1144,7 +1143,7 @@ def test_a_ready_groups_closes_share_one_grouped_effect_ahead_of_one_insert_of_e
 def test_a_later_writes_shortfall_in_a_ready_group_precedes_an_earlier_writes_insert() -> None:
     # Object 2's second close returns no ordinal.
     port = ScriptedAdapter(Transact(Read(rows=_both_ready()), _ordinals(3)))
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT) as raised:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT) as raised:
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
             itself,
@@ -1162,7 +1161,7 @@ def test_a_ready_groups_failing_insert_reports_its_statement_error_alone() -> No
     port = ScriptedAdapter(
         Transact(Read(rows=_both_ready()), _ordinals(4), Write(raises=failure)),
     )
-    with raises_contextualized(DatabaseError) as raised:
+    with pytest.raises(DatabaseError) as raised:
         scope(port, shared.DOMAIN).transact(
             _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
             itself,

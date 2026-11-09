@@ -177,6 +177,7 @@ import pytest
 
 import parallax.core.execution_lifecycle._activity as _activity
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
     CommitFailed,
@@ -189,7 +190,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import ExecutionFailure, RetryPolicy
+from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -1375,7 +1376,7 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
     with _observed_db(port) as database:
 
         def run() -> None:
-            with suppress(ExecutionFailure):
+            with suppress(DatabaseError):
                 database.transact(lambda tx: tx.insert(new_account()), retry=fast_retry(1))
 
         assert _left_behind(run) == []

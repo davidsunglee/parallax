@@ -24,7 +24,6 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import TxnContext
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -34,6 +33,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._transact_support import FIXED, INFINITY_INSTANT, db_for
 
@@ -124,6 +124,6 @@ def test_an_answer_the_insert_cannot_produce_fails_the_write_and_rolls_it_back(
     answered: list[dict[str, object]],
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=answered)))
-    with raises_contextualized(InternalError, code=WRITE_RESULT_INVALID):
+    with raises_code(InternalError, WRITE_RESULT_INVALID):
         db_for(_MODEL, port).transact(lambda tx: _insert_allocated(tx, Ledger, 100))
     assert isinstance(port.calls[-1], RollbackCall)

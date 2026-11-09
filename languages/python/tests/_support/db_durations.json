@@ -790,7 +790,7 @@
  "tests/api/test_merged_successors.py::test_unassigned_members_that_differ_keep_four_current_rows[typed-document]": 0.451,
  "tests/api/test_merged_successors.py::test_unassigned_members_that_differ_keep_four_current_rows[wire-columns]": 0.436,
  "tests/api/test_merged_successors.py::test_unassigned_members_that_differ_keep_four_current_rows[wire-document]": 0.422,
- "tests/api/test_model_publication_reads.py::test_a_delayed_refusal_from_a_reports_a_inside_an_execution_failure_under_b": 0.295,
+ "tests/api/test_model_publication_reads.py::test_a_delayed_refusal_from_a_keeps_a_and_is_noted_with_the_transactions_b": 0.295,
  "tests/api/test_model_publication_reads.py::test_a_publication_after_a_read_leaves_every_envelope_it_published_on_a": 0.28,
  "tests/api/test_model_publication_reads.py::test_a_publication_during_a_stream_leaves_every_page_on_a": 0.264,
  "tests/api/test_model_publication_reads.py::test_a_typed_value_read_under_a_states_the_revision_a_write_under_b_is_checked_against": 0.285,

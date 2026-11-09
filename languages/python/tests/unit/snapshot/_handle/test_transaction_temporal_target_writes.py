@@ -47,7 +47,6 @@ from parallax.core.write_plan.plan import BoundRange
 from parallax.core.write_plan.steps import PlannedAssignments
 from parallax.snapshot import ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -236,7 +235,7 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
 
     monkeypatch.setattr(ranges, "_bind_range", recording)
     if acquired is None:
-        with raises_contextualized(WritePreconditionError):
+        with pytest.raises(WritePreconditionError):
             _db(port).transact(lambda tx: _patch(tx, value="150.00"))
     else:
         _db(port).transact(lambda tx: _patch(tx, value="150.00"))
@@ -264,7 +263,7 @@ def test_an_optimistic_target_whose_start_moved_fails_before_any_write_and_never
         attempts += 1
         _replace(tx)
 
-    with raises_contextualized(WritePreconditionError) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         _db(port).transact(fn)
     assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _T0)
     assert attempts == 1
@@ -275,7 +274,7 @@ def test_an_optimistic_target_whose_start_moved_fails_before_any_write_and_never
 def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_retries() -> None:
     rows = [_rectangle(_JAN, _JUN), _rectangle(_JUN, INFINITY_INSTANT, "200.00")]
     lost_start = ScriptedAdapter(Transact(Read(rows=rows), Write(affected=0)))
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _db(lost_start).transact(lambda tx: _patch(tx, value="150.00"))
     assert len(_writes(lost_start)) == 1
     lost_later = ScriptedAdapter(
@@ -286,7 +285,7 @@ def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_ret
     starts = [call for call in _writes(lost_later) if call.binds[2] == _JUN]
     assert [call.binds[-1] for call in starts] == [_T0, _T0]
     without_retry = ScriptedAdapter(Transact(Read(rows=rows), Write(), Write(affected=0)))
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         _db(without_retry).transact(
             lambda tx: _patch(tx, value="150.00"), retry=RetryPolicy(max_retries=0)
         )
@@ -610,7 +609,7 @@ def _starting_row_lives_only_while_its_write_is_pending(ends: str) -> None:
             raise _Abandoned
 
     if ends == "abandoned":
-        with raises_contextualized(_Abandoned):
+        with pytest.raises(_Abandoned):
             _db(port).transact(fn, concurrency="locking")
     else:
         _db(port).transact(fn, concurrency="locking")
@@ -849,7 +848,7 @@ def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_st
     )
     # The guard binds the caller's condition, so losing it is that caller's
     # failed precondition, never a retry.
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _db(lost).transact(lambda tx: _patch(tx, value="100.00"))
     assert len(_writes(lost)) == 1
 
@@ -863,7 +862,7 @@ def test_an_equal_valued_temporal_patch_under_locking_writes_nothing() -> None:
 
 def test_an_equal_valued_temporal_patch_of_a_stale_start_still_fails_its_precondition() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT, tx_start=_T1)])))
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _db(port).transact(lambda tx: _patch(tx, value="100.00"))
     assert _writes(port) == []
 
@@ -899,7 +898,7 @@ def test_an_invariant_failure_of_the_start_outranks_the_callers_precondition() -
     port = ScriptedAdapter(
         Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=2))
     )
-    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION):
+    with raises_code(InternalError, CARDINALITY_CORRUPTION):
         _db(port).transact(lambda tx: _patch(tx, value="150.00"))
 
 
@@ -916,7 +915,7 @@ def test_two_current_rows_at_the_start_are_corruption_before_any_write(
         attempts += 1
         _patch(tx, value="150.00")
 
-    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION) as corrupt:
+    with raises_code(InternalError, CARDINALITY_CORRUPTION) as corrupt:
         _db(port).transact(fn, concurrency=concurrency)
     assert "affected 2 row(s), expected 1" in str(corrupt.value)
     assert attempts == 1
@@ -934,7 +933,7 @@ def test_a_locked_observation_and_a_flush_read_row_both_at_the_start_are_corrupt
         tx.amend(_source(tx).edit(acct_num="B"), until=_SEP)
         _patch(tx, value="150.00")
 
-    with raises_contextualized(InternalError, code=CARDINALITY_CORRUPTION) as corrupt:
+    with raises_code(InternalError, CARDINALITY_CORRUPTION) as corrupt:
         _db(port).transact(fn, concurrency="locking")
     assert "affected 2 row(s), expected 1" in str(corrupt.value)
     assert _writes(port) == []
@@ -951,7 +950,7 @@ def test_an_optimistic_observation_a_flush_read_row_overlaps_is_left_to_its_gate
         tx.amend(_source(tx).edit(acct_num="B"), until=_SEP)
         _patch(tx, value="150.00")
 
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _db(port).transact(fn)
     (close,) = _writes(port)
     assert close.sql.endswith("and in_z = %s") and close.binds[-1] == _T0
@@ -966,7 +965,7 @@ def test_a_database_error_at_the_start_is_the_databases_not_the_callers() -> Non
             ),
         )
     )
-    with raises_contextualized(DatabaseError):
+    with pytest.raises(DatabaseError):
         _db(port).transact(lambda tx: _patch(tx, value="150.00"))
 
 
@@ -979,7 +978,7 @@ def test_a_caught_temporal_precondition_failure_still_rolls_the_attempt_back() -
             tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
         return "withheld"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _db(port).transact(fn)
     assert RollbackCall() in port.calls
     assert _writes(port) == []
@@ -1146,7 +1145,7 @@ def test_a_family_members_invalid_retained_occurrence_fails_its_flush_without_an
         _family_amend(tx, metadata, {"name": "m"})
         called.append("returned")
 
-    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed") as refused:
+    with raises_code(InvalidDataError, "stored-data-decoding-failed") as refused:
         _db_of(family.MODEL, port).transact(fn, concurrency="locking")
     assert called == ["returned"]
     assert " at home.city (" in refused.value.args[1]
@@ -1283,7 +1282,7 @@ def test_a_condition_after_a_predicate_write_restating_the_replaced_start_fails_
         _tag_where(tx)
         _window_patch(tx, _JUN_AUG, "175.00")
 
-    with raises_contextualized(WritePreconditionError) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         _predicated(port).transact(fn, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
     # Nothing the earlier write derived from the state the caller names
     # stands for that state: the condition fails before anything of the later
@@ -1356,7 +1355,7 @@ def test_a_later_call_restating_a_start_an_earlier_flush_replaced_fails_literall
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
         _window_patch(tx, _JUN_AUG, "175.00")
 
-    with raises_contextualized(WritePreconditionError) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         _predicated(port).transact(fn, concurrency=concurrency)
     assert failed.value.expected == _T0
     assert len(_writes(port)) == 2
@@ -1371,7 +1370,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
         _tag_where(tx)
         _window_patch(tx, _JUN_AUG, "175.00", tx_start=FIXED)
 
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _predicated(lost_first).transact(fn)
     assert _sql_kinds(lost_first) == ["read", "close"]
     lost_later = ScriptedAdapter(
@@ -1383,7 +1382,7 @@ def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back
             Write(affected=0),
         )
     )
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _predicated(lost_later).transact(fn, retry=RetryPolicy(max_retries=0))
     assert isinstance(lost_later.calls[-1], RollbackCall)
 
@@ -1455,7 +1454,7 @@ def test_a_transaction_time_target_after_a_predicate_write_restating_its_start_f
         # admitted.
         tx.wire.amend_if("Balance", {"id": 1, "acctNum": "B"}, tx_start=_T0)
 
-    with raises_contextualized(WritePreconditionError) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         db_for(DomainModel(mm.Balance, WhereTag), port).transact(
             fn, retry=RetryPolicy(max_retries=0)
         )
@@ -1566,7 +1565,7 @@ def test_an_optimistic_termination_whose_start_moved_fails_before_any_write(
     coverage: list[MappingRow],
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=coverage)))
-    with raises_contextualized(WritePreconditionError) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         _db(port).transact(lambda tx: _terminate(tx))
     assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _T0)
     assert _writes(port) == []
@@ -1577,7 +1576,7 @@ def test_a_termination_whose_start_gate_matches_nothing_fails_its_precondition()
     port = ScriptedAdapter(
         Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=0))
     )
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         _db(port).transact(lambda tx: _terminate(tx))
     assert len(_writes(port)) == 1
     assert isinstance(port.calls[-1], RollbackCall)

@@ -26,7 +26,6 @@ from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.execution import prepare_model
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -157,7 +156,7 @@ def test_a_source_read_step_needs_its_outside_read_arranged() -> None:
     def fn(tx: TxnContext) -> str | None:
         return write_value_runner.grade_step(tx, step, foreign)
 
-    with raises_contextualized(ValueError, match="needs its outside read arranged"):
+    with pytest.raises(ValueError, match="needs its outside read arranged"):
         _db(port).transact(fn)
 
 
@@ -272,7 +271,7 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
     def fn(tx: TxnContext) -> Entity:
         return write_value_runner.value_of("invented", tx, foreign)
 
-    with raises_contextualized(ValueError, match="unrecognized value provenance"):
+    with pytest.raises(ValueError, match="unrecognized value provenance"):
         _db(port).transact(fn)
 
 
@@ -283,7 +282,7 @@ def test_invalid_root_provenance_requires_its_adapter_arranger() -> None:
     def fn(tx: TxnContext) -> Entity:
         return write_value_runner.value_of("invalidRoot", tx, foreign)
 
-    with raises_contextualized(ValueError, match="diagnostic-data arranger"):
+    with pytest.raises(ValueError, match="diagnostic-data arranger"):
         _db(port).transact(fn)
 
 
@@ -310,7 +309,7 @@ def test_a_graded_mismatch_is_loud_in_either_direction(
     def fn(tx: TxnContext) -> str | None:
         return write_value_runner.grade_step(tx, step, foreign)
 
-    with raises_contextualized(AssertionError, match=message):
+    with pytest.raises(AssertionError, match=message):
         _db(port).transact(fn)
 
 

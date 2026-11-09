@@ -7,7 +7,6 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account, Wallet
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
-from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import TxnContext, connect
 
@@ -64,9 +63,7 @@ def reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
 
             try:
                 db.transact(close)
-            except ExecutionFailure as failure:
-                if not isinstance(failure.cause, WritePreconditionError):
-                    raise
+            except WritePreconditionError:
                 refused.append(account.id)
             else:
                 closed.append(account.id)

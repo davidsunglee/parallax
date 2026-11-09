@@ -51,7 +51,6 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
-from tests._support.adoption import raises_contextualized
 from tests._support.bind_positions import assert_document_nulls
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
@@ -559,7 +558,7 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     # port rolls back) and `transact` raises instead of returning the value.
     story = _STORIES["m-unit-work-004"]
     port = _port_for(story)
-    with raises_contextualized(RuntimeError, match="abort"):
+    with pytest.raises(RuntimeError, match="abort"):
         story.run(_db(port, story))
     assert [type(call) for call in port.calls] == [
         BeginCall,
@@ -709,7 +708,7 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     db = own_root(
         Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
     ).using_database_login()
-    with raises_contextualized(UsageError) as exc_info:
+    with pytest.raises(UsageError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.code == expected_rule
     assert not port.wrote
@@ -749,7 +748,7 @@ def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = own_root(Database.connect(port, MODELS[model])).using_database_login()
-    with raises_contextualized(UsageError) as exc_info:
+    with pytest.raises(UsageError) as exc_info:
         db.transact(write)
     assert exc_info.value.code == expected_rule
     assert port.statements() == []
@@ -809,7 +808,7 @@ def test_idiomatic_read_only_write_rejects_the_corpus_rule(case_id: str) -> None
     model, write = REJECTED_READ_ONLY_WRITES[case_id]
     port = _KeyedSeedPort(rows=[_SCALAR_THING_ROW])
     db = own_root(Database.connect(port, MODELS[model])).using_database_login()
-    with raises_contextualized(UsageError) as exc_info:
+    with pytest.raises(UsageError) as exc_info:
         db.transact(write)
     assert exc_info.value.code == expected_rule
     assert not port.wrote

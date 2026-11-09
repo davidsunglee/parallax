@@ -14,7 +14,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import DomainModel
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import TxnContext
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -280,7 +279,7 @@ def test_a_target_write_restating_the_version_an_earlier_one_replaced_fails_lite
         _low(tx)
         tx.wire.amend_if("Account", {"id": 1, "owner": "Bo"}, version=3)
 
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         db_for(_MODEL, port).transact(fn)
     # The caller's condition stays the version it stated, which the earlier
     # write already replaced: the gate binds it literally and matches nothing.

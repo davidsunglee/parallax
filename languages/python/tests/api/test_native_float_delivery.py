@@ -39,10 +39,8 @@ from parallax.core import (
     rel,
 )
 from parallax.core import wire as wire_codec
-from parallax.core.base import ManagedValue
-from parallax.core.db_error import DatabaseError
+from parallax.core.base import ManagedValue, UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import ScopedDatabase, SnapshotStream, TxnContext, connect
 from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
@@ -403,9 +401,8 @@ def test_a_nonfinite_float_is_refused_before_any_write(
                 _predicate_widths(representation, {1: (f32, f64)}),
             )
             for attempt in attempts:
-                with pytest.raises(ExecutionFailure) as refused:
+                with pytest.raises(UsageError):
                     db.transact(attempt)
-                assert not isinstance(refused.value.cause, DatabaseError)
 
     (row,) = _read_readings(db, "typed-eager")
     assert (row.id, row.version, _bits(row.f32), _bits(row.f64)) == (1, 1, _bits(1.5), _bits(2.5))

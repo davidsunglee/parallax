@@ -24,7 +24,7 @@ from parallax.conformance._mechanism.model_facts import (
     read_scans,
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
-from parallax.conformance._mechanism.transaction_control import read_only, transact, underlying
+from parallax.conformance._mechanism.transaction_control import read_only, transact
 from parallax.core import read_delivery
 from parallax.core.db_port import MappingRow
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
@@ -190,7 +190,7 @@ def _case_read[T](case: case_format.Case, db: ScopedDatabase, read: Callable[[_R
     standalone ``db`` without `when.uow`, else the transaction that block
     requests, opened through the entrypoint its access mode selects."""
     if not _is_transactional(case):
-        return underlying(lambda: read(db))
+        return read(db)
     keywords = case_format.transaction_keywords(case)
     if case_format.access_mode(case) == "read_only":
         return read_only(

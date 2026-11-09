@@ -147,7 +147,6 @@
   "parallax.core.execution": [
     "AdaptiveBackoff",
     "EXECUTION_FEATURE_DEFERRED",
-    "ExecutionFailure",
     "KeyedWriteValueCode",
     "ModelSelection",
     "PRINCIPAL_INVALID",

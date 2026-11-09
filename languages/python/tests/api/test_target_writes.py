@@ -25,7 +25,6 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Document, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import (
     WritePreconditionError,
 )
@@ -271,10 +270,9 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
         else:
             _delete(tx, entity, "wire")
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         db.transact(stale, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
-    assert failed.value.cause.expected == 1
+    assert failed.value.expected == 1
     assert attempts == 1
     assert _accounts(profile_run, entity) == before
 
@@ -369,9 +367,8 @@ def test_a_stale_observed_source_a_replacement_overwrote_still_fails_the_write(
         tx.amend(stale.edit(label="stale"))
         _replace(tx, entity, "wire", label="replaced")
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _accounts(profile_run, entity)[0][1:3] == ("seed", "peer")
 
 
@@ -447,7 +444,6 @@ def test_a_token_this_attempts_own_flush_outdated_fails_and_rolls_the_attempt_ba
         _read_other(tx, entity)
         _patch(tx, entity, version=1, label="patched")
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _accounts(profile_run, entity) == before

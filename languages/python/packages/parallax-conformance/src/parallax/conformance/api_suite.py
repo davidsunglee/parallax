@@ -143,7 +143,7 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.db_port import Password\n"
             "from parallax.core.dialect import POSTGRES\n"
             "from parallax.core.entity import model_of\n"
-            "from parallax.core.execution import ExecutionFailure, TxnOptions\n"
+            "from parallax.core.execution import TxnOptions\n"
             "from parallax.evolution import ABSENT, evolve, schema_delta\n"
             "from parallax.postgres import PostgresAdapter, PostgresEndpoint\n"
             "from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect\n"
@@ -209,7 +209,6 @@ RECIPES: Final[list[Recipe]] = [
             "    attr,\n"
             ")\n"
             "from parallax.core.entity import UnloadedRelationshipError\n"
-            "from parallax.core.execution import ExecutionFailure\n"
             "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
             "from parallax.snapshot import (\n"
             "    ReadOnlyTxnContext,\n"
@@ -243,7 +242,6 @@ RECIPES: Final[list[Recipe]] = [
             "    UsageError,\n"
             "    attr,\n"
             ")\n"
-            "from parallax.core.execution import ExecutionFailure\n"
             "from parallax.core.unit_work import WritePreconditionError\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of\n"
         ),
@@ -503,7 +501,6 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core import ConflictError, DomainModel, UsageError\n"
             "from parallax.core.execution import (\n"
             "    AdaptiveBackoff,\n"
-            "    ExecutionFailure,\n"
             "    ReadOnlyTxnOptions,\n"
             "    RetryPolicy,\n"
             "    TxnOptions,\n"
@@ -761,7 +758,6 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.db_port import ConnectionAcquisitionError\n"
             "from parallax.core.entity import UnloadedRelationshipError\n"
             "from parallax.core.execution import (\n"
-            "    ExecutionFailure,\n"
             "    PublicationConflictError,\n"
             "    TransactionRollbackError,\n"
             ")\n"
@@ -937,8 +933,7 @@ EXAMPLES: Final[list[Example]] = [
         "m-inheritance-088",
         "A keyed write aimed at an abstract inheritance position",
         'db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))\n'
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="abstract-write-target")',
+        '# raises UsageError(code="abstract-write-target")',
     ),
     Example(
         "m-value-object-039",
@@ -955,8 +950,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="write-required-attribute-missing")',
+        '# raises UsageError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-040",
@@ -974,8 +968,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="write-required-attribute-missing")',
+        '# raises UsageError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-041",
@@ -993,8 +986,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="write-required-attribute-missing")',
+        '# raises UsageError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-042",
@@ -1008,15 +1000,13 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="write-required-value-object-missing")',
+        '# raises UsageError(code="write-required-value-object-missing")',
     ),
     Example(
         "m-value-object-044",
         "A write missing a required TOP-LEVEL value object entirely",
         'db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))\n'
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="write-required-value-object-missing")',
+        '# raises UsageError(code="write-required-value-object-missing")',
     ),
     # Rejected-case preparation proofs for predicate writes: the Typed verb
     # refuses the SAME instruction the corpus's own rejected lane prepares
@@ -1032,15 +1022,13 @@ EXAMPLES: Final[list[Example]] = [
         '        Account.balance.set(Decimal("0.00")),\n'
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="set-based-write-target-unsupported")',
+        '# raises UsageError(code="set-based-write-target-unsupported")',
     ),
     Example(
         "m-batch-write-048",
         "A predicate deletion of a Transaction-Time Entity",
         'db.transact(lambda tx: tx.delete_where(Balance.where(Balance.acct_num == "A-1")))\n'
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="set-based-write-target-unsupported")',
+        '# raises UsageError(code="set-based-write-target-unsupported")',
     ),
     Example(
         "m-batch-write-049",
@@ -1051,8 +1039,7 @@ EXAMPLES: Final[list[Example]] = [
         '        Position(id=1, acct_num="A-1", value=Decimal("0.00")),\n'
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="set-based-write-target-unsupported")',
+        '# raises UsageError(code="set-based-write-target-unsupported")',
     ),
     # Persistence-admission proofs: each Typed verb refuses the SAME write to a
     # ReadOnly Entity the corpus's rejected lane prepares through Wire, naming the
@@ -1074,8 +1061,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="read-only-write-target")',
+        '# raises UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-067",
@@ -1083,8 +1069,7 @@ EXAMPLES: Final[list[Example]] = [
         "db.transact(\n"
         "    lambda tx: tx.amend(tx.find(ScalarThing.where(ScalarThing.id == 1)).result())\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="read-only-write-target")',
+        '# raises UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-068",
@@ -1094,8 +1079,7 @@ EXAMPLES: Final[list[Example]] = [
         '        Magazine, Magazine.title.set("Spring issue"), key=1, version=1\n'
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="read-only-write-target")',
+        '# raises UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-069",
@@ -1105,15 +1089,13 @@ EXAMPLES: Final[list[Example]] = [
         "        ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)\n"
         "    )\n"
         ")\n"
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="read-only-write-target")',
+        '# raises UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-unit-work-070",
         "A keyed insert at a ReadOnly family's abstract root",
         'db.transact(lambda tx: tx.insert(Publication(id=2, title="Annual report")))\n'
-        "# raises ExecutionFailure"
-        ' caused by UsageError(code="read-only-write-target")',
+        '# raises UsageError(code="read-only-write-target")',
     ),
     Example(
         "m-batch-write-055",

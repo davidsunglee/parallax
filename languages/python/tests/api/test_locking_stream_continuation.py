@@ -19,7 +19,6 @@ from parallax.core import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import DatabaseCallFailed, DatabaseCallFinished
 from parallax.core.metamodel import TablePerConcreteSubtype
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
@@ -271,9 +270,8 @@ def test_repeatable_read_restarts_the_whole_attempt_or_reports_serialization_fai
         ]
         expected = [(1, 5), (2, 5), (3, 5), (4, 9), (5, 5), (6, 5)]
     else:
-        assert isinstance(outcome, ExecutionFailure)
-        assert isinstance(outcome.cause, DatabaseError)
-        assert (outcome.cause.category, outcome.cause.native_code) == ("deadlock", "40001")
+        assert isinstance(outcome, DatabaseError)
+        assert (outcome.category, outcome.native_code) == ("deadlock", "40001")
         assert len(attempts) == 1
         expected = [(1, 4), (2, 4), (3, 4), (4, 8), (5, 4), (6, 4)]
     assert [

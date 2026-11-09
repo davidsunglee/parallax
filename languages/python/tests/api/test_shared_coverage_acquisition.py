@@ -26,7 +26,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import IsolationLevel
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, RetryPolicy
+from parallax.core.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.flush_calls import FlushCalls, call_runs
 from tests._support.root_ownership import own_root
@@ -217,14 +217,13 @@ def test_a_serialization_failure_after_a_snapshot_read_is_a_retryable_deadlock(
     _seeded(profile_run)
     peer = _peer_change(profile_run)
     attempts: list[int] = []
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         _db(profile_run, _AT).transact(
             _correct_both(attempts, lambda: commit_as_a_peer(peer)),
             isolation="repeatable_read",
             retry=RetryPolicy(max_retries=0),
         )
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert cause.category == "deadlock"
 
 

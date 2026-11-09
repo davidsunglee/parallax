@@ -25,7 +25,7 @@ from parallax.snapshot import (
     Snapshot,
     connect,
 )
-from tests._support.adoption import raises_contextualized
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._statement_interleaving import AfterReadStatement
 
@@ -245,9 +245,7 @@ def test_a_conflict_within_one_root_raises_as_it_does_at_root_scope(
     profile_run: Any, wire: bool
 ) -> None:
     def conflict(sharing_scope: SharingScope) -> InvalidDataError:
-        with raises_contextualized(
-            InvalidDataError, code="snapshot-fetched-row-conflict"
-        ) as raised:
+        with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
             _read(
                 profile_run,
                 _CHILD_TWICE,
@@ -329,9 +327,7 @@ def test_a_stream_conflict_raises_at_the_same_root_with_the_same_prefix(
                 for root in stream:
                     delivered.append(stream.wire(root) if read == "projected" else root)
 
-        with raises_contextualized(
-            InvalidDataError, code="snapshot-fetched-row-conflict"
-        ) as raised:
+        with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
             db.read_only(drain, isolation="read_committed")
         assert interleaving.fired
         assert interleaving.failures == []

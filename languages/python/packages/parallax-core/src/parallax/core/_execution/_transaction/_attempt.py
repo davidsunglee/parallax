@@ -353,8 +353,8 @@ class _TxnAttemptBase:
         del failure
 
     def advance[T](self, body: Callable[[], T], /) -> T:
-        """Run ``body`` unwrapped: a participating failure propagates to the
-        invocation, which names the attempt's edition once."""
+        """Run ``body`` as it is: a participating failure propagates to the
+        invocation, which notes the attempt's edition."""
         return body()
 
     def eager[T](

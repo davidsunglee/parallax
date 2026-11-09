@@ -53,7 +53,6 @@ from parallax.snapshot._publication._wire import (
     stored_provenance_of,
 )
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -1442,7 +1441,7 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", opened)
 
-    with raises_contextualized(UsageError, match="write-value-already-stored"):
+    with pytest.raises(UsageError, match="write-value-already-stored"):
         db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
 
@@ -1459,7 +1458,7 @@ def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> 
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
 
-    with raises_contextualized(UsageError, code="write-value-already-stored") as refusal:
+    with raises_code(UsageError, "write-value-already-stored") as refusal:
         db_for(PERSON, port).transact(fn)
     assert "already buffered an insert of" in refusal.value.args[1]
     assert "tx.wire.amend(opened, {...})" in refusal.value.args[1]

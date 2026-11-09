@@ -51,7 +51,6 @@ from parallax.core import (
     UsageError,
     attr,
 )
-from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 ```
@@ -82,8 +81,8 @@ still inside the transaction: if the callback raises, or the commit fails, the i
 discarded like everything else the transaction did.
 
 If another customer already has the id, the database refuses the insert when the
-transaction sends it, here at the `find`. The refusal reaches you as the `cause` of an
-`ExecutionFailure`: a `DatabaseError` whose `category` is `"uniqueViolation"`.
+transaction sends it, here at the `find`. The refusal reaches you as a `DatabaseError`
+whose `category` is `"uniqueViolation"`.
 [Errors](08-errors.md#failures-the-database-reports) shows how to tell it from other
 failures.
 
@@ -194,8 +193,7 @@ versioned entities, with `db.transact(callback, concurrency="locking")`.
 The same check catches a row deleted in between. If another transaction deletes the
 order after your read, your amendment finds no row at the version it read, which is a
 conflict, so Parallax runs the callback again. This time `find` finds no order, and
-`.result()` raises `NoResultFound`, which reaches you as the `cause` of the
-`ExecutionFailure`.
+`.result()` raises `NoResultFound`, which reaches you once it escapes the callback.
 
 A value read outside the transaction licenses nothing, whichever kind of entity it
 belongs to. [Reading](03-reading.md#youll-write-what-you-read) shows the refusal, and
@@ -235,8 +233,8 @@ database refuses that statement, and Parallax retries the attempt at a fresh ins
 with fresh reads. Intervals that only meet don't overlap, so reopening an object at the
 very instant it was terminated succeeds.
 
-The refusal reaches you only when retries can't fix it: as the `cause` of an
-`ExecutionFailure`, a `DatabaseError` whose `category` is `"constraintViolation"` and
+The refusal reaches you only when retries can't fix it: as a `DatabaseError` whose
+`category` is `"constraintViolation"` and
 whose `constraint_name` is the table's exclusion, with a note counting the attempts. An
 insert over a key's current coverage is such a case, and so is an insert by a clock that
 stays behind the history it overlaps. The two are refused alike, so
@@ -603,8 +601,8 @@ because that is what the database held then.
 
 The second function is refused. Its source was read at a finite Transaction Time, and a
 value read there is read-only: amending it raises a `UsageError` with code
-`transaction-time-pin-read-only`, which reaches the caller as the `cause` of an
-`ExecutionFailure`. A correction always
+`transaction-time-pin-read-only`, which reaches the caller once it escapes the
+callback. A correction always
 starts from what the database knows now and appends to it. What the database knew at an
 earlier instant never changes.
 
@@ -697,9 +695,7 @@ def cancel_unless_changed(db: ScopedDatabase, order: Order) -> bool:
     """Cancel ``order`` unless it changed since it was read; answer whether it was cancelled."""
     try:
         db.transact(lambda tx: tx.delete_if(Order, key=order.id, version=order.version))
-    except ExecutionFailure as failure:
-        if not isinstance(failure.cause, WritePreconditionError):
-            raise
+    except WritePreconditionError:
         return False
     return True
 ```

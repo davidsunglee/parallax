@@ -38,7 +38,6 @@ from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
     committed,
     transact,
-    underlying,
     write_adapter,
     write_connection,
 )
@@ -916,7 +915,7 @@ def run_standalone_find(
     ) as _root_db:
         db = _root_db.using_database_login()
         return (
-            underlying(lambda: db.wire.find(query)),
+            db.wire.find(query),
             observed,
         )
 

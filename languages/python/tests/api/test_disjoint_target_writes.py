@@ -39,12 +39,13 @@ from parallax.core import (
 )
 from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, RetryPolicy
+from parallax.core.execution import RetryPolicy
 from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     WritePreconditionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 
@@ -354,9 +355,8 @@ def test_a_disjoint_target_stating_another_rectangles_start_changes_nothing(
             _name(entity), {"id": 1, "amount": 175}, valid_from=_SEP, until=_OCT, tx_start=_T0
         )
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert attempts == 1
     assert _rows(profile_run, entity) == before
 
@@ -491,7 +491,7 @@ def test_a_target_after_a_predicate_write_stating_the_start_the_first_replaced_f
     before = _rows(profile_run, entity)
     earlier, later = _across((first, "P"))
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(
             lambda tx: _write_across(tx, entity, earlier, later),
             concurrency=concurrency,
@@ -499,7 +499,6 @@ def test_a_target_after_a_predicate_write_stating_the_start_the_first_replaced_f
         )
     # The later caller states the original the first operation closed; what
     # the first derived from it proves nothing for that literal condition.
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _rows(profile_run, entity) == before
     assert _tag_label(profile_run) == "t"
 
@@ -583,11 +582,10 @@ def test_a_side_effect_that_breaks_continuity_across_a_predicate_write_fails_the
             _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn, concurrency=concurrency)
     # The later caller states the original the first operation closed, which
     # no current row stands at, whatever the predicate write's side effect did.
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _rows(profile_run, entity) == before
     assert _tag_label(profile_run) == "t"
 
@@ -613,9 +611,8 @@ def test_after_a_read_flushes_one_window_a_later_window_restates_its_start(
         )
 
     before = _rows(profile_run, entity)
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(stale, concurrency=concurrency)
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert _rows(profile_run, entity) == before
 
     def fresh(tx: TxnContext) -> None:
@@ -689,11 +686,10 @@ def test_a_shared_original_revised_after_the_flush_read_fails_at_its_one_guard(
             _name(entity), {"id": 1, "amount": 175}, valid_from=_JUN, until=_AUG, tx_start=_T0
         )
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         ours.transact(fn)
     # Both callers stated the original the peer replaced; the guard on it is
     # the first start's, so the failure is that caller's and is not retried.
-    assert isinstance(failed.value.cause, WritePreconditionError)
     assert (attempts, interleaving.failures) == (1, [])
     assert [row[:4] for row in _rows(profile_run, entity)] == [
         (_T0, _TP, _JAN, None),
@@ -717,7 +713,7 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
         )
 
     ours, interleaving = _interleaved(profile_run, entity, peer, _TA)
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError) as failed:
         ours.transact(
             lambda tx: (
                 tx.wire.amend_if(
@@ -736,8 +732,7 @@ def test_a_lost_second_start_is_its_callers_and_a_lost_observed_original_retries
                 ),
             ),
         )
-    assert isinstance(failed.value.cause, WritePreconditionError)
-    assert failed.value.cause.expected == _T1
+    assert failed.value.expected == _T1
     assert interleaving.failures == []
 
     # An observed write over a disjoint window keeps its own source's
@@ -799,10 +794,8 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
         )
         tx.amend(source.edit(label="o"), until=_OCT)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         ours.transact(fn, retry=RetryPolicy(max_retries=0))
-    assert isinstance(failed.value.cause, ConflictError)
-    assert failed.value.cause.code == OPTIMISTIC_LOCK_CONFLICT
     assert [row[:2] for row in _rows(profile_run, entity)][:2] == [(_T0, None), (_T1, _TP)]
 
 
@@ -831,9 +824,8 @@ def test_a_transaction_time_write_after_a_predicate_write_restating_the_first_on
         # second binds, the row stands at the first one's own start instead.
         tx.wire.amend_if(_name(entity), {"id": 1, "spec": {"title": "s2"}}, tx_start=_T0)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(WritePreconditionError):
         db.transact(fn, concurrency=concurrency, retry=RetryPolicy(max_retries=0))
-    assert isinstance(failed.value.cause, WritePreconditionError)
     members = ", ".join(_member(entity, name) for name in ("label", "spec"))
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, "

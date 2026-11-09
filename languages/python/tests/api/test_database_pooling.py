@@ -43,7 +43,6 @@ from parallax.core.db_port import ArrayBind, ConnectionAcquisitionError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
-    ExecutionFailure,
     ServingModel,
     prepare_model,
 )
@@ -114,11 +113,10 @@ def test_a_closed_handle_refuses_the_next_operation(profile_run: Any) -> None:
     db = root.using_database_login()
     root.close()
 
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(ConnectionAcquisitionError) as refused:
         _accounts(db)
 
-    assert isinstance(refused.value.__cause__, ConnectionAcquisitionError)
-    assert refused.value.__cause__.reason == "closed"
+    assert refused.value.reason == "closed"
 
 
 def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> None:
@@ -134,7 +132,7 @@ def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> 
         root.close()
         raise RuntimeError("this attempt fails after the handle closed")
 
-    with pytest.raises(ExecutionFailure):
+    with pytest.raises(RuntimeError, match="this attempt fails after the handle closed"):
         db.transact(body, retry=fast_retry(3))
 
     assert attempts == [1]
@@ -527,13 +525,12 @@ def test_a_child_pipeline_cannot_claim_the_opportunity_its_root_read_spent(
 
         monkeypatch.setattr(connection_module, "_execute_pipeline", ending_first)
         provider.heard()
-        with pytest.raises(ExecutionFailure) as failed:
+        with pytest.raises(DatabaseError):
             db.find(query).results()
         events = provider.heard()
 
         assert _ledger_ids(db) == [1, 2, 3]
 
-    assert isinstance(failed.value.__cause__, DatabaseError)
     assert batches == [2]
     assert events.count("AcquisitionStarted") == events.count("ReleaseFinished") == 1
 
@@ -675,10 +672,9 @@ def test_the_lifespan_pattern_opens_one_handle_and_closes_it_at_shutdown(
     balances = asyncio.run(scenario())
 
     assert balances
-    with pytest.raises(ExecutionFailure) as refused:
+    with pytest.raises(ConnectionAcquisitionError) as refused:
         database_pooling_stories.account_balances(escaped[0])
-    assert isinstance(refused.value.__cause__, ConnectionAcquisitionError)
-    assert refused.value.__cause__.reason == "closed"
+    assert refused.value.reason == "closed"
 
 
 def test_a_complete_operation_offloaded_from_an_async_endpoint_never_touches_the_loop(

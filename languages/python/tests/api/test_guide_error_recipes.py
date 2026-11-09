@@ -46,7 +46,6 @@ from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.evolution import ABSENT, SchemaDelta, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
@@ -131,11 +130,10 @@ def test_a_duplicate_key_surfaces_as_a_unique_violation_through_public_attribute
 ) -> None:
     db = _shop(profile_run)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         db.transact(lambda tx: tx.insert(Customer(id=1, name="Grace", email=None)))
 
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert (cause.category, cause.native_code, cause.violated_index) == (
         "uniqueViolation",
         "23505",
@@ -252,11 +250,10 @@ def test_an_uncategorized_database_failure_passes_through(profile_run: Any) -> N
     with contextlib.closing(profile_run.control()) as control:
         control.execute_write("drop table customer", ())
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         add_a_customer_unless_the_id_is_taken(db, Customer(id=3, name="Grace", email=None))
 
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert (cause.category, cause.native_code, cause.violated_index) == (None, "42P01", None)
 
 
@@ -292,13 +289,12 @@ def test_a_free_tracking_number_is_added(profile_run: Any) -> None:
 def test_a_duplicate_shipment_id_passes_through_naming_the_key(profile_run: Any) -> None:
     db = _shipped(profile_run)
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         add_a_shipment_unless_its_tracking_number_is_taken(
             db, _shipment(1, "TRK-2"), _tracking_index()
         )
 
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert (cause.category, cause.violated_index) == (
         "uniqueViolation",
         PhysicalIndexName("shipment_pkey"),
@@ -313,13 +309,12 @@ def test_an_unrelated_failure_passes_through_the_tracking_number_handler(
     with contextlib.closing(profile_run.control()) as control:
         control.execute_write("drop table shipment", ())
 
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         add_a_shipment_unless_its_tracking_number_is_taken(
             db, _shipment(2, "TRK-2"), _tracking_index()
         )
 
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert (cause.category, cause.native_code) == (None, "42P01")
 
 
@@ -395,7 +390,7 @@ def test_adding_a_customer_runs_through_the_shipped_surface(script: Transact, ad
 def test_another_database_failure_passes_through_the_shipped_surface() -> None:
     with (
         ScriptedAdapter(Transact(Write(raises=_database_error(None, "42P01")))) as adapter,
-        pytest.raises(ExecutionFailure),
+        pytest.raises(DatabaseError),
     ):
         add_a_customer_unless_the_id_is_taken(_scripted(adapter), _GRACE)
 
@@ -441,7 +436,7 @@ def test_any_other_failure_passes_through_the_tracking_number_handler(
 ) -> None:
     with (
         ScriptedAdapter(Transact(Write(raises=error))) as adapter,
-        pytest.raises(ExecutionFailure),
+        pytest.raises(DatabaseError),
     ):
         add_a_shipment_unless_its_tracking_number_is_taken(
             _scripted(adapter), _shipment(2, "TRK-1"), PhysicalIndexName("pxi_tracking")
@@ -486,7 +481,7 @@ def test_pricing_a_window_runs_through_the_shipped_surface(script: Transact, pri
 def test_any_other_failure_passes_through_the_pricing_handler(error: DatabaseError) -> None:
     with (
         ScriptedAdapter(Transact(Read(), Write(raises=error))) as adapter,
-        pytest.raises(ExecutionFailure),
+        pytest.raises(DatabaseError),
     ):
         price_a_window_unless_it_is_priced(_scripted(adapter), _TEA, _JUN, _DEC)
 
@@ -495,12 +490,11 @@ def test_a_unique_violation_naming_no_index_surfaces_without_one() -> None:
     unnamed = _database_error("uniqueViolation", "23505")
     with (
         ScriptedAdapter(Transact(Write(raises=unnamed))) as adapter,
-        pytest.raises(ExecutionFailure) as failed,
+        pytest.raises(DatabaseError) as failed,
     ):
         _scripted(adapter).transact(lambda tx: tx.insert(_GRACE))
 
-    cause = failed.value.cause
-    assert isinstance(cause, DatabaseError)
+    cause = failed.value
     assert (cause.category, cause.violated_index) == ("uniqueViolation", None)
 
 

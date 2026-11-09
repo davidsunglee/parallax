@@ -75,7 +75,6 @@ from parallax.snapshot._handle import _stream as stream_module
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication._wire import read_evidence_of
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -255,14 +254,18 @@ def test_a_partly_drained_stream_does_not_resume_past_its_scope() -> None:
 def test_every_advance_past_the_scope_refuses_again_rather_than_ending(view: str) -> None:
     # Each ADVANCE is an entry point of its own, so the refusal is not spent by
     # the first one that meets it: a caller looping over a retained view sees the
-    # named error every time rather than an empty iteration after the first.
+    # named error every time rather than an empty iteration after the first. The
+    # refusal is about the stream rather than a read, so no edition is noted.
     port = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[]))
     stream = _orders(port).stream(_all_orders(), batch_size=1)
     with stream:
         roots = iter(stream) if view == "default" else stream.checked()
     for _ in range(3):
-        with raises_code(UsageError, "stream-state-invalid", match="inside its own scope"):
+        with raises_code(
+            UsageError, "stream-state-invalid", match="inside its own scope"
+        ) as refused:
             next(roots)
+        assert not hasattr(refused.value, "__notes__")
     assert _reads(port) == []
     assert repr(stream).endswith("state='closed')")
 
@@ -554,7 +557,7 @@ def test_a_streamed_unknown_child_tag_fails_its_root_after_the_published_prefix(
     port = _partially_composed_keepers()
     with db_for(COMPOSED_BEAST_READER, port).stream(_keepers_with_beasts(), batch_size=1) as stream:
         delivered: list[Keeper] = []
-        with raises_contextualized(InvalidDataError) as refused:
+        with pytest.raises(InvalidDataError) as refused:
             delivered.extend(stream)
     assert [keeper.name for keeper in delivered] == ["Mowgli"]
     (record,) = refused.value.invalid_data
@@ -919,7 +922,7 @@ def test_a_failed_wire_stream_releases_its_encoder(
 
     with (
         _orders(port).wire.stream(_all_orders(), batch_size=1) as stream,
-        raises_contextualized(DatabaseError),
+        pytest.raises(DatabaseError),
     ):
         list(stream)
     gc.collect()
@@ -968,7 +971,7 @@ def test_typed_projection_releases_its_encoder_on_delivery_failure(
 
     with (
         _orders(port).stream(_all_orders(), batch_size=1) as stream,
-        raises_contextualized(DatabaseError),
+        pytest.raises(DatabaseError),
     ):
         roots = iter(stream)
         stream.wire(next(roots))
@@ -1024,7 +1027,7 @@ def test_a_provider_failure_on_a_later_page_preserves_the_published_prefix() -> 
 
     with (
         _orders(port).stream(_all_orders(), batch_size=1) as stream,
-        raises_contextualized(DatabaseError) as raised,
+        pytest.raises(DatabaseError) as raised,
     ):
         for root in stream:
             delivered.append(root.id)
@@ -1505,9 +1508,9 @@ def test_a_tie_publishes_the_prefix_before_it_and_then_refuses() -> None:
     delivered: list[object] = []
     with (
         _orders(port).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(
+        raises_code(
             InvalidDataError,
-            code=_TIE,
+            _TIE,
             match=r"cannot continue past result 1: .* so \(\S+\.Order\.id\) is not total",
         ) as refusal,
     ):
@@ -1524,7 +1527,7 @@ def test_a_tie_ends_the_throwing_view_the_same_way() -> None:
     # converted, or classified by either.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(InvalidDataError, code=_TIE, match="not total"),
+        raises_code(InvalidDataError, _TIE, match="not total"),
     ):
         assert _ids(iter(stream)) == [1]
 
@@ -1539,7 +1542,7 @@ def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:
     delivered: list[object] = []
     with (
         _orders(port).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(InvalidDataError, code=_TIE, match="past result 3:") as refusal,
+        raises_code(InvalidDataError, _TIE, match="past result 3:") as refusal,
     ):
         delivered.extend(stream)
     assert _ids(iter(delivered)) == [1, 2, 3]
@@ -1548,7 +1551,7 @@ def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:
 
 def test_a_stream_that_ended_at_a_tie_answers_nothing_further() -> None:
     with _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream:
-        with raises_contextualized(InvalidDataError, code=_TIE):
+        with raises_code(InvalidDataError, _TIE):
             list(stream)
         with raises_code(UsageError, "stream-state-invalid", match="single-pass"):
             stream.checked()
@@ -1560,7 +1563,7 @@ def test_the_refusal_is_frozen_and_keeps_its_coordinate_out_of_what_it_reports()
     # and on a refusal nothing may rewrite.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(InvalidDataError, code=_TIE) as raised,
+        raises_code(InvalidDataError, _TIE) as raised,
     ):
         list(stream)
     refusal = raised.value
@@ -1576,7 +1579,7 @@ def test_the_refusal_is_frozen_and_keeps_its_coordinate_out_of_what_it_reports()
     assert refusal.coordinate == (2,)
     assert refusal.code == _TIE
     refusal.add_note("a note is interpreter-owned state and stays writable")
-    assert refusal.__notes__ == ["a note is interpreter-owned state and stays writable"]
+    assert refusal.__notes__[-1] == "a note is interpreter-owned state and stays writable"
     del refusal.__notes__
     assert not hasattr(refusal, "__notes__")
 

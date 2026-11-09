@@ -30,7 +30,6 @@ from parallax.snapshot import (
     connect,
 )
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import BeginCall, CommitCall, Read, ReadCall, ScriptedAdapter, Transact
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -149,7 +148,7 @@ def test_a_failed_read_only_join_refuses_the_commit() -> None:
             db.read_only(lambda _joined: cast("str", _raise()))
         return "withheld"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         db.read_only(outer)
 
 

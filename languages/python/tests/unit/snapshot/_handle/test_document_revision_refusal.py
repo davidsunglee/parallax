@@ -17,7 +17,6 @@ from parallax.core.base import SQL_NULL, StructuredDocument
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import TxnContext
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     PortCall,
@@ -29,6 +28,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests.unit._transact_support import FIXED, INFINITY_INSTANT, db_for
 
 
@@ -105,8 +105,8 @@ def test_a_revision_patching_a_row_not_read_as_an_object_is_refused_before_its_s
         tx.amend(second.edit(amount=3))
         reached.append("buffered")
 
-    with raises_contextualized(
-        InvalidDataError, code=STORED_DOCUMENT_NOT_OBJECT, match="not known to be an object"
+    with raises_code(
+        InvalidDataError, STORED_DOCUMENT_NOT_OBJECT, match="not known to be an object"
     ):
         db_for(_MODEL, port).transact(fn)
 
@@ -146,7 +146,7 @@ def test_a_refused_revision_dooms_the_attempt_where_a_later_read_flushes_it(
             refused.append(error)
         tx.find(RevisedLog.where(RevisedLog.id == 9)).result()
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         db_for(_MODEL, port).transact(fn)
 
     assert [error.code for error in refused] == [STORED_DOCUMENT_NOT_OBJECT]

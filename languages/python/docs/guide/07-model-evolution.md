@@ -80,8 +80,9 @@ Every execution adopts the selection held when it starts, and keeps it to the en
 - A standalone `find` adopts when it runs, and a stream adopts when you enter its `with`
   block and keeps that edition for every page.
 
-A `Snapshot`, an entered stream and an `ExecutionFailure` carry the edition the work ran
-under as `edition`; the entity instances inside a result don't. Editions are compared
+A `Snapshot` and an entered stream carry the edition the work ran under as `edition`,
+and a failure that escapes the work carries a note naming it; the entity instances
+inside a result don't. Editions are compared
 only for equality, never ordered, so a later release doesn't need a "larger" name, but
 never give a changed model a name the Serving Model has already served. Parallax doesn't
 detect a reused name, and `edition` would then no longer tell the two models apart.

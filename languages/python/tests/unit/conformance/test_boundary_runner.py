@@ -61,7 +61,6 @@ from parallax.core.execution import (
 )
 from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext
-from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -73,6 +72,7 @@ from tests._support.db_port import (
     WriteCall,
     body_outcome,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import balance_row
 
@@ -321,7 +321,7 @@ def test_a_join_naming_a_second_level_is_refused_by_production() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
-    with raises_contextualized(UsageError, code="transaction-option-conflict"):
+    with raises_code(UsageError, "transaction-option-conflict"):
         db.transact(fn, isolation="repeatable_read")
 
 
@@ -398,7 +398,7 @@ def test_a_join_naming_the_other_access_mode_is_refused_by_production() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
-    with raises_contextualized(UsageError, code="transaction-access-mode-mismatch"):
+    with raises_code(UsageError, "transaction-access-mode-mismatch"):
         db.transact(fn)
 
 
@@ -408,7 +408,7 @@ def test_a_writing_action_in_a_read_only_invocation_is_refused() -> None:
     def fn(rtx: ReadOnlyTxnContext) -> Any:
         return boundary_runner.run_boundary_actions(rtx, _steps("read", "amend"), _ACCOUNT_TARGET)
 
-    with raises_contextualized(AssertionError, match="`amend` action needs a writable"):
+    with pytest.raises(AssertionError, match="`amend` action needs a writable"):
         _db(port).read_only(fn)
 
 
@@ -418,9 +418,7 @@ def test_a_join_without_the_owning_database_is_refused() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("join"), _ACCOUNT_TARGET)
 
-    with raises_contextualized(
-        AssertionError, match="needs the ScopedDatabase running the boundary"
-    ):
+    with pytest.raises(AssertionError, match="needs the ScopedDatabase running the boundary"):
         _db(port).transact(fn)
 
 
@@ -434,7 +432,7 @@ def test_a_qualified_join_without_an_authority_scope_selector_is_refused() -> No
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
-    with raises_contextualized(AssertionError, match="needs an authority scope selector"):
+    with pytest.raises(AssertionError, match="needs an authority scope selector"):
         db.transact(fn)
 
 
@@ -492,7 +490,7 @@ def test_run_boundary_actions_terminate_refuses() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("terminate"), _ACCOUNT_TARGET)
 
-    with raises_contextualized(AssertionError, match="no legal target"):
+    with pytest.raises(AssertionError, match="no legal target"):
         _db(port).transact(fn)
 
 
@@ -523,7 +521,7 @@ def test_an_account_only_action_on_another_target_is_refused(action: str) -> Non
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps(action), _BALANCE_TARGET)
 
-    with raises_contextualized(AssertionError, match="declared only on the account.yaml target"):
+    with pytest.raises(AssertionError, match=r"declared only on the account\.yaml target"):
         _db(port, MODELS["balance"]).transact(fn)
     assert port.writes == []
 
@@ -534,7 +532,7 @@ def test_run_boundary_actions_update_without_a_prior_read_raises() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("amend"), _ACCOUNT_TARGET)
 
-    with raises_contextualized(AssertionError, match="prior `read`"):
+    with pytest.raises(AssertionError, match="prior `read`"):
         _db(port).transact(fn)
 
 
@@ -544,7 +542,7 @@ def test_run_boundary_actions_delete_without_a_prior_read_raises() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("delete"), _ACCOUNT_TARGET)
 
-    with raises_contextualized(AssertionError, match="prior `read`"):
+    with pytest.raises(AssertionError, match="prior `read`"):
         _db(port).transact(fn)
 
 
@@ -629,7 +627,7 @@ def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read"), _ACCOUNT_TARGET)
 
-    with raises_contextualized(DatabaseError) as unopened:
+    with pytest.raises(DatabaseError) as unopened:
         _db(_faulted(inner, fault="isolation-setup-failure", persistent=False)).transact(
             fn, isolation="serializable"
         )
@@ -957,7 +955,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
     if outcome == "committed":
         db.transact(fn, **requests)
     else:
-        with raises_contextualized(UsageError, code="transaction-option-conflict"):
+        with raises_code(UsageError, "transaction-option-conflict"):
             db.transact(fn, **requests)
     effective = case_format.effective_options(case)
     attempts = boundary_runner.expected_attempts(

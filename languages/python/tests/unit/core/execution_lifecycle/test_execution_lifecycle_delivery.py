@@ -39,7 +39,6 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -319,7 +318,7 @@ def test_a_quarantined_root_never_renders_a_failed_call() -> None:
     )
     provider = _Provider(_FailingHandler(fail_at=2, failure=RuntimeError("queue full")))
     port = ScriptedAdapter(Read(raises=failure))
-    with raises_contextualized(DatabaseError) as raised:
+    with pytest.raises(DatabaseError) as raised:
         _read(_db(port, provider))
     assert raised.value is failure
     assert failure.renders == 0

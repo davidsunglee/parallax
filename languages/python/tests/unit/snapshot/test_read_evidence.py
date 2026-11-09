@@ -59,7 +59,6 @@ from parallax.snapshot import _publication as publication
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -615,7 +614,7 @@ def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
     assert restored == node
     assert snapshot_state_of(restored) is None
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         db.transact(lambda tx: tx.amend(restored.edit(balance=Decimal("125.00"))))
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -760,7 +759,7 @@ def test_an_aborted_flush_spends_no_evidence() -> None:
         tx.amend(node.edit(balance=Decimal("125.00")))
         raise RuntimeError("abort")
 
-    with raises_contextualized(RuntimeError, match="abort"):
+    with pytest.raises(RuntimeError, match="abort"):
         db.transact(doomed)
     assert cast("Any", _typed_hint(escaped[0])).observation.invalidated is False
 
@@ -1092,7 +1091,7 @@ def test_a_classified_temporal_roots_hydrated_data_answers_its_pin_without_write
 # ordinary write under either strategy — the refusal precedes any DML.        #
 # --------------------------------------------------------------------------- #
 def _refused_outside_the_attempt(port: ScriptedAdapter, transact: Callable[[], object]) -> None:
-    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         transact()
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -1294,6 +1293,6 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         assert _typed_hint(valid_customer) is not None
         tx.amend(invalid_customer.edit(name="Rejected"))
 
-    with raises_contextualized(UsageError, code="write-value-not-stored"):
+    with raises_code(UsageError, "write-value-not-stored"):
         own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login().transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)

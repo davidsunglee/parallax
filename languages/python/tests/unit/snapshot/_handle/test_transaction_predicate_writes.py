@@ -76,7 +76,6 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._handle import _typed_writes as typed_writes
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     BeginCall,
@@ -397,9 +396,9 @@ def test_replace_where_refuses_a_payload_of_another_entity() -> None:
             mm.Passport(id=1, person_id=1, number="X"),  # pyright: ignore[reportArgumentType]
         )
 
-    with raises_contextualized(
+    with raises_code(
         UsageError,
-        code="write-instruction-invalid",
+        "write-instruction-invalid",
         match=r"`replace_where` over parallax\.compatibility\.Person states a whole state of "
         r"that Entity, and this payload is a parallax\.compatibility\.Passport",
     ):
@@ -483,7 +482,7 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
-    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
+    with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -502,9 +501,9 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
             mm.Badge.holder.set("Ada"),  # pyright: ignore[reportArgumentType]
         )
 
-    with raises_contextualized(
+    with raises_code(
         UsageError,
-        code="write-instruction-invalid",
+        "write-instruction-invalid",
         match=r"'parallax\.compatibility\.Badge\.holder' does not name a declared member of "
         r"parallax\.compatibility\.Ticket",
     ):
@@ -524,7 +523,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
             mm.Person.name.set("Grace"),
         )
 
-    with raises_contextualized(UsageError, code="write-instruction-invalid", match="is duplicated"):
+    with raises_code(UsageError, "write-instruction-invalid", match="is duplicated"):
         own_root(
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -618,9 +617,7 @@ def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_mod
             mm.Person.name.set("Ada"),
         )
 
-    with raises_contextualized(
-        UsageError, code="query-expression-invalid", match="through Wire instead"
-    ):
+    with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         own_root(
             Database.connect(port, _classless(PERSON), clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -710,7 +707,7 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
     def fn(tx: TxnContext) -> None:
         tx.amend_where(query, mm.Person.name.set("Ada"))
 
-    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
+    with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -723,7 +720,7 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_where(query)
 
-    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
+    with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -741,7 +738,7 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
     def fn(tx: TxnContext) -> None:
         tx.delete_where(query)
 
-    with raises_contextualized(UsageError, code="query-not-mutation-compatible") as caught:
+    with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -758,11 +755,11 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
     def fn(tx: TxnContext) -> None:
         tx.amend_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
-    with raises_contextualized(
+    with raises_code(
         UsageError,
-        code="write-instruction-invalid",
+        "write-instruction-invalid",
         match=r"the connected model declares no entity 'parallax\.compatibility\.Person' "
-        "for this write$",
+        "for this write",
     ):
         own_root(
             Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
@@ -774,7 +771,7 @@ def test_a_read_of_a_target_the_connected_model_does_not_declare_keeps_its_refus
     def fn(tx: TxnContext) -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
-    with raises_contextualized(UsageError, code="query-target-not-in-model") as caught:
+    with raises_code(UsageError, "query-target-not-in-model") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -793,7 +790,7 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
     def fn(tx: TxnContext) -> None:
         tx.amend_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
-    with raises_contextualized(UsageError) as caught:
+    with pytest.raises(UsageError) as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -806,7 +803,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
     def fn(tx: TxnContext) -> None:
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
-    with raises_contextualized(UsageError) as caught:
+    with pytest.raises(UsageError) as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -863,7 +860,7 @@ def test_a_predicate_write_needing_an_observation_is_refused_at_the_call(
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with raises_contextualized(_Abandon):
+    with pytest.raises(_Abandon):
         own_root(
             Database.connect(port, model, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -941,7 +938,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with raises_contextualized(_Abandon):
+    with pytest.raises(_Abandon):
         own_root(
             Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)

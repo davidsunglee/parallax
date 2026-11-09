@@ -52,7 +52,6 @@ from parallax.snapshot import (
     is_view_loaded,
     pin_of,
 )
-from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.errors import raises_code
@@ -431,7 +430,7 @@ def test_a_shared_document_from_another_attempt_is_refused_at_the_write_door(
         db.transact(lambda tx: tx.wire.find(_REPEATED, sharing_scope="page").results()),
     )
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         db.transact(lambda tx: tx.wire.amend(published[0], {"total": "6.00"}))
 
 
@@ -439,7 +438,7 @@ def test_a_shared_node_from_another_attempt_is_refused_at_the_write_door(profile
     db = _db(profile_run)
     published = db.transact(lambda tx: tx.find(_REPEATED, sharing_scope="page").results())
 
-    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
+    with raises_code(UsageError, "write-evidence-unavailable"):
         db.transact(lambda tx: tx.amend(published[0].edit(total=Decimal("6.00"))))
 
 
@@ -571,7 +570,7 @@ def _checked_and_projected(stream: SnapshotStream[Any]) -> list[Any]:
 
 def _delivered_before_a_refusal(stream: SnapshotStream[Any]) -> tuple[list[Any], Any]:
     delivered: list[Any] = []
-    with stream as roots, raises_contextualized(InvalidDataError) as refused:
+    with stream as roots, pytest.raises(InvalidDataError) as refused:
         delivered.extend(roots)
     return delivered, refused.value
 

@@ -46,7 +46,6 @@ from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnConte
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -504,7 +503,7 @@ def test_a_streamed_roots_claim_refuses_an_intent_it_cannot_join(
         _delete(tx, representation, root)
         _update(tx, representation, root, "125.00")
 
-    with raises_contextualized(UsageError, code="write-evidence-already-claimed"):
+    with raises_code(UsageError, "write-evidence-already-claimed"):
         account_db(port).transact(fn)
     assert WriteCall not in _kinds(port)
 
@@ -698,12 +697,12 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
 # Adoption: a participating stream inherits its attempt's selection and wraps  #
 # nothing of its own.                                                          #
 # --------------------------------------------------------------------------- #
-def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failure() -> None:
+def test_a_participating_stream_inherits_the_attempts_edition_and_notes_no_failure() -> None:
     # The stream is served under the selection the attempt adopted, so its
     # edition is the transaction's and a publication mid-delivery moves
     # neither. A page failure propagates BARE inside the callback — the
     # transaction's own reads are bracketed by nothing — and the invocation
-    # names the attempt's edition once on the way out.
+    # notes the attempt's edition once on the way out.
     a = prepare_model(ACCOUNT, edition="ledger-a")
     b = prepare_model(ACCOUNT, edition="ledger-b")
     serving = ServingModel(a)
@@ -726,14 +725,15 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
                     assert stream.edition == "ledger-a"
             except DatabaseError as raised:
                 assert raised is failure
+                assert not hasattr(raised, "__notes__")
                 raise
 
-    with raises_contextualized(DatabaseError) as failed:
+    with pytest.raises(DatabaseError) as failed:
         db.transact(body, retry=RetryPolicy(max_retries=0))
 
     assert seen == [1]
     assert failed.value is failure
-    assert failed.edition == "ledger-a"
+    assert failed.value.__notes__ == ["raised in a transaction under model edition 'ledger-a'"]
     assert serving.current() is b
 
 

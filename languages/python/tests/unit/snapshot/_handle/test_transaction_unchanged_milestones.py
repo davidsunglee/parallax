@@ -16,8 +16,8 @@ from parallax.core.execution import RetryPolicy
 from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
+from tests._support.errors import raises_code
 from tests.unit._transact_support import (
     BALANCE,
     INFINITY_INSTANT,
@@ -97,7 +97,7 @@ def test_where_the_count_proves_no_guard_an_unchanged_row_is_closed_and_chained(
 
 def test_a_guard_that_matches_nothing_is_the_milestones_conflict() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(affected=0)))
-    with raises_contextualized(ConflictError, code=OPTIMISTIC_LOCK_CONFLICT):
+    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
         db_for(BALANCE, port).transact(
             lambda tx: _restate(tx, "typed"), retry=RetryPolicy(max_retries=0)
         )

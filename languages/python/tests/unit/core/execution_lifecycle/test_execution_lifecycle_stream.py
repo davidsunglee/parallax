@@ -59,7 +59,6 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -339,7 +338,7 @@ def test_a_page_read_failure_fails_its_batch_first_and_causes_the_stream_failure
         Read(rows=[_order_row(index) for index in (1, 2, 3)]), Read(raises=failure)
     )
     with (
-        raises_contextualized(DatabaseError),
+        pytest.raises(DatabaseError),
         _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream,
     ):
         assert [root.id for root in stream] == [1, 2]

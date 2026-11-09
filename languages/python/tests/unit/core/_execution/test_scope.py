@@ -29,7 +29,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.unit_work import SubjectActor
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, root
 
@@ -113,7 +112,7 @@ def test_root_alias_options_are_independent_while_resources_and_close_are_shared
     assert adapter.acquisitions == 1
     alias.close()
 
-    with raises_contextualized(ConnectionAcquisitionError) as closed:
+    with pytest.raises(ConnectionAcquisitionError) as closed:
         original_scope.transact(lambda _attempt: None, itself)
     assert closed.value.reason == "closed"
 

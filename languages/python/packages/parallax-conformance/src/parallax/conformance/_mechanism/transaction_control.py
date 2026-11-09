@@ -25,7 +25,6 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
-from parallax.core.execution import ExecutionFailure
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = [
@@ -33,7 +32,6 @@ __all__ = [
     "committed",
     "read_only",
     "transact",
-    "underlying",
     "write_adapter",
     "write_connection",
 ]
@@ -43,43 +41,19 @@ class _RollbackStep(Exception):
     """Sentinel raised inside a transaction body to abort a ``rollback: true`` step."""
 
 
-def underlying[T](execution: Callable[[], T]) -> T:
-    """Run one adopted ``execution`` and answer the underlying failure rather
-    than its contextualized form.
-
-    What the engine grades is what the callback, the write, the boundary, or
-    the read raised — a rollback sentinel, a Write Effect Error, an
-    optimistic-lock conflict, a lowering refusal, a Database Error — and an
-    :class:`~parallax.core.execution.ExecutionFailure` carries exactly that as
-    its cause. Re-raising the cause with its own chain intact is what lets each
-    lane keep catching the failure it classifies; the edition the wrapper named
-    is the case's own literal, which the lifecycle oracle grades instead.
-
-    The re-raise happens after the handler is left, because raising inside it
-    would install the wrapper as the cause's ``__context__`` — overwriting
-    whatever the cause was already chained to, and pointing the two at each
-    other.
-    """
-    try:
-        return execution()
-    except ExecutionFailure as failure:
-        cause = failure.cause
-    raise cause
-
-
 def transact[T](
     database: ScopedDatabase,
     body: Callable[[TxnContext], T],
     **keywords: Unpack[TransactionKeywords],
 ) -> T:
-    """``db.transact`` as every lane drives it, through :func:`underlying`.
+    """``db.transact`` as every lane drives it.
 
     ``keywords`` is the sparse projection of what the case authored: a field
     the case omitted is absent here and therefore omitted at the production
     call, so the root's defaults — never a value restated by a lane — resolve
     it.
     """
-    return underlying(lambda: database.transact(body, **keywords))
+    return database.transact(body, **keywords)
 
 
 def read_only[T](
@@ -87,9 +61,9 @@ def read_only[T](
     body: Callable[[ReadOnlyTxnContext], T],
     **keywords: Unpack[ReadOnlyKeywords],
 ) -> T:
-    """``db.read_only`` as every lane drives it, through :func:`underlying`, on
-    the terms :func:`transact` drives ``db.transact``."""
-    return underlying(lambda: database.read_only(body, **keywords))
+    """``db.read_only`` as every lane drives it, on the terms :func:`transact`
+    drives ``db.transact``."""
+    return database.read_only(body, **keywords)
 
 
 class _AbortingPort:

@@ -40,7 +40,6 @@ from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "source.continuation"
@@ -250,7 +249,7 @@ def test_a_callers_stated_revision_stays_literal_after_its_flush(
         _flush(tx, entity)
         tx.amend_if(entity, entity.note.set("stale"), key=1, version=1)
 
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         db.transact(fn, concurrency=concurrency)
     assert _stored(db, entity) == ("seed", "kept", 1)
 
@@ -695,7 +694,7 @@ def test_a_callers_completed_write_continues_a_source_and_its_stated_start_stays
         _temporal_flush(tx, entity)
         tx.amend_if(entity, entity.note.set("stale"), key=2, **bounds)
 
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         db.transact(stale, concurrency=concurrency)
 
 

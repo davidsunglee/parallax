@@ -24,7 +24,6 @@ from parallax.core import (
 )
 from parallax.core.base import StructuredDocument, UsageError
 from parallax.snapshot import TxnContext, WireEntity
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     Read,
@@ -465,7 +464,7 @@ def test_an_uncaught_refusal_fails_the_transaction_once_without_retry(refusal: _
         tx.insert(Journal(id=1, note="never"))
         refuse()
 
-    with raises_contextualized(UsageError) as failure:
+    with pytest.raises(UsageError) as failure:
         db_for(_MODEL, port).transact(fn)
 
     assert failure.value.code == _RULE

@@ -31,7 +31,6 @@ from parallax.core.unit_work import (
 from parallax.snapshot import TxnContext
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -161,7 +160,7 @@ def test_a_deletion_that_removes_nothing_fails_its_precondition_and_never_commit
 ) -> None:
     port = ScriptedAdapter(Transact(Write(affected=0)))
 
-    with raises_contextualized(WritePreconditionError, match="expected revision 3") as failed:
+    with pytest.raises(WritePreconditionError, match="expected revision 3") as failed:
         account_db(port).transact(lambda tx: _delete(tx, representation))
     assert dict(failed.value.key) == {"id": 1}
     assert _calls(port) == [WriteCall(_GATED_DELETE, (1, 3)), RollbackCall()]
@@ -353,7 +352,7 @@ def test_a_locking_deletion_refuses_a_stale_or_missing_start_at_the_call(
 def test_a_failed_precondition_is_never_retried_even_with_conflict_retries_on() -> None:
     port = ScriptedAdapter(Transact(Write(affected=0)), Transact(Write()))
 
-    with raises_contextualized(WritePreconditionError, match="expected revision 3"):
+    with pytest.raises(WritePreconditionError, match="expected revision 3"):
         account_db(port).transact(lambda tx: _patch(tx, balance="150.00"))
     assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
     assert RollbackCall() in port.calls
@@ -368,7 +367,7 @@ def test_a_caught_precondition_failure_still_rolls_the_attempt_back() -> None:
             tx.find(mm.Account.where(mm.Account.id == 2))
         return "withheld"
 
-    with raises_contextualized(UsageError, code=TRANSACTION_ROLLBACK_ONLY):
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         account_db(port).transact(fn)
     assert RollbackCall() in port.calls
 
@@ -486,7 +485,7 @@ def test_a_composed_write_whose_gate_fails_reports_the_callers_precondition() ->
         tx.amend(source.edit(owner="Bo"))
         _patch(tx, balance="150.00")
 
-    with raises_contextualized(WritePreconditionError):
+    with pytest.raises(WritePreconditionError):
         account_db(port).transact(fn)
 
 

@@ -36,7 +36,6 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, KeyedInsert
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.write_plan import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
@@ -264,6 +263,5 @@ def test_an_insertion_its_writes_preparation_ended_is_refused_when_the_write_is_
             tx.keyed_write(_RevisingInsertedAccountSeven(authority, interfere), "amend")
         raise _Abandoned
 
-    with pytest.raises(ExecutionFailure) as failure:
+    with pytest.raises(_Abandoned):
         scope(ScriptedAdapter(Transact())).transact(fn, itself)
-    assert isinstance(failure.value.__cause__, _Abandoned)

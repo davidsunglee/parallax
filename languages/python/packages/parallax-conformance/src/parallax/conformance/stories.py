@@ -23,7 +23,6 @@ from parallax.conformance.vo_models import (
     Supplier,
 )
 from parallax.core.entity import Entity
-from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import Clock
 from parallax.snapshot import ScopedDatabase, TxnContext
 
@@ -83,14 +82,12 @@ def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
 
 
 def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
-    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
-    edited = fetched.edit(balance=Decimal("999.00"))
-
     def doomed(tx: TxnContext) -> None:
-        tx.amend(edited)
+        fetched = tx.find(Account.where(Account.id == 1)).result()
+        tx.amend(fetched.edit(balance=Decimal("999.00")))
         raise RuntimeError("changed my mind")
 
-    with contextlib.suppress(ExecutionFailure):
+    with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
 
@@ -182,7 +179,7 @@ def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         raise RuntimeError("abort")
 
-    with contextlib.suppress(ExecutionFailure):
+    with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
 
@@ -194,7 +191,7 @@ def aborted_delete_leaves_the_row_standing(db: ScopedDatabase) -> list[Entity]:
         tx.find(Account.where(Account.id == 3))
         raise RuntimeError("abort")
 
-    with contextlib.suppress(ExecutionFailure):
+    with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
 

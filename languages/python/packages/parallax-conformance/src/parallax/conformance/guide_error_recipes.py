@@ -8,7 +8,6 @@ from parallax.conformance.guide_models import Customer, Price, Shipment
 from parallax.core import DomainModel, EditError, Entity, MetamodelValidationError
 from parallax.core.db_error import DatabaseError, PhysicalIndexName
 from parallax.core.db_port import CredentialSource
-from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import LoggingLifecycleProvider
 from parallax.evolution import SchemaDelta
 from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint, PostgresRole
@@ -55,9 +54,8 @@ def add_a_customer_unless_the_id_is_taken(db: ScopedDatabase, customer: Customer
     """Insert ``customer``, or answer False when another customer already has its id."""
     try:
         db.transact(lambda tx: tx.insert(customer))
-    except ExecutionFailure as failure:
-        cause = failure.cause
-        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
+    except DatabaseError as failure:
+        if failure.category != "uniqueViolation":
             raise
         return False
     return True
@@ -77,9 +75,8 @@ def price_a_window_unless_it_is_priced(
 
     try:
         return db.transact(price_unless_priced)
-    except ExecutionFailure as failure:
-        cause = failure.cause
-        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
+    except DatabaseError as failure:
+        if failure.category != "uniqueViolation":
             raise
         return False
 
@@ -101,13 +98,8 @@ def add_a_shipment_unless_its_tracking_number_is_taken(
     """Insert ``shipment``, or answer False when another shipment has its tracking number."""
     try:
         db.transact(lambda tx: tx.insert(shipment))
-    except ExecutionFailure as failure:
-        cause = failure.cause
-        if not (
-            isinstance(cause, DatabaseError)
-            and cause.category == "uniqueViolation"
-            and cause.violated_index == tracking_index
-        ):
+    except DatabaseError as failure:
+        if failure.violated_index != tracking_index:
             raise
         return False
     return True

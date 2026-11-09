@@ -23,7 +23,6 @@ from parallax.conformance.target_write_stories import (
     unversioned_write_snippet,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.execution import ExecutionFailure
 from tests._support.db_port import (
     BeginCall,
     Read,
@@ -73,9 +72,9 @@ def test_a_deletion_failing_for_any_other_reason_is_never_counted_as_refused() -
         Transact(Read(rows=[_LINUS]), Write()),
         Transact(Write(raises=lock_wait)),
     )
-    with pytest.raises(ExecutionFailure) as failed:
+    with pytest.raises(DatabaseError) as failed:
         reviewed_accounts_are_deleted_under_the_versions_their_review_saw(port, MODELS["account"])
-    assert failed.value.cause is lock_wait
+    assert failed.value is lock_wait
 
 
 def test_the_unversioned_wallet_is_read_under_the_shared_lock_before_its_write() -> None:

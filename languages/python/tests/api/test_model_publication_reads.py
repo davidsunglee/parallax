@@ -27,7 +27,6 @@ from parallax.core.execution import (
 )
 from parallax.core.read_delivery import InvalidDataError
 from parallax.snapshot import TxnContext, connect
-from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.errors import raises_code
@@ -103,14 +102,14 @@ def test_a_publication_during_a_stream_leaves_every_page_on_a(profile_run: Any) 
     assert db.find(Account.where(Account.id == TARGET_ID)).edition == "2026-09-b"
 
 
-def test_a_delayed_refusal_from_a_reports_a_inside_an_execution_failure_under_b(
+def test_a_delayed_refusal_from_a_keeps_a_and_is_noted_with_the_transactions_b(
     profile_run: Any,
 ) -> None:
     # The Customer fixture holds stored states that contradict the model, so a
     # read over it publishes invalid roots its default accessor refuses later.
     # Reaching that accessor inside a transaction adopted under B starts no
-    # execution and adopts nothing: the transaction's failure names B, and the
-    # refusal it carries is still the one A's result settled.
+    # execution and adopts nothing: the transaction's note names B, and the
+    # refusal is still the one A's result settled, naming A.
     port = _seeded(profile_run, _INVALID_CASE_ID)
     a = prepare_model(MODELS["customer"], edition="2026-09-a")
     b = prepare_model(MODELS["customer"], edition="2026-09-b")
@@ -120,10 +119,10 @@ def test_a_delayed_refusal_from_a_reports_a_inside_an_execution_failure_under_b(
     snapshot = db.wire.find({"target": _CUSTOMER, "predicate": {"true": {}}})
     serving.publish(b, expected=a)
 
-    with raises_contextualized(InvalidDataError) as failed:
+    with raises_code(InvalidDataError, "result-data-invalid") as failed:
         db.transact(lambda _tx: snapshot.results())
 
-    assert failed.edition == "2026-09-b"
+    assert failed.value.__notes__ == ["raised in a transaction under model edition '2026-09-b'"]
     assert failed.value.edition == "2026-09-a" == snapshot.edition
     assert failed.value.invalid_data
 

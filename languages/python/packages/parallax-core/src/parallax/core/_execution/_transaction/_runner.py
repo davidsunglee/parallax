@@ -202,11 +202,11 @@ class TransactionRunner:
         value after commit.
 
         The public contract is the lifecycle scope's ``transact``. What is
-        decided here: the deterministic refusals run first and keep their own
-        types, the join path returns inside the active attempt without adopting
-        or wrapping, and an outer invocation resolves its options once, opens its
-        root, runs the retry loop with one adoption per attempt, and is
-        contextualized as a whole once the loop has resolved.
+        decided here: the deterministic refusals run first and carry no edition
+        note, the join path returns inside the active attempt without adopting
+        or noting, and an outer invocation resolves its options once, opens its
+        root, runs the retry loop with one adoption per attempt, and notes its
+        edition on a failure once the loop has resolved.
 
         Each attempt is constructed fully wired before ``context_for``
         receives it, and ``fn`` is handed what that factory answered. A retry
@@ -389,7 +389,7 @@ class TransactionRunner:
     ) -> T:
         """Run one outermost invocation: the retry loop over physical attempts,
         each adopting, acquiring through ``routing``, and opening its boundary
-        afresh, the whole contextualized once the loop has resolved."""
+        afresh, the whole noted with its edition once the loop has resolved."""
         execution = AdoptedExecution(self._serving)
 
         def invoke() -> T:
@@ -470,7 +470,7 @@ class TransactionRunner:
                     try:
                         return physical_attempt(replayable)
                     except Exception as failure:
-                        # Wrapped only here, so release and reporting ran with the
+                        # Carried only here, so release and reporting ran with the
                         # original failure live and chained nothing to a carrier;
                         # whatever a cleanup step raised instead ends the
                         # invocation.
@@ -483,11 +483,11 @@ class TransactionRunner:
                 # passes straight through it as the caller's own error.
                 return run_with_retry(attempt, policy=retry)
 
-        # Contextualized around the whole invocation and outside the root scope:
-        # the classifier saw every underlying error, the lifecycle reported it
-        # under the attempt it came from, and what the caller receives names
-        # the edition of the attempt that failed last.
-        return execution.contextualized(invoke)
+        # Noted around the whole invocation and outside the root scope: the
+        # classifier saw every failure before any edition note, the lifecycle
+        # reported it under the attempt it came from, and the note names the
+        # edition of the attempt that failed last, after any exhaustion note.
+        return execution.noting_edition("transaction", invoke)
 
 
 def _completed[Tx, T](
@@ -530,8 +530,8 @@ def _joined[Tx, T](
     outermost attempt, whose activity the joined one is a child of. A failure
     escaping the joined callback dooms the shared lifetime, keeping the first
     cause, before it propagates, so an outer callback that catches it still
-    cannot commit. Nothing is adopted and nothing is wrapped: the selection and
-    the failure contract are the outer invocation's.
+    cannot commit. Nothing is adopted and nothing is noted: the selection and
+    the edition note are the outer invocation's.
     """
     with attempt.joined_invocation():
         try:

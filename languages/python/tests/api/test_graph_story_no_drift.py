@@ -80,7 +80,6 @@ from parallax.snapshot import (
     TxnContext,
     is_view_loaded,
 )
-from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
     CollectionKinds,
@@ -1115,7 +1114,7 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
     db = _RecordingDatabase(
         _TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), model, group_finds=True
     )
-    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
+    with pytest.raises(UsageError, match="transaction-time-pin-read-only"):
         graph_stories.a_finite_transaction_time_pinned_view_is_read_only(db)
     case_id = "m-temporal-write-092"
     assert [canonical_document(query, model) for query in db.queries] == _scenario_object_queries(

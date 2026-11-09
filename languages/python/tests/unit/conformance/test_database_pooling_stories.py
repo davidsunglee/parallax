@@ -21,20 +21,24 @@ from collections.abc import Sequence
 from decimal import Decimal
 from uuid import uuid4
 
-import pytest
-
 from parallax.conformance import database_pooling_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
-from parallax.core.db_port import Bind, DocumentReadOrdinals, Password, Row
+from parallax.core.db_port import (
+    Bind,
+    ConnectionAcquisitionError,
+    DocumentReadOrdinals,
+    Password,
+    Row,
+)
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution import (
-    ExecutionFailure,
     ServingModel,
     prepare_model,
 )
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandlerError
 from parallax.postgres import OnDemandOptions, PoolOptions
 from tests._support.db_port import Read, ScriptedAdapter, ScriptedRuntime
+from tests._support.errors import raises_code
 from tests.unit._pool_source_support import DetachableSource
 
 _ROW = {"id": 1, "owner": "Newton", "balance": Decimal("10.00"), "version": 1}
@@ -164,7 +168,7 @@ def test_the_lifespan_yields_a_working_handle_and_closes_it_at_shutdown() -> Non
 
     assert balances == [Decimal("10.00")]
     assert adapter.closes == 1
-    with pytest.raises(ExecutionFailure):
+    with raises_code(ConnectionAcquisitionError, "connection-acquisition-failed"):
         stories.account_balances(escaped[0])  # pyright: ignore[reportArgumentType] - the handle the lifespan yielded, deliberately used after its own shutdown
 
 

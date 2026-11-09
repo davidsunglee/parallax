@@ -39,7 +39,6 @@ from parallax.core.write_plan import ObjectKey, ObjectStateKey, VersionObservati
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
 from tests._support import mirrored_models as mm
-from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -338,7 +337,7 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
     # Wire verb's preparation judges it, so it is refused with the same
     # classified rule the Typed keyed verbs and the rejected run lane report.
     port = ScriptedAdapter(Transact())
-    with raises_contextualized(UsageError) as raised:
+    with pytest.raises(UsageError) as raised:
         _run(
             port,
             lambda tx: tx.wire.insert(
@@ -353,7 +352,7 @@ def test_a_predicate_write_of_a_versioned_target_is_refused_at_the_shared_predic
     # A versioned target needs an observation one readless statement cannot
     # make (`m-batch-write`), and the Wire ingress does not invent a read.
     port = ScriptedAdapter(Transact())
-    with raises_contextualized(UsageError) as refused:
+    with pytest.raises(UsageError) as refused:
         _run(port, lambda tx: tx.wire.amend_where(_predicate_target(), {"balance": "11.00"}))
     assert refused.value.code == SET_BASED_WRITE_TARGET_UNSUPPORTED
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
@@ -382,7 +381,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
         tx.wire.insert("parallax.compatibility.Account", {"id": 7, "owner": "N", "balance": "5.00"})
         tx.wire.find(query)
 
-    with raises_contextualized(UsageError, code="query-target-not-in-model"):
+    with raises_code(UsageError, "query-target-not-in-model"):
         _run(port, fn)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
@@ -425,7 +424,7 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
         _insert_policy(tx)
         tx.wire.find(query)
 
-    with raises_contextualized(UnsupportedError, code="execution-feature-deferred") as raised:
+    with raises_code(UnsupportedError, "execution-feature-deferred") as raised:
         _policy_db(port).transact(fn)
     assert "has deferred snapshot-history-includes and" in raised.value.args[1]
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]

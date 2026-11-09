@@ -51,7 +51,6 @@ from parallax.core import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
 )
@@ -633,15 +632,13 @@ def test_a_caught_dependent_read_failure_still_rolls_the_attempt_back(profile_ru
                 outcomes.append(failure)
         return "withheld"
 
-    with pytest.raises(ExecutionFailure) as escaped:
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         db.transact(edit)
     flush_failure, refused = outcomes
     assert isinstance(flush_failure, DatabaseError)
     assert isinstance(refused, UsageError)
     assert refused.code == TRANSACTION_ROLLBACK_ONLY
     assert refused.__cause__ is flush_failure
-    assert isinstance(escaped.value.cause, UsageError)
-    assert escaped.value.cause.code == TRANSACTION_ROLLBACK_ONLY
     assert _log_rows(profile_run, ColumnsLog) == [(_SEEDED, None, "seeded", _SPEC_DOCUMENT)]
     assert _log_rows(profile_run, DocumentLog) == []
 
@@ -1057,9 +1054,8 @@ def test_a_range_flushed_before_a_failing_callback_rolls_back_with_it(
         assert _span_find(tx, entity, representation, _AUG) is not None
         raise _Abandoned
 
-    with pytest.raises(ExecutionFailure) as abandoned:
+    with pytest.raises(_Abandoned):
         db.transact(edit, concurrency=concurrency)
-    assert isinstance(abandoned.value.cause, _Abandoned)
 
     assert _span_rows(profile_run, entity) == seeded
 

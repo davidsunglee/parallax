@@ -33,7 +33,7 @@ from parallax.core import (
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import AdaptiveBackoff, ExecutionFailure, RetryPolicy, TxnOptions
+from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WritePreconditionError
 from parallax.evolution import ABSENT, evolve, schema_delta
@@ -624,9 +624,7 @@ def cancel_unless_changed(db: ScopedDatabase, order: Order) -> bool:
     """Cancel ``order`` unless it changed since it was read; answer whether it was cancelled."""
     try:
         db.transact(lambda tx: tx.delete_if(Order, key=order.id, version=order.version))
-    except ExecutionFailure as failure:
-        if not isinstance(failure.cause, WritePreconditionError):
-            raise
+    except WritePreconditionError:
         return False
     return True
 
