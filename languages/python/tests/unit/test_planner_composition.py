@@ -1,468 +1,56 @@
-"""Every write lane plans through the composition-root factory.
+"""The composition root is the only source of a Write Planner, and its wiring.
 
-``parallax.core._execution._planning.build_write_planner`` is the one place the optional
-policy modules are wired into a Write Planner, so a lane that built a planner of
-its own would plan under a second set of strategies free to drift from
-production's. This grades that as behavior: the factory is made to hand back
-planners this module can recognize, a real write is driven through each lane, and
-the drive is then followed all the way to the statements it emits.
-
-The chain is closed link by link. Every planning the drive performed ran on a
-planner the factory built. Every step sequence taken through a
-``LoweringCursor`` is by identity the steps of one Write Group of a plan one of
-those plannings returned, or the one step a predicate-selected write's planning
-returned, whether execution or a simulated step execution lowers it, and the
-sequences streamed are the sequences planned, each once and in order, so a
-factory plan the lane discarded is named too. Every step
-rendered by ``compile_write_step`` — the function that turns a settled step into
-a statement of its own — or carried into a grouped insert the cursor builds is
-by identity a step of one of those streamed sequences. An
-unrelated implementation of the planner interface inherits nothing, so it
-performs no planning this module records and appears in
-no subclass registry; but its plan still has to become SQL, and every route from
-a plan to SQL runs through those seams under a name this module replaced.
-
-Every seam is replaced wherever an imported ``parallax`` module holds it,
-under whatever name the holder bound them by and in the modules defining them
-included, so a caller reaching the seam through an aliased import — or binding it
-while the watch is installed, since every route to it reads one of the replaced
-attributes — is watched rather than missed. A plan handed to a stream nobody
-consumed renders nothing and is recorded nowhere.
-
-What remains uncovered is stated exactly: a lane that emitted DML without
-rendering a step at all, assembling a statement from the SQL layer directly, and
-a write lane this module does not drive. The lanes it drives are ENUMERATED — the
-`Database` lane, and the conformance engine's writeSequence, readless predicate
-write, and conflict entries. On an undriven lane,
-`test_source_enforcement_topology.py` still finds a second ``WritePlanner``
-construction and a second planner class, but a planner constructed through an
-alias is caught by neither module.
-
-The `Database` lane is graded on identity as well as provenance. One planner
-serves the whole transaction, so a Typed verb and ``tx.wire`` verb are held to
-feeding the SAME object rather than two equivalently wired ones — the direct
-statement of `m-unit-work`'s shared Unit of Work. The conformance engine builds a
-planner per simulated transaction and holds none, so its drives claim provenance
-rather than identity.
-
-The factory's own wiring is graded here too, for the one strategy whose
-production value is a decision rather than an implementation: the audit port it
-injects is the neutral one, so no planner a write path reaches can decorate.
+``build_write_planner`` is the planner's only constructor, so every planner
+plans under production's one set of strategies. The planner's type says so, and
+the static probes below keep it saying so. Its batching and payload wiring are
+graded by every write a compatibility case lowers; the audit port is the one
+strategy whose production value is a decision rather than an implementation.
 """
 
 from __future__ import annotations
 
-import sys
-from collections.abc import Callable
-from dataclasses import dataclass
-from decimal import Decimal
-from pathlib import Path
-from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Never, cast
 
 import pytest
 
-from parallax.conformance import case_format, engine
-from parallax.core._execution import _planning, _write_lowering
-from parallax.core._execution._publication import write_projection
-from parallax.core._execution._unit_work.instructions import PreparedPredicateInstruction
-from parallax.core._execution._unit_work.strategy import (
-    AuditStrategy,
-    BatchingStrategy,
-)
-from parallax.core._execution._write_lowering import LoweringCursor
-from parallax.core.dialect import Dialect
-from parallax.core.execution import prepare_model
-from parallax.core.metamodel import (
-    EntityIdentity,
-    Metamodel,
-)
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import StepPayload, compile_write_step
-from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
-from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import WriteGroup
-from parallax.core.write_plan.steps import (
-    PlannedDelete,
-    PlannedInsert,
-    PlannedStep,
-    PlannedUpdate,
-    WriteRow,
-)
-from parallax.snapshot import TxnContext
-from tests._support import mirrored_models as mm
-from tests._support.db_port import (
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-)
-from tests._support.repo import REPO_ROOT
-from tests.unit._transact_support import NEW_ROW, account_db, new_account
+from parallax.conformance import models
+from parallax.core._execution._planning import build_write_planner
+from parallax.core.unit_work import NO_AUDIT, SubjectActor, WritePlanner
+from tests._support.clock_probes import inert_instant
 
-type _CompileCase = Callable[[case_format.Case, str], tuple[list[engine.Emission], int]]
+if TYPE_CHECKING:
+    from parallax.core.metamodel import Metamodel
 
-_CASES: Path = REPO_ROOT / "core" / "compatibility" / "cases"
+_ACCOUNT = models.load_models()["account"]
 
 
-@dataclass(frozen=True, slots=True)
-class _Built:
-    """One planner the composition root built, and the audit strategy it wired.
-
-    The strategy is taken where the factory injects it rather than read back off
-    the planner, which holds it privately.
-    """
-
-    planner: WritePlanner
-    audit: AuditStrategy
+def test_a_write_planner_is_obtained_only_from_the_composition_root() -> None:
+    with pytest.raises(TypeError):
+        WritePlanner(cast("Never", _ACCOUNT))
 
 
-@dataclass(frozen=True, slots=True)
-class _Planning:
-    """One planning: its receiver, the shapes of what it was asked to plan, and
-    the step sequences it returned — a plan's Write Groups, or a predicate
-    write's one statement."""
-
-    planner: WritePlanner
-    shapes: list[str]
-    sequences: tuple[tuple[PlannedStep, ...], ...]
-
-
-@dataclass(slots=True)
-class _Composition:
-    """One drive's planning provenance: the planners the composition root built
-    while it ran, every planning that ran, every step sequence whose lowering was
-    streamed, and every step rendered into a statement."""
-
-    lane: str
-    built: list[_Built]
-    planned: list[_Planning]
-    lowered: list[tuple[PlannedStep, ...]]
-    rendered: list[PlannedStep]
-
-    def escaped(self) -> list[list[str]]:
-        """The shapes of the plannings whose receiver the composition root did
-        not build."""
-        return [
-            one.shapes
-            for one in self.planned
-            if not any(one.planner is built.planner for built in self.built)
-        ]
-
-    def planned_groups(self) -> list[tuple[PlannedStep, ...]]:
-        return [steps for one in self.planned for steps in one.sequences]
-
-    def unaccounted(self) -> list[tuple[PlannedStep, ...]]:
-        """The streamed sequences no planning recorded here produced."""
-        planned = self.planned_groups()
-        return [
-            streamed
-            for streamed in self.lowered
-            if not any(_identical(streamed, steps) for steps in planned)
-        ]
-
-    def steps_of_lowered_plans(self) -> list[PlannedStep]:
-        """Every step the streamed sequences hold, in the order streaming reaches them."""
-        return [step for streamed in self.lowered for step in streamed]
-
-
-def _identical(streamed: tuple[PlannedStep, ...], planned: tuple[PlannedStep, ...]) -> bool:
-    """Whether ``streamed`` holds exactly ``planned``'s steps, each by identity."""
-    return len(streamed) == len(planned) and all(
-        step is held for step, held in zip(streamed, planned, strict=True)
-    )
-
-
-def _bindings_of(original: object) -> list[tuple[ModuleType, str]]:
-    """Every attribute of an imported ``parallax`` module holding ``original``,
-    as the module and the attribute to replace.
-
-    A module that imported the function keeps a binding of its own — under
-    whatever name it imported it as — which replacing the name in the module that
-    defines it leaves untouched. Asking which attributes hold the OBJECT is what
-    makes the watch complete without anyone having had to list the callers or the
-    names they chose.
-    """
-    return [
-        (module, bound)
-        for module in list(sys.modules.values())
-        if getattr(module, "__name__", "").startswith("parallax.")
-        for bound, value in list(vars(module).items())
-        if value is original
-    ]
-
-
-def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
-    """Make the composition root hand back recognizable planners for ``lane``, and
-    record every planning any planner performs, every plan whose lowering is
-    streamed, and every step rendered into a statement while it is installed.
-
-    What is replaced is the factory's own name for the planner CLASS, not the
-    factory: both consumers bind ``build_write_planner`` at import time, so a
-    patch of that name would intercept neither, while the class name is read
-    inside the factory body on every call. ``raising`` is left on throughout and a
-    lowering seam nothing holds fails the watch outright, so the day a name moves
-    this fails rather than silently watching nothing.
-
-    ``finalize`` is watched on the class rather than on the built planners, so a
-    planning that ran on some OTHER ``WritePlanner`` is visible instead of merely
-    absent. The lowering seams are watched because a plan an unrelated
-    implementation produced runs no watched ``plan`` at all and would otherwise be
-    invisible right up to the statements it emits; a streamed plan is recorded
-    when its stream is STARTED rather than when the seam is called, so a stream
-    nobody consumed accounts for nothing, and a cursor's when execution opens it
-    to take its first step.
-    """
-    seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
-    finalizing = WritePlanner.finalize
-    cursoring = LoweringCursor
-    grouping = LoweringCursor.lowered_grouped_insert
-    rendering = compile_write_step
-    joining = _write_lowering._joining  # pyright: ignore[reportPrivateUsage] - a grouped insert's joining step
-
-    def construct(
-        model: Metamodel,
-        *,
-        batching: BatchingStrategy,
-        audit: AuditStrategy,
-        payloads: WritePayloadPreparer,
-    ) -> WritePlanner:
-        planner = WritePlanner(model, batching=batching, audit=audit, payloads=payloads)
-        seen.built.append(_Built(planner=planner, audit=audit))
-        return planner
-
-    def finalize(self: WritePlanner, request: WritePlanningRequest) -> WritePlan:
-        finalized = finalizing(self, request)
-        seen.planned.append(
-            _Planning(
-                planner=self,
-                shapes=[type(item).__name__ for item in request.composed_writes],
-                sequences=tuple(
-                    entry.steps for entry in finalized.entries if isinstance(entry, WriteGroup)
-                ),
-            )
-        )
-        return finalized
-
-    def cursor(
-        steps: tuple[PlannedStep, ...],
-        payloads: WritePayloadPreparer,
-        meta: Metamodel,
-        dialect: Dialect,
-        **capture: Any,
-    ) -> LoweringCursor:
-        seen.lowered.append(steps)
-        return cursoring(steps, payloads, meta, dialect, **capture)
-
-    def render(
-        step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect
-    ) -> LoweredStatement:
-        seen.rendered.append(step)
-        return rendering(step, payload, meta, dialect)
-
-    def group(self: LoweringCursor, first: PlannedInsert) -> _write_lowering.GroupedInsert:
-        seen.rendered.append(first)
-        return grouping(self, first)
-
-    def join(step: PlannedStep | None, entity: EntityIdentity, presence: int) -> WriteRow | None:
-        entry = joining(step, entity, presence)
-        if step is not None and entry is not None:
-            seen.rendered.append(step)
-        return entry
-
-    monkeypatch.setattr(_planning, "WritePlanner", construct)
-    monkeypatch.setattr(WritePlanner, "finalize", finalize)
-    _watch_predicate_plannings(seen, monkeypatch)
-    monkeypatch.setattr(LoweringCursor, "lowered_grouped_insert", group)
-    watched: tuple[tuple[object, object], ...] = (
-        (cursor, LoweringCursor),
-        (render, compile_write_step),
-        (join, joining),
-    )
-    for replacement, original in watched:
-        holders = _bindings_of(original)
-        assert holders, f"nothing imported holds {original}, so watching it grades nothing"
-        for module, bound in holders:
-            monkeypatch.setattr(module, bound, replacement)
-    return seen
-
-
-def _watch_predicate_plannings(seen: _Composition, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Record every predicate-selected write any planner plans into ``seen``,
-    as the one-step sequence it lowers to."""
-    predicating = WritePlanner.predicate_step
-
-    def predicate_step(
-        self: WritePlanner, prepared: PreparedPredicateInstruction, /, **identity: Any
-    ) -> PlannedUpdate | PlannedDelete:
-        step = predicating(self, prepared, **identity)
-        seen.planned.append(
-            _Planning(planner=self, shapes=[type(prepared).__name__], sequences=((step,),))
-        )
-        return step
-
-    monkeypatch.setattr(WritePlanner, "predicate_step", predicate_step)
-
-
-def _assert_planned_only_through_the_factory(seen: _Composition, plannings: int) -> None:
-    escaped = seen.escaped()
-    assert not escaped, (
-        f"{seen.lane}: {len(escaped)} of {len(seen.planned)} plannings ran on a planner the "
-        f"composition root did not build (it built {len(seen.built)}); the first of them "
-        f"planned {escaped[0]}"
-    )
-    unaccounted = seen.unaccounted()
-    assert not unaccounted, (
-        f"{seen.lane}: {len(unaccounted)} of {len(seen.lowered)} step sequences reached the "
-        f"write-lowering seam without any planning recorded here having produced them, so "
-        f"something other than this factory's planners planned them"
-    )
-    planned = seen.planned_groups()
-    assert len(planned) == len(seen.lowered) and all(
-        _identical(streamed, steps) for streamed, steps in zip(seen.lowered, planned, strict=True)
-    ), (
-        f"{seen.lane}: {len(seen.planned)} plannings produced {len(seen.planned_groups())} Write "
-        f"Groups but {len(seen.lowered)} step sequences reached the write-lowering seam — a "
-        f"plan this factory produced was discarded, or a group was lowered twice"
-    )
-    assert [id(step) for step in seen.rendered] == [
-        id(step) for step in seen.steps_of_lowered_plans()
-    ], (
-        f"{seen.lane}: {len(seen.rendered)} steps became statements against "
-        f"{len(seen.steps_of_lowered_plans())} held by the plans lowered here — a statement was "
-        f"rendered from a step no plan this factory produced holds, or a lowered plan's step never "
-        f"became one"
-    )
-    assert len(seen.planned) == plannings, (
-        f"{seen.lane}: {len(seen.planned)} plannings ran on a planner this factory built, "
-        f"not {plannings} — a drive that obtained a plan anywhere else comes up short here "
-        f"rather than escaping above"
-    )
-
-
-def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen = _watch("Database", monkeypatch)
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
-    database = account_db(port)
-
-    def body(tx: TxnContext) -> None:
-        tx.insert(new_account())
-        # A participating read force-flushes the buffered Typed insert, so the
-        # Wire insert below reaches a SECOND planning rather than being coalesced
-        # into the Typed verb's own — which is what leaves two receivers to
-        # compare.
-        tx.find(mm.Account.where(mm.Account.id == 7))
-        tx.wire.insert("Account", {"id": 8, "owner": "Ada", "balance": "11.00"})
-
-    database.transact(body)
-
-    _assert_planned_only_through_the_factory(seen, plannings=2)
-    assert len(seen.built) == 1, "one connected Metamodel, one planner"
-    assert all(one.planner is seen.built[0].planner for one in seen.planned)
-
-
-def test_a_prepared_selection_carries_the_planner_the_factory_built(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Preparation is where the composition root builds a planner, and the
-    # selection's write projection is the one place it is retained: the object
-    # every transaction over that selection plans through is, by identity, the
-    # one the factory handed back while preparing.
-    seen = _watch("prepare_model", monkeypatch)
-    selection = prepare_model(mm.ACCOUNT_MODEL, edition="one")
-
-    assert len(seen.built) == 1, "one prepared selection, one planner"
-    assert write_projection(selection).planner is seen.built[0].planner
-
-
-def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy() -> None:
     # Audit decoration is a wired port with nothing behind it, and this is the
-    # wiring half: the planner a write path plans through holds the neutral
-    # strategy, so no step reaching audit meets one that could decorate. The
-    # other half — that the neutral strategy hands back the step it was given —
-    # is a property of the strategy itself and lives with the rest of the
-    # algebra's behavior in `test_planned_algebra.py`.
-    #
-    # Which classes SATISFY the port is deliberately not asked. It is a
-    # runtime-checkable Protocol, so satisfying it means owning a method named
-    # `decorate`: the question answers yes for any decorator with nothing to do
-    # with audit, and no for a hand-written stamp under another name.
-    #
-    # The limit: a value stamped by hand onto a row, under a name of its own and
-    # ahead of the reserved audit property names, reaches no strategy and so
-    # passes here. What a write emits is a property of the statement and its
-    # binds, constrained where write behavior is — an extra column or an extra
-    # bind fails an exact-statement assertion for the write shapes those
-    # assertions cover, and a stamp that never varies survives every comparison
-    # of two writes to each other.
-    seen = _watch("Database", monkeypatch)
-    account_db(ScriptedAdapter())
-
-    assert seen.built, "connecting built no planner, so this grades no wiring"
-    assert all(built.audit is NO_AUDIT for built in seen.built)
-
-
-# The planning count is the case's own shape: one per flush the lowering
-# performs, so the write-sequence case's two steps plan twice and the
-# single-statement predicate write plans once.
-@pytest.mark.parametrize(
-    ("lane", "case", "compile_case", "plannings"),
-    [
-        pytest.param(
-            "conformance writeSequence",
-            _CASES / "m-unit-work-003-fk-insert-ordering.yaml",
-            engine.compile_write_sequence_case,
-            2,
-            id="write-sequence",
-        ),
-        pytest.param(
-            "conformance readless predicate write",
-            _CASES / "m-batch-write-006-predicate-update-readless-column-order.yaml",
-            engine.compile_scenario_case,
-            1,
-            id="predicate-write",
-        ),
-    ],
-)
-def test_the_conformance_lane_plans_through_planners_the_factory_built(
-    lane: str,
-    case: Path,
-    compile_case: _CompileCase,
-    plannings: int,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen = _watch(lane, monkeypatch)
-    emissions, _database_calls = compile_case(case_format.load_case(case), "postgres")
-
-    assert emissions, "a case that emitted nothing exercised no write lane"
-    _assert_planned_only_through_the_factory(seen, plannings=plannings)
-
-
-def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen = _watch("conformance conflict", monkeypatch)
-    case = case_format.load_case(_CASES / "m-concurrency-006-success.yaml")
-    emissions, _affected, _state, _database_calls = engine.run_conflict_case(
-        case,
-        ScriptedAdapter(
-            Transact(
-                Read(
-                    rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
-                ),
-                Write(),
-            ),
-            Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),
-        ),
+    # wiring half: every planner holds the neutral strategy, so no step reaching
+    # audit meets one that could decorate. The other half, that the neutral
+    # strategy hands back what it was given, lives in `test_strategy.py`.
+    decoration = build_write_planner(_ACCOUNT).audit_decoration(
+        actor_identity=SubjectActor("alice"), transaction_instant=inert_instant()
     )
 
-    assert emissions, "a case that emitted nothing exercised no write lane"
-    # The engine reports what the attempt's flush delivered, so the one planning
-    # is the `Database`'s own: the lane plans no second copy of the buffer to
-    # report it.
-    _assert_planned_only_through_the_factory(seen, plannings=1)
+    assert decoration.audit is NO_AUDIT
+
+
+if TYPE_CHECKING:
+
+    def _static_construction_probes(  # pyright: ignore[reportUnusedFunction] - static contract probe
+        model: Metamodel,
+    ) -> None:
+        """Typechecked, never called: no call but the composition root's builds a
+        planner."""
+        WritePlanner(model)  # pyright: ignore[reportArgumentType]
+        WritePlanner()  # pyright: ignore[reportCallIssue]
+        _ = WritePlanner._wired  # pyright: ignore[reportPrivateUsage]
+
+    class SecondPlanner(WritePlanner):  # pyright: ignore[reportGeneralTypeIssues]
+        """Typechecked, never defined: no second planner class descends from it."""
