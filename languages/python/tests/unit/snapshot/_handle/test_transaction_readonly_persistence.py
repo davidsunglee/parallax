@@ -23,7 +23,6 @@ from parallax.core import (
     attr,
 )
 from parallax.core.base import StructuredDocument, UsageError
-from parallax.core.execution import KeyedWriteValueError
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -494,7 +493,7 @@ def test_an_ingress_refusal_ahead_of_preparation_keeps_its_precedence() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(KeyedWriteValueError):
+        with pytest.raises(UsageError):
             tx.amend(Archive(id=1, title="t"))
 
     db_for(_MODEL, port).transact(fn)

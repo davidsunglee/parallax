@@ -1,39 +1,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 from uuid import UUID
 
 from parallax.core.diagnostics import FailureDiagnostic
 
+LIFECYCLE_PROVIDER_FAILED: Final = "lifecycle-provider-failed"
+"""A Provider's ``open`` failed ordinarily, so the operation is refused.
 
-class ExecutionLifecycleProviderError(RuntimeError):
-    """A Provider's ``open`` failed ordinarily, so the operation is refused.
+Refused before execution state, clocks, or database work, which is the whole
+reason opening is allowed to fail the operation at all. The ordinary exception
+is preserved as ``__cause__`` and is never reinterpreted as a deliberate
+decline; a control-flow or fatal exception from ``open`` propagates unchanged
+instead.
+"""
 
-    Raised before execution state, clocks, or database work, which is the whole
-    reason opening is allowed to fail the operation at all. The ordinary
-    exception is preserved as ``__cause__`` and is never reinterpreted as a
-    deliberate decline; a control-flow or fatal exception from ``open``
-    propagates unchanged instead.
-    """
+LIFECYCLE_REENTERED: Final = "lifecycle-reentered"
+"""A Handle was asked to work from inside one of its own lifecycle contexts.
 
+Provider opening, event delivery, and error reporting are lifecycle contexts,
+and calling an operation through the Handle or Transaction that opened one of
+them re-enters the very execution being observed. It is refused before
+execution state, clocks, or database work, so a Handler cannot change the query
+it is watching.
 
-class ExecutionLifecycleReentryError(RuntimeError):
-    """A Handle was asked to work from inside one of its own lifecycle contexts.
-
-    Provider opening, event delivery, and error reporting are lifecycle
-    contexts, and calling an operation through the Handle or Transaction that
-    opened one of them re-enters the very execution being observed. It is
-    refused before execution state, clocks, or database work, so a Handler
-    cannot change the query it is watching.
-
-    The refusal is per Handle and per thread: an unrelated Handle stays fully
-    usable from a lifecycle context, and a Handler that hands work to another
-    thread is not re-entering. Where the refusal surfaces decides what it
-    becomes — raised during opening it is the
-    :class:`ExecutionLifecycleProviderError`'s cause, and raised inside a Handler
-    it is an ordinary delivery failure that quarantines that Handler like any
-    other.
-    """
+The refusal is per Handle and per thread: an unrelated Handle stays fully
+usable from a lifecycle context, and a Handler that hands work to another
+thread is not re-entering. Where the refusal surfaces decides what it becomes —
+raised during opening it is the :data:`LIFECYCLE_PROVIDER_FAILED` refusal's
+cause, and raised inside a Handler it is an ordinary delivery failure that
+quarantines that Handler like any other.
+"""
 
 
 @dataclass(frozen=True, slots=True)

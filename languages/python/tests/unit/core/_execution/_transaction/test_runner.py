@@ -57,10 +57,6 @@ from parallax.core.execution import (
     ReadOnlyTxnOptions,
     RetryPolicy,
     ServingModel,
-    TransactionAccessModeError,
-    TransactionAuthorityError,
-    TransactionOptionConflictError,
-    TransactionOwnershipError,
     TransactionRollbackError,
     TxnOptions,
     prepare_model,
@@ -259,7 +255,7 @@ def test_authority_mismatch_refuses_before_the_joining_body_and_leaves_outer_usa
     ran: list[bool] = []
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionAuthorityError) as refused:
+        with raises_code(UsageError, "transaction-authority-mismatch") as refused:
             other.transact(lambda _joined: ran.append(True), itself)
         assert refused.value.code == "transaction-authority-mismatch"
         return "survived"
@@ -280,7 +276,7 @@ def test_root_aliases_share_ownership_while_unrelated_roots_do_not() -> None:
 
     def outer(tx: TxnAttempt) -> str:
         assert joining_alias.transact(lambda joined: joined is tx, itself)
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself)
         return "survived"
 
@@ -296,11 +292,11 @@ def test_join_refusal_precedence_is_ownership_then_rollback_authority_then_optio
     foreign = foreign_root.using_database_login()
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionAuthorityError):
+        with raises_code(UsageError, "transaction-authority-mismatch"):
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with pytest.raises(RuntimeError, match="inner failure"):
             owner.transact(_raise_inner, itself)
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as rollback_only:
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
@@ -371,7 +367,7 @@ def test_join_with_a_conflicting_explicit_option_raises(
     db = scope(port)
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionOptionConflictError, match=option):
+        with raises_code(UsageError, "transaction-option-conflict", match=option):
             join(db)
         return "survived"
 
@@ -431,7 +427,7 @@ def test_a_joined_call_naming_a_level_outside_the_vocabulary_is_refused_as_inval
     def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(ValueError, match="isolation must be one of") as refusal:
             db.transact(_must_not_run, itself, isolation=cast("Any", "repeatable read"))
-        assert not isinstance(refusal.value, TransactionOptionConflictError)
+        assert not isinstance(refusal.value, UsageError)
         return "survived"
 
     assert db.transact(outer, itself, isolation="repeatable_read") == "survived"
@@ -465,7 +461,7 @@ def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -
     db = scope(port)
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionOptionConflictError, match="isolation"):
+        with raises_code(UsageError, "transaction-option-conflict", match="isolation"):
             db.transact(_must_not_run, itself, isolation="repeatable_read")
         return "survived"
 
@@ -532,7 +528,7 @@ def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> No
     foreign = scope(port)  # same model, same adapter, same clock; a different object
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionOwnershipError) as excinfo:
+        with raises_code(UsageError, "transaction-owner-mismatch") as excinfo:
             foreign.transact(_must_not_run, itself)
         assert excinfo.value.code == "transaction-owner-mismatch"
         # Neither scope is retained: the refusal names no root at all.
@@ -577,7 +573,7 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
     assert list(model_of(ACCOUNT).entities) == list(model_of(_equal_account_model()).entities)
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself)
         return "survived"
 
@@ -592,7 +588,7 @@ def test_the_ownership_refusal_reaches_no_adapter() -> None:
     def outer(_tx: TxnAttempt) -> str:
         # The boundary's script holds no statement, so returning at all is the
         # proof that the refusal performed none.
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself)
         return "survived"
 
@@ -610,7 +606,7 @@ def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> 
             owner.transact(_raise_inner, itself)
         # A foreign scope carrying a conflicting option: the doomed boundary
         # and the option conflict would each raise, and neither is the answer.
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         # Nothing beyond the outer boundary's own `begin` ever reached the port.
         assert port.calls == [BeginCall()]
@@ -727,7 +723,7 @@ def test_a_joining_call_with_an_invalid_explicit_value_is_refused_as_invalid(
     def outer(_tx: TxnAttempt) -> str:
         with pytest.raises(ValueError, match=message) as refusal:
             db.transact(_must_not_run, itself, **cast("dict[str, Any]", {keyword: value}))
-        assert not isinstance(refusal.value, TransactionOptionConflictError)
+        assert not isinstance(refusal.value, UsageError)
         return "survived"
 
     assert db.transact(outer, itself) == "survived"
@@ -1032,9 +1028,9 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
     foreign = scope(ScriptedAdapter(), serving)
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself)
-        with pytest.raises(TransactionOptionConflictError):
+        with raises_code(UsageError, "transaction-option-conflict"):
             db.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         return "survived"
 
@@ -1587,9 +1583,9 @@ def test_a_join_inherits_an_outer_override_rather_than_the_roots_default(
             )
             is tx.options
         )
-        with pytest.raises(TransactionOptionConflictError, match=keyword):
+        with raises_code(UsageError, "transaction-option-conflict", match=keyword):
             db.transact(_must_not_run, itself, **cast("dict[str, Any]", {keyword: root_value}))
-        with pytest.raises(TransactionOptionConflictError, match=keyword):
+        with raises_code(UsageError, "transaction-option-conflict", match=keyword):
             db.transact(_must_not_run, itself, **cast("dict[str, Any]", {keyword: different}))
         return "survived"
 
@@ -1735,7 +1731,7 @@ def test_a_read_only_join_naming_a_conflicting_option_is_refused(
     db = scope(port)
 
     def outer(_rtx: ReadOnlyTxnAttempt) -> str:
-        with pytest.raises(TransactionOptionConflictError, match=option):
+        with raises_code(UsageError, "transaction-option-conflict", match=option):
             join(db)
         return "survived"
 
@@ -1747,7 +1743,7 @@ def test_a_writable_join_into_a_read_only_transaction_is_refused_before_its_call
     db = scope(port)
 
     def outer(_rtx: ReadOnlyTxnAttempt) -> str:
-        with pytest.raises(TransactionAccessModeError) as refused:
+        with raises_code(UsageError, "transaction-access-mode-mismatch") as refused:
             db.transact(_must_not_run, itself)
         assert refused.value.code == "transaction-access-mode-mismatch"
         assert "writable invocation cannot join the active read-only" in str(refused.value)
@@ -1763,7 +1759,7 @@ def test_a_read_only_join_into_a_writable_transaction_is_refused_before_its_call
     db = scope(port)
 
     def outer(_tx: TxnAttempt) -> str:
-        with pytest.raises(TransactionAccessModeError) as refused:
+        with raises_code(UsageError, "transaction-access-mode-mismatch") as refused:
             db.read_only(_must_not_run, itself)
         assert "read-only invocation cannot join the active writable" in str(refused.value)
         return "survived"
@@ -1781,14 +1777,14 @@ def test_join_admission_runs_ownership_rollback_only_authority_access_mode_then_
 
     def outer(_rtx: ReadOnlyTxnAttempt) -> str:
         # Authority outranks the access mode, and the access mode an option.
-        with pytest.raises(TransactionAuthorityError):
+        with raises_code(UsageError, "transaction-authority-mismatch"):
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
-        with pytest.raises(TransactionAccessModeError):
+        with raises_code(UsageError, "transaction-access-mode-mismatch"):
             owner.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))
         with pytest.raises(RuntimeError, match="inner failure"):
             owner.read_only(_raise_inner, itself)
         # Ownership outranks rollback-only, which outranks everything after it.
-        with pytest.raises(TransactionOwnershipError):
+        with raises_code(UsageError, "transaction-owner-mismatch"):
             foreign.transact(_must_not_run, itself)
         with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
             mismatched.transact(_must_not_run, itself, retry=RetryPolicy(max_retries=3))

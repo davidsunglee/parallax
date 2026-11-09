@@ -37,11 +37,11 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
@@ -389,7 +389,7 @@ def test_a_window_overlapping_a_targets_unequally_is_refused_and_earlier_work_st
         source = _find(tx, entity, _JUN)
         # An unbounded window reaches every later window, whatever its start.
         tx.wire.amend_if(_name(entity), {"id": 1, "amount": 150}, valid_from=_MAR, tx_start=_T0)
-        with pytest.raises(WriteEvidenceError, match="write-evidence-already-claimed"):
+        with pytest.raises(UsageError, match="write-evidence-already-claimed"):
             second(tx, entity, source)
 
     db.transact(fn)

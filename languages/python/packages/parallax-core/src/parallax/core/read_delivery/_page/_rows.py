@@ -23,7 +23,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery._page._views import SourceLevel, SourceViewLayout, ViewSchema
 from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.temporal_read import Edge, Pin, TemporalReadError, TemporalShape, milestone_edge
+from parallax.core.temporal_read import Edge, Pin, TemporalShape, milestone_edge_or_none
 
 __all__ = [
     "ABSENT",
@@ -826,10 +826,7 @@ def page_edges(page: Page, shape: TemporalShape | None) -> Iterator[Edge | None]
 def _root_edge(shape: TemporalShape, rows: PageRows, root: int) -> Edge | None:
     if rows.keys[root] is None:  # pragma: no cover - a temporal result root with no key has no edge
         return None
-    try:
-        return milestone_edge(shape, rows, root)
-    except TemporalReadError:
-        return None
+    return milestone_edge_or_none(shape, rows, root)
 
 
 class PageBuilder:

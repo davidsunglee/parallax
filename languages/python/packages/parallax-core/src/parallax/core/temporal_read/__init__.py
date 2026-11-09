@@ -3,11 +3,12 @@ from __future__ import annotations
 import datetime as _dt
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal, Protocol, assert_never
+from typing import Final, Literal, Protocol, assert_never
 
 from parallax.core.base import (
     INFINITY,
     TemporalBound,
+    UsageError,
     normalize_instant,
 )
 from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, EntityMetadata, Metamodel
@@ -63,6 +64,8 @@ __all__ = [
     "FACET_KEY",
     "MODEL_COMPILER",
     "NON_TEMPORAL",
+    "TEMPORAL_AXIS_UNDECLARED",
+    "TEMPORAL_READ_INVALID",
     "TEMPORAL_READ_MODULE",
     "Bitemporal",
     "Edge",
@@ -70,14 +73,13 @@ __all__ = [
     "NonTemporal",
     "Pin",
     "TemporalFacet",
-    "TemporalReadError",
     "TemporalShape",
     "TimeInterval",
     "TransactionTimeOnly",
-    "UndeclaredAxisError",
     "inject_resolved_as_of",
     "inject_sourced_as_of",
     "milestone_edge",
+    "milestone_edge_or_none",
     "perspective_terms",
     "propagated_selections",
     "ranked_axes",
@@ -90,13 +92,13 @@ __all__ = [
 ]
 
 
-class TemporalReadError(ValueError):
-    """A temporal read is malformed (undeclared axis, non-temporal target, double pin)."""
+TEMPORAL_READ_INVALID: Final = "temporal-read-invalid"
+"""A temporal read is malformed: an undeclared axis member, a Non-Temporal
+target, or a coordinate or milestone value that is no managed instant."""
 
-
-class UndeclaredAxisError(TemporalReadError):
-    """A strict :class:`Edge` / :class:`Pin` axis accessor named an axis the entity
-    does not declare (the arity-accessor house pattern; use the ``*_or_none`` form)."""
+TEMPORAL_AXIS_UNDECLARED: Final = "temporal-axis-undeclared"
+"""A strict :class:`Edge` axis accessor named an axis the entity does not
+declare (the arity-accessor house pattern; use the ``*_or_none`` form)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +122,8 @@ class Edge:
     finite (never :data:`LATEST`, never absent-because-scanned): a milestone's
     from-instant lies inside its own ``[from, to)`` interval on each axis, so it is
     the one coordinate guaranteed to re-select exactly that milestone (core's edge
-    pin; Reladomo's ``equalsEdgePoint``). The strict accessor raises
-    :class:`UndeclaredAxisError` for an axis the entity does not declare; the
+    pin; Reladomo's ``equalsEdgePoint``). The strict accessor refuses an axis
+    the entity does not declare with :data:`TEMPORAL_AXIS_UNDECLARED`; the
     ``*_or_none`` accessor returns ``None`` instead — the arity-accessor house
     pattern applied to axis access, keeping replay code narrowing-free.
     """
@@ -154,7 +156,7 @@ class Edge:
     def tx_time(self) -> _dt.datetime:
         """The Transaction-Time start instant; raises when undeclared."""
         if self._tx_time is None:
-            raise UndeclaredAxisError("entity declares no `tx_time` dimension")
+            raise UsageError(TEMPORAL_AXIS_UNDECLARED, "entity declares no `tx_time` dimension")
         return self._tx_time
 
     @property
@@ -166,7 +168,7 @@ class Edge:
     def valid_time(self) -> _dt.datetime:
         """The Valid-Time start instant; raises when undeclared."""
         if self._valid_time is None:
-            raise UndeclaredAxisError("entity declares no `valid_time` dimension")
+            raise UsageError(TEMPORAL_AXIS_UNDECLARED, "entity declares no `valid_time` dimension")
         return self._valid_time
 
     @property
@@ -364,8 +366,8 @@ def milestone_edge[At](shape: TemporalShape, rows: MilestoneRows[At], at: At) ->
     Attribute's value — the one instant guaranteed to re-select exactly that
     milestone on a half-open ``[from, to)`` interval. ``shape`` is the family's
     Temporal Shape, so an inherited position reads the root's axes without its
-    Metadata. Raises :class:`TemporalReadError` for a Non-Temporal family and
-    for a start value that is not a timestamp instant.
+    Metadata. Refused with :data:`TEMPORAL_READ_INVALID` for a Non-Temporal
+    family and for a start value that is not a timestamp instant.
     """
     match shape:
         case TransactionTimeOnly(transaction_time=tx):
@@ -378,14 +380,29 @@ def milestone_edge[At](shape: TemporalShape, rows: MilestoneRows[At], at: At) ->
                 valid_time=_instant(vt.start_attribute, rows.axis_start(at, vt.start_attribute)),
             )
         case NonTemporal():
-            raise TemporalReadError("a Non-Temporal family has no milestone edge")
+            raise UsageError(TEMPORAL_READ_INVALID, "a Non-Temporal family has no milestone edge")
+
+
+def milestone_edge_or_none[At](
+    shape: TemporalShape, rows: MilestoneRows[At], at: At
+) -> Edge | None:
+    """:func:`milestone_edge`, or ``None`` where it is refused with
+    :data:`TEMPORAL_READ_INVALID`: where no temporal edge decoded, a judged
+    state reports none rather than failing. Every other refusal propagates."""
+    try:
+        return milestone_edge(shape, rows, at)
+    except UsageError as refusal:
+        if refusal.code != TEMPORAL_READ_INVALID:
+            raise
+        return None
 
 
 def _instant(attribute: AttributeIdentity, value: object) -> _dt.datetime:
     if not isinstance(value, _dt.datetime):
-        raise TemporalReadError(
+        raise UsageError(
+            TEMPORAL_READ_INVALID,
             f"{attribute.entity.name}.{attribute.name}: the milestone start value "
-            "is not a timestamp instant"
+            "is not a timestamp instant",
         )
     return normalize_instant(value)
 
@@ -399,7 +416,7 @@ def valid_time_coverage[At](
 
     Only the representation is checked: a start that is not a datetime, or an
     end that is neither a datetime nor :data:`~parallax.core.base.INFINITY`,
-    raises :class:`TemporalReadError` naming its member, and an empty or
+    is refused with :data:`TEMPORAL_READ_INVALID` naming its member, and an empty or
     reversed extent raises ``ValueError``. Endpoints are neither decoded nor
     normalized.
     """
@@ -416,10 +433,11 @@ def valid_time_coverage[At](
             return None
 
 
-def _not_an_endpoint(attribute: AttributeIdentity) -> TemporalReadError:
-    return TemporalReadError(
+def _not_an_endpoint(attribute: AttributeIdentity) -> UsageError:
+    return UsageError(
+        TEMPORAL_READ_INVALID,
         f"{attribute.entity.name}.{attribute.name}: the milestone's Valid-Time "
-        "value is not a managed interval endpoint"
+        "value is not a managed interval endpoint",
     )
 
 
@@ -490,7 +508,9 @@ def _selection_terms(
     start = entity.attribute(selection.axis.start_attribute.name)
     end = entity.attribute(selection.axis.end_attribute.name)
     if start is None or end is None:
-        raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
+        raise UsageError(
+            TEMPORAL_READ_INVALID, f"{entity.identity.name}: temporal axis member is undeclared"
+        )
     match selection:
         case ResolvedHistorySelection():
             return ()
@@ -582,7 +602,7 @@ def propagated_selections(
     """
     shape = view(model).shape(target.identity)
     if shape is None:  # pragma: no cover - accepted metadata is total
-        raise TemporalReadError(f"{target.identity.canonical}: no temporal shape")
+        raise UsageError(TEMPORAL_READ_INVALID, f"{target.identity.canonical}: no temporal shape")
     return tuple(_propagated(axis, root_selections) for axis in ranked_axes(shape))
 
 
@@ -599,7 +619,7 @@ def _propagated(
 
 def _instant_of(selection: ResolvedAsOfSelection) -> _dt.datetime:
     if not isinstance(selection.coordinate, _dt.datetime):
-        raise TemporalReadError("a temporal coordinate is not a managed datetime")
+        raise UsageError(TEMPORAL_READ_INVALID, "a temporal coordinate is not a managed datetime")
     return selection.coordinate
 
 

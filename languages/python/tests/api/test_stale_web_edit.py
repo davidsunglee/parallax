@@ -24,10 +24,9 @@ from parallax.conformance.stale_web_edit import (
     submit_branch_edit,
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
-from parallax.core import LATEST
+from parallax.core import LATEST, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._model import model_of
-from parallax.core.execution import TransactionTimePinReadOnlyError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
@@ -147,9 +146,7 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
         current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
         tx.amend(current.edit(value=Decimal("150.00")))
 
-    with raises_contextualized(
-        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
-    ):
+    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn, concurrency=concurrency)
     current = db.find(Balance.where(Balance.id == 1)).result()
     assert current.value == Decimal("100.00")  # nothing was written

@@ -23,13 +23,12 @@ from typing import Any
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.base import UsageError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProviderError,
-    ExecutionLifecycleReentryError,
     RootExecution,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
@@ -44,6 +43,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, new_account
 
@@ -175,9 +175,9 @@ def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
     db = _db(port, provider)
     handle.append(db)
 
-    with pytest.raises(ExecutionLifecycleProviderError) as refusal:
+    with raises_code(UsageError, "lifecycle-provider-failed") as refusal:
         _read(db)
-    assert isinstance(refusal.value.__cause__, ExecutionLifecycleReentryError)
+    assert isinstance(refusal.value.__cause__, UsageError)
     assert port.calls == [], "the refusal precedes every database call, the outer read's included"
 
 
@@ -192,7 +192,7 @@ def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() ->
     # delivery failure, which costs that Handler and nothing else.
     _read(db)
     (reported,) = provider.reported
-    assert reported.diagnostic.qualified_type.endswith(".ExecutionLifecycleReentryError")
+    assert reported.diagnostic.qualified_type.endswith(".UsageError")
     assert [type(op) for op in port.calls] == [ReadCall]
     assert len(provider.handlers[0].seen) == 1
 
@@ -211,7 +211,7 @@ def test_a_read_from_inside_error_reporting_is_refused_and_changes_nothing() -> 
     # The Handler failed ordinarily, which is what reached the reporter; the
     # reporter's own re-entry is best effort and the read still ran.
     (refusal,) = provider.refused_while_reporting
-    assert isinstance(refusal, ExecutionLifecycleReentryError)
+    assert isinstance(refusal, UsageError)
     assert [type(op) for op in port.calls] == [ReadCall]
 
 
@@ -337,7 +337,7 @@ def _refused(entries: dict[str, _Work]) -> list[str]:
     for name, work in entries.items():
         try:
             work()
-        except ExecutionLifecycleReentryError:
+        except UsageError:
             refused.append(name)
     return refused
 

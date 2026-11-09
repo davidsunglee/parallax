@@ -15,13 +15,14 @@ import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
 
+from parallax.core import UsageError
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     ConnectionAcquisitionError,
     CredentialSource,
     Password,
 )
-from parallax.core.execution import InvalidPrincipalError, TransactionAuthorityError
+from parallax.core.execution import TRANSACTION_AUTHORITY_MISMATCH
 from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 ```
@@ -88,8 +89,9 @@ Scopes are cheap: a scope holds no connection, and every scope shares its root's
 Deriving the scope reads `subject` and `database_authorization` once and keeps their
 values, not your object. The subject is kept exactly as given. Parallax never trims,
 case-folds or parses it, and two subjects are the same user only when their strings are
-equal. An empty subject, or one that starts with `db-login:`, raises
-`InvalidPrincipalError`, because that prefix is reserved for the login's own identity.
+equal. An empty subject, or one that starts with `db-login:`, raises a `UsageError`
+with code `principal-invalid`, because that prefix is reserved for the login's own
+identity.
 
 On each connection the work uses, the PostgreSQL adapter runs `SET ROLE` to the user's
 role before any of the work, and `RESET ROLE` before the connection goes back to the
@@ -164,7 +166,8 @@ its new connection, so a re-run can't pick up a different user.
 A nested `transact` joins the running transaction only when it runs as the same actor. A
 scope derived again from equal values carries the same actor, so a helper can derive its
 own scope and still join. A different user, or the same user under another role, is
-refused with `TransactionAuthorityError` before its callback runs:
+refused before its callback runs, with a `UsageError` whose code is
+`TRANSACTION_AUTHORITY_MISMATCH`, `"transaction-authority-mismatch"`:
 
 <!-- example: keep-one-actor-per-transaction -->
 ```python
@@ -187,7 +190,9 @@ def another_user_can_join(
         rename_a_customer(database.using_principal(user), customer_id, "Ada King")
         try:
             rename_a_customer(database.using_principal(other), customer_id, "Ada Lovelace")
-        except TransactionAuthorityError:
+        except UsageError as refusal:
+            if refusal.code != TRANSACTION_AUTHORITY_MISMATCH:
+                raise
             return False
         return True
 

@@ -29,6 +29,7 @@ from parallax.core.db_port._resource_logging import (
     report_unregistration_failure,
 )
 from parallax.core.db_port._resources import (
+    AUTHORIZATION_INVALID,
     AcquisitionReason,
     CleanupCode,
     CleanupIssue,
@@ -41,7 +42,6 @@ from parallax.core.db_port._resources import (
     DatabaseRuntime,
     DatabaseStartupError,
     Invalidated,
-    InvalidAuthorizationError,
     ReleaseUnconfirmed,
     Returned,
     StartupPhase,
@@ -49,6 +49,7 @@ from parallax.core.db_port._resources import (
 from parallax.core.dialect import JSON_NULL, ArrayBind, Dialect, JsonNull
 
 __all__ = [
+    "AUTHORIZATION_INVALID",
     "DRIVER_MANAGED",
     "ISOLATION_LEVELS",
     "JSON_NULL",
@@ -81,7 +82,6 @@ __all__ = [
     "DocumentReadOrdinals",
     "DriverManaged",
     "FallbackReason",
-    "InvalidAuthorizationError",
     "Invalidated",
     "IsolationLevel",
     "JsonNull",

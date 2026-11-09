@@ -4,7 +4,7 @@ from typing import Final
 
 __all__ = [
     "SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED",
-    "SnapshotMaterializationError",
+    "SNAPSHOT_MATERIALIZATION_FAILED",
 ]
 
 
@@ -23,23 +23,16 @@ ownership: any class-backed model serves, however many other Databases already
 serve it."""
 
 
-class SnapshotMaterializationError(RuntimeError):
-    """Building the Entity graph failed after the read itself had succeeded.
+SNAPSHOT_MATERIALIZATION_FAILED: Final = "snapshot-materialization-failed"
+"""Building the Entity graph failed after the read itself had succeeded.
 
-    Raised exactly once, at the materialization boundary, for a graph-construction
-    refusal, or a failure answering the node-indexed graph or its lifecycle
-    states. The original exception is the ``__cause__`` and is also carried as
-    :attr:`cause`, so the defect stays diagnosable while callers branch on one
-    stable code.
+Raised exactly once, at the materialization boundary, for a graph-construction
+refusal, or a failure answering the node-indexed graph or its lifecycle states.
+The original exception is the ``__cause__``, so the defect stays diagnosable
+while callers branch on one stable code.
 
-    Everything upstream keeps its own classification: query, capability,
-    transaction, adapter, SQL, and neutral-decoding failures are never re-wrapped
-    here, because none of them is a failure to build a graph. No partial graph and
-    no Snapshot is published when this raises.
-    """
-
-    code: Final[str] = "snapshot-materialization-failed"
-
-    def __init__(self, message: str, *, cause: BaseException) -> None:
-        super().__init__(message)
-        self.cause = cause
+Everything upstream keeps its own classification: query, capability,
+transaction, adapter, SQL, and neutral-decoding failures are never re-wrapped
+here, because none of them is a failure to build a graph. No partial graph and
+no Snapshot is published when this raises.
+"""

@@ -37,13 +37,6 @@ import pytest
 from parallax.core.base import UsageError
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import EditError
-from parallax.core.execution import (
-    KeyedWriteValueError,
-    TransactionTimePinReadOnlyError,
-)
-from parallax.core.unit_work import (
-    WriteEvidenceError,
-)
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
@@ -305,8 +298,8 @@ def test_a_net_zero_chain_writes_its_member_and_keeps_a_milestone_that_holds_it(
 # --------------------------------------------------------------------------- #
 def _unusable_evidence(target: Target) -> Answer:
     return _refused(
-        WriteEvidenceError,
-        f"write-evidence-unavailable: {target.entity}: a keyed write is licensed only by a "
+        UsageError,
+        f"{target.entity} {{'id': 1}}: a keyed write is licensed only by a "
         "read of THIS transaction attempt, and the value handed to the verb came from no such "
         "read — a standalone read, a read-only transaction, and an earlier attempt license "
         "nothing here; read the row through this transaction and write what that read "
@@ -344,12 +337,11 @@ def test_a_pinned_source_is_read_only_whatever_verb_was_aimed_at_it(
     _answers(
         scenario,
         _refused(
-            TransactionTimePinReadOnlyError,
+            UsageError,
             f"{scenario.target.entity}: the write's source view is pinned at the finite "
             f"Transaction-Time instant {TX_PIN.isoformat()} and is read-only — the "
-            "Transaction-Time past records what the system knew and is never rewritten "
-            "(transaction-time-pin-read-only); read the current milestone "
-            "(Transaction Time Latest) to mutate it",
+            "Transaction-Time past records what the system knew and is never rewritten; "
+            "read the current milestone (Transaction Time Latest) to mutate it",
             code="transaction-time-pin-read-only",
         ),
     )
@@ -509,8 +501,8 @@ def _repeated_insert(scenario: KeyedWriteScenario, *, statements: int = 0) -> An
     # opener — which is the interface whose update verb the advice names.
     assert scenario.opened_by is not None
     return _refused(
-        KeyedWriteValueError,
-        f"write-value-already-stored: {scenario.target.entity}: "
+        UsageError,
+        f"{scenario.target.entity}: "
         f"{_MUTATIONS[scenario.verb]!r} was handed a value naming an object this "
         "transaction already buffered an insert of, so there is no row to open; "
         f"{_REPEATED_INSERT_ADVICE[scenario.opened_by]}",
@@ -576,12 +568,11 @@ def test_a_pinned_source_beats_the_window_it_stated() -> None:
     _answers(
         _PINNED_AND_REVERSED,
         _refused(
-            TransactionTimePinReadOnlyError,
+            UsageError,
             f"{POSITION_TARGET.entity}: the write's source view is pinned at the finite "
             f"Transaction-Time instant {TX_PIN.isoformat()} and is read-only — the "
-            "Transaction-Time past records what the system knew and is never rewritten "
-            "(transaction-time-pin-read-only); read the current milestone "
-            "(Transaction Time Latest) to mutate it",
+            "Transaction-Time past records what the system knew and is never rewritten; "
+            "read the current milestone (Transaction Time Latest) to mutate it",
             code="transaction-time-pin-read-only",
         ),
     )
@@ -1002,7 +993,7 @@ def _refusal_in(port: ScriptedAdapter, call: Callable[[TxnContext], object]) -> 
     def fn(tx: TxnContext) -> None:
         try:
             call(tx)
-        except KeyedWriteValueError as refusal:
+        except UsageError as refusal:
             refused.append(str(refusal))
 
     db_for(ACCOUNT, port).transact(fn)

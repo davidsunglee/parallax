@@ -52,12 +52,13 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
+from parallax.core.base import UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution import RetryPolicy, TransactionTimePinReadOnlyError
+from parallax.core.execution import RetryPolicy
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
@@ -920,7 +921,7 @@ def test_a_finite_transaction_time_pinned_view_is_read_only(profile_run: Any) ->
     meta = _reset_for("m-temporal-write-092", profile_run)
     db = _counting_connect(profile_run.port, meta)
     before = engine.read_table_state(profile_run.port, model_of(meta))
-    with raises_contextualized(TransactionTimePinReadOnlyError) as refused:
+    with raises_contextualized(UsageError, code="transaction-time-pin-read-only") as refused:
         a_finite_transaction_time_pinned_view_is_read_only(db)
     assert refused.value.code == "transaction-time-pin-read-only"
     # The case's own `databaseCalls: 0` on the mutate step, graded as durable state:

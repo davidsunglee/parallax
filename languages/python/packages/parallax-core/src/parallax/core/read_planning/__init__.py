@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import Final, Literal, NamedTuple, TypeGuard
 
 from parallax.core import inheritance, relationship
-from parallax.core.base import INFINITY, ManagedValue
+from parallax.core.base import INFINITY, InternalError, ManagedValue
 from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
@@ -94,8 +94,9 @@ __all__ = [
 ]
 
 
-class DeepFetchError(ValueError):
-    """A deep-fetch path cannot be planned against the metamodel."""
+DEEP_FETCH_PLANNING_FAILED: Final = "deep-fetch-planning-failed"
+"""A validated deep-fetch path cannot be planned against the model it was validated
+against."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,7 +458,9 @@ def plan_target_read(
 def _declared_attribute(view: InheritanceEntityView, name: str) -> AttributeMetadata:
     attribute = view.applicable_attribute(name)
     if attribute is None:  # pragma: no cover - the accepted family declares its key and axes
-        raise DeepFetchError(f"{view.root.name}: {name!r} is no applicable attribute")
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED, f"{view.root.name}: {name!r} is no applicable attribute"
+        )
     return attribute
 
 
@@ -548,7 +551,10 @@ class _PlanBuilder:
         owner = self._owners[parent_id]
         direction = relationship.view(self.model).relationship(segment.relationship)
         if direction is None:
-            raise DeepFetchError(f"resolved relationship {segment.relationship!r} is absent")
+            raise InternalError(
+                DEEP_FETCH_PLANNING_FAILED,
+                f"resolved relationship {segment.relationship!r} is absent",
+            )
         related_entity = segment.target
         position = segment.position
         narrowed = segment.authored_narrow
@@ -677,9 +683,10 @@ def _effective_position(
         return _entity_view(families, entity.identity)
     position = families.position(narrow_to)
     if position is None:  # pragma: no cover - validation keeps a narrowing inside one family
-        raise DeepFetchError(
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED,
             f"narrow to {[identity.canonical for identity in narrow_to]} spans more than one "
-            "inheritance family"
+            "inheritance family",
         )
     return position
 
@@ -711,7 +718,10 @@ def _resolved_order_terms(
     for order in direction.order_by:
         member = view.applicable_attribute(order.attribute.name)
         if member is None:
-            raise DeepFetchError(f"resolved relationship order member {order.attribute} is absent")
+            raise InternalError(
+                DEEP_FETCH_PLANNING_FAILED,
+                f"resolved relationship order member {order.attribute} is absent",
+            )
         terms.append(
             resolved_order_term(
                 member,
@@ -725,14 +735,18 @@ def _resolved_order_terms(
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = model.entity(identity)
     if entity is None:  # pragma: no cover - a resolved reference names a declared Entity
-        raise DeepFetchError(f"{identity.canonical}: the model declares no such entity")
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED, f"{identity.canonical}: the model declares no such entity"
+        )
     return entity
 
 
 def _entity_view(facet: InheritanceFacet, identity: EntityIdentity) -> InheritanceEntityView:
     view = facet.entity(identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise DeepFetchError(f"{identity.canonical}: the model declares no such entity")
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED, f"{identity.canonical}: the model declares no such entity"
+        )
     return view
 
 
@@ -749,8 +763,9 @@ def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> 
     """
     declared = _entity_view(facet, attribute.entity).applicable_attribute(attribute.name)
     if declared is None:  # pragma: no cover - guards an unvalidated relationship
-        raise DeepFetchError(
-            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED,
+            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute",
         )
     return declared.storage.name
 
@@ -758,8 +773,9 @@ def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> 
 def _attribute_metadata(facet: InheritanceFacet, attribute: AttributeIdentity) -> AttributeMetadata:
     declared = _entity_view(facet, attribute.entity).applicable_attribute(attribute.name)
     if declared is None:  # pragma: no cover - accepted joins name applicable attributes
-        raise DeepFetchError(
-            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED,
+            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute",
         )
     return declared
 

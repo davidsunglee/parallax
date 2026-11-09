@@ -18,11 +18,11 @@ import pytest
 from parallax.core import MANY_TO_ONE, ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, rel
 from parallax.core.db_port import IsolationLevel
 from parallax.core.entity import model_of
+from parallax.core.read_delivery import InvalidDataError
 from parallax.snapshot import (
     ScopedDatabase,
     SharingScope,
     Snapshot,
-    SnapshotConsistencyError,
     connect,
 )
 from tests._support.adoption import raises_contextualized
@@ -244,8 +244,10 @@ def test_a_direct_wire_repeatable_read_page_shares_past_a_peer_commit(profile_ru
 def test_a_conflict_within_one_root_raises_as_it_does_at_root_scope(
     profile_run: Any, wire: bool
 ) -> None:
-    def conflict(sharing_scope: SharingScope) -> SnapshotConsistencyError:
-        with raises_contextualized(SnapshotConsistencyError) as raised:
+    def conflict(sharing_scope: SharingScope) -> InvalidDataError:
+        with raises_contextualized(
+            InvalidDataError, code="snapshot-fetched-row-conflict"
+        ) as raised:
             _read(
                 profile_run,
                 _CHILD_TWICE,
@@ -261,10 +263,7 @@ def test_a_conflict_within_one_root_raises_as_it_does_at_root_scope(
     at_page = conflict("page")
     at_root = conflict("root")
 
-    assert at_page.code == at_root.code == "snapshot-fetched-row-conflict"
-    assert at_page.object_key == at_root.object_key
-    assert at_page.members == at_root.members
-    assert at_page.fetched_rows == at_root.fetched_rows
+    assert at_page.args == at_root.args
 
 
 @pytest.mark.parametrize("sharing_scope", ["root", "page"])
@@ -315,7 +314,7 @@ def test_a_stream_conflict_raises_at_the_same_root_with_the_same_prefix(
 ) -> None:
     def delivered_before_the_conflict(
         sharing_scope: SharingScope,
-    ) -> tuple[list[Any], SnapshotConsistencyError]:
+    ) -> tuple[list[Any], InvalidDataError]:
         db, interleaving = _interleaved_database(
             profile_run,
             _A_LATER_ROOT_ON_BOTH_PATHS,
@@ -330,7 +329,9 @@ def test_a_stream_conflict_raises_at_the_same_root_with_the_same_prefix(
                 for root in stream:
                     delivered.append(stream.wire(root) if read == "projected" else root)
 
-        with raises_contextualized(SnapshotConsistencyError) as raised:
+        with raises_contextualized(
+            InvalidDataError, code="snapshot-fetched-row-conflict"
+        ) as raised:
             db.read_only(drain, isolation="read_committed")
         assert interleaving.fired
         assert interleaving.failures == []
@@ -340,9 +341,7 @@ def test_a_stream_conflict_raises_at_the_same_root_with_the_same_prefix(
     at_root, conflict_at_root = delivered_before_the_conflict("root")
 
     assert len(at_page) == len(at_root) == 1
-    assert conflict_at_page.object_key == conflict_at_root.object_key
-    assert conflict_at_page.members == conflict_at_root.members
-    assert conflict_at_page.fetched_rows == conflict_at_root.fetched_rows
+    assert conflict_at_page.args == conflict_at_root.args
     if read == "typed":
         assert [root.id for root in at_page] == [root.id for root in at_root] == [1]
     else:

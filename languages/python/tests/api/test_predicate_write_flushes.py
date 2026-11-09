@@ -19,9 +19,10 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import KeyedWriteValueError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "predicate.flushes"
@@ -328,9 +329,8 @@ def test_an_opening_removed_whole_after_a_predicate_write_admits_its_reinsertion
         tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
         tx.terminate(first)
         tx.insert(span(id=1, amount=200), valid_from=_JAN)
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-not-stored"):
             tx.amend(first.edit(amount=1))
-        assert refused.value.code == "write-value-not-stored"
 
     db.transact(fn, concurrency=concurrency)
     # The first opening ran in the predicate write's flush and was removed
@@ -350,9 +350,8 @@ def test_an_opening_removed_in_part_after_a_predicate_write_refuses_a_reinsertio
         tx.insert(first, valid_from=_JAN)
         tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
         tx.terminate(first, until=_APR)
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-already-stored"):
             tx.insert(span(id=1, amount=200), valid_from=_JAN)
-        assert refused.value.code == "write-value-already-stored"
 
     db.transact(fn)
     assert _span_rows(profile_run, span) == [(_TA, None, _APR, None, 100)]

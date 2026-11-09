@@ -29,18 +29,18 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
+    UsageError,
     ValueObject,
     attr,
 )
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ExecutionFailure,
-    KeyedWriteValueError,
-    TransactionTimePinReadOnlyError,
 )
 from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.adoption import raises_contextualized
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "temporal.merged"
@@ -317,9 +317,7 @@ def test_a_historical_read_of_a_merged_original_writes_nothing(
         assert (historical.amount, historical.label) == (200, "a")
         tx.amend(historical.edit(label="z"), until=_JUN)
 
-    with raises_contextualized(
-        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
-    ):
+    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn)
     assert _rows(profile_run, entity) == before
 
@@ -425,9 +423,8 @@ def test_an_insertion_stands_while_its_part_of_a_merged_row_does_and_ends_with_i
         # and the gap standing, but nothing it opened: its authority ends.
         tx.terminate(replaced, until=_APR)
         _find(tx, entity, _MAY)
-        with pytest.raises(KeyedWriteValueError) as ended:
+        with raises_code(UsageError, "write-value-not-stored"):
             tx.amend(replaced.edit(label="t"), until=_FEB)
-        assert ended.value.code == "write-value-not-stored"
 
     db.transact(fn)
     current = [row for row in _rows(profile_run, entity) if row[1] is None]

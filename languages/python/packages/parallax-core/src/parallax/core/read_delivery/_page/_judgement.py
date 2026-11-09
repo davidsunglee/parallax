@@ -13,8 +13,7 @@ from parallax.core.temporal_read import (
     Edge,
     NonTemporal,
     TemporalFacet,
-    TemporalReadError,
-    milestone_edge,
+    milestone_edge_or_none,
 )
 from parallax.core.write_plan import ObjectKey
 
@@ -127,10 +126,7 @@ def observed_edge(
     shape = temporal.shape(layout.concrete)
     if shape is None or isinstance(shape, NonTemporal):
         return None
-    try:
-        return milestone_edge(shape, _JudgedAxes(layout, member_row), None)
-    except TemporalReadError:
-        return None
+    return milestone_edge_or_none(shape, _JudgedAxes(layout, member_row), None)
 
 
 class _JudgedAxes:

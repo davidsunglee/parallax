@@ -87,7 +87,7 @@ def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
     assert "connect(adapter, model, options=root)" in snippet
     assert "tx.options" in snippet
     assert 'isolation="serializable"' in snippet
-    assert "TransactionOptionConflictError" in snippet
+    assert "UsageError" in snippet
 
 
 def test_the_retry_policy_story_inherits_a_tuned_policy_until_a_call_replaces_it_whole() -> None:

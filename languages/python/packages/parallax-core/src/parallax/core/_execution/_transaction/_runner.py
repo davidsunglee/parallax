@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._connection_lifecycle import (
@@ -32,7 +32,7 @@ from parallax.core.auto_retry import (
     retry_policy,
     run_with_retry,
 )
-from parallax.core.base import ParallaxError
+from parallax.core.base import ParallaxError, UsageError
 from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
 from parallax.core.db_port import (
     AccessMode,
@@ -58,60 +58,39 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.read_delivery._read_plan import ReadPlanner
 
 __all__ = [
-    "TransactionAccessModeError",
-    "TransactionAuthorityError",
-    "TransactionOptionConflictError",
-    "TransactionOwnershipError",
+    "TRANSACTION_ACCESS_MODE_MISMATCH",
+    "TRANSACTION_AUTHORITY_MISMATCH",
+    "TRANSACTION_OPTION_CONFLICT",
+    "TRANSACTION_OWNER_MISMATCH",
+    "TransactionJoinCode",
     "TransactionRollbackError",
     "TransactionRunner",
 ]
 
+type TransactionJoinCode = Literal[
+    "transaction-owner-mismatch",
+    "transaction-authority-mismatch",
+    "transaction-access-mode-mismatch",
+    "transaction-option-conflict",
+]
+"""Why a nested invocation was refused the active transaction, in the order it
+is judged.
 
-class TransactionOptionConflictError(ValueError):
-    """A joining invocation tried to re-negotiate the boundary.
+The active transaction records the shared resource identity behind the Database
+Root that opened it: scopes derived from that root or any root alias join, and
+a scope from every other root is refused even when it carries an equivalent
+configuration. A joining scope must then carry the same execution authority and
+select the active transaction's access mode, because joining reuses the native
+transaction the attempt opened in its mode. Last, an explicit option whose value
+differs from the active transaction's resolved one is refused; an equal value
+and an omitted option are accepted. Every refusal precedes the joined callback,
+Unit of Work mutation, SQL, and adapter access, and retains neither scope.
+"""
 
-    A joining call may not change the active transaction's settings: an explicit
-    option whose value conflicts with the active transaction's resolved
-    ``options`` raises; an explicit equal value and an omitted option are
-    accepted.
-    """
-
-
-class TransactionOwnershipError(RuntimeError):
-    """A nested invocation was made through a foreign resource root.
-
-    The active transaction records the shared resource identity behind the
-    Database Root that opened it. Scopes derived from that root or any root alias
-    join and receive the identical transaction; a scope from every other
-    root is refused even when it carries the same model, adapter, clock, or
-    otherwise equivalent configuration.
-
-    The refusal precedes rollback-only joining, the authority, access-mode, and
-    option checks, closure execution, Unit of Work mutation, SQL, and adapter
-    access, and retains neither scope — :data:`code` and the message are its
-    whole public state.
-    """
-
-    code: Final[str] = "transaction-owner-mismatch"
-
-
-class TransactionAuthorityError(RuntimeError):
-    """A joining scope carries a different captured execution authority."""
-
-    code: Final[str] = "transaction-authority-mismatch"
-
-
-class TransactionAccessModeError(RuntimeError):
-    """A nested invocation's entrypoint selects the other access mode.
-
-    A read-only transaction admits only read-only joins and a writable one only
-    writable joins, because joining reuses the active attempt and the native
-    transaction it opened in its mode. Refused after ownership, rollback-only,
-    and authority, and before the explicit options are compared or the joined
-    callback runs.
-    """
-
-    code: Final[str] = "transaction-access-mode-mismatch"
+TRANSACTION_OWNER_MISMATCH: Final = "transaction-owner-mismatch"
+TRANSACTION_AUTHORITY_MISMATCH: Final = "transaction-authority-mismatch"
+TRANSACTION_ACCESS_MODE_MISMATCH: Final = "transaction-access-mode-mismatch"
+TRANSACTION_OPTION_CONFLICT: Final = "transaction-option-conflict"
 
 
 class TransactionRollbackError(ParallaxError):
@@ -376,21 +355,22 @@ class TransactionRunner:
         entrypoint's access mode. Explicit options are the caller's to compare
         next."""
         if active.root is not self._root:
-            raise TransactionOwnershipError(
-                "this scope does not belong to the runtime that opened the active "
-                "transaction (transaction-owner-mismatch)"
+            raise UsageError(
+                TRANSACTION_OWNER_MISMATCH,
+                "this scope does not belong to the runtime that opened the active transaction",
             )
         attempt = active.attempt
         attempt.lifetime.refuse_join()
         if not same_authority(active.authority, authority):
-            raise TransactionAuthorityError(
-                "the joining scope carries different execution authority "
-                "(transaction-authority-mismatch)"
+            raise UsageError(
+                TRANSACTION_AUTHORITY_MISMATCH,
+                "the joining scope carries different execution authority",
             )
         if not isinstance(attempt, mode):
-            raise TransactionAccessModeError(
+            raise UsageError(
+                TRANSACTION_ACCESS_MODE_MISMATCH,
                 f"a {_mode_name(mode)} invocation cannot join the active "
-                f"{_mode_name(type(attempt))} transaction (transaction-access-mode-mismatch)"
+                f"{_mode_name(type(attempt))} transaction",
             )
         return attempt
 
@@ -711,8 +691,9 @@ def _check_join_options(
 
 def _refuse_conflict(name: str, explicit: object, active_value: object) -> None:
     if explicit is not OMITTED and explicit != active_value:
-        raise TransactionOptionConflictError(
+        raise UsageError(
+            TRANSACTION_OPTION_CONFLICT,
             f"cannot join the active transaction with {name}={explicit!r}: the transaction "
             f"was opened with {name}={active_value!r} (a joining call may not "
-            "re-negotiate; omit the option to inherit)"
+            "re-negotiate; omit the option to inherit)",
         )

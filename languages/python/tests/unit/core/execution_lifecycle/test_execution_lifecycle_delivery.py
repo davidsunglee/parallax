@@ -22,13 +22,13 @@ from uuid import uuid4
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProviderError,
     ReadStarted,
     RootExecution,
     _activity,
@@ -44,6 +44,7 @@ from tests._support.db_port import (
     Read,
     ScriptedAdapter,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, read_account
 
@@ -164,7 +165,7 @@ def test_an_ordinary_opening_failure_refuses_the_operation_before_any_work() -> 
     cause = RuntimeError("the exporter is not configured")
     port = ScriptedAdapter()
     db = _db(port, _RaisingOpen(cause))
-    with pytest.raises(ExecutionLifecycleProviderError) as refusal:
+    with raises_code(UsageError, "lifecycle-provider-failed") as refusal:
         _read(db)
     assert refusal.value.__cause__ is cause
     assert port.calls == [], "the refusal precedes every database call"

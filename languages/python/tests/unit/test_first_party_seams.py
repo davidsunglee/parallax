@@ -29,10 +29,6 @@ from parallax.core.base import UsageError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
-from parallax.core.execution import (
-    DeferredFeatureError,
-    QueryTargetError,
-)
 from parallax.core.metamodel import EntityIdentity, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
@@ -55,6 +51,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -368,7 +365,7 @@ def test_a_predicate_write_of_a_versioned_target_is_refused_at_the_shared_predic
 
 
 def test_the_wire_read_is_refused_for_an_undeclared_target() -> None:
-    with pytest.raises(QueryTargetError):
+    with raises_code(UsageError, "query-target-not-in-model"):
         account_db(ScriptedAdapter()).wire.find(
             _account_query("parallax.compatibility.NoSuchEntity")
         )
@@ -385,7 +382,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
         tx.wire.insert("parallax.compatibility.Account", {"id": 7, "owner": "N", "balance": "5.00"})
         tx.wire.find(query)
 
-    with raises_contextualized(QueryTargetError):
+    with raises_contextualized(UsageError, code="query-target-not-in-model"):
         _run(port, fn)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
@@ -402,9 +399,9 @@ def test_the_wire_read_reports_a_deferred_feature_by_name() -> None:
             "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
         }
     )
-    with pytest.raises(DeferredFeatureError) as raised:
+    with raises_code(UsageError, "execution-feature-deferred") as raised:
         _policy_db(ScriptedAdapter()).wire.find(query)
-    assert raised.value.features == ("snapshot-history-includes",)
+    assert "has deferred snapshot-history-includes and" in raised.value.args[1]
 
 
 def test_a_deferred_participating_read_flushes_nothing() -> None:
@@ -428,9 +425,9 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
         _insert_policy(tx)
         tx.wire.find(query)
 
-    with raises_contextualized(DeferredFeatureError) as raised:
+    with raises_contextualized(UsageError, code="execution-feature-deferred") as raised:
         _policy_db(port).transact(fn)
-    assert raised.value.features == ("snapshot-history-includes",)
+    assert "has deferred snapshot-history-includes and" in raised.value.args[1]
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 

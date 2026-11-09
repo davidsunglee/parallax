@@ -13,12 +13,13 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.db_port import InvalidAuthorizationError
-from parallax.core.execution import InvalidPrincipalError, RetryPolicy, TxnOptions
+from parallax.core.base import UsageError
+from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
+from tests._support.errors import raises_code
 from tests._support.retry import fast_retry
 
 type _AuthorityMode = Literal["database-login", "principal"]
@@ -69,11 +70,11 @@ def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
 def test_a_principal_whose_authorization_is_no_postgres_role_is_refused(profile_run: Any) -> None:
     with (
         connect(profile_run.port, MODELS["account"]) as root,
-        pytest.raises(InvalidPrincipalError) as refused,
+        raises_code(UsageError, "principal-invalid") as refused,
     ):
         root.using_principal(_Principal("authority-api", "tenant"))
 
-    assert isinstance(refused.value.__cause__, InvalidAuthorizationError)
+    assert isinstance(refused.value.__cause__, UsageError)
 
 
 @pytest.mark.parametrize("mode", ["database-login", "principal"])

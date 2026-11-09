@@ -7,7 +7,8 @@ import pytest
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.snapshot import SnapshotConsistencyError, connect
+from parallax.core.read_delivery import InvalidDataError
+from parallax.snapshot import connect
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.root_ownership import own_root
 from tests._support.tpcs_inverse_models import (
@@ -145,10 +146,9 @@ def test_public_broad_tpcs_children_report_same_root_witness_conflict(
         else:
             db.find(query).results()
     conflict = failure.value.__cause__
-    assert isinstance(conflict, SnapshotConsistencyError)
+    assert isinstance(conflict, InvalidDataError)
     assert conflict.code == "snapshot-fetched-row-conflict"
-    assert conflict.coordinates == ()
-    assert conflict.fetched_rows == ((1, 0), (1, 1))
+    assert ": fetched rows (1, 0) and (1, 1) hold" in conflict.args[1]
     assert observation.database_calls == 2
 
 

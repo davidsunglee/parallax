@@ -52,7 +52,7 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
@@ -69,7 +69,6 @@ from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import (
     RetryPolicy,
     ServingModel,
-    TransactionTimePinReadOnlyError,
     prepare_model,
 )
 from parallax.core.unit_work import Clock
@@ -1116,9 +1115,7 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
     db = _RecordingDatabase(
         _TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), model, group_finds=True
     )
-    with raises_contextualized(
-        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
-    ):
+    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
         graph_stories.a_finite_transaction_time_pinned_view_is_read_only(db)
     case_id = "m-temporal-write-092"
     assert [canonical_document(query, model) for query in db.queries] == _scenario_object_queries(

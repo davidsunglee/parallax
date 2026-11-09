@@ -88,8 +88,8 @@ otherwise unreferenced plans and retained query values collectible.
 `using_principal` reads `subject` once and `database_authorization` once, captures
 their values and the runtime's bound source, and does not retain the Principal.
 An empty, non-string, or `db-login:`-prefixed subject and an
-`InvalidAuthorizationError` from the provider become `InvalidPrincipalError`
-with their cause. Application property failures and unexpected provider failures
+`UsageError(authorization-invalid)` from the provider become
+`UsageError(principal-invalid)` with their cause. Application property failures and unexpected provider failures
 propagate unchanged. `using_database_login()` explicitly captures the runtime's
 actual authenticated login without scope-time I/O. No ambient or default
 Principal exists.
@@ -156,13 +156,13 @@ the adopted model and core evidence rules, not edition inequality alone.
 Active transactions are thread-local. Joins must come from the same resource
 root and an equal captured actor, through the active transaction's own
 entrypoint. Independently derived aliases may join;
-another root raises `TransactionOwnershipError(transaction-owner-mismatch)`.
+another root raises `UsageError(transaction-owner-mismatch)`.
 Unequal actor capture raises
-`TransactionAuthorityError(transaction-authority-mismatch)`. A `transact` call
+`UsageError(transaction-authority-mismatch)`. A `transact` call
 while a read-only transaction is active, or a `read_only` call while a writable
-one is, raises `TransactionAccessModeError(transaction-access-mode-mismatch)`. A
+one is, raises `UsageError(transaction-access-mode-mismatch)`. A
 joining explicit option may equal the active value but cannot renegotiate it; a
-difference raises `TransactionOptionConflictError`. Scope defaults alone do not
+difference raises `UsageError(transaction-option-conflict)`. Scope defaults alone do not
 conflict.
 
 Lifecycle re-entry and explicit option validation precede the core join refusal
@@ -186,7 +186,7 @@ is `ExecutionFailure`, carrying the adopted edition and original `cause`.
 Transactional operations raise their own errors inside the callback; the outer
 boundary contextualizes a failure once. Entered standalone stream advances use
 the stream edition, while stream-state misuse remains
-`StreamStateError`. Failures rejected before model adoption remain
+`UsageError(stream-state-invalid)`. Failures rejected before model adoption remain
 unstamped. Interpreter control-flow exceptions keep their
 ordinary behavior.
 
@@ -239,7 +239,7 @@ took or answered — and state no condition and no `valid_from`: a Bitemporal on
 starts at its source's finite Valid-Time pin, or where the insertion that
 produced its source was authored to start, and a source read at Valid-Time
 `LATEST` is refused. A value a standalone read, a read-only transaction, or an
-earlier attempt published raises `WriteEvidenceError(write-evidence-unavailable)`
+earlier attempt published raises `UsageError(write-evidence-unavailable)`
 at the call under either concurrency preference, an amendment naming nothing
 included (`m-unit-work` *Current-attempt source admission*); its caller states
 the revision that value carries through a target verb instead.
@@ -316,7 +316,7 @@ raises `parallax.core.unit_work.WritePreconditionError` — at the call under
 Locking, at the flush under Optimistic — a deletion or termination included,
 which never succeeds by removing nothing; it is never retried, and its
 `expected` is the stated revision. An object the attempt inserted is refused
-with `WriteEvidenceError(write-evidence-inserted)`.
+with `UsageError(write-evidence-inserted)`.
 `tx.wire` is the Wire ingress, sharing transaction state and policy. Public
 write-plan and flush operations are absent. Framework-owned attributes cannot
 be authored by construction, `edit`, assignments, or Wire changes.
@@ -329,13 +329,13 @@ them. Providers are installed at root composition. Results and transaction
 objects expose no retained lifecycle event record. Observer callbacks follow
 core re-entry and failure containment rules.
 
-An ordinary provider `open` failure is `ExecutionLifecycleProviderError` with
-the original `__cause__`. Ordinary handler failures produce detached
+An ordinary provider `open` failure is `UsageError(lifecycle-provider-failed)`
+with the original `__cause__`. Ordinary handler failures produce detached
 `ExecutionLifecycleHandlerError` reports; an ordinary reporting failure writes
 one sanitized correlation-only line to `sys.__stderr__`, or is dropped if that
 path is unavailable. `BaseException` from handling or reporting aborts delivery
 and propagates unchanged. Root-local callback re-entry raises
-`ExecutionLifecycleReentryError`; other Database Roots remain usable.
+`UsageError(lifecycle-reentered)`; other Database Roots remain usable.
 
 `LoggingLifecycleProvider` uses an application-owned standard-library Logger,
 with no queue, sink, or shutdown ownership. Both detail modes exclude SQL and

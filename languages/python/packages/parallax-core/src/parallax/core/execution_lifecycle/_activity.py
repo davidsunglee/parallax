@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from parallax.core import auto_retry
 from parallax.core._execution._unit_work.uow import FlushTrigger
 from parallax.core.auto_retry import RetryPolicy
+from parallax.core.base import UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import (
     AccessMode,
@@ -37,9 +38,9 @@ from parallax.core.execution_lifecycle._diagnostics import (
     database_diagnostic_for,
 )
 from parallax.core.execution_lifecycle._errors import (
+    LIFECYCLE_PROVIDER_FAILED,
+    LIFECYCLE_REENTERED,
     ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProviderError,
-    ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
     AcquisitionFailed,
@@ -160,9 +161,9 @@ class ExecutionLifecycleProvider(Protocol):
         """A fresh Handler for ``execution``, or ``None`` to decline it outright.
 
         Called before execution state, clocks, or database work. An ordinary
-        failure aborts the operation through
-        :class:`~parallax.core.execution_lifecycle.ExecutionLifecycleProviderError`
-        and is never reinterpreted as a decline.
+        failure aborts the operation with a
+        :data:`~parallax.core.execution_lifecycle.LIFECYCLE_PROVIDER_FAILED`
+        refusal and is never reinterpreted as a decline.
         """
         ...
 
@@ -236,11 +237,12 @@ def refuse_reentry(installed: InstalledLifecycle | None, /) -> None:
     absent installation without reading any state.
     """
     if installed is not None and installed.delivering.active:
-        raise ExecutionLifecycleReentryError(
+        raise UsageError(
+            LIFECYCLE_REENTERED,
             "this operation was reached from inside a lifecycle context of the same "
             "Parallax handle — a provider opening, a handler receiving an event, or an "
             "error reporter — and is refused before any execution work; observe from a "
-            "handler and act on it elsewhere"
+            "handler and act on it elsewhere",
         )
 
 
@@ -2332,9 +2334,10 @@ def _opened(
     try:
         return installed.provider.open(execution)
     except Exception as failure:
-        raise ExecutionLifecycleProviderError(
+        raise UsageError(
+            LIFECYCLE_PROVIDER_FAILED,
             "the installed execution lifecycle provider failed to open a root execution, "
-            "so the operation was refused before any execution work began"
+            "so the operation was refused before any execution work began",
         ) from failure
     finally:
         delivering.active = False

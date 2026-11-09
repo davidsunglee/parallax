@@ -27,7 +27,6 @@ from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.unit_work import (
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
@@ -345,7 +344,7 @@ def test_target_and_observed_writes_of_one_state_compose_into_one_effect(
         if stored is not None:
             tx.amend(source.edit(label="again"))
             return
-        with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+        with pytest.raises(UsageError, match="write-evidence-consumed"):
             tx.amend(source.edit(label="again"))
 
     db.transact(fn, concurrency=concurrency)
@@ -407,7 +406,7 @@ def test_a_target_write_of_an_object_this_attempt_inserted_is_refused_until_comm
                 ),
                 lambda: _delete(tx, entity, representation),
             ):
-                with pytest.raises(WriteEvidenceError, match="write-evidence-inserted"):
+                with pytest.raises(UsageError, match="write-evidence-inserted"):
                     refused()
             _patch(tx, entity)
         tx.amend(fresh.edit(note="observed"))

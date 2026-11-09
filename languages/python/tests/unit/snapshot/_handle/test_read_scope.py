@@ -47,9 +47,8 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index
-from parallax.core.execution import QueryTargetError, TxnOptions
+from parallax.core.execution import TxnOptions
 from parallax.core.execution_lifecycle import (
-    ExecutionLifecycleReentryError,
     ResultRepresentation,
 )
 from parallax.core.execution_lifecycle._activity import (
@@ -450,7 +449,7 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
         lambda: _wire_find(scope, _wire_node()),
         lambda: _wire_stream(scope, _wire_node(), _VALID_BATCH_SIZE),
     ):
-        with pytest.raises(ExecutionLifecycleReentryError):
+        with raises_code(UsageError, "lifecycle-reentered"):
             verb()
 
     assert execution.calls == []
@@ -471,7 +470,7 @@ def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> N
         lambda: _wire_find(delivering, malformed),
         lambda: _wire_stream(delivering, malformed, _VALID_BATCH_SIZE),
     ):
-        with pytest.raises(ExecutionLifecycleReentryError):
+        with raises_code(UsageError, "lifecycle-reentered"):
             refused()
     for complaining in (
         lambda: _wire_find(quiet, malformed),
@@ -570,7 +569,7 @@ def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str
         "wire_find": lambda: _wire_find(scope, unknown),
     }
 
-    with pytest.raises(QueryTargetError) as caught:
+    with raises_code(UsageError, "query-target-not-in-model") as caught:
         verbs[verb_name]()
 
     assert caught.value.code == "query-target-not-in-model"

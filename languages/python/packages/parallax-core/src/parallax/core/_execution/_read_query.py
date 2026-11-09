@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core._execution._features import DeferredFeatureError, deferred_features
+from parallax.core._execution._features import deferred_feature_refusal, deferred_features
 from parallax.core.base import UsageError
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
@@ -14,24 +14,14 @@ from parallax.core.object_query import (
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import REFERENCE_AMBIGUOUS_ENTITY_NAME
 
-__all__ = ["QueryTargetError", "resolve_read_query"]
+__all__ = ["QUERY_TARGET_NOT_IN_MODEL", "resolve_read_query"]
 
+QUERY_TARGET_NOT_IN_MODEL: Final = "query-target-not-in-model"
+"""The connected model declares no Entity for a query's target.
 
-class QueryTargetError(RuntimeError):
-    """The connected model declares no Entity for a query's target.
-
-    Raised before any SQL, connection acquisition, or adapter activity, and
-    before a participating read force-flushes the unit of work, so a query the
-    connected model cannot answer never becomes a side effect.
-
-    The refusal reports that the CONNECTED MODEL, not the call's arguments, is
-    what makes the query unanswerable — the identical query succeeds against a
-    model declaring the Entity — which is why this is a ``RuntimeError``. It
-    retains and exposes neither the query, the model, nor the Database:
-    :data:`code` and the message are its whole public state.
-    """
-
-    code: Final[str] = "query-target-not-in-model"
+The identical query succeeds against a model declaring the Entity, so the
+refusal names the model rather than the query, and retains neither.
+"""
 
 
 def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObjectQuery:
@@ -63,12 +53,12 @@ def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObject
                 f"{list(shared)}, so it names no single Entity in this model and the read "
                 "resolves nowhere (m-predicate reference resolution)",
             )
-        raise QueryTargetError(
-            "the connected model declares no Entity for this read's target "
-            "(query-target-not-in-model)"
+        raise UsageError(
+            QUERY_TARGET_NOT_IN_MODEL,
+            "the connected model declares no Entity for this read's target",
         )
     resolved = validate_object_query(root, query, model)
     deferred = deferred_features(clauses)
     if deferred:
-        raise DeferredFeatureError(deferred)
+        raise deferred_feature_refusal(deferred)
     return resolved

@@ -36,8 +36,9 @@ import pytest
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.scripted_clock import FixedClock, ScriptedClock
 from parallax.core import LATEST, Attr, Bitemporal, Document, DomainModel, Entity, TxTemporal, attr
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
+from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
 from tests._support.adoption import raises_contextualized
 from tests._support.root_ownership import own_root
@@ -288,7 +289,7 @@ def test_a_deleted_source_ends_and_a_reinsertion_at_its_key_revives_none_of_it(
         _flush(tx, entity)
         tx.wire.insert(_name(entity), {"id": 1, "label": "again", "note": "fresh"})
         for write in (lambda: _amend(tx, source, label="stale"), lambda: _delete(tx, source)):
-            with pytest.raises(WriteEvidenceError) as refusal:
+            with pytest.raises(UsageError) as refusal:
                 write()
             refused.append(refusal.value.code)
         _flush(tx, entity)
@@ -715,14 +716,14 @@ def test_two_pins_of_one_observation_part_when_a_termination_removes_one(
         june = _temporal_read(tx, entity, representation, at=_JUN)
         _terminate(tx, march, until=_APR)
         _temporal_flush(tx, entity)
-        with pytest.raises(WriteEvidenceError) as ended:
+        with pytest.raises(UsageError) as ended:
             _temporal_amend(tx, march, label="march")
         refused.append(ended.value.code)
         _temporal_replace(
             tx, _temporal_read(tx, entity, representation, at=_FEB), label="filled", until=_APR
         )
         _temporal_flush(tx, entity)
-        with pytest.raises(WriteEvidenceError) as still_ended:
+        with pytest.raises(UsageError) as still_ended:
             _temporal_amend(tx, march, label="march")
         refused.append(still_ended.value.code)
         _temporal_amend(tx, june, label="june")
@@ -838,7 +839,7 @@ def test_a_temporal_source_its_attempt_destroyed_stays_ended_through_a_reinserti
         _terminate(tx, source)
         _temporal_flush(tx, entity)
         for reinserting in (True, False):
-            with pytest.raises(WriteEvidenceError) as ended:
+            with pytest.raises(UsageError) as ended:
                 _temporal_amend(tx, source, label="stale")
             refused.append(ended.value.code)
             if reinserting:

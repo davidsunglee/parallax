@@ -25,12 +25,7 @@ from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMet
 from parallax.core.predicate import StringOp
 from parallax.core.predicate._execution_values import ExecutionValueSource, source_order
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
-from parallax.core.wire import (
-    WireEncodingError,
-    WireValue,
-    decode_wire,
-    encode_wire,
-)
+from parallax.core.wire import WireValue, decode_wire, encode_wire
 
 type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
 type _TypedBindSlot = tuple[NeutralType, _BindForm]
@@ -448,7 +443,7 @@ def _document_wire_bind(value: object) -> WireValue:
     try:
         managed = decode_wire(JSON, cast("WireValue", value))
         return encode_wire(JSON, managed)
-    except (UsageError, WireEncodingError) as error:
+    except UsageError as error:
         raise SqlGenError(
             f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}"
         ) from error

@@ -17,16 +17,16 @@ from parallax.core.temporal_read import Edge
 from parallax.core.write_plan import ObjectKey
 
 __all__ = [
-    "INTERPRETER_OWNED_ATTRIBUTES",
+    "CONTINUATION_ORDER_NOT_TOTAL",
     "MISSING_STORED_VALUE",
     "RESULT_DATA_INVALID",
     "STORED_DATA_DECODING_FAILED",
     "InvalidData",
     "InvalidDataError",
-    "StoredDataDecodingError",
     "StoredDataIssue",
     "invalid_result_refusal",
-    "stored_data_refusal",
+    "member_spelling",
+    "undecodable_data_refusal",
 ]
 
 
@@ -200,13 +200,15 @@ INTERPRETER_OWNED_ATTRIBUTES: Final[frozenset[str]] = frozenset(
 """The attributes of an exception the INTERPRETER owns rather than its author.
 
 An exception frozen by hand leaves exactly these writable, so chaining,
-tracebacks, and notes behave as they do on any exception. Shared by every
-hand-frozen refusal in this package, because which names those are is a fact
-about Python rather than about any one of them.
+tracebacks, and notes behave as they do on any exception.
 """
 
 RESULT_DATA_INVALID: Final = "result-data-invalid"
 """The code of a result accessor's refusal of roots holding invalid stored data."""
+
+CONTINUATION_ORDER_NOT_TOTAL: Final = "snapshot-stream-continuation-order-not-total"
+"""The code of a streamed delivery's refusal to continue past two roots stored
+at one Continuation Order coordinate."""
 
 
 class InvalidDataError(ParallaxError):
@@ -220,8 +222,16 @@ class InvalidDataError(ParallaxError):
     delayed until an accessor is reached, so the stamp travels with it rather
     than being looked up again, and the validators that judged the stored data
     need no edition at all. Under any other code there is no result, so
-    :attr:`invalid_data` is empty and :attr:`edition` is ``None``; the
-    constructor refuses any other pairing.
+    :attr:`invalid_data` is empty and :attr:`edition` is ``None``.
+
+    Under :data:`CONTINUATION_ORDER_NOT_TOTAL`, a streamed delivery met two
+    adjacent roots stored at one Continuation Order coordinate, and
+    :attr:`coordinate` is an inert copy of where they stood, positionally
+    aligned with the order's terms: readable and comparable, with no public
+    constructor turning it back into pagination authority, and kept out of the
+    message, the default repr, and default logging. Under any other code it is
+    ``None``. The constructor refuses any pairing of a code and these fields
+    other than the ones described here.
 
     The constructor settles every field, and every later attribute assignment
     or deletion is refused — including the inherited ``args`` :func:`str`
@@ -239,6 +249,7 @@ class InvalidDataError(ParallaxError):
 
     _invalid_data: tuple[InvalidData[object], ...]
     _edition: str | None
+    _coordinate: tuple[object, ...] | None
 
     def __init__(
         self,
@@ -247,8 +258,13 @@ class InvalidDataError(ParallaxError):
         *,
         invalid_data: Iterable[InvalidData[object]] = (),
         edition: str | None = None,
+        coordinate: tuple[object, ...] | None = None,
     ) -> None:
         records = tuple(invalid_data)
+        if (code == CONTINUATION_ORDER_NOT_TOTAL) != (coordinate is not None):
+            raise ValueError(
+                f"a {CONTINUATION_ORDER_NOT_TOTAL} refusal, and only one, carries a coordinate"
+            )
         if code == RESULT_DATA_INVALID:
             if not records or edition is None:
                 raise ValueError(
@@ -261,6 +277,7 @@ class InvalidDataError(ParallaxError):
         super().__init__(code, message)
         object.__setattr__(self, "_invalid_data", records)
         object.__setattr__(self, "_edition", edition)
+        object.__setattr__(self, "_coordinate", coordinate)
 
     def __setattr__(self, name: str, value: object) -> None:
         if name not in INTERPRETER_OWNED_ATTRIBUTES:
@@ -280,6 +297,10 @@ class InvalidDataError(ParallaxError):
     def edition(self) -> str | None:
         return self._edition
 
+    @property
+    def coordinate(self) -> tuple[object, ...] | None:
+        return self._coordinate
+
 
 def invalid_result_refusal(
     invalid_data: Iterable[InvalidData[object]], *, edition: str
@@ -295,36 +316,27 @@ def invalid_result_refusal(
     )
 
 
-STORED_DATA_DECODING_FAILED: Final[str] = "stored-data-decoding-failed"
-"""The stable code of a stored-data refusal that interrupts an atomic operation."""
+STORED_DATA_DECODING_FAILED: Final = "stored-data-decoding-failed"
+"""The code of a stored-data refusal that interrupts an atomic operation."""
 
 
-class StoredDataDecodingError(ValueError):
-    """A judged stored-data issue that prevents an operation from completing.
-
-    Raised where invalid stored data cannot travel in band: atomic publication
-    and evidence acquisition both refuse the first issue they reach.
-    """
-
-    code: Final[str] = STORED_DATA_DECODING_FAILED
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        entity: EntityIdentity,
-        member: AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity | None,
-    ) -> None:
-        super().__init__(f"{STORED_DATA_DECODING_FAILED}: {message}")
-        self.message = message
-        self.entity = entity
-        self.member = member
-
-
-def stored_data_refusal(issue: StoredDataIssueInput) -> StoredDataDecodingError:
-    """The refusal ``issue`` raises where it cannot be published in band."""
-    return StoredDataDecodingError(
-        f"{issue.entity.canonical} holds invalid stored data ({issue.code})",
-        entity=issue.entity,
-        member=issue.member,
+def undecodable_data_refusal(issue: StoredDataIssueInput) -> InvalidDataError:
+    """The refusal ``issue`` raises where invalid stored data cannot travel in
+    band: atomic publication and evidence acquisition both refuse the first
+    issue they reach, and have no result to report it in."""
+    where = "" if issue.member is None else f" at {member_spelling(issue.member)}"
+    return InvalidDataError(
+        STORED_DATA_DECODING_FAILED,
+        f"{issue.entity.canonical} holds invalid stored data{where} ({issue.code})",
     )
+
+
+def member_spelling(member: MemberIdentity) -> str:
+    """``member``'s dotted name within its Entity."""
+    match member:
+        case AttributeIdentity(name=name):
+            return name
+        case ValueObjectIdentity(path=path):
+            return ".".join(path)
+        case ValueObjectAttributeIdentity(value_object=occurrence, name=name):
+            return ".".join((*occurrence.path, name))

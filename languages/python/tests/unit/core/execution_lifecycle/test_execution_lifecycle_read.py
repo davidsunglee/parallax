@@ -22,6 +22,7 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -31,9 +32,6 @@ from parallax.core.db_port import (
     Row,
 )
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import (
-    QueryTargetError,
-)
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,
@@ -57,6 +55,7 @@ from tests._support.db_port import (
     ReadCall,
     ScriptedAdapter,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, ORDERS
 from tests.unit.memory_instruments import (
@@ -394,7 +393,7 @@ def test_a_read_refused_by_preflight_creates_no_root() -> None:
     # creates no descriptor, calls no Provider, and reaches no port.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter()
-    with pytest.raises(QueryTargetError):
+    with raises_code(UsageError, "query-target-not-in-model"):
         _db(port, recorder).wire.find({"target": "NoSuchEntity", "predicate": {"true": {}}})
     assert recorder.roots == ()
     assert port.calls == []
@@ -407,7 +406,7 @@ def test_a_typed_read_refused_by_preflight_creates_no_root() -> None:
     # answered before a root exists and before the port is reached.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter()
-    with pytest.raises(QueryTargetError):
+    with raises_code(UsageError, "query-target-not-in-model"):
         _db(port, recorder).find(mm.Person.where(mm.Person.id == 1))
     assert recorder.roots == ()
     assert port.calls == []

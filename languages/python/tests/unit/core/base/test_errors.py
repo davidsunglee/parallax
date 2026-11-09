@@ -26,8 +26,8 @@ from parallax.core import (
     WritePreconditionError,
 )
 from parallax.core.metamodel import EntityIdentity, EntityLocation, MetamodelIssue
-from parallax.core.read_delivery import InvalidData, StoredDataIssue
-from parallax.core.read_delivery._page import invalid_result_refusal
+from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
+from parallax.core.read_delivery._page import CONTINUATION_ORDER_NOT_TOTAL, invalid_result_refusal
 from parallax.core.write_plan import ObjectKey
 from parallax.descriptor import DescriptorError, DescriptorViolation
 
@@ -198,6 +198,14 @@ def test_an_invalid_data_refusal_survives_pickling_still_frozen() -> None:
     assert restored.edition == "2026-09-a"
     with pytest.raises(AttributeError):
         restored._edition = "other"  # pyright: ignore[reportPrivateUsage] - the refusal under test
+
+
+def test_a_continuation_tie_refusal_survives_pickling_with_its_coordinate() -> None:
+    restored = _round_trip(
+        InvalidDataError(CONTINUATION_ORDER_NOT_TOTAL, "m", coordinate=(2, b"\x00"))
+    )
+    assert restored.coordinate == (2, b"\x00")
+    assert (restored.invalid_data, restored.edition) == ((), None)
 
 
 def test_a_descriptor_error_survives_pickling_with_its_phase_fields() -> None:

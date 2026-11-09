@@ -75,4 +75,4 @@ def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
     snippet = read_only_stories.read_only_snippet()
     assert 'db.read_only(report, isolation="repeatable_read")' in snippet
     assert "rtx.find(query)" in snippet
-    assert "TransactionAccessModeError" in snippet
+    assert "UsageError" in snippet

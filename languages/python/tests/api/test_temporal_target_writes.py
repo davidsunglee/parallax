@@ -38,8 +38,9 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.execution import ExecutionFailure, KeyedWriteValueError, RetryPolicy
+from parallax.core.execution import ExecutionFailure, RetryPolicy
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseReadCompleted,
@@ -47,11 +48,10 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandlerError,
     RootExecution,
 )
-from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.read_delivery import InvalidDataError
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from parallax.descriptor import domain_model_from_document, export_document
@@ -685,7 +685,7 @@ def test_target_and_observed_writes_of_one_window_compose_into_one_range(
         # through the row it left at the source's pin, unless it left none.
         _span_find(tx, entity, _JAN)
         if _SEQUENCES[sequence] is None:
-            with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+            with pytest.raises(UsageError, match="write-evidence-consumed"):
                 tx.amend(source.edit(label="again"), until=_SEP)
         else:
             tx.amend(source.edit(label="again"), until=_SEP)
@@ -834,7 +834,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
                     if bitemporal
                     else entity.where(entity.id == 1)
                 ).result()
-            with pytest.raises(WriteEvidenceError, match="write-evidence-inserted"):
+            with pytest.raises(UsageError, match="write-evidence-inserted"):
                 target(tx, **{member: changed})
             target(tx)
         tx.wire.amend(inserted, {member: 175 if bitemporal else "authored"})
@@ -1248,7 +1248,7 @@ def test_a_reinsertion_follows_the_removal_of_all_an_insertion_replacement_reach
             valid_from=_JAN,
             until=_JUN,
         )
-        with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
+        with pytest.raises(UsageError, match="write-value-not-stored"):
             tx.replace(first.edit(amount=500), until=_JUN)
 
     db.transact(fn)
@@ -1267,7 +1267,7 @@ def test_an_ended_insertion_authorizes_no_replacement(profile_run: Any, entity: 
         opened = entity(id=1, amount=100, label="a", spec=Spec(title="s1"), marks=())
         tx.insert(opened, valid_from=_JAN, until=_APR)
         tx.terminate(opened, until=_APR)
-        with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
+        with pytest.raises(UsageError, match="write-value-not-stored"):
             tx.replace(opened.edit(amount=300), until=_JUN)
 
     db.transact(fn)
@@ -1512,7 +1512,7 @@ def test_a_locking_targets_invalid_stored_occurrence_fails_at_the_flush(
     # The call admitted the write on the row's revision; the occurrence its
     # reuse needed was judged at the flush, and the attempt rolled back.
     assert called == ["admitted"]
-    assert isinstance(failed.value.cause, StoredDataDecodingError)
+    assert isinstance(failed.value.cause, InvalidDataError)
     assert [row[:4] for row in _span_rows(profile_run, entity)] == [
         (_T0, None, _JAN, _APR),
         (_T1, None, _JUN, _AUG),

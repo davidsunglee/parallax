@@ -7,9 +7,9 @@ from typing import Any, Final, Protocol, cast, overload
 from parallax.core import read_planning
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_pipeline import ReadQuery
-from parallax.core.base import ManagedValue, NeutralType
+from parallax.core.base import ManagedValue, NeutralType, UsageError
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
-from parallax.core.read_delivery import InvalidData, StreamStateError
+from parallax.core.read_delivery import STREAM_STATE_INVALID, InvalidData
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin
 from parallax.core.wire._facts import WireModelFacts
@@ -106,13 +106,15 @@ class _StreamWireProjection:
             return cast("InvalidData[WireEntity]", record)
         assert concrete is not None
         if not self._includes.admits(position, concrete):
-            from parallax.snapshot._inspection import SnapshotInspectionError
+            from parallax.snapshot._inspection import (
+                SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
+                inspection_refusal,
+            )
 
-            raise SnapshotInspectionError(
-                code="snapshot-wire-at-concrete-mismatch",
-                message=f"{concrete.canonical} is not admitted at requested position {position}",
-                operation="SnapshotStream.wire",
-                entity=concrete,
+            raise inspection_refusal(
+                SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
+                "SnapshotStream.wire",
+                f"{concrete.canonical} is not admitted at requested position {position}",
             )
         if self._reader is None:
             assert reader is not None
@@ -251,17 +253,20 @@ class SnapshotStream[T]:
         wire = None if publication is None else publication.wire
         if construction is None or wire is None:
             if self._delivery.entered:
-                from parallax.snapshot._inspection import SnapshotInspectionError
-
-                raise SnapshotInspectionError(
-                    code="snapshot-wire-envelope-ineligible",
-                    message="Wire projection is available only on a Typed Snapshot Stream",
-                    operation="SnapshotStream.wire",
+                from parallax.snapshot._inspection import (
+                    SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
+                    inspection_refusal,
                 )
-            raise StreamStateError(_CURRENT_PROJECTION_PAGE)
+
+                raise inspection_refusal(
+                    SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
+                    "SnapshotStream.wire",
+                    "Wire projection is available only on a Typed Snapshot Stream",
+                )
+            raise UsageError(STREAM_STATE_INVALID, _CURRENT_PROJECTION_PAGE)
         includes = self._delivery.paused_includes
         if includes is None:
-            raise StreamStateError(_CURRENT_PROJECTION_PAGE)
+            raise UsageError(STREAM_STATE_INVALID, _CURRENT_PROJECTION_PAGE)
         projection = self._projection_state
         if projection is None:
             projection = _StreamWireProjection(construction, wire, includes)

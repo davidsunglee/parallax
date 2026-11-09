@@ -15,16 +15,14 @@ from typing import Any, Final, Literal, cast
 
 import pytest
 
-from parallax.core.base import NeutralType, StructuredDocument
+from parallax.core.base import InternalError, NeutralType, StructuredDocument
 from parallax.core.entity import UNLOADED
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.read_delivery import InvalidData
+from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.core.read_delivery._page import Page, judged_entity_state, page_rows
 from parallax.core.read_planning import IncludeTree
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot import (
-    SnapshotConsistencyError,
-    SnapshotMaterializationError,
     is_view_loaded,
 )
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
@@ -34,6 +32,7 @@ from parallax.snapshot._publication._root_publication import publish_roots, publ
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import (
     graph_construction_for,
     prepared_view_keys_for,
@@ -251,11 +250,10 @@ def test_a_projection_conflict_in_a_discarded_relationship_value_still_refuses(
     fixture.attach(order, _ITEMS, (discarded,))
     fixture.attach(order, _ITEMS, (current,))
 
-    with pytest.raises(SnapshotConsistencyError) as conflict:
+    with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as conflict:
         _published(fixture, form, order, atomic=atomic)
 
-    assert conflict.value.code == "snapshot-fetched-row-conflict"
-    assert type(conflict.value) is SnapshotConsistencyError
+    assert type(conflict.value) is InvalidDataError
 
 
 def _continuing_past_a_discarded_relationship_value() -> tuple[PageFixture, int, int]:
@@ -825,9 +823,9 @@ def test_a_typed_publisher_failure_is_wrapped_once_with_its_cause(
 
     received, failure = _publish_until_failure(fixture, roots, "typed", atomic=atomic)
 
-    assert type(failure) is SnapshotMaterializationError
-    assert type(failure.cause) is RuntimeError
-    assert failure.__cause__ is failure.cause
+    assert type(failure) is InternalError
+    assert failure.code == "snapshot-materialization-failed"
+    assert type(failure.__cause__) is RuntimeError
     assert [cast("Any", value).id for value in received] == ([] if atomic else [1])
 
 

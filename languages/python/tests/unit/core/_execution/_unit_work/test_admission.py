@@ -53,7 +53,6 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
-from parallax.core.execution import KeyedWriteValueError
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
@@ -62,7 +61,6 @@ from parallax.core.unit_work import (
     ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
-    WriteEvidenceError,
     admitted_write,
 )
 from parallax.core.write_plan import (
@@ -147,9 +145,8 @@ def _admit(admission: WriteAdmission, *writes: AdmittedWrite) -> None:
 def _refused(
     admission: WriteAdmission, write: ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
 ) -> None:
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_code(UsageError, "write-evidence-already-claimed"):
         admission.admit(write, confirm_target=_confirmed)
-    assert refusal.value.code == "write-evidence-already-claimed"
 
 
 def _account(account_id: int) -> ObjectKey:
@@ -218,7 +215,7 @@ def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_a
     # A second write over exactly that window starts from the state the first
     # does; one refused for another stated start is never confirmed.
     admission.admit(addressed_write(value="175.00"), confirm_target=confirm)
-    with pytest.raises(WriteEvidenceError):
+    with pytest.raises(UsageError):
         admission.admit(addressed_write(tx_start=T1, value="1.00"), confirm_target=confirm)
     assert confirm.asked == [first]
 
@@ -237,9 +234,8 @@ def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmat
     admission.drain_planned()
     # A pending write of another state of the object would also refuse it.
     admission.admit(_account_observed(1, 1), confirm_target=confirm)
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_code(UsageError, "write-evidence-inserted"):
         admission.admit(_account_target(1, 7), confirm_target=confirm)
-    assert refusal.value.code == "write-evidence-inserted"
     assert confirm.asked == []
 
 
@@ -398,10 +394,9 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothin
             admission.drain_planned()
             authority.complete_write(WriteEffects(opened=Openings(continued=stored_rows)), ())
         pending = admission.composed_writes()
-        with pytest.raises(KeyedWriteValueError) as refusal:
+        with raises_code(UsageError, "write-value-already-stored") as refusal:
             admission.admit_insert(insert(), insertion_advice=_REPEATER)
-        assert refusal.value.code == "write-value-already-stored"
-        assert refusal.value.message.endswith("amend the opener")
+        assert refusal.value.args[1].endswith("amend the opener")
         assert admission.composed_writes() == pending
         assert authority.insertion_authority(identity) is not NO_INSERTION_AUTHORITY
 
@@ -452,7 +447,7 @@ def test_an_insert_after_a_pending_whole_removal_follows_it_as_a_first_opening(
     # removal retires nothing of it, and a further insert repeats it.
     admission.drain_planned()
     assert authority.insertion_authority(again) is None
-    with pytest.raises(KeyedWriteValueError, match="amend the repeat"):
+    with pytest.raises(UsageError, match="amend the repeat"):
         admission.admit_insert(insert(), insertion_advice=None)
 
 
@@ -489,9 +484,8 @@ def test_an_inserted_objects_target_stays_refused_once_its_insertion_retires(
     _admit(admission, _account_delete_through(identity))
     admission.drain_planned()
     assert authority.insertion_authority(identity) is NO_INSERTION_AUTHORITY
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_code(UsageError, "write-evidence-inserted"):
         admission.admit(_account_target(9, 1), confirm_target=_confirmed)
-    assert refusal.value.code == "write-evidence-inserted"
 
 
 # --------------------------------------------------------------------------- #

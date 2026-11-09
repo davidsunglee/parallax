@@ -11,7 +11,7 @@ from parallax.conformance._mechanism.model_facts import case_entity, family_decl
 from parallax.core import concurrency, inheritance, read_delivery
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._unit_work import instructions
-from parallax.core.execution import TransactionTimePinReadOnlyError
+from parallax.core.base import UsageError
 from parallax.core.metamodel import (
     AttributeIdentity,
     PrimaryKey,
@@ -24,7 +24,6 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     PredicateWriteInstruction,
     TargetWriteInstruction,
-    WriteEvidenceError,
 )
 from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import ObjectKey, VersionObservation
@@ -177,7 +176,7 @@ class WireSubmitter:
             else:
                 node = self._source_node(submission, named)
                 _buffer_wire_keyed(self._tx, self._model, instruction, node)
-        except WriteEvidenceError as exc:
+        except UsageError as exc:
             if exc.code != submission.expect_error:
                 raise
             return Refused(submission.pointer, exc.code)
@@ -512,7 +511,7 @@ def _writable_source(node: WireEntity) -> bool:
     assert hint is not None
     try:
         validate_source_pin(hint.entity, hint.pin)
-    except TransactionTimePinReadOnlyError:
+    except UsageError:
         return False
     return True
 

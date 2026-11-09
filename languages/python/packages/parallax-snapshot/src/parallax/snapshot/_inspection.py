@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
+from parallax.core.base import UsageError
 from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
 from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
@@ -29,15 +30,24 @@ from parallax.core.temporal_read import (
 )
 
 __all__ = [
-    "SNAPSHOT_INSPECTION_CODES",
+    "SNAPSHOT_EDGE_UNAVAILABLE",
+    "SNAPSHOT_NODE_REQUIRED",
+    "SNAPSHOT_PIN_UNAVAILABLE",
+    "SNAPSHOT_VIEW_OWNER_MISMATCH",
+    "SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH",
+    "SNAPSHOT_WIRE_AT_UNREQUESTED",
+    "SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE",
+    "SNAPSHOT_WIRE_INPUT_EDITED",
+    "SNAPSHOT_WIRE_INPUT_INCOMPATIBLE",
     "NarrowedViews",
     "NodeProvenance",
     "PageProvenance",
     "RootConformance",
-    "SnapshotInspectionError",
+    "SnapshotInspectionCode",
     "SnapshotNodeState",
     "bind_insertion",
     "insertion_of",
+    "inspection_refusal",
     "is_view_loaded",
     "pin_for_shape",
     "required_pin",
@@ -47,47 +57,38 @@ __all__ = [
     "view",
 ]
 
-SNAPSHOT_INSPECTION_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "snapshot-node-required",
-        "snapshot-view-owner-mismatch",
-        "snapshot-pin-unavailable",
-        "snapshot-edge-unavailable",
-        "snapshot-wire-envelope-ineligible",
-        "snapshot-wire-input-edited",
-        "snapshot-wire-input-incompatible",
-        "snapshot-wire-at-unrequested",
-        "snapshot-wire-at-concrete-mismatch",
-    }
-)
-"""The complete Snapshot-inspection refusal vocabulary."""
+type SnapshotInspectionCode = Literal[
+    "snapshot-node-required",
+    "snapshot-view-owner-mismatch",
+    "snapshot-pin-unavailable",
+    "snapshot-edge-unavailable",
+    "snapshot-wire-envelope-ineligible",
+    "snapshot-wire-input-edited",
+    "snapshot-wire-input-incompatible",
+    "snapshot-wire-at-unrequested",
+    "snapshot-wire-at-concrete-mismatch",
+]
+"""Why an inspection operation cannot answer for the node it was handed.
+
+Every code reports that the node — or the pairing of node and path — makes the
+question unanswerable. The message names the inspection operation; neither the
+node nor its private state is retained.
+"""
+
+SNAPSHOT_NODE_REQUIRED: Final = "snapshot-node-required"
+SNAPSHOT_VIEW_OWNER_MISMATCH: Final = "snapshot-view-owner-mismatch"
+SNAPSHOT_PIN_UNAVAILABLE: Final = "snapshot-pin-unavailable"
+SNAPSHOT_EDGE_UNAVAILABLE: Final = "snapshot-edge-unavailable"
+SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE: Final = "snapshot-wire-envelope-ineligible"
+SNAPSHOT_WIRE_INPUT_EDITED: Final = "snapshot-wire-input-edited"
+SNAPSHOT_WIRE_INPUT_INCOMPATIBLE: Final = "snapshot-wire-input-incompatible"
+SNAPSHOT_WIRE_AT_UNREQUESTED: Final = "snapshot-wire-at-unrequested"
+SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH: Final = "snapshot-wire-at-concrete-mismatch"
 
 
-class SnapshotInspectionError(RuntimeError):
-    """An inspection operation was asked something this node cannot answer.
-
-    A ``RuntimeError`` because every code reports that the *node* — or the pairing
-    of node and path — makes the question unanswerable, never that an argument's
-    value was rejected. ``operation`` names the inspection function and ``entity``
-    the node's own concrete Entity Identity where one is known. Neither the node
-    nor its private state is retained or exposed.
-    """
-
-    def __init__(
-        self,
-        *,
-        code: str,
-        message: str,
-        operation: str,
-        entity: EntityIdentity | None = None,
-    ) -> None:
-        if code not in SNAPSHOT_INSPECTION_CODES:
-            raise ValueError(f"{code!r} is not a snapshot inspection code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-        self.operation = operation
-        self.entity = entity
+def inspection_refusal(code: SnapshotInspectionCode, operation: str, reason: str) -> UsageError:
+    """The refusal of the inspection ``operation`` for ``reason``."""
+    return UsageError(code, f"{operation}: {reason}")
 
 
 class RootConformance(Enum):
@@ -261,13 +262,10 @@ def typed_pin_of(node: object) -> Pin:
 def required_pin(provenance: NodeProvenance) -> Pin:
     """The Pin ``provenance`` retains, refusing a node no As-Of Axis pinned."""
     if provenance.pin is None:
-        raise SnapshotInspectionError(
-            code="snapshot-pin-unavailable",
-            message=(
-                f"{provenance.entity.canonical} declares no as-of axis, so it was read at no pin"
-            ),
-            operation="pin_of",
-            entity=provenance.entity,
+        raise inspection_refusal(
+            SNAPSHOT_PIN_UNAVAILABLE,
+            "pin_of",
+            f"{provenance.entity.canonical} declares no as-of axis, so it was read at no pin",
         )
     return provenance.pin
 
@@ -287,11 +285,10 @@ def typed_edge_of(node: object) -> Edge:
     cached = state.edge_cache
     if cached is None:
         entity = state.provenance.entity
-        raise SnapshotInspectionError(
-            code="snapshot-edge-unavailable",
-            message=f"{entity.canonical} is not temporal, so it stands on no milestone",
-            operation="edge_of",
-            entity=entity,
+        raise inspection_refusal(
+            SNAPSHOT_EDGE_UNAVAILABLE,
+            "edge_of",
+            f"{entity.canonical} is not temporal, so it stands on no milestone",
         )
     if isinstance(cached, Edge):
         return cached
@@ -455,13 +452,11 @@ def _unloaded(path: str, *, raising: bool) -> _UnloadedMarker:
 def _required_state(node: object, operation: str) -> SnapshotNodeState:
     state = snapshot_state_of(node)
     if state is None:
-        raise SnapshotInspectionError(
-            code="snapshot-node-required",
-            message=(
-                f"{operation} inspects a node a Snapshot read materialized; "
-                f"{type(node).__name__} carries no Snapshot state"
-            ),
-            operation=operation,
+        raise inspection_refusal(
+            SNAPSHOT_NODE_REQUIRED,
+            operation,
+            "it inspects only a node a Snapshot read materialized, and "
+            f"{type(node).__name__} carries no Snapshot state",
         )
     return state
 
@@ -475,14 +470,11 @@ def _require_path(node: object, path: object, operation: str) -> AuthoredInclude
     ancestor's identity.
     """
     if not isinstance(path, IncludePath):
-        raise SnapshotInspectionError(
-            code="snapshot-view-owner-mismatch",
-            message=(
-                f"{operation} takes a class-derived Relationship Path "
-                "(`Owner.items`, `Owner.pets.narrow(Dog)`), never a bare relationship name"
-            ),
-            operation=operation,
-            entity=_entity_of(node),
+        raise inspection_refusal(
+            SNAPSHOT_VIEW_OWNER_MISMATCH,
+            operation,
+            "it takes a class-derived Relationship Path "
+            "(`Owner.items`, `Owner.pets.narrow(Dog)`), never a bare relationship name",
         )
     authored = authored_include_path(cast("IncludePath[Any, Any]", path))
     first = authored.segments[0]
@@ -491,16 +483,13 @@ def _require_path(node: object, path: object, operation: str) -> AuthoredInclude
     return authored
 
 
-def _owner_mismatch(
-    node: object, segment: AuthoredIncludeSegment, operation: str
-) -> SnapshotInspectionError:
+def _owner_mismatch(node: object, segment: AuthoredIncludeSegment, operation: str) -> UsageError:
     entity = _entity_of(node)
     reached = "an Entity this path cannot address" if entity is None else entity.canonical
-    return SnapshotInspectionError(
-        code="snapshot-view-owner-mismatch",
-        message=f"{segment.described()} names no relationship applying to {reached}",
-        operation=operation,
-        entity=entity,
+    return inspection_refusal(
+        SNAPSHOT_VIEW_OWNER_MISMATCH,
+        operation,
+        f"{segment.described()} names no relationship applying to {reached}",
     )
 
 

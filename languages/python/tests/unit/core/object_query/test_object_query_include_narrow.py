@@ -45,7 +45,6 @@ from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._model import model_of
-from parallax.core.execution import DeferredFeatureError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import AsOf, AsOfRange, History, IncludeSegment
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
@@ -710,9 +709,9 @@ def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> N
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
-    with pytest.raises(DeferredFeatureError) as caught:
+    with raises_code(UsageError, "execution-feature-deferred") as caught:
         resolve_read_query(object_query_node(query, POLICY_MODEL), model=model_of(POLICY_MODEL))
-    assert caught.value.features == ("snapshot-history-includes",)
+    assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 
 
 def test_a_narrow_clause_requires_at_least_one_subtype() -> None:

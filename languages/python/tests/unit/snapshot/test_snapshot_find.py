@@ -46,10 +46,12 @@ from parallax.core import (
     read_planning,
     rel,
 )
+from parallax.core._execution._features import deferred_feature_refusal
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import (
     INFINITY,
     INT64,
+    InternalError,
     NoResultFound,
     StructuredDocument,
     TooManyResultsFound,
@@ -71,8 +73,6 @@ from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
-    DeferredFeatureError,
-    QueryTargetError,
     ServingModel,
     prepare_model,
 )
@@ -97,6 +97,7 @@ from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
 from parallax.core.read_delivery._page import (
     ABSENT,
+    CONTINUATION_ORDER_NOT_TOTAL,
     RESULT_DATA_INVALID,
     ChildSlot,
     InvalidRootInput,
@@ -121,7 +122,6 @@ from parallax.descriptor._records import Inheritance
 from parallax.snapshot import (
     Database,
     Snapshot,
-    SnapshotMaterializationError,
     WireEntity,
     pin_of,
 )
@@ -139,6 +139,7 @@ from tests._support.db_port import (
     Transact,
 )
 from tests._support.document_reads import fold_mapping_rows
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._root_publication_support import each_root, observed_roots
@@ -1175,7 +1176,7 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
             "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
         }
     )
-    with pytest.raises(DeferredFeatureError, match="snapshot-history-includes"):
+    with raises_code(UsageError, "execution-feature-deferred", match="snapshot-history-includes"):
         _find_history(query, policy, port)
 
 
@@ -1189,7 +1190,7 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     # resolution resolves the target before anything else, so the port is never
     # touched: a refusing port raises on any read or write.
     db = own_root(Database.connect(RefusingAdapter(), ACCOUNT)).using_database_login()
-    with pytest.raises(QueryTargetError) as caught:
+    with raises_code(UsageError, "query-target-not-in-model") as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
 
@@ -1203,10 +1204,10 @@ def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
-    with pytest.raises(DeferredFeatureError) as caught:
+    with raises_code(UsageError, "execution-feature-deferred") as caught:
         db.find(query)
     assert caught.value.code == "execution-feature-deferred"
-    assert caught.value.features == ("snapshot-history-includes",)
+    assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 
 
 def test_a_pinned_axis_with_includes_is_not_deferred() -> None:
@@ -1236,9 +1237,9 @@ def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
         .limit(5)
         .include(Policy.coverages)
     )
-    with pytest.raises(DeferredFeatureError) as caught:
+    with raises_code(UsageError, "execution-feature-deferred") as caught:
         db.find(query)
-    assert caught.value.features == ("snapshot-history-includes",)
+    assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 
 
 def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
@@ -1250,7 +1251,7 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
-    with pytest.raises(QueryTargetError) as caught:
+    with raises_code(UsageError, "query-target-not-in-model") as caught:
         db.find(query)
     assert caught.value.code == "query-target-not-in-model"
 
@@ -1258,20 +1259,11 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
 def test_a_refusal_reports_every_matching_feature_in_ascending_order() -> None:
     # The installed inventory holds ONE member, and a second is a coordinated
     # contract change rather than a test fixture, so the multi-match promise is
-    # pinned on the value that carries it: `features` is every match, ascending,
-    # whatever order the matching set iterated in.
-    error = DeferredFeatureError(frozenset({"snapshot-history-includes", "a-staged-feature"}))
-    assert error.features == ("a-staged-feature", "snapshot-history-includes")
-    assert "a-staged-feature, snapshot-history-includes" in str(error)
-
-
-def test_a_refusal_naming_no_feature_cannot_be_constructed() -> None:
-    # `features` is nonempty by construction, not merely by the seam's own
-    # guard: the class is exported, so a caller reaches the constructor
-    # directly, and an empty match set is the answer for a query this
-    # implementation EXECUTES — a refusal built from one would name no reason.
-    with pytest.raises(ValueError, match="at least one Feature"):
-        DeferredFeatureError(frozenset())
+    # pinned on the refusal that carries it: every match, ascending, whatever
+    # order the matching set iterated in.
+    error = deferred_feature_refusal(frozenset({"snapshot-history-includes", "a-staged-feature"}))
+    assert error.code == "execution-feature-deferred"
+    assert "has deferred a-staged-feature, snapshot-history-includes and" in error.args[1]
 
 
 def test_every_execution_reads_the_querys_own_authored_state(
@@ -1321,7 +1313,7 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
     # raised before any graph was being built is never re-classified as a
     # materialization failure.
     db = own_root(Database.connect(RefusingAdapter(), ACCOUNT)).using_database_login()
-    with pytest.raises(QueryTargetError):
+    with raises_code(UsageError, "query-target-not-in-model"):
         db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
 
@@ -1334,7 +1326,7 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
     with pytest.raises(InvalidDataError) as refusal:
         snapshot.result()
-    assert not isinstance(refusal.value, SnapshotMaterializationError)
+    assert not isinstance(refusal.value, InternalError)
     (record,) = refusal.value.invalid_data
     assert record.data is None
     # Both diagnoses ride one record: the required `street` key is absent and the
@@ -1375,10 +1367,9 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
         ]
     )
     db = own_root(Database.connect(port, read_models.BALANCE_MODEL)).using_database_login()
-    with raises_contextualized(SnapshotMaterializationError) as refusal:
+    with raises_contextualized(InternalError, code="snapshot-materialization-failed") as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
-    assert refusal.value.code == "snapshot-materialization-failed"
-    assert isinstance(refusal.value.cause, ValueError)
+    assert isinstance(refusal.value.__cause__, ValueError)
 
 
 # --------------------------------------------------------------------------- #
@@ -1492,7 +1483,28 @@ def test_only_a_result_refusal_carries_records_or_an_edition() -> None:
     with pytest.raises(ValueError, match="only a result-data-invalid refusal"):
         InvalidDataError("stored-data-decoding-failed", "with an edition", edition="edition")
     atomic = InvalidDataError("stored-data-decoding-failed", "no result to report")
-    assert (atomic.invalid_data, atomic.edition) == ((), None)
+    assert (atomic.invalid_data, atomic.edition, atomic.coordinate) == ((), None, None)
+
+
+def test_only_a_continuation_tie_refusal_carries_a_coordinate() -> None:
+    with pytest.raises(ValueError, match="only one, carries a coordinate"):
+        InvalidDataError(CONTINUATION_ORDER_NOT_TOTAL, "no coordinate")
+    with pytest.raises(ValueError, match="only one, carries a coordinate"):
+        InvalidDataError("stored-data-decoding-failed", "with a coordinate", coordinate=(2,))
+    with pytest.raises(ValueError, match="only one, carries a coordinate"):
+        InvalidDataError(
+            RESULT_DATA_INVALID,
+            "with a coordinate",
+            invalid_data=(_invalid(0),),
+            edition="edition",
+            coordinate=(2,),
+        )
+    with pytest.raises(ValueError, match="only a result-data-invalid refusal"):
+        InvalidDataError(
+            CONTINUATION_ORDER_NOT_TOTAL, "with an edition", edition="edition", coordinate=(2,)
+        )
+    tie = InvalidDataError(CONTINUATION_ORDER_NOT_TOTAL, "a tie", coordinate=(2,))
+    assert (tie.invalid_data, tie.edition, tie.coordinate) == ((), None, (2,))
 
 
 def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:

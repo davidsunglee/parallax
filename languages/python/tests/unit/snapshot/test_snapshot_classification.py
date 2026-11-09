@@ -30,7 +30,7 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
-from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument
+from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyFacet
 from parallax.core.concurrency import view as concurrency_view
 from parallax.core.db_port import MappingRow
@@ -51,7 +51,6 @@ from parallax.core.read_delivery._page import Page, PageRows, invalid_result_ref
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
-    TemporalReadError,
     valid_time_coverage,
 )
 from parallax.core.temporal_read import view as temporal_view
@@ -68,6 +67,7 @@ from tests._support.db_port import (
     Read,
     ScriptedAdapter,
 )
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._root_publication_support import each_root
 from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded_identity_page
@@ -456,7 +456,9 @@ def test_an_inherited_roots_rejected_valid_time_end_has_no_coverage() -> None:
     page, shape = _deposit_rate_page("not-an-instant")
     rows = page_rows(page)
 
-    with pytest.raises(TemporalReadError, match=r"Rate\.validEnd: .*interval endpoint"):
+    with raises_code(
+        UsageError, "temporal-read-invalid", match=r"Rate\.validEnd: .*interval endpoint"
+    ):
         valid_time_coverage(shape, rows, rows.roots[0])
 
 

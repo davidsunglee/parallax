@@ -175,7 +175,7 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
 - `parallax.core.write_plan.keys:ObjectKey`
 - `parallax.core.write_plan.keys:VersionedObjectStateKey`
-- `parallax.core._execution._unit_work._errors:WriteEvidenceError`
+- `parallax.core._execution._unit_work._errors:write_evidence_refusal`
 
 ## From verb to buffer
 
@@ -231,7 +231,7 @@ everything it opened is removed, or a later insertion of the object supersedes i
               │   SourceAuthority transitions onto its WriteOwnership
               │   insert                   open_insertion issues an InsertionIdentity,
               │                            superseding an earlier insertion's; a repeat
-              │                            of a standing insertion → KeyedWriteValueError
+              │                            of a standing insertion → UsageError
               │                            (write-value-already-stored)
               │   insertion-authorized     resolve_insertion_authorized_write: refused
               │     write                  once that insertion no longer stands; takes
@@ -256,7 +256,7 @@ everything it opened is removed, or a later insertion of the object supersedes i
               │                            Locking, confirm_target reads its starting
               │                            row unless a pending write or a live read
               │                            (has_live_observation) already proves it
-              │   anything else            WriteEvidenceError
+              │   anything else            UsageError
               │                            (write-evidence-already-claimed)
               ▼
  COMPOSED   WriteAdmission.composed_writes()
@@ -347,7 +347,7 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work._write_ownership:WriteOwnership`
 - `parallax.core._execution._unit_work._write_ownership:WriteOwnership.open_insertion`
 - `parallax.core._execution._unit_work._write_ownership:InsertionRecord`
-- `parallax.core._execution._unit_work._errors:KeyedWriteValueError`
+- `parallax.core._execution._unit_work._errors:KeyedWriteValueCode`
 - `parallax.core._execution._unit_work.admission:WriteAdmission.composed_writes`
 - `parallax.core._execution._unit_work.claims:admits`
 

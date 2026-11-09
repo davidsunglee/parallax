@@ -4,7 +4,14 @@ from parallax.core._execution._transaction._lifetime import (
     TRANSACTION_ESCAPED,
     TRANSACTION_ROLLBACK_ONLY,
 )
-from parallax.core._execution._unit_work._errors import UnobservedVersionError
+from parallax.core._execution._unit_work._errors import (
+    VERSION_UNOBSERVED,
+    WRITE_EVIDENCE_ALREADY_CLAIMED,
+    WRITE_EVIDENCE_CONSUMED,
+    WRITE_EVIDENCE_INSERTED,
+    WRITE_EVIDENCE_UNAVAILABLE,
+    WriteEvidenceCode,
+)
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
     ClaimVerdict,
@@ -63,13 +70,10 @@ from parallax.core._execution._unit_work.strategy import (
     SubjectActor,
 )
 from parallax.core._execution._unit_work.uow import (
-    WRITE_EVIDENCE_CODES,
     BufferOutcome,
     FlushTrigger,
     TransactionSettings,
     UnitOfWork,
-    WriteEvidenceError,
-    WriteEvidenceErrorCode,
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
@@ -97,7 +101,11 @@ __all__ = [
     "TEMPORAL_CONFLICT",
     "TRANSACTION_ESCAPED",
     "TRANSACTION_ROLLBACK_ONLY",
-    "WRITE_EVIDENCE_CODES",
+    "VERSION_UNOBSERVED",
+    "WRITE_EVIDENCE_ALREADY_CLAIMED",
+    "WRITE_EVIDENCE_CONSUMED",
+    "WRITE_EVIDENCE_INSERTED",
+    "WRITE_EVIDENCE_UNAVAILABLE",
     "WRITE_INSTRUCTION_INVALID",
     "WRITE_PRECONDITION_FAILED",
     "AdmittedWrite",
@@ -125,11 +133,9 @@ __all__ = [
     "TransactionInstant",
     "TransactionSettings",
     "UnitOfWork",
-    "UnobservedVersionError",
     "WriteAssignment",
     "WriteEffectCode",
-    "WriteEvidenceError",
-    "WriteEvidenceErrorCode",
+    "WriteEvidenceCode",
     "WriteIntent",
     "WritePlanner",
     "WritePlanningRequest",

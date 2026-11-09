@@ -26,7 +26,6 @@ from parallax.conformance._mechanism.model_facts import (
 from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import read_only, transact, underlying
 from parallax.core import read_delivery
-from parallax.core.continuation import ContinuationError
 from parallax.core.db_port import MappingRow
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.metamodel import (
@@ -314,9 +313,6 @@ def run_graph_case(
     )
 
 
-_STREAM_ERRORS = (*READ_ERRORS, ContinuationError, read_delivery.StreamStateError)
-
-
 def _stream_batch_size(case: case_format.Case) -> int:
     when = case.document.get("when")
     size = (
@@ -440,7 +436,7 @@ def _wire_delivery(
 
         try:
             return _case_read(case, db, drained), observed
-        except _STREAM_ERRORS as exc:
+        except READ_ERRORS as exc:
             raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
 
 

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from parallax.core.dialect import Dialect
 
 __all__ = [
+    "AUTHORIZATION_INVALID",
     "AcquisitionReason",
     "CleanupCode",
     "CleanupIssue",
@@ -32,7 +33,6 @@ __all__ = [
     "DatabaseAdapter",
     "DatabaseRuntime",
     "DatabaseStartupError",
-    "InvalidAuthorizationError",
     "Invalidated",
     "ReleaseUnconfirmed",
     "Returned",
@@ -215,8 +215,9 @@ class ConnectionAcquisitionError(ParallaxError):
         return self.reason in _TRANSIENT_ACQUISITION_REASONS
 
 
-class InvalidAuthorizationError(ValueError):
-    """An adapter refused the shape of a resource-free authorization value."""
+AUTHORIZATION_INVALID: Final = "authorization-invalid"
+"""The code of the :class:`~parallax.core.base.UsageError` an adapter raises for
+the shape of a resource-free authorization value it refuses."""
 
 
 type StartupPhase = Literal["open", "minimum_ready", "acquire", "probe", "release"]

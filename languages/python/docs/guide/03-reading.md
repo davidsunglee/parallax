@@ -32,9 +32,8 @@ from parallax.core import (
     attr,
 )
 from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.execution import ExecutionFailure, TransactionAccessModeError
-from parallax.core.read_delivery import InvalidData, InvalidDataError, StreamStateError
-from parallax.core.unit_work import WriteEvidenceError
+from parallax.core.execution import ExecutionFailure
+from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
     ReadOnlyTxnContext,
     ScopedDatabase,
@@ -87,7 +86,7 @@ writes, and [Transactions](05-transactions.md) covers isolation and locking.
 | Do a stream's pages agree? | No. Each page is consistent only within itself | At Repeatable Read or Serializable, a row already delivered can't change value, and on PostgreSQL every page reads the transaction's one snapshot, so no new rows appear either. At Read Committed, each page is consistent only within itself | As for read-only |
 | Row locks | None | None | A shared lock on each row read from an entity that uses the locking strategy: always a Non-Temporal entity without a version, such as `Customer`, and every entity when the transaction prefers locking |
 | Sees this transaction's pending writes | No. It reads outside every transaction | Nothing to see: a read-only transaction writes nothing | Yes. The read first sends the pending writes |
-| Can the value license a later write? | No. Amending it raises `WriteEvidenceError`; a [target write](04-writing.md#target-writes), which states the version the value showed, can write it instead | No, as for a standalone read | Yes, within the same attempt. History and range reads can't, and a value read at a past Transaction Time is read-only |
+| Can the value license a later write? | No. Amending it raises a `UsageError` with code `write-evidence-unavailable`; a [target write](04-writing.md#target-writes), which states the version the value showed, can write it instead | No, as for a standalone read | Yes, within the same attempt. History and range reads can't, and a value read at a past Transaction Time is read-only |
 | Stream lifetime | Can stay open across pages, holding no connection between them | Ends with the attempt | Ends with the attempt |
 
 Both kinds of transaction run at Read Committed unless you pass `isolation=`, as
@@ -113,7 +112,8 @@ reader's side:
 <!-- example: re-read-before-amending -->
 ```python
 def amend_a_value_read_earlier(db: ScopedDatabase, customer: Customer, email: str) -> None:
-    """Refused with ``WriteEvidenceError``: ``customer`` was read outside this transaction."""
+    """Refused with ``write-evidence-unavailable``: ``customer`` was read outside this
+    transaction."""
     db.transact(lambda tx: tx.amend(customer.edit(email=email)))
 
 
@@ -128,8 +128,8 @@ def amend_after_reading_it_again(db: ScopedDatabase, customer_id: int, email: st
 ```
 <!-- /example -->
 
-In the first function, `tx.amend` raises `WriteEvidenceError` before anything is
-written; outside the callback it arrives as the `cause` of the `ExecutionFailure` that
+In the first function, `tx.amend` raises a `UsageError` with code
+`write-evidence-unavailable` before anything is written; outside the callback it arrives as the `cause` of the `ExecutionFailure` that
 [Getting started](01-getting-started.md#write-in-a-transaction) described. In the
 second, the read inside the transaction licenses the amendment. `Customer` has no
 version, so that read also takes a shared lock on the customer's row, which holds until
@@ -208,10 +208,11 @@ def customer_with_their_orders(
 
 Called alone, `orders_of` opens its own read-only transaction. Called from
 `customer_with_their_orders`, it joins that transaction and reads the same snapshot as
-the customer. A `db.transact` call made inside a read-only callback is refused with
-`TransactionAccessModeError` before its callback runs, and catching that refusal leaves
-the read-only transaction usable. The reverse holds too: called from inside a
-`db.transact` callback, `orders_of` raises `TransactionAccessModeError`, so a helper that both kinds of
+the customer. A `db.transact` call made inside a read-only callback is refused with a
+`UsageError` whose code is `transaction-access-mode-mismatch` before its callback runs,
+and catching that refusal leaves the read-only transaction usable. The reverse holds
+too: called from inside a `db.transact` callback, `orders_of` raises the same refusal,
+so a helper that both kinds of
 caller use takes the context to read through as a parameter instead. [Transactions](05-transactions.md#running-a-transaction) covers
 nesting in full, including what happens when a joined callback fails.
 
@@ -497,8 +498,8 @@ between pages, and while your loop runs, it holds none, and other work can use t
 connection. A stream inside a transaction uses the transaction's connection instead.
 
 A stream ends when its results run out or when you leave the `with` block, whichever
-comes first. Using it after that, entering it twice or iterating it twice raises
-`StreamStateError`. If a page fails partway through, the results already delivered stay
+comes first. Using it after that, entering it twice or iterating it twice raises a
+`UsageError` with code `stream-state-invalid`. If a page fails partway through, the results already delivered stay
 delivered, and the failure is raised in place of the next one. A standalone stream
 raises it as an `ExecutionFailure`, as a failing standalone read does. Inside a
 transaction it is the page's own error, which `transact` wraps if you let it escape the
@@ -878,7 +879,7 @@ Transaction Time: what the query selected, not where the price begins, which is 
 this pin, direct or projected, root or included, eager or streamed, and each root of a
 history or range read holds the start of its own milestone. A hydrated node inside
 `InvalidData` answers too, but the record itself does not. `pin_of` performs no I/O and
-grants no write authority. It raises `SnapshotInspectionError` with
+grants no write authority. It raises a `UsageError` with code
 `snapshot-pin-unavailable` for a non-temporal node, and with `snapshot-node-required` for
 anything no read published, such as the node an insert returned, or a `dict(node)` copy.
 

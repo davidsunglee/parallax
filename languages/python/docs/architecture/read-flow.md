@@ -435,7 +435,7 @@ are already published into Wire form in memory, with no further read.
               publish    outside the batch: roots_of for this Page; roots handed over
                          one at a time
               then       resume_from → next page | exhausted → done
-                         | tie → StreamContinuationError
+                         | tie → InvalidDataError(snapshot-stream-continuation-order-not-total)
               milestone-set stream: the same pages, root-only, each root at its own
                          edge, and an empty delivery Pin
 
@@ -469,7 +469,7 @@ before anything is buffered; a value this attempt inserted is licensed instead b
 insertion, while `SourceAuthority.insertion_authority` answers that insertion as
 standing. The
 value's pin is checked at the same verb: a value read at a finite Transaction-Time
-instant is refused by `validate_source_pin` with `TransactionTimePinReadOnlyError`,
+instant is refused by `validate_source_pin` with `transaction-time-pin-read-only`,
 even when a writable attempt read it. Publication provenance — the concrete Entity,
 the Pin, and whether the root conformed — is recorded on every published value, with
 or without evidence, as one `NodeProvenance` that a Typed node's state and a Wire node
@@ -506,7 +506,7 @@ exhausted, failed or stopped early.
 - `parallax.core._execution._transaction._attempt:_TxnAttemptBase.stream`
 - `parallax.core.read_delivery._stream:check_batch_size`
 - `parallax.core.read_delivery._stream:StreamDelivery.enter`
-- `parallax.core.read_delivery._stream:StreamContinuationError`
+- `parallax.core.read_delivery._stream:_continuation_tie_refusal`
 - `parallax.core.read_delivery._paging:PagingPlan`
 - `parallax.core.read_delivery._paging:At`
 - `parallax.core.read_delivery._paging:page_decision`
@@ -522,7 +522,7 @@ exhausted, failed or stopped early.
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
 - `parallax.core._execution._keyed_writes:validate_source_pin`
-- `parallax.core._execution._keyed_writes:TransactionTimePinReadOnlyError`
+- `parallax.core._execution._keyed_writes:TRANSACTION_TIME_PIN_READ_ONLY`
 
 ## Where the contracts live
 

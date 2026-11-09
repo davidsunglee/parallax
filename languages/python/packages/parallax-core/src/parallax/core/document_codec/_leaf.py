@@ -17,7 +17,6 @@ from parallax.core.base import (
     retain_document_value,
 )
 from parallax.core.wire import (
-    WireEncodingError,
     WireValue,
     decode_canonical_wire,
     encode_wire,
@@ -85,8 +84,8 @@ def encode_leaf(neutral_type: NeutralType, value: object) -> object:
     """
     try:
         return encode_wire(neutral_type, cast("ManagedValue", value))
-    except WireEncodingError as exc:
-        raise LeafEncodingError(str(exc)) from exc
+    except UsageError as exc:
+        raise LeafEncodingError(exc.args[1]) from exc
 
 
 def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> tuple[object, ...]:
@@ -100,8 +99,8 @@ def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> t
     for index, value in enumerate(values):
         try:
             encoded.append(encode_wire(element_type, cast("ManagedValue", value)))
-        except WireEncodingError as exc:
-            raise LeafEncodingError(f"element {index}: {exc}") from exc
+        except UsageError as exc:
+            raise LeafEncodingError(f"element {index}: {exc.args[1]}") from exc
     return tuple(encoded)
 
 

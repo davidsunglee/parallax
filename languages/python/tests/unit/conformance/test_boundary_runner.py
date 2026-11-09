@@ -29,6 +29,7 @@ from parallax.conformance.boundary_runner import (
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import DomainModel
+from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
@@ -56,8 +57,6 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import (
     AdaptiveBackoff,
     RetryPolicy,
-    TransactionAccessModeError,
-    TransactionOptionConflictError,
     TxnOptions,
 )
 from parallax.core.sql_gen import LoweredStatement
@@ -322,7 +321,7 @@ def test_a_join_naming_a_second_level_is_refused_by_production() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
-    with raises_contextualized(TransactionOptionConflictError):
+    with raises_contextualized(UsageError, code="transaction-option-conflict"):
         db.transact(fn, isolation="repeatable_read")
 
 
@@ -399,7 +398,7 @@ def test_a_join_naming_the_other_access_mode_is_refused_by_production() -> None:
     def fn(tx: TxnContext) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, _ACCOUNT_TARGET, database=db)
 
-    with raises_contextualized(TransactionAccessModeError):
+    with raises_contextualized(UsageError, code="transaction-access-mode-mismatch"):
         db.transact(fn)
 
 
@@ -958,7 +957,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
     if outcome == "committed":
         db.transact(fn, **requests)
     else:
-        with raises_contextualized(TransactionOptionConflictError):
+        with raises_contextualized(UsageError, code="transaction-option-conflict"):
             db.transact(fn, **requests)
     effective = case_format.effective_options(case)
     attempts = boundary_runner.expected_attempts(

@@ -24,7 +24,6 @@ from parallax.core.base import (
 )
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.wire import (
-    WireEncodingError,
     WireValue,
     decode_canonical_wire,
     decode_wire,
@@ -864,7 +863,7 @@ def test_out_of_space_yaml_numbers_are_not_managed_scalar_members() -> None:
         value = loaded["value"]
         for neutral_type in scalar_types:
             assert matches_neutral_type(value, neutral_type) is False
-            with pytest.raises(WireEncodingError):
+            with raises_code(UsageError, "wire-encoding-failed"):
                 encode_wire(neutral_type, cast("ManagedValue", value))
 
 

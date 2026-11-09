@@ -43,16 +43,16 @@ from parallax.core.read_delivery._page._rows import (
     with_identity_findings,
 )
 from parallax.core.read_delivery._page._stored_data import (
-    INTERPRETER_OWNED_ATTRIBUTES,
+    CONTINUATION_ORDER_NOT_TOTAL,
     MISSING_STORED_VALUE,
     RESULT_DATA_INVALID,
     STORED_DATA_DECODING_FAILED,
     InvalidData,
     InvalidDataError,
-    StoredDataDecodingError,
     StoredDataIssue,
     invalid_result_refusal,
-    stored_data_refusal,
+    member_spelling,
+    undecodable_data_refusal,
 )
 from parallax.core.read_delivery._page._views import (
     ROOT_LEVEL,
@@ -65,8 +65,8 @@ from parallax.core.read_delivery._page._views import (
 
 __all__ = [
     "ABSENT",
+    "CONTINUATION_ORDER_NOT_TOTAL",
     "INERT_OBSERVER",
-    "INTERPRETER_OWNED_ATTRIBUTES",
     "MISSING_STORED_VALUE",
     "NON_HYDRATING_CODES",
     "RESULT_DATA_INVALID",
@@ -86,7 +86,6 @@ __all__ = [
     "RowKey",
     "SourceLevel",
     "SourceViewLayout",
-    "StoredDataDecodingError",
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
@@ -100,6 +99,7 @@ __all__ = [
     "invalid_result_refusal",
     "judged_entity_state",
     "layout_order_key",
+    "member_spelling",
     "observed_edge",
     "observed_object_key",
     "observed_version",
@@ -113,7 +113,7 @@ __all__ = [
     "release_finished_rows",
     "release_page_rows",
     "same_stored_values",
-    "stored_data_refusal",
     "stored_order_key",
+    "undecodable_data_refusal",
     "with_identity_findings",
 ]

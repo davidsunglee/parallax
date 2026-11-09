@@ -34,14 +34,12 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
 from parallax.core.entity._model import DomainModel
-from parallax.core.execution import KeyedWriteValueError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
-    WriteEvidenceError,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -51,7 +49,6 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from parallax.snapshot import (
-    SnapshotInspectionError,
     TxnContext,
     WireEntity,
     connect,
@@ -618,9 +615,8 @@ def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
     assert restored == node
     assert snapshot_state_of(restored) is None
 
-    with raises_contextualized(KeyedWriteValueError) as refusal:
+    with raises_contextualized(UsageError, code="write-value-not-stored"):
         db.transact(lambda tx: tx.amend(restored.edit(balance=Decimal("125.00"))))
-    assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -1060,13 +1056,11 @@ def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     assert isinstance(wire.data, WireEntity)
     assert stored_provenance_of(wire.data) is None
     for hydrated in (typed.data, wire.data):
-        with pytest.raises(SnapshotInspectionError) as non_temporal:
+        with raises_code(UsageError, "snapshot-pin-unavailable"):
             pin_of(hydrated)
-        assert non_temporal.value.code == "snapshot-pin-unavailable"
     for wrapper in (typed, wire):
-        with pytest.raises(SnapshotInspectionError) as wrapped:
+        with raises_code(UsageError, "snapshot-node-required"):
             pin_of(wrapper)
-        assert wrapped.value.code == "snapshot-node-required"
 
 
 def test_a_classified_temporal_roots_hydrated_data_answers_its_pin_without_write_authority() -> (
@@ -1086,9 +1080,8 @@ def test_a_classified_temporal_roots_hydrated_data_answers_its_pin_without_write
     pin = Pin(tx_time=LATEST, valid_time=_CENSUS_AT)
     assert pin_of(typed.data) == pin_of(wire.data) == pin
     for wrapper in (typed, wire):
-        with pytest.raises(SnapshotInspectionError) as refusal:
+        with raises_code(UsageError, "snapshot-node-required"):
             pin_of(wrapper)
-        assert refusal.value.code == "snapshot-node-required"
     assert stored_provenance_of(wire.data) is None
     assert read_evidence_of(wire.data) is None
 
@@ -1099,9 +1092,8 @@ def test_a_classified_temporal_roots_hydrated_data_answers_its_pin_without_write
 # ordinary write under either strategy — the refusal precedes any DML.        #
 # --------------------------------------------------------------------------- #
 def _refused_outside_the_attempt(port: ScriptedAdapter, transact: Callable[[], object]) -> None:
-    with raises_contextualized(WriteEvidenceError) as refusal:
+    with raises_contextualized(UsageError, code="write-evidence-unavailable"):
         transact()
-    assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -1302,7 +1294,6 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         assert _typed_hint(valid_customer) is not None
         tx.amend(invalid_customer.edit(name="Rejected"))
 
-    with raises_contextualized(KeyedWriteValueError) as refusal:
+    with raises_contextualized(UsageError, code="write-value-not-stored"):
         own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login().transact(fn)
-    assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)

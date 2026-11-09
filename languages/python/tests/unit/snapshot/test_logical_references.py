@@ -20,12 +20,13 @@ from parallax.core.entity import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import validate_object_query
 from parallax.core.object_query.serde import deserialize
+from parallax.core.read_delivery import InvalidDataError
 from parallax.core.read_delivery._fetch import attach_children
 from parallax.core.read_delivery._page import Page, PageSchedule, page_rows
 from parallax.core.temporal_read import Pin
-from parallax.snapshot import SnapshotConsistencyError
 from parallax.snapshot._publication import _root_publication
 from parallax.snapshot._publication._graph_view import GraphView
+from tests._support.errors import raises_code
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW, PARENT_ROWS
 from tests.unit._root_publication_support import deferring_schedule, each_root
 from tests.unit.snapshot._snapshot_page_support import PageFixture
@@ -71,11 +72,9 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     rows = list(reversed(PARENT_ROWS)) if reverse else PARENT_ROWS
     children = tuple(fixture.node(str(row["family_variant"]), _concrete(row)) for row in rows)
     attach_children(fixture.builder, meta, plan.includes, step, (root,), children)
-    with pytest.raises(SnapshotConsistencyError) as conflict:
+    with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as conflict:
         fixture.observed_roots(root)
-    assert conflict.value.code == "snapshot-fetched-row-conflict"
-    assert conflict.value.coordinates == ()
-    assert conflict.value.fetched_rows == ((0, 1), (0, 2))
+    assert ": fetched rows (0, 1) and (0, 2) hold" in conflict.value.args[1]
 
 
 @pytest.fixture

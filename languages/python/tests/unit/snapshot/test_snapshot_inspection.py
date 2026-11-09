@@ -31,12 +31,12 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._publication import read_projection
+from parallax.core.base import UsageError
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import ModelSelection, ServingModel, prepare_model
-from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge
+from parallax.core.temporal_read import Edge, Pin, milestone_edge
 from parallax.snapshot import (
     Database,
-    SnapshotInspectionError,
     TxnContext,
     _inspection,
     edge_of,
@@ -45,12 +45,12 @@ from parallax.snapshot import (
     view,
 )
 from parallax.snapshot._inspection import (
-    SNAPSHOT_INSPECTION_CODES,
     NarrowedViews,
     snapshot_state_of,
 )
 from tests._support import snapshot_models as sm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit import _deep_include_support as deep
 from tests.unit._gc_reachability import reachable_objects
@@ -139,18 +139,16 @@ def test_every_operation_refuses_a_node_this_lifecycle_did_not_produce(
         active=True,
         ordered_on=dt.date(2024, 1, 1),
     )
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-node-required") as refusal:
         call(plain)
-    assert refusal.value.code == "snapshot-node-required"
-    assert refusal.value.operation == operation
+    assert refusal.value.args[1].startswith(f"{operation}: ")
 
 
 def test_the_lifecycle_refusal_precedes_the_owner_check() -> None:
     # The path's owner is unrelated to the object AND the object carries no
     # Snapshot state; the lifecycle refusal is the one that fires.
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-node-required"):
         is_view_loaded(object(), sm.SnapOrder.items)
-    assert refusal.value.code == "snapshot-node-required"
 
 
 # --------------------------------------------------------------------------- #
@@ -159,16 +157,14 @@ def test_the_lifecycle_refusal_precedes_the_owner_check() -> None:
 
 
 def test_a_path_whose_owner_does_not_apply_raises_rather_than_answering_false() -> None:
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-view-owner-mismatch") as refusal:
         is_view_loaded(_order_graph(), sm.AnimalOwner.pets)
-    assert refusal.value.code == "snapshot-view-owner-mismatch"
-    assert refusal.value.entity == sm.SnapOrder.identity
+    assert sm.SnapOrder.identity.canonical in refusal.value.args[1]
 
 
 def test_a_bare_relationship_name_is_not_an_accepted_argument() -> None:
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-view-owner-mismatch"):
         is_view_loaded(_order_graph(), cast("Any", "items"))
-    assert refusal.value.code == "snapshot-view-owner-mismatch"
 
 
 def test_a_relationship_an_ancestor_declares_applies_to_its_concrete_subtype() -> None:
@@ -354,18 +350,17 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
     (root,) = fixture.materialize(owner)
     # `AnimalOwner.animals` reaches a `Dog`, whose class answers no relationship
     # for a name another Entity declares.
-    with pytest.raises(SnapshotInspectionError) as refusal:
+    with raises_code(UsageError, "snapshot-view-owner-mismatch"):
         view(root, sm.AnimalOwner.animals.items)
-    assert refusal.value.code == "snapshot-view-owner-mismatch"
 
 
 def test_a_value_a_typed_insert_took_stands_at_no_read_pin() -> None:
-    refusals: list[SnapshotInspectionError] = []
+    refusals: list[UsageError] = []
 
     def fn(tx: TxnContext) -> None:
         balance = read_models.Balance(id=1, acct_num="A-1", value=Decimal("5.00"))
         tx.insert(balance)
-        with pytest.raises(SnapshotInspectionError) as refusal:
+        with pytest.raises(UsageError) as refusal:
             pin_of(balance)
         refusals.append(refusal.value)
 
@@ -373,7 +368,7 @@ def test_a_value_a_typed_insert_took_stands_at_no_read_pin() -> None:
     root.using_database_login().transact(fn)
     (refusal,) = refusals
     assert refusal.code == "snapshot-node-required"
-    assert refusal.operation == "pin_of"
+    assert refusal.args[1].startswith("pin_of: ")
 
 
 # --------------------------------------------------------------------------- #
@@ -662,10 +657,9 @@ def test_a_sibling_never_answers_a_root_segment_it_merely_shares_a_name_with() -
     )
     assert is_view_loaded(dog, deep.Dog.gear) is False
     for operation in (view, is_view_loaded):
-        with pytest.raises(SnapshotInspectionError) as refusal:
+        with raises_code(UsageError, "snapshot-view-owner-mismatch") as refusal:
             operation(cat, deep.Dog.gear)
-        assert refusal.value.code == "snapshot-view-owner-mismatch"
-        assert refusal.value.entity == deep.Cat.identity
+        assert deep.Cat.identity.canonical in refusal.value.args[1]
 
 
 _RESPELLED_NS = "parallax.tests.respelled_root"
@@ -721,10 +715,9 @@ def test_a_root_segment_reads_the_relationship_a_differently_spelled_class_serve
 def test_a_continuation_no_reached_class_declares_is_an_owner_mismatch_at_any_depth() -> None:
     root = _deep_keeper()
     for operation in (view, is_view_loaded):
-        with pytest.raises(SnapshotInspectionError) as refusal:
+        with raises_code(UsageError, "snapshot-view-owner-mismatch") as refusal:
             operation(root, deep.Keeper.animals.toys.no_such_member)
-        assert refusal.value.code == "snapshot-view-owner-mismatch"
-        assert refusal.value.entity == deep.Toy.identity
+        assert deep.Toy.identity.canonical in refusal.value.args[1]
 
 
 # --------------------------------------------------------------------------- #
@@ -762,33 +755,13 @@ def test_a_temporal_node_answers_the_whole_graph_pin_and_its_own_edge() -> None:
 
 def test_a_non_temporal_node_reports_its_missing_pin_and_edge_by_code() -> None:
     root = _order_graph()
-    with pytest.raises(SnapshotInspectionError) as no_pin:
+    with raises_code(UsageError, "snapshot-pin-unavailable") as no_pin:
         pin_of(root)
-    assert no_pin.value.code == "snapshot-pin-unavailable"
-    assert no_pin.value.entity == sm.SnapOrder.identity
+    assert sm.SnapOrder.identity.canonical in no_pin.value.args[1]
 
-    with pytest.raises(SnapshotInspectionError) as no_edge:
+    with raises_code(UsageError, "snapshot-edge-unavailable") as no_edge:
         edge_of(root)
-    assert no_edge.value.code == "snapshot-edge-unavailable"
-    assert no_edge.value.operation == "edge_of"
-
-
-def test_the_inspection_code_set_is_closed_against_an_unlisted_code() -> None:
-    assert {
-        "snapshot-node-required",
-        "snapshot-view-owner-mismatch",
-        "snapshot-pin-unavailable",
-        "snapshot-edge-unavailable",
-        "snapshot-wire-envelope-ineligible",
-        "snapshot-wire-input-edited",
-        "snapshot-wire-input-incompatible",
-        "snapshot-wire-at-unrequested",
-        "snapshot-wire-at-concrete-mismatch",
-    } == SNAPSHOT_INSPECTION_CODES
-    with pytest.raises(ValueError, match="not a snapshot inspection code"):
-        SnapshotInspectionError(
-            code="snapshot-nosuch", message="invented", operation="is_view_loaded"
-        )
+    assert no_edge.value.args[1].startswith("edge_of: ")
 
 
 # --------------------------------------------------------------------------- #
@@ -811,9 +784,9 @@ def test_non_temporal_nodes_without_narrowed_views_share_one_state_per_concrete(
     assert not isinstance(first_state.views, NarrowedViews)
     assert order_state.provenance.entity == sm.SnapOrder.identity
     assert first_state.provenance.entity == sm.SnapOrderItem.identity
-    with pytest.raises(SnapshotInspectionError) as no_pin:
+    with pytest.raises(UsageError) as no_pin:
         pin_of(first)
-    assert no_pin.value.entity == sm.SnapOrderItem.identity
+    assert sm.SnapOrderItem.identity.canonical in no_pin.value.args[1]
 
 
 def test_temporal_nodes_share_provenance_but_each_owns_its_edge_cache() -> None:
@@ -965,12 +938,12 @@ def test_a_failed_first_inspection_leaves_the_edge_to_a_later_one(
     def failing_once(*arguments: Any) -> Edge:
         attempts.append(arguments)
         if len(attempts) == 1:
-            raise TemporalReadError("the first attempt fails")
+            raise UsageError("temporal-read-invalid", "the first attempt fails")
         return milestone_edge(*arguments)
 
     monkeypatch.setattr(_inspection, "milestone_edge", failing_once)
 
-    with pytest.raises(TemporalReadError, match="first attempt"):
+    with raises_code(UsageError, "temporal-read-invalid", match="first attempt"):
         edge_of(root)
     edge = edge_of(root)
 

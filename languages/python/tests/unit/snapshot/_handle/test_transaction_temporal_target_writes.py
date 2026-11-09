@@ -32,15 +32,12 @@ from parallax.core.db_port import MappingRow, StructuredDocument
 from parallax.core.execution import RetryPolicy
 from parallax.core.metamodel import (
     EntityIdentity,
-    ValueObjectAttributeIdentity,
-    ValueObjectIdentity,
 )
-from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
     CARDINALITY_CORRUPTION,
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ROLLBACK_ONLY,
-    WriteEvidenceError,
     WritePreconditionError,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
@@ -669,7 +666,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused(
         tx.insert(WherePosition(id=1, acct_num="A", value=Decimal("1.00")), valid_from=_JAN)
         if flushed:
             tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
-        with pytest.raises(WriteEvidenceError, match="write-evidence-inserted"):
+        with pytest.raises(UsageError, match="write-evidence-inserted"):
             if representation == "typed":
                 _replace(tx, typed=True)
             else:
@@ -763,7 +760,7 @@ def test_exact_window_target_and_observed_writes_compose_into_one_range(
         tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
         if middle is None:
             # The composition destroyed the coverage at the source's pin.
-            with pytest.raises(WriteEvidenceError, match="write-evidence-consumed"):
+            with pytest.raises(UsageError, match="write-evidence-consumed"):
                 tx.amend(source.edit(acct_num="again"))
 
     _db(port).transact(fn, concurrency=concurrency)
@@ -785,7 +782,7 @@ def _refused(*steps: Callable[[TxnContext, WherePosition], object]) -> _Step:
         *earlier, last = steps
         for step in earlier:
             step(tx, source)
-        with pytest.raises(WriteEvidenceError, match="write-evidence-already-claimed"):
+        with pytest.raises(UsageError, match="write-evidence-already-claimed"):
             last(tx, source)
         return source
 
@@ -831,7 +828,7 @@ def test_a_target_after_an_observed_write_of_another_revision_is_refused() -> No
 
     def fn(tx: TxnContext) -> None:
         tx.amend(_source(tx).edit(acct_num="O"), until=_SEP)
-        with pytest.raises(WriteEvidenceError, match="write-evidence-already-claimed"):
+        with pytest.raises(UsageError, match="write-evidence-already-claimed"):
             _patch(tx, value="150.00")
 
     _db(port).transact(fn)
@@ -1149,12 +1146,10 @@ def test_a_family_members_invalid_retained_occurrence_fails_its_flush_without_an
         _family_amend(tx, metadata, {"name": "m"})
         called.append("returned")
 
-    with raises_contextualized(StoredDataDecodingError) as refused:
+    with raises_contextualized(InvalidDataError, code="stored-data-decoding-failed") as refused:
         _db_of(family.MODEL, port).transact(fn, concurrency="locking")
     assert called == ["returned"]
-    assert refused.value.member == ValueObjectAttributeIdentity(
-        ValueObjectIdentity(metadata.identity, ("home",)), "city"
-    )
+    assert " at home.city (" in refused.value.args[1]
     assert len(_reads(port)) == 1
     assert _writes(port) == []
 

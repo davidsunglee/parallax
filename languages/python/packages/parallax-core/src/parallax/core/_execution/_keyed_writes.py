@@ -12,8 +12,9 @@ from typing import Final, Literal, Protocol, cast
 from parallax.core._execution._family import temporal_shape
 from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._unit_work._errors import (
-    KEYED_WRITE_VALUE_CODES,
-    KeyedWriteValueError,
+    WRITE_VALUE_ALREADY_STORED,
+    WRITE_VALUE_FOREIGN_LIFECYCLE,
+    WRITE_VALUE_NOT_STORED,
 )
 from parallax.core._execution._unit_work._write_ownership import (
     NO_INSERTION_AUTHORITY,
@@ -42,16 +43,14 @@ from parallax.core.write_plan import ObjectKey
 from parallax.core.write_plan.managed_row import ManagedRow
 
 __all__ = [
-    "KEYED_WRITE_VALUE_CODES",
+    "TRANSACTION_TIME_PIN_READ_ONLY",
     "KeyedInsertSource",
     "KeyedWriteSource",
-    "KeyedWriteValueError",
     "OpenedKeyedWrite",
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
     "TargetRevisionArguments",
-    "TransactionTimePinReadOnlyError",
     "keyed_insert",
     "keyed_instruction",
     "keyed_write",
@@ -62,20 +61,17 @@ __all__ = [
 ]
 
 
-class TransactionTimePinReadOnlyError(ValueError):
-    """A mutation verb's source view is pinned at a finite Transaction-Time
-    instant:
-    the Transaction-Time past records what the system knew and is never
-    rewritten, so the verb refuses at the call — before any buffering — and
-    emits no DML. This is the neutral application-lifecycle error the
-    conformance contract reports as ``errorClass:
-    transaction-time-pin-read-only`` (`m-conformance-adapter`), distinct from
-    the `m-db-error` database taxonomy. A ``LATEST`` Transaction-Time pin and
-    a finite Valid-Time pin stay writable — the Valid-Time case is the
-    retroactive correction that lowers to the `m-temporal-write` rectangle
-    split."""
+TRANSACTION_TIME_PIN_READ_ONLY: Final = "transaction-time-pin-read-only"
+"""A mutation verb's source view is pinned at a finite Transaction-Time instant.
 
-    code: Final[str] = "transaction-time-pin-read-only"
+The Transaction-Time past records what the system knew and is never rewritten,
+so the verb refuses at the call — before any buffering — and emits no DML. This
+is the neutral application-lifecycle refusal the conformance contract reports
+as ``errorClass: transaction-time-pin-read-only`` (`m-conformance-adapter`),
+distinct from the `m-db-error` database taxonomy. A ``LATEST`` Transaction-Time
+pin and a finite Valid-Time pin stay writable — the Valid-Time case is the
+retroactive correction that lowers to the `m-temporal-write` rectangle split.
+"""
 
 
 type Provenance = Literal["none", "foreign", "this"]
@@ -149,35 +145,26 @@ def validate_provenance(
     if provenance == "none":
         if mutation in INSERT_MUTATIONS or inserted:
             return
-        raise KeyedWriteValueError(
-            code="write-value-not-stored",
-            message=(
-                f"{identity.canonical}: {mutation!r} was handed a value no read of this "
-                f"store produced, so it addresses no stored row; {advice.not_stored}"
-            ),
-            identity=identity,
+        raise UsageError(
+            WRITE_VALUE_NOT_STORED,
+            f"{identity.canonical}: {mutation!r} was handed a value no read of this "
+            f"store produced, so it addresses no stored row; {advice.not_stored}",
         )
     if provenance == "foreign":
-        raise KeyedWriteValueError(
-            code="write-value-foreign-lifecycle",
-            message=(
-                f"{identity.canonical}: {mutation!r} was handed a value another "
-                "framework-managed source produced, and no verb writes another source's "
-                "value through this one; read the row through this transaction and write "
-                "what that read returns"
-            ),
-            identity=identity,
+        raise UsageError(
+            WRITE_VALUE_FOREIGN_LIFECYCLE,
+            f"{identity.canonical}: {mutation!r} was handed a value another "
+            "framework-managed source produced, and no verb writes another source's "
+            "value through this one; read the row through this transaction and write "
+            "what that read returns",
         )
     if mutation in INSERT_MUTATIONS:
-        raise KeyedWriteValueError(
-            code="write-value-already-stored",
-            message=(
-                f"{identity.canonical}: {mutation!r} was handed a value this store published "
-                "for a row it already holds — from its own read, or from an insert this "
-                "transaction buffered — so there is no row to open; "
-                f"{advice.already_stored}"
-            ),
-            identity=identity,
+        raise UsageError(
+            WRITE_VALUE_ALREADY_STORED,
+            f"{identity.canonical}: {mutation!r} was handed a value this store published "
+            "for a row it already holds — from its own read, or from an insert this "
+            "transaction buffered — so there is no row to open; "
+            f"{advice.already_stored}",
         )
 
 
@@ -349,7 +336,8 @@ def keyed_instruction(
 def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     """Reject a mutation sourced from a view pinned at a FINITE Transaction-Time
     instant (`m-temporal-read`'s finite-pin mutation row): raise
-    :class:`TransactionTimePinReadOnlyError` at the verb call, before any
+    a :class:`~parallax.core.base.UsageError` with
+    :data:`TRANSACTION_TIME_PIN_READ_ONLY` at the verb call, before any
     buffering, so no DML is ever emitted. An absent pin, a ``LATEST``
     Transaction-Time pin, and a finite Valid-Time pin all pass — the finite
     Valid-Time pin is the writable retroactive correction (`m-temporal-write`).
@@ -364,12 +352,12 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     tx_time = None if pin is None else pin.tx_time
     if not isinstance(tx_time, dt.datetime):
         return
-    raise TransactionTimePinReadOnlyError(
+    raise UsageError(
+        TRANSACTION_TIME_PIN_READ_ONLY,
         f"{identity.canonical}: the write's source view is pinned at the finite "
         f"Transaction-Time instant {tx_time.isoformat()} and is read-only — the "
-        "Transaction-Time past records what the system knew and is never rewritten "
-        "(transaction-time-pin-read-only); read the current milestone "
-        "(Transaction Time Latest) to mutate it"
+        "Transaction-Time past records what the system knew and is never rewritten; "
+        "read the current milestone (Transaction Time Latest) to mutate it",
     )
 
 

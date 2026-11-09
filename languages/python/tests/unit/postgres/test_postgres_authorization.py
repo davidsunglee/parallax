@@ -8,9 +8,10 @@ from typing import Any, cast
 import pytest
 from psycopg.sql import Composed
 
-from parallax.core.db_port import InvalidAuthorizationError
+from parallax.core.base import UsageError
 from parallax.postgres import PostgresRole
 from parallax.postgres._authorization import install_role, restore_role
+from tests._support.errors import raises_code
 
 
 class _RecordingConnection:
@@ -36,9 +37,9 @@ def test_postgres_role_is_an_immutable_opaque_nonempty_name() -> None:
     assert role.name == " Tenant Role "
     with pytest.raises(FrozenInstanceError):
         role.name = "other"  # pyright: ignore[reportAttributeAccessIssue] - immutability witness
-    with pytest.raises(InvalidAuthorizationError):
+    with raises_code(UsageError, "authorization-invalid"):
         PostgresRole("")
-    with pytest.raises(InvalidAuthorizationError):
+    with raises_code(UsageError, "authorization-invalid"):
         PostgresRole(cast("Any", 7))
 
 

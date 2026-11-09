@@ -33,13 +33,14 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ExecutionFailure,
-    KeyedWriteValueError,
 )
 from parallax.core.unit_work import MISSING_TARGET
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "insertion.authority"
@@ -484,9 +485,8 @@ def test_a_completely_removed_insertion_admits_a_fresh_one_at_its_coordinates(
         _read_span(tx, entity, representation, _MAR)
         first.terminate()
         second = _insert_span(tx, entity, representation, valid_from=_JAN, amount=200)
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-not-stored"):
             first.update(amount=1)
-        assert refused.value.code == "write-value-not-stored"
         _read_span(tx, entity, representation, _MAR)
         second.update(until=_MAY, amount=250)
 
@@ -508,9 +508,8 @@ def test_a_partial_removal_keeps_the_insertion_standing(
         first = _insert_span(tx, entity, representation, valid_from=_JAN)
         _read_span(tx, entity, representation, _MAR)
         first.terminate(until=_MAY)
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-already-stored"):
             _insert_span(tx, entity, representation, valid_from=_JAN, amount=200)
-        assert refused.value.code == "write-value-already-stored"
 
     db.transact(edit)
     assert _span_rows(profile_run, entity) == _current((_MAY, None, 100))
@@ -533,9 +532,8 @@ def test_a_removal_that_moves_an_openings_end_keeps_the_insertion_standing(
         _read_span(tx, entity, representation, _MAY).terminate()
         if helper_read:
             _read_span(tx, entity, representation, _MAR)
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-already-stored"):
             _insert_span(tx, entity, representation, valid_from=_JAN, amount=200)
-        assert refused.value.code == "write-value-already-stored"
         if not helper_read:
             _read_span(tx, entity, representation, _MAR)
         first.update(amount=150)
@@ -603,9 +601,8 @@ def test_an_insertion_authority_ends_with_its_attempt(
     def later(tx: TxnContext) -> None:
         source = opened[0]
         source._tx = tx  # pyright: ignore[reportPrivateUsage] - the held source, in a new attempt
-        with pytest.raises(KeyedWriteValueError) as refused:
+        with raises_code(UsageError, "write-value-not-stored"):
             source.update(amount=150)
-        assert refused.value.code == "write-value-not-stored"
 
     db.transact(later)
     assert _span_rows(profile_run, ColumnsSpan) == _current((_JAN, None, 100))

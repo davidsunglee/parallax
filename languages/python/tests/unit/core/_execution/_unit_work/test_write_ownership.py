@@ -44,7 +44,6 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.entity._model import model_of
-from parallax.core.execution import KeyedWriteValueError
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
@@ -335,7 +334,7 @@ def test_a_repeat_of_a_standing_insertion_is_refused_with_its_openers_advice() -
         if stored:
             ownership.finish_insertion_planning(pending_keys=(_KEY,), removed_objects=())
             ownership.complete((), Openings(continued=(_position_endpoint(None),)))
-        with pytest.raises(KeyedWriteValueError) as refusal:
+        with raises_code(UsageError, "write-value-already-stored") as refusal:
             ownership.open_insertion(
                 _insert(_FEB),
                 pending_removal=NO_TRANSFORM.followed_by(
@@ -344,8 +343,7 @@ def test_a_repeat_of_a_standing_insertion_is_refused_with_its_openers_advice() -
                 removes_object=False,
                 insertion_advice=_REPEATER,
             )
-        assert refusal.value.code == "write-value-already-stored"
-        assert refusal.value.message.endswith("amend the opener")
+        assert refusal.value.args[1].endswith("amend the opener")
         assert ownership.insertion_authority(identity) == TimeInterval(_FEB, INFINITY)
 
 

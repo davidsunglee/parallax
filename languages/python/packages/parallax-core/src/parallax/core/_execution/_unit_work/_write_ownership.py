@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Final, Literal, final
 
 from parallax.core import concurrency, temporal_read
-from parallax.core._execution._unit_work._errors import KeyedWriteValueError
+from parallax.core._execution._unit_work._errors import WRITE_VALUE_ALREADY_STORED
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
 from parallax.core._execution._unit_work.write_items import (
@@ -1016,7 +1016,7 @@ def _destroyed(transform: CoverageTransform) -> Iterator[TimeInterval]:
             yield window
 
 
-def _repeated_insert(insert: KeyedInsert, advice: KeyedWriteRefusalAdvice) -> KeyedWriteValueError:
+def _repeated_insert(insert: KeyedInsert, advice: KeyedWriteRefusalAdvice) -> UsageError:
     """The refusal of ``insert``, a repeat of an insertion still standing,
     naming the way out its opener's interface offers.
 
@@ -1026,14 +1026,11 @@ def _repeated_insert(insert: KeyedInsert, advice: KeyedWriteRefusalAdvice) -> Ke
     interface produced a carrier the repair can name.
     """
     entity = insert.target.identity
-    return KeyedWriteValueError(
-        code="write-value-already-stored",
-        message=(
-            f"{entity.canonical}: {insert.instruction.mutation!r} was handed a value naming an "
-            "object this transaction already buffered an insert of, so there is no row to open; "
-            f"{advice.repeated_insert}"
-        ),
-        identity=entity,
+    return UsageError(
+        WRITE_VALUE_ALREADY_STORED,
+        f"{entity.canonical}: {insert.instruction.mutation!r} was handed a value naming an "
+        "object this transaction already buffered an insert of, so there is no row to open; "
+        f"{advice.repeated_insert}",
     )
 
 

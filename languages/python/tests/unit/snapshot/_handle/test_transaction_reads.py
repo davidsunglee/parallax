@@ -44,11 +44,6 @@ from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, StructuredDoc
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import (
-    DeferredFeatureError,
-    QueryTargetError,
-    TransactionTimePinReadOnlyError,
-)
 from parallax.core.read_delivery._page_reader import EagerPageRequest, EagerPageResult, PageReader
 from parallax.core.read_delivery._publication import Publication
 from parallax.core.unit_work import (
@@ -444,9 +439,7 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
         ).result()
         tx.amend(fetched.edit(value=Decimal("9.00")))
 
-    with raises_contextualized(
-        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
-    ):
+    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn, concurrency=concurrency)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -868,9 +861,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         assert [_retained_evidence(root) for root in milestones] == [None, None]
         tx.amend(milestones[-1].edit(value=Decimal("9.00")))
 
-    with raises_contextualized(
-        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
-    ):
+    with raises_contextualized(UsageError, match="transaction-time-pin-read-only"):
         db.transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -1093,7 +1084,7 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
     def fn(tx: TxnContext) -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
-    with raises_contextualized(QueryTargetError) as caught:
+    with raises_contextualized(UsageError, code="query-target-not-in-model") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
@@ -1112,12 +1103,12 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
             .include(Policy.coverages)
         )
 
-    with raises_contextualized(DeferredFeatureError) as caught:
+    with raises_contextualized(UsageError, code="execution-feature-deferred") as caught:
         own_root(
             Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
     assert caught.value.code == "execution-feature-deferred"
-    assert caught.value.features == ("snapshot-history-includes",)
+    assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 
 
 def test_tx_find_read_query_resolution_rejects_before_a_pending_write_can_flush() -> None:
@@ -1125,7 +1116,7 @@ def test_tx_find_read_query_resolution_rejects_before_a_pending_write_can_flush(
 
     def fn(tx: TxnContext) -> None:
         tx.insert(new_account())
-        with pytest.raises(QueryTargetError):
+        with raises_code(UsageError, "query-target-not-in-model"):
             tx.find(mm.Person.where(mm.Person.id == 1))
         # The buffered insert is still pending: read-query resolution refused ahead of
         # `uow.read`, so the force-flush that a valid read performs
@@ -1260,7 +1251,7 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
     # The versioned licensing consumer, reached through the planner rather than
     # the verb: the update's advance and its optimistic gate both come from the
     # included level's own observation, so a lookup that missed it would raise
-    # `UnobservedVersionError` before any DML.
+    # `UsageError` before any DML.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "name": "V-1"}]),

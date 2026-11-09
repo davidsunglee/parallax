@@ -11,7 +11,8 @@ import pytest
 
 from parallax.conformance import case_format, edit_runner, engine
 from parallax.conformance.edit_models import LEDGER, NOTE_MODEL, Note, NoteMark
-from parallax.snapshot import SnapshotInspectionError, connect, pin_of
+from parallax.core.base import UsageError
+from parallax.snapshot import connect, pin_of
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 
@@ -66,8 +67,8 @@ def _read_id(case: case_format.Case) -> int:
     return cast("int", equality["value"])
 
 
-def _pin_refusal(value: object) -> SnapshotInspectionError:
-    with pytest.raises(SnapshotInspectionError) as caught:
+def _pin_refusal(value: object) -> UsageError:
+    with pytest.raises(UsageError) as caught:
         pin_of(value)
     return caught.value
 
@@ -94,10 +95,7 @@ def test_read_edit_case(case: case_format.Case, profile_run: Any) -> None:
     )
     source_refusal = _pin_refusal(target)
     result_refusal = _pin_refusal(result)
-    assert (source_refusal.code, source_refusal.entity) == (
-        result_refusal.code,
-        result_refusal.entity,
-    )
+    assert source_refusal.args == result_refusal.args
     assert result_refusal.code == expected_pin_code
 
 

@@ -32,18 +32,16 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
 from parallax.core._execution._unit_work import write_settlement
+from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
     RetryPolicy,
     ServingModel,
-    TransactionTimePinReadOnlyError,
     prepare_model,
 )
 from parallax.core.object_query import TX_TIME, VALID_TIME
-from parallax.core.read_delivery import StreamStateError
-from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnContext
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
@@ -60,6 +58,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.errors import raises_code
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
@@ -231,7 +230,7 @@ def test_a_root_its_page_fetched_before_an_own_change_cannot_write_from_that_sta
                     tx.amend(other.edit(balance=Decimal("150.00")))
                     tx.find(mm.Account.where(mm.Account.id == 2)).result()
                     continue
-                with pytest.raises(WriteEvidenceError) as refused:
+                with pytest.raises(UsageError) as refused:
                     tx.amend(account.edit(balance=Decimal("175.00")))
                 refusals.append(refused.value.code)
 
@@ -275,7 +274,7 @@ def test_an_unversioned_root_its_page_fetched_before_a_keyed_change_writes_nothi
                     tx.find(mm.Person.where(mm.Person.id == 2)).result()
                     published.append(person)
                     continue
-                with pytest.raises(WriteEvidenceError) as refused:
+                with pytest.raises(UsageError) as refused:
                     tx.amend(person.edit(name="Stale"))
                 refusals.append(refused.value.code)
                 tx.amend(published[0].edit(name="First"))
@@ -505,9 +504,8 @@ def test_a_streamed_roots_claim_refuses_an_intent_it_cannot_join(
         _delete(tx, representation, root)
         _update(tx, representation, root, "125.00")
 
-    with raises_contextualized(WriteEvidenceError) as refusal:
+    with raises_contextualized(UsageError, code="write-evidence-already-claimed"):
         account_db(port).transact(fn)
-    assert refusal.value.code == "write-evidence-already-claimed"
     assert WriteCall not in _kinds(port)
 
 
@@ -547,9 +545,8 @@ def test_only_a_participating_stream_licenses_a_locking_write(
     standalone = _first_root(db, representation)
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(WriteEvidenceError) as refusal:
+        with raises_code(UsageError, "write-evidence-unavailable"):
             _update(tx, representation, standalone, "150.00")
-        assert refusal.value.code == "write-evidence-unavailable"
         _update(tx, representation, _first_root(tx, representation), "125.00")
 
     db.transact(fn, concurrency="locking")
@@ -637,7 +634,7 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
     assert attempts == [[1, 2, 3], [1, 2, 3]]
     assert port.calls.count(BeginCall()) == 2
     assert opened[0] is not opened[1]
-    with pytest.raises(StreamStateError, match="inside its own scope"):
+    with raises_code(UsageError, "stream-state-invalid", match="inside its own scope"):
         _ = opened[0].pin
 
 
@@ -683,14 +680,14 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
     def typed(tx: TxnContext) -> None:
         with tx.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
-        with pytest.raises(TransactionTimePinReadOnlyError):
+        with raises_code(UsageError, "transaction-time-pin-read-only"):
             tx.amend(root.edit(value=Decimal("1.00")))
 
     def wire(tx: TxnContext) -> None:
         with tx.wire.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
         assert read_evidence_of(root) is None
-        with pytest.raises(TransactionTimePinReadOnlyError):
+        with raises_code(UsageError, "transaction-time-pin-read-only"):
             tx.wire.amend(root, {"value": "1.00"})
 
     db_for(POSITION_MODEL, typed_port).transact(typed)

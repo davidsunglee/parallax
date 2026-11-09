@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import re
 from decimal import Decimal
 from enum import IntEnum
 from itertools import permutations
@@ -45,7 +46,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument
+from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument, UsageError
 from parallax.core.db_port import Row
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -57,7 +58,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.read_delivery import InvalidDataError
 from parallax.core.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
@@ -79,9 +80,6 @@ from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import (
-    SnapshotConsistencyError,
-    SnapshotInspectionError,
-    SnapshotMaterializationError,
     edge_of,
     is_view_loaded,
     pin_of,
@@ -90,10 +88,12 @@ from parallax.snapshot import (
 from parallax.snapshot._publication._graph_view import (
     GraphView,
     _member_order,  # pyright: ignore[reportPrivateUsage]
+    fetched_row_refusal,
 )
 from parallax.snapshot._publication._root_publication import publication_issue, require_publishable
 from parallax.snapshot._publication._wire import InstanceReader
 from tests._support import snapshot_models as sm
+from tests._support.errors import raises_code
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._prepared_read_support import compiled_read, convert_cells
 from tests.unit._root_publication_support import RootObservation, each_root, observed_roots
@@ -335,12 +335,12 @@ def test_an_issue_bearing_root_view_is_refused_with_its_first_issue() -> None:
     first = cast("StoredDataIssueInput", first)
 
     def refusal(root: GraphView, _ordinal: int) -> object:
-        with pytest.raises(StoredDataDecodingError) as refused:
+        with raises_code(InvalidDataError, "stored-data-decoding-failed") as refused:
             require_publishable(root)
-        return (refused.value.entity, refused.value.member)
+        return refused.value.args[1]
 
     assert each_root(encoded_identity_page((None, None, SQL_NULL)), ENCODED_IDENTITY, refusal) == [
-        (first.entity, first.member)
+        f"{first.entity.canonical} holds invalid stored data at id ({first.code})"
     ]
     assert each_root(
         encoded_identity_page((KEY_TEXT, None, SQL_NULL)),
@@ -537,7 +537,7 @@ def test_a_mixed_root_reads_its_proved_state_and_compares_its_merged_rows_first(
         (root,) = observed_roots(page, meta)
         assert calls.decoded == ["0f", "0c"]
         conflicting, _order = _mixed_page("0d")
-        with pytest.raises(SnapshotConsistencyError):
+        with raises_code(InvalidDataError, "snapshot-fetched-row-conflict"):
             observed_roots(conflicting, meta)
         assert calls.decoded == ["0f", "0c", "0f"]
 
@@ -551,7 +551,7 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
     # unequal witnesses before decoding either.
     items, by_code = _ENCODED_ITEMS, _ENCODED_ITEMS_BY_CODE
 
-    def conflict(*views: str) -> SnapshotConsistencyError:
+    def conflict(*views: str) -> InvalidDataError:
         with recorded_conversion_dependencies() as calls:
             fixture = PageFixture(ENCODED_ORDERS, *views)
             order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
@@ -561,7 +561,7 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
             fixture.attach(order, by_code, (second,))
             page = fixture.page(order)
             assert sorted(cast("list[str]", calls.decoded)) == []
-            with pytest.raises(SnapshotConsistencyError) as raised:
+            with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
                 observed_roots(page, fixture.model)
             assert sorted(cast("list[str]", calls.decoded)) == []
         assert _judged_state_count(page) == 0
@@ -569,11 +569,11 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
 
     forward = conflict(items, by_code)
     reverse = conflict(by_code, items)
-    assert forward.code == reverse.code == "snapshot-fetched-row-conflict"
-    assert forward.object_key == reverse.object_key
-    assert forward.coordinates == reverse.coordinates
-    assert forward.fetched_rows == reverse.fetched_rows == ((0, 1), (0, 2))
-    assert forward.members == reverse.members == (AttributeIdentity(_ENCODED_ITEM, "code"),)
+    assert forward.args == reverse.args
+    assert forward.args[1] == (
+        "parallax.compatibility.EncodedOrderItem {'id': 11}: fetched rows (0, 1) and (0, 2) "
+        "hold unequal stored values for code"
+    )
 
 
 # Three provider occurrences of one child disagree along different member sets.
@@ -587,38 +587,30 @@ def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
         {**_ITEM_ROW, "sku": "y"},
         {**_ITEM_ROW, "quantity": 9},
     )
-    conflicts: list[SnapshotConsistencyError] = []
+    conflicts: list[InvalidDataError] = []
     for ordered in permutations(rows):
         fixture = PageFixture(_STORY_ORDERS, items)
         order = fixture.node("Order", _ORDER_ROW)
         children = tuple(fixture.node("OrderItem", row) for row in ordered)
         fixture.attach(order, items, children)
-        with pytest.raises(SnapshotConsistencyError) as raised:
+        with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
             fixture.observed_roots(order)
-        assert raised.value.fetched_rows == tuple(
-            sorted(
-                (
-                    (0, ordered.index(rows[0]) + 1),
-                    (0, ordered.index(rows[2]) + 1),
-                )
-            )
-        )
+        left, right = sorted(((0, ordered.index(rows[0]) + 1), (0, ordered.index(rows[2]) + 1)))
         conflicts.append(raised.value)
+        assert f"fetched rows {left} and {right} hold" in str(raised.value)
 
-    first, *rest = conflicts
-    assert all(
-        (
-            conflict.object_key,
-            conflict.coordinates,
-            conflict.members,
-        )
-        == (first.object_key, first.coordinates, first.members)
-        for conflict in rest
-    )
-    assert len({conflict.fetched_rows for conflict in conflicts}) > 1
+    first = conflicts[0]
+    assert len({_without_positions(conflict) for conflict in conflicts}) == 1
+    assert len({str(conflict) for conflict in conflicts}) > 1
     assert str(first) == (
-        "parallax.compatibility.OrderItem: fetched rows disagree (snapshot-fetched-row-conflict)"
+        "snapshot-fetched-row-conflict: parallax.compatibility.OrderItem {'id': 11}: "
+        "fetched rows (0, 1) and (0, 3) hold unequal stored values for quantity"
     )
+
+
+def _without_positions(conflict: InvalidDataError) -> str:
+    """``conflict``'s message with the fetched row positions it names left out."""
+    return re.sub(r"fetched rows \(.*?\) and \(.*?\)", "fetched rows", conflict.args[1])
 
 
 # Canonical conflict diagnostics order declared Attributes, Value Objects, and
@@ -634,6 +626,13 @@ def test_conflict_member_order_covers_every_declared_member_kind() -> None:
         occurrence,
         nested,
     ]
+    refusal = fetched_row_refusal(
+        ObjectKey(entity, (("id", 1),)),
+        (),
+        (AttributeIdentity(entity, "name"), occurrence, nested),
+        ((0, 1), (0, 2)),
+    )
+    assert refusal.args[1].endswith("values for name, address, address.street")
 
 
 # Two concrete subtypes claiming one family key are a conflict even when arrival
@@ -646,10 +645,13 @@ def test_concrete_disagreement_canonicalizes_the_diagnostic_entity() -> None:
     cat = fixture.node("Cat", {**_CAT_ROW, "id": 1})
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.animals", (dog, cat))
 
-    with pytest.raises(SnapshotConsistencyError) as raised:
+    with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
         fixture.observed_roots(owner)
 
-    assert raised.value.object_key.entity == EntityIdentity(_NAMESPACE, "Cat")
+    assert raised.value.args[1] == (
+        "parallax.compatibility.Cat {'id': 1}: fetched rows (0, 1) and (0, 2) hold unequal "
+        "stored values for name, indoor, barkVolume, licenseId"
+    )
 
 
 # Three supported concrete siblings carry value-identical positional witnesses
@@ -663,36 +665,27 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
         ("ConflictBeta", {"id": 1, "owner_id": 10, "beta": None}),
         ("ConflictGamma", {"id": 1, "owner_id": 10, "gamma": None}),
     )
-    conflicts: list[SnapshotConsistencyError] = []
+    conflicts: list[InvalidDataError] = []
     for ordered in permutations(occurrences):
         fixture = PageFixture(_CONFLICT_ANIMALS, relationship)
         owner = fixture.node("ConflictAnimalOwner", {"id": 10})
         children = tuple(fixture.node(entity, row) for entity, row in ordered)
         fixture.attach(owner, relationship, children)
-        with pytest.raises(SnapshotConsistencyError) as raised:
+        with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
             fixture.observed_roots(owner)
-        assert raised.value.fetched_rows == tuple(
-            sorted(
-                (
-                    (0, ordered.index(occurrences[0]) + 1),
-                    (0, ordered.index(occurrences[1]) + 1),
-                )
-            )
+        left, right = sorted(
+            ((0, ordered.index(occurrences[0]) + 1), (0, ordered.index(occurrences[1]) + 1))
         )
         conflicts.append(raised.value)
+        assert f"fetched rows {left} and {right} hold" in str(raised.value)
 
-    first, *rest = conflicts
-    assert all(
-        (
-            conflict.object_key,
-            conflict.coordinates,
-            conflict.members,
-        )
-        == (first.object_key, first.coordinates, first.members)
-        for conflict in rest
+    first = conflicts[0]
+    assert len({_without_positions(conflict) for conflict in conflicts}) == 1
+    assert len({str(conflict) for conflict in conflicts}) > 1
+    assert str(first) == (
+        "snapshot-fetched-row-conflict: ConflictAlpha {'id': 1}: fetched rows (0, 1) and "
+        "(0, 2) hold unequal stored values for alpha, beta"
     )
-    assert len({conflict.fetched_rows for conflict in conflicts}) > 1
-    assert first.object_key.entity.name == "ConflictAlpha"
 
 
 # Two sibling levels can project one invalid row twice. Page accumulation assigns
@@ -727,9 +720,8 @@ def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> Non
     fixture.attach(order, _ENCODED_ITEMS, (via_items,))
     fixture.attach(order, _ENCODED_ITEMS_BY_CODE, (via_code,))
 
-    with pytest.raises(SnapshotConsistencyError) as raised:
+    with raises_code(InvalidDataError, "snapshot-fetched-row-conflict"):
         fixture.observed_roots(order)
-    assert raised.value.code == "snapshot-fetched-row-conflict"
 
 
 def test_exact_witness_comparison_distinguishes_bool_from_int() -> None:
@@ -746,11 +738,9 @@ def test_exact_witness_comparison_distinguishes_bool_from_int() -> None:
     fixture.attach(order, "parallax.compatibility.Order.items", (via_items,))
     fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
 
-    with pytest.raises(SnapshotConsistencyError) as raised:
+    with raises_code(InvalidDataError, "snapshot-fetched-row-conflict") as raised:
         fixture.observed_roots(order)
-    assert raised.value.members == (
-        AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "quantity"),
-    )
+    assert raised.value.args[1].endswith("hold unequal stored values for quantity")
 
 
 def test_unequal_document_witnesses_in_separate_roots_coexist() -> None:
@@ -860,9 +850,8 @@ def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
         )
         == narrowed
     )
-    with pytest.raises(SnapshotInspectionError) as unrelated:
+    with raises_code(UsageError, "snapshot-view-owner-mismatch"):
         is_view_loaded(root, sm.SnapOrder.items)
-    assert unrelated.value.code == "snapshot-view-owner-mismatch"
 
 
 def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
@@ -1140,12 +1129,10 @@ def _ledger_row(start: dt.datetime) -> dict[str, object]:
 
 
 def _assert_stands_on_no_milestone(node: object) -> None:
-    with pytest.raises(SnapshotInspectionError) as no_pin:
+    with raises_code(UsageError, "snapshot-pin-unavailable"):
         pin_of(node)
-    assert no_pin.value.code == "snapshot-pin-unavailable"
-    with pytest.raises(SnapshotInspectionError) as no_edge:
+    with raises_code(UsageError, "snapshot-edge-unavailable"):
         edge_of(node)
-    assert no_edge.value.code == "snapshot-edge-unavailable"
 
 
 def test_a_temporal_root_s_non_temporal_children_stand_at_no_pin_or_edge() -> None:
@@ -1249,9 +1236,9 @@ def test_a_loaded_view_naming_a_direction_the_concrete_lacks_is_refused() -> Non
     fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.zzz")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrder.zzz", None)
-    with pytest.raises(SnapshotMaterializationError) as refusal:
+    with raises_code(InternalError, "snapshot-materialization-failed") as refusal:
         fixture.materialize(order)
-    cause = refusal.value.cause
+    cause = refusal.value.__cause__
     assert isinstance(cause, InternalError)
     assert cause.code == "entity-graph-invalid-member"
     assert cause.args[1].startswith("node 0: ")
@@ -1268,9 +1255,9 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
     fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrderItem.statuses")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrderItem.statuses", ())
-    with pytest.raises(SnapshotMaterializationError) as refusal:
+    with raises_code(InternalError, "snapshot-materialization-failed") as refusal:
         fixture.materialize(order)
-    cause = refusal.value.cause
+    cause = refusal.value.__cause__
     assert isinstance(cause, InternalError)
     assert cause.code == "entity-graph-invalid-member"
     assert cause.args[1].startswith("node 0: ")

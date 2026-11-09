@@ -92,8 +92,9 @@ def located_refusal(refusal: UsageError, where: str) -> UsageError:
     return located
 
 
-class WireEncodingError(Exception):
-    """A value is not a managed member of its declared Neutral Type."""
+WIRE_ENCODING_FAILED: Final = "wire-encoding-failed"
+"""A value handed to the encoder is not a managed member of its declared
+Neutral Type."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,9 +190,10 @@ def encode_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
     """Encode an existing managed member as its canonical built-in Wire value."""
     normalized = base_managed_carrier(value, neutral_type)
     if not matches_neutral_type(normalized, neutral_type):
-        raise WireEncodingError(
+        raise UsageError(
+            WIRE_ENCODING_FAILED,
             f"{_diagnostic(value)} is not a member of the declared value space "
-            f"{_diagnostic(neutral_type)}"
+            f"{_diagnostic(neutral_type)}",
         )
     return _canonical_spelling(neutral_type, normalized)
 
@@ -286,7 +288,7 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
             try:
                 return _normalize_json(managed, top_level=True)
             except _JsonFailure as exc:
-                raise WireEncodingError(str(exc)) from exc
+                raise UsageError(WIRE_ENCODING_FAILED, str(exc)) from exc
         case _ as unreachable:
             assert_never(unreachable)
 

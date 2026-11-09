@@ -7,11 +7,6 @@ from types import TracebackType
 from typing import Literal, Protocol, cast
 
 from parallax.core import concurrency, inheritance, temporal_read
-from parallax.core._execution._unit_work._errors import (
-    WRITE_EVIDENCE_CODES,
-    WriteEvidenceError,
-    WriteEvidenceErrorCode,
-)
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
@@ -73,7 +68,6 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import KeyTarget
 
 __all__ = [
-    "WRITE_EVIDENCE_CODES",
     "AttemptLifetime",
     "BufferOutcome",
     "FlushTrigger",
@@ -81,8 +75,6 @@ __all__ = [
     "StoredTarget",
     "TransactionSettings",
     "UnitOfWork",
-    "WriteEvidenceError",
-    "WriteEvidenceErrorCode",
 ]
 
 type FlushTrigger = Literal["read_dependency", "predicate_write", "pre_commit"]
@@ -267,8 +259,8 @@ class UnitOfWork:
         retained observation claims the state it observed, and an
         object-locked write claims the object it writes (`m-unit-work`
         "Observed-State Coalescing"). An arriving
-        keyed intent the held claim cannot absorb raises
-        :class:`WriteEvidenceError` (``write-evidence-already-claimed``), and
+        keyed intent the held claim cannot absorb is refused with
+        ``write-evidence-already-claimed``, and
         the pending writes, their claims, and the pending inserts are left as
         they were.
 
@@ -302,8 +294,7 @@ class UnitOfWork:
         (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.admit_insert`).
 
         An insert of an object whose admitted insertion still stands is refused
-        (:class:`~parallax.core._execution._unit_work._errors.KeyedWriteValueError`,
-        ``write-value-already-stored``) with the advice that insertion's opener
+        with ``write-value-already-stored`` and the advice that insertion's opener
         supplied, and ``insertion_advice`` is kept for a repeat of this one.
         Where an earlier insertion of the object is stored and a pending write
         removes all of it, the insert executes after that removal. An insert

@@ -12,6 +12,7 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     TemporalBound,
+    UsageError,
 )
 from parallax.core.document_codec import (
     MemberShape,
@@ -48,11 +49,16 @@ from parallax.core.temporal_read import Edge, TemporalFacet
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
+    SNAPSHOT_EDGE_UNAVAILABLE,
+    SNAPSHOT_NODE_REQUIRED,
+    SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
+    SNAPSHOT_WIRE_INPUT_EDITED,
+    SNAPSHOT_WIRE_INPUT_INCOMPATIBLE,
     NodeProvenance,
     PageProvenance,
     RootConformance,
-    SnapshotInspectionError,
     SnapshotNodeState,
+    inspection_refusal,
     pin_for_shape,
     snapshot_state_of,
 )
@@ -359,11 +365,10 @@ def wire_edge_of(node: object) -> Edge:
     provenance = required_wire_provenance(node, "edge_of")
     if provenance.pin is None:
         entity = provenance.entity
-        raise SnapshotInspectionError(
-            code="snapshot-edge-unavailable",
-            message=f"{entity.canonical} is not temporal, so it stands on no milestone",
-            operation="edge_of",
-            entity=entity,
+        raise inspection_refusal(
+            SNAPSHOT_EDGE_UNAVAILABLE,
+            "edge_of",
+            f"{entity.canonical} is not temporal, so it stands on no milestone",
         )
     published = cast("WireEntity", node)
     valid_start = published.get(_VALID_START)
@@ -375,7 +380,7 @@ def wire_edge_of(node: object) -> Edge:
     )
 
 
-def _wire_node_required(node: object, operation: str) -> SnapshotInspectionError:
+def _wire_node_required(node: object, operation: str) -> UsageError:
     provenance: NodeProvenance | None = (
         getattr(node, "_provenance", None) if isinstance(node, _WireEntityNode) else None
     )
@@ -385,11 +390,10 @@ def _wire_node_required(node: object, operation: str) -> SnapshotInspectionError
         if entity is None or getattr(node, "_authoring", None) is None
         else f"no read published the {entity.canonical} node an insert answered"
     )
-    return SnapshotInspectionError(
-        code="snapshot-node-required",
-        message=f"{operation} inspects a node a Snapshot read published; {held}",
-        operation=operation,
-        entity=entity,
+    return inspection_refusal(
+        SNAPSHOT_NODE_REQUIRED,
+        operation,
+        f"it inspects only a node a Snapshot read published, and {held}",
     )
 
 
@@ -548,14 +552,11 @@ class InstanceReader:
             if not self._construction.proves(cls, entity):
                 require_correspondence(layout, wire_names_of(cls), plan_of(cls))
         except Exception as error:
-            raise SnapshotInspectionError(
-                code="snapshot-wire-input-incompatible",
-                message=(
-                    f"{type(node).__name__} does not correspond to retained layout "
-                    f"{entity.canonical}: {error}"
-                ),
-                operation=self._operation,
-                entity=entity,
+            raise inspection_refusal(
+                SNAPSHOT_WIRE_INPUT_INCOMPATIBLE,
+                self._operation,
+                f"{type(node).__name__} does not correspond to retained layout "
+                f"{entity.canonical}: {error}",
             ) from error
         self._checked.add(pair)
         return entity
@@ -568,14 +569,10 @@ class InstanceReader:
             return _state(node).views.get(view.narrowed_view, ABSENT)
         py_name = wire_names_of(type(node)).relationship_py.get(view.relationship.name)
         if py_name is None:  # pragma: no cover - correspondence checks every direction
-            raise SnapshotInspectionError(
-                code="snapshot-wire-input-incompatible",
-                message=(
-                    f"{type(node).__name__} declares no relationship position for "
-                    f"{view.relationship}"
-                ),
-                operation=self._operation,
-                entity=_state(node).provenance.entity,
+            raise inspection_refusal(
+                SNAPSHOT_WIRE_INPUT_INCOMPATIBLE,
+                self._operation,
+                f"{type(node).__name__} declares no relationship position for {view.relationship}",
             )
         value = relationship_state(cast("Any", node), py_name)
         return ABSENT if value is UNLOADED else value
@@ -589,11 +586,10 @@ class InstanceReader:
     def admission_error(  # pragma: no cover - explicit callers check admission first
         self, concrete: EntityIdentity
     ) -> Exception:
-        return SnapshotInspectionError(
-            code="snapshot-wire-at-concrete-mismatch",
-            message=f"{concrete.canonical} is not admitted by the requested include position",
-            operation=self._operation,
-            entity=concrete,
+        return inspection_refusal(
+            SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
+            self._operation,
+            f"{concrete.canonical} is not admitted by the requested include position",
         )
 
 
@@ -618,20 +614,18 @@ def projection_entity(node: object, *, operation: str = "Snapshot.wire") -> Enti
         named_state_value(node, CHANGE_RECORD_SLOT), ChangeRecord
     ):
         state = snapshot_state_of(node)
-        raise SnapshotInspectionError(
-            code="snapshot-wire-input-edited",
-            message="an edited Entity cannot be projected as read Wire state",
-            operation=operation,
-            entity=None if state is None else state.provenance.entity,
+        raise inspection_refusal(
+            SNAPSHOT_WIRE_INPUT_EDITED,
+            operation,
+            "an edited Entity cannot be projected as read Wire state",
         )
     published = is_published(node)
     state = snapshot_state_of(node)
     if state is None or not published:
-        raise SnapshotInspectionError(
-            code="snapshot-node-required",
-            message="Wire projection requires a published Snapshot node",
-            operation=operation,
-            entity=None if state is None else state.provenance.entity,
+        raise inspection_refusal(
+            SNAPSHOT_NODE_REQUIRED,
+            operation,
+            "Wire projection requires a published Snapshot node",
         )
     return state.provenance.entity
 

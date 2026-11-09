@@ -45,7 +45,7 @@ from parallax.core import (
     rel,
     relationship,
 )
-from parallax.core.base import INFINITY, INT64, ManagedValue, UsageError
+from parallax.core.base import INFINITY, INT64, InternalError, ManagedValue, UsageError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -274,7 +274,9 @@ def test_relationship_ordering_rejects_a_resolved_member_that_disappeared(
         lambda *_args: MissingMemberView(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
     )
 
-    with pytest.raises(read_planning.DeepFetchError, match=r"order member.*is absent"):
+    with raises_code(
+        InternalError, read_planning.DEEP_FETCH_PLANNING_FAILED, match=r"order member.*is absent"
+    ):
         read_planning._resolved_order_terms(  # pyright: ignore[reportPrivateUsage]
             direction, child, inheritance.view(ORDERS)
         )
@@ -297,7 +299,11 @@ def test_deep_fetch_rejects_a_validated_path_whose_relationship_disappeared() ->
         validated, includes=(dataclasses.replace(path, segments=(segment,)),)
     )
 
-    with pytest.raises(read_planning.DeepFetchError, match=r"resolved relationship.*is absent"):
+    with raises_code(
+        InternalError,
+        read_planning.DEEP_FETCH_PLANNING_FAILED,
+        match=r"resolved relationship.*is absent",
+    ):
         read_planning.plan(
             malformed,
             ORDERS,

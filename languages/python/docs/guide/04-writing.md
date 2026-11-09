@@ -51,8 +51,8 @@ from parallax.core import (
     UsageError,
     attr,
 )
-from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnlyError
-from parallax.core.unit_work import WriteEvidenceError, WritePreconditionError
+from parallax.core.execution import ExecutionFailure
+from parallax.core.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 ```
 <!-- /example -->
@@ -570,7 +570,7 @@ def correct_a_price_as_recorded_then(
     end: dt.datetime,
     recorded_at: dt.datetime,
 ) -> None:
-    """Refused with ``TransactionTimePinReadOnlyError``: the value was read at a past
+    """Refused with ``transaction-time-pin-read-only``: the value was read at a past
     Transaction Time."""
 
     def correct(tx: TxnContext) -> None:
@@ -602,15 +602,16 @@ Now the price for February is 9.50. Asked as recorded on 1 November, it is still
 because that is what the database held then.
 
 The second function is refused. Its source was read at a finite Transaction Time, and a
-value read there is read-only: amending it raises `TransactionTimePinReadOnlyError`,
-which reaches the caller as the `cause` of an `ExecutionFailure`. A correction always
+value read there is read-only: amending it raises a `UsageError` with code
+`transaction-time-pin-read-only`, which reaches the caller as the `cause` of an
+`ExecutionFailure`. A correction always
 starts from what the database knows now and appends to it. What the database knew at an
 earlier instant never changes.
 
 ## Target writes
 
-A value from a standalone or read-only read can't license `amend`: amending it raises
-`WriteEvidenceError`, as
+A value from a standalone or read-only read can't license `amend`: amending it raises a
+`UsageError` with code `write-evidence-unavailable`, as
 [You'll write what you read](03-reading.md#youll-write-what-you-read) showed. One way to
 write it is to read it again inside `transact`. The other is a target write: `amend_if`,
 `replace_if`, `delete_if` or `terminate_if`. A target write names the object by its

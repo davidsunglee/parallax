@@ -33,7 +33,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.core import continuation, read_planning, temporal_read
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, InternalError
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -71,6 +71,7 @@ from parallax.core.predicate._resolved import ResolvedConstant
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
 from parallax.descriptor import _records
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -617,7 +618,7 @@ def test_a_coordinate_of_the_wrong_width_is_refused_by_name() -> None:
     # another width was captured under a different order than this plan composes
     # — and lowering it would seek past comparisons the page never evaluated.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),))
-    with pytest.raises(continuation.ContinuationError, match="carries 1"):
+    with raises_code(InternalError, continuation.CONTINUATION_PLANNING_FAILED, match="carries 1"):
         plan.after(ContinuationCoordinate((1,)), limit=3)
 
 

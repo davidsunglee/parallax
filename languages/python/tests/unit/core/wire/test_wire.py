@@ -71,7 +71,7 @@ def test_wire_public_seams_bound_defensive_codec_failures(
         raise failure(wire.NEUTRAL_LITERAL_TYPE_MISMATCH, "changed during normalization")
 
     monkeypatch.setattr(wire_codec, "_normalize_json", invalid_json)
-    with pytest.raises(wire.WireEncodingError, match="changed during normalization"):
+    with raises_code(UsageError, "wire-encoding-failed", match="changed during normalization"):
         wire.encode_wire(JSON, cast("ManagedValue", {"stable": True}))
 
 
@@ -457,13 +457,13 @@ def test_out_of_space_authored_numbers_are_not_scalar_or_json_members() -> None:
             assert matches_neutral_type(loaded, neutral_type) is False
             with raises_code(UsageError, "neutral-literal-out-of-space"):
                 wire.decode_wire(neutral_type, loaded)
-            with pytest.raises(wire.WireEncodingError):
+            with raises_code(UsageError, "wire-encoding-failed"):
                 wire.encode_wire(neutral_type, cast("ManagedValue", loaded))
         for candidate in (loaded, [loaded], {"value": loaded}):
             assert matches_neutral_type(candidate, JSON) is False
             with raises_code(UsageError, "neutral-literal-out-of-space"):
                 wire.decode_wire(JSON, cast("wire.WireValue", candidate))
-            with pytest.raises(wire.WireEncodingError):
+            with raises_code(UsageError, "wire-encoding-failed"):
                 wire.encode_wire(JSON, cast("ManagedValue", candidate))
 
 
@@ -729,7 +729,7 @@ def test_encoding_rejects_exclusions_before_extracting_builtin_carriers() -> Non
 
     for neutral_type, value in values:
         assert matches_neutral_type(value, neutral_type) is False
-        with pytest.raises(wire.WireEncodingError):
+        with raises_code(UsageError, "wire-encoding-failed"):
             wire.encode_wire(neutral_type, cast("ManagedValue", value))
 
 
@@ -842,7 +842,7 @@ def test_json_rejects_excluded_scalars_containers_and_member_names() -> None:
         assert matches_neutral_type(candidate, JSON) is False
         with raises_code(UsageError, "neutral-literal-type-mismatch"):
             wire.decode_wire(JSON, cast("wire.WireValue", candidate))
-        with pytest.raises(wire.WireEncodingError):
+        with raises_code(UsageError, "wire-encoding-failed"):
             wire.encode_wire(JSON, cast("ManagedValue", candidate))
 
 
@@ -856,7 +856,7 @@ def test_json_cycles_are_rejected_while_repeated_acyclic_containers_are_allowed(
         assert matches_neutral_type(value, JSON) is False
         with raises_code(UsageError, "neutral-literal-type-mismatch"):
             wire.decode_wire(JSON, cast("wire.WireValue", value))
-        with pytest.raises(wire.WireEncodingError):
+        with raises_code(UsageError, "wire-encoding-failed"):
             wire.encode_wire(JSON, cast("ManagedValue", value))
 
     shared = [1]
@@ -894,7 +894,7 @@ def test_json_object_names_must_normalize_to_distinct_utf8_text() -> None:
     surrogate = {"\ud800": 1}
     with raises_code(UsageError, "neutral-literal-out-of-space"):
         wire.decode_wire(JSON, cast("wire.WireValue", surrogate))
-    with pytest.raises(wire.WireEncodingError):
+    with raises_code(UsageError, "wire-encoding-failed"):
         wire.encode_wire(JSON, cast("ManagedValue", surrogate))
 
     class Key(str):
@@ -909,7 +909,7 @@ def test_json_object_names_must_normalize_to_distinct_utf8_text() -> None:
     assert len(colliding) == 2
     with raises_code(UsageError, "neutral-literal-type-mismatch"):
         wire.decode_wire(JSON, cast("wire.WireValue", colliding))
-    with pytest.raises(wire.WireEncodingError):
+    with raises_code(UsageError, "wire-encoding-failed"):
         wire.encode_wire(JSON, cast("ManagedValue", colliding))
 
 
@@ -921,7 +921,7 @@ def test_programmatic_oversized_json_integers_are_outside_host_serialization_spa
 
     for candidate in (value, [value], {"value": value}):
         assert matches_neutral_type(candidate, JSON) is False
-        with pytest.raises(wire.WireEncodingError):
+        with raises_code(UsageError, "wire-encoding-failed"):
             wire.encode_wire(JSON, cast("ManagedValue", candidate))
 
     with raises_code(UsageError, "neutral-literal-out-of-space"):
@@ -937,7 +937,7 @@ def test_codec_errors_bound_large_integer_diagnostics_without_changing_exception
     with raises_code(UsageError, "neutral-literal-out-of-space") as decoding:
         wire.decode_wire(INT32, cast("wire.WireValue", value))
     assert len(str(decoding.value)) < 256
-    with pytest.raises(wire.WireEncodingError) as encoding:
+    with raises_code(UsageError, "wire-encoding-failed") as encoding:
         wire.encode_wire(INT32, cast("ManagedValue", value))
     assert len(str(encoding.value)) < 256
 
@@ -1022,15 +1022,15 @@ _NONMEMBERS: tuple[tuple[NeutralType, object, str], ...] = (
 def test_encoding_names_a_nonmember_and_its_declared_space(
     neutral_type: NeutralType, value: object, message: str
 ) -> None:
-    with pytest.raises(wire.WireEncodingError) as caught:
+    with raises_code(UsageError, "wire-encoding-failed") as caught:
         wire.encode_wire(neutral_type, cast("ManagedValue", value))
-    assert str(caught.value) == message
+    assert caught.value.args[1] == message
 
 
 def test_encoding_refuses_nonmembers_without_developer_coercion() -> None:
-    with pytest.raises(wire.WireEncodingError):
+    with raises_code(UsageError, "wire-encoding-failed"):
         wire.encode_wire(FLOAT32, 1)
-    with pytest.raises(wire.WireEncodingError):
+    with raises_code(UsageError, "wire-encoding-failed"):
         wire.encode_wire(Decimal(4, 2), 1)
 
 

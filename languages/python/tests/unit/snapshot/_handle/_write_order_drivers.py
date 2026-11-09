@@ -1170,10 +1170,8 @@ def _message(raised: Exception) -> str:
 
 
 def _code(raised: Exception) -> str | None:
-    """The classification ``raised`` carries: its own ``code``, where it has one."""
-    if isinstance(raised, ParallaxError):
-        return raised.code
-    return cast("str | None", getattr(raised, "code", None))
+    """The classification ``raised`` carries: a Parallax error's ``code``."""
+    return raised.code if isinstance(raised, ParallaxError) else None
 
 
 def outcome(scenario: WriteScenario, representation: Representation) -> Outcome:

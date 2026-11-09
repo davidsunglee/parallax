@@ -3,14 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Final, cast
+from typing import Any, Final, cast, get_args
 
 from parallax.conformance import case_format
 from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.story_models import Account
+from parallax.core.base import UsageError
 from parallax.core.entity import Entity
-from parallax.core.execution import KeyedWriteValueError
-from parallax.core.unit_work import WriteEvidenceError
+from parallax.core.execution import KeyedWriteValueCode
+from parallax.core.unit_work import WriteEvidenceCode
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
 
 __all__ = [
@@ -247,10 +248,19 @@ def grade_step(
     return _graded(step, lambda: _apply(tx, step.action, value))
 
 
+_GRADED_REFUSALS: Final = frozenset(
+    (*get_args(KeyedWriteValueCode.__value__), *get_args(WriteEvidenceCode.__value__))
+)
+"""The refusals a write-value step grades: the value provenance refusals, and
+the write-evidence refusals the same verbs raise."""
+
+
 def _graded(step: WriteValueStep, verb: Callable[[], object]) -> str | None:
     try:
         verb()
-    except (KeyedWriteValueError, WriteEvidenceError) as refusal:
+    except UsageError as refusal:
+        if refusal.code not in _GRADED_REFUSALS:
+            raise
         if step.expect_error != refusal.code:
             declared = (
                 f"expectError {step.expect_error!r}"

@@ -19,10 +19,6 @@ from parallax.core._execution._keyed_writes import (
     keyed_instruction,
 )
 from parallax.core._execution._transaction._attempt import TxnAttempt
-from parallax.core._execution._unit_work._errors import (
-    KeyedWriteValueError,
-    WriteEvidenceError,
-)
 from parallax.core._execution._unit_work._write_ownership import (
     INSERTION_AUTHORITY_INVALID,
     KeyedWriteRefusalAdvice,
@@ -165,17 +161,17 @@ def test_a_resolved_source_names_the_object_its_evidence_or_else_its_authoring_n
 def test_an_evidence_refusal_names_the_read_object_before_the_prepared_row(
     named: Named, account_id: int
 ) -> None:
-    refused: list[WriteEvidenceError] = []
+    refused: list[UsageError] = []
 
     def fn(tx: TxnAttempt) -> None:
-        with pytest.raises(WriteEvidenceError) as refusal:
+        with pytest.raises(UsageError) as refusal:
             tx.keyed_write(_AmendingAccountOne(named), "amend")
         refused.append(refusal.value)
 
     scope(ScriptedAdapter(Transact())).transact(fn, itself)
     [refusal] = refused
     assert refusal.code == "write-evidence-unavailable"
-    assert refusal.object_key == _key(_ACCOUNT, account_id)
+    assert refusal.args[1].startswith(f"{_ACCOUNT.canonical} {{'id': {account_id}}}: ")
 
 
 def test_an_insert_opens_the_object_its_prepared_row_keys() -> None:
@@ -195,11 +191,10 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_before_anything_bu
 
     def fn(tx: TxnAttempt) -> None:
         opened = tx.keyed_insert(_OpeningAccountSeven())
-        with pytest.raises(KeyedWriteValueError) as refusal:
+        with raises_code(UsageError, "write-value-already-stored") as refusal:
             tx.keyed_insert(_OpeningAccountSeven(repeat))
-        assert refusal.value.code == "write-value-already-stored"
-        assert refusal.value.message.endswith("repeated")
-        assert refusal.value.identity == _ACCOUNT
+        assert refusal.value.args[1].endswith("repeated")
+        assert refusal.value.args[1].startswith(f"{_ACCOUNT.canonical}: ")
         assert tx.uow.source_authority.insertion_authority(opened.authority) is None
 
     # Only the opening insert executes.
