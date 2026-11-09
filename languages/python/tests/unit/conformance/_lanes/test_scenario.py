@@ -313,32 +313,6 @@ _ORDER_ITEM_11_ROW: MappingRow = {
     "shipped_on": None,
 }
 
-_ORDER_ITEM_13_ROW: MappingRow = {
-    "id": 13,
-    "order_id": 1,
-    "sku": "D-130",
-    "quantity": 6,
-    "shipped_on": None,
-}
-
-
-def _ryow_relationship_port() -> ScriptedPort:
-    """The four level reads `m-unit-work-029`'s two grouped finds issue.
-
-    The second find's item level answers what the group's own writes left: the
-    inserted row beside the rewritten one. A scripted port is what makes the
-    difference between the two finds authorable at all here — `FakeWritePort`
-    answers one canned row set to every read, so both finds would state one graph.
-    """
-    return ScriptedPort(
-        read_rows=[
-            [dict(_ORDER_1_ROW)],
-            [dict(_ORDER_ITEM_11_ROW)],
-            [dict(_ORDER_1_ROW)],
-            [dict(_ORDER_ITEM_13_ROW), dict(_ORDER_ITEM_11_ROW) | {"sku": "Rewritten"}],
-        ]
-    )
-
 
 def test_run_scenario_case_reports_an_ungrouped_finds_own_materialized_graph() -> None:
     # The read placement carries no `uow` requirement: an ungrouped read-back
@@ -377,7 +351,7 @@ def test_run_scenario_case_refuses_a_read_step_graph_over_no_include_path() -> N
     del steps[0]["objectQuery"]["includes"]
 
     with pytest.raises(UnclassifiedEngineError, match="declares no `includes`"):
-        scenario.run_scenario_case(case, _ryow_relationship_port())
+        scenario.run_scenario_case(case, ScriptedPort(read_rows=[[dict(_ORDER_1_ROW)]]))
 
 
 def _ledger_insert(at: str) -> dict[str, object]:
@@ -1040,6 +1014,14 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
         ("write", 2),
     ]
     assert database_calls == len(calls)
+
+
+def test_a_compiled_write_sequence_reports_each_emission_under_its_own_entry() -> None:
+    # m-unit-work-007's four entries each emit one statement.
+    emissions, _database_calls = scenario.compile_write_sequence_case(
+        _case("m-unit-work-007"), "postgres"
+    )
+    assert [e.case_pointer for e in emissions] == [f"/writeSequence/{i}" for i in range(4)]
 
 
 def test_scenario_compile_wraps_a_lowering_failure_as_engine_error() -> None:
