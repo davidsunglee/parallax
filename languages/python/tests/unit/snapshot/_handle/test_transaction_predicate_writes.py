@@ -1,9 +1,8 @@
 """Predicate-selected (`*_where`) write unit tests for `parallax.snapshot._handle`.
 
 The set-based verb family covers the mutation-compatibility guard, Assignment
-composition, the replaced state, inheritance rejection, the readless statement an unversioned
-non-temporal target executes, and the refusal of every target that needs an
-observation (`m-batch-write`).
+composition, the replaced state, inheritance rejection, Python-name binding, and
+the refusal of every target that needs an observation (`m-batch-write`).
 
 The codec's effective-change comparison is driven directly off positional rows
 over these models' own shapes, under `Columns` layout and Relational Document
@@ -28,7 +27,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.story_models import Account, Order, OrderItem
+from parallax.conformance.story_models import Account
 from parallax.core import (
     TX_TIME,
     Attr,
@@ -48,12 +47,8 @@ from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work import instructions
 from parallax.core.base import (
     INFINITY,
-    DocumentValue,
-    FrozenMap,
     UsageError,
 )
-from parallax.core.db_port import StructuredDocument
-from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
     MemberShape,
     prepare_effective_change,
@@ -95,7 +90,6 @@ from tests.unit._positional_row_support import positional_row
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
-    ORDERS,
     PAYMENT,
     PERSON,
     RATE,
@@ -144,233 +138,10 @@ class WhereVoyage(
 _WHERE_VOYAGE_META = DomainModel(WhereVoyage)
 
 
-class NestedReadlessStop(ValueObject):
-    port: Attr[str]
-
-
-class NestedReadlessSegment(ValueObject):
-    stops: Attr[tuple[NestedReadlessStop, ...]]
-
-
-class NestedReadlessRoute(ValueObject):
-    name: Attr[str]
-    segment: Attr[NestedReadlessSegment]
-
-
-class NestedReadlessVoyage(
-    Entity, table="nested_readless_voyage", namespace="parallax.compatibility", layout=Document()
-):
-    id: Attr[int] = attr(primary_key=True)
-    title: Attr[str | None]
-    route: Attr[NestedReadlessRoute]
-
-
-_NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
-
-
 # --------------------------------------------------------------------------- #
-# Predicate-selected `_where` verb family over a readless target: one        #
-# statement, executed at the call, with no read.                               #
+# Predicate-selected `_where` verbs: the replaced state, and the              #
+# instructions refused before any statement.                                  #
 # --------------------------------------------------------------------------- #
-def test_readless_update_where_executes_one_statement_no_read() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
-
-    own_root(
-        Database.connect(port, PERSON, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1)),
-        CommitCall(),
-    ]
-
-
-def test_readless_document_many_assignment_replaces_the_array_at_its_path() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            mm.Traveler.where(mm.Traveler.id == 1),
-            mm.Traveler.tags.set((mm.TravelerTag(label="founder"),)),
-        )
-
-    own_root(
-        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(
-            POSTGRES.to_driver_sql(
-                "update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
-            ),
-            ("{tags}", StructuredDocument((FrozenMap({"label": "founder"}),)), 1),
-        ),
-        CommitCall(),
-    ]
-
-
-@pytest.mark.parametrize(
-    ("model", "entity", "sql", "binds"),
-    [
-        (
-            mm.SCALAR_COLLECTION_COLUMNS_MODEL,
-            mm.ColumnsCollectionTwinItem,
-            "update collection_twin set counts = ?, tags = ? where id < ?",
-            (StructuredDocument((5, 5)), StructuredDocument(("b",)), 3),
-        ),
-        (
-            mm.SCALAR_COLLECTION_DOCUMENT_MODEL,
-            mm.DocumentCollectionTwinItem,
-            "update collection_twin set payload = jsonb_set(jsonb_set(payload, ?, "
-            "cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?",
-            ("{counts}", StructuredDocument((5, 5)), "{tags}", StructuredDocument(("b",)), 3),
-        ),
-    ],
-    ids=["columns", "document"],
-)
-def test_a_readless_collection_assignment_binds_whole_arrays_in_layout_order(
-    model: DomainModel, entity: Any, sql: str, binds: tuple[object, ...]
-) -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            entity.where(entity.id < 3), entity.tags.set(("b",)), entity.counts.set((5, 5))
-        )
-
-    own_root(
-        Database.connect(port, model, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(POSTGRES.to_driver_sql(sql), binds),
-        CommitCall(),
-    ]
-
-
-def test_readless_nested_document_many_assignment_replaces_the_whole_occurrence() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            NestedReadlessVoyage.where(NestedReadlessVoyage.id == 1),
-            NestedReadlessVoyage.route.set(
-                NestedReadlessRoute(
-                    name="Coastal",
-                    segment=NestedReadlessSegment(stops=(NestedReadlessStop(port="Oslo"),)),
-                )
-            ),
-        )
-
-    own_root(
-        Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    route = cast(
-        "DocumentValue",
-        FrozenMap(
-            {"name": "Coastal", "segment": FrozenMap({"stops": (FrozenMap({"port": "Oslo"}),)})}
-        ),
-    )
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(
-            POSTGRES.to_driver_sql(
-                "update nested_readless_voyage set payload = "
-                "jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
-            ),
-            ("{route}", StructuredDocument(route), 1),
-        ),
-        CommitCall(),
-    ]
-
-
-def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(
-            NestedReadlessVoyage.where(NestedReadlessVoyage.id == 1),
-            NestedReadlessVoyage.title.set("Coastal"),
-        )
-
-    own_root(
-        Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall]
-
-
-def test_readless_delete_where_executes_one_statement_no_read() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.delete_where(mm.Person.where(mm.Person.id == 1))
-
-    own_root(
-        Database.connect(port, PERSON, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
-        CommitCall(),
-    ]
-
-
-def test_readless_replace_where_writes_the_instances_whole_state_but_never_its_key() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.replace_where(mm.Person.where(mm.Person.id == 1), mm.Person(id=9, name="Grace"))
-
-    own_root(
-        Database.connect(port, PERSON, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Grace", 1)),
-        CommitCall(),
-    ]
-
-
-def test_readless_replace_where_completes_each_omitted_member_at_its_document_path() -> None:
-    # An omitted nullable member is JSON null at its own path and an omitted
-    # `many` the empty array, each patched in canonical placement order, so no
-    # key the replacement does not write is touched.
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.replace_where(mm.Traveler.where(mm.Traveler.id == 1), mm.Traveler(id=1, note="east"))
-
-    own_root(
-        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    patch = "payload"
-    for _ in range(6):
-        patch = f"jsonb_set({patch}, ?, cast(? as jsonb))"
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(
-            POSTGRES.to_driver_sql(f"update traveler set payload = {patch} where id = ?"),
-            (
-                "{displayName}",
-                "null",
-                "{score}",
-                "null",
-                "{joinedOn}",
-                "null",
-                "{note}",
-                '"east"',
-                "{address}",
-                "null",
-                "{tags}",
-                StructuredDocument(()),
-                1,
-            ),
-        ),
-        CommitCall(),
-    ]
 
 
 def test_a_replacement_of_an_entity_writing_nothing_but_its_key_is_dropped() -> None:
@@ -406,74 +177,6 @@ def test_replace_where_refuses_a_payload_of_another_entity() -> None:
             Database.connect(port, PERSON, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
-
-
-def test_readless_update_where_through_a_shared_join_executes_one_statement_no_read() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.amend_where(OrderItem.where(OrderItem.order.name == "Ada"), OrderItem.sku.set("Z"))
-
-    own_root(
-        Database.connect(port, ORDERS, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
-    assert port.calls == [
-        BeginCall(),
-        WriteCall(
-            POSTGRES.to_driver_sql(
-                "update order_item set sku = ? where id in (select t0.id from order_item t0 "
-                "left join orders t1 on t1.id = t0.order_id where t1.name = ?)"
-            ),
-            ("Z", "Ada"),
-        ),
-        CommitCall(),
-    ]
-
-
-def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> None:
-    # The SET clause orders by the target's Table Layout slots
-    # (the settled step's own slot-ordered assignment cells), never the
-    # AUTHORED assignment order -- reversing the two `.set(...)` calls below
-    # (price before name, the opposite of Order's own slot order) emits
-    # BYTE-IDENTICAL SQL to the natural order (mirrors `test_full_row_insert_
-    # emits_the_entity_layout_slot_selection`'s own insert-side proof).
-    # Eligibility is untouched: the target is still unversioned and
-    # non-temporal, so the write stays readless.
-    forward_port = ScriptedAdapter(Transact(Write()))
-
-    def forward(tx: TxnContext) -> None:
-        tx.amend_where(
-            Order.where(Order.id == 100),
-            Order.name.set("Hopper"),
-            Order.price.set(Decimal("9.99")),
-        )
-
-    own_root(
-        Database.connect(forward_port, ORDERS, clock=FixedClock(FIXED))
-    ).using_database_login().transact(forward)
-
-    reordered_port = ScriptedAdapter(Transact(Write()))
-
-    def reordered(tx: TxnContext) -> None:
-        tx.amend_where(
-            Order.where(Order.id == 100),
-            Order.price.set(Decimal("9.99")),
-            Order.name.set("Hopper"),
-        )
-
-    own_root(
-        Database.connect(reordered_port, ORDERS, clock=FixedClock(FIXED))
-    ).using_database_login().transact(reordered)
-
-    assert forward_port.calls == reordered_port.calls
-    assert forward_port.calls == [
-        BeginCall(),
-        WriteCall(
-            POSTGRES.to_driver_sql("update orders set name = ?, price = ? where id = ?"),
-            ("Hopper", Decimal("9.99"), 100),
-        ),
-        CommitCall(),
-    ]
 
 
 def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:

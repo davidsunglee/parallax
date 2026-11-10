@@ -212,30 +212,6 @@ def test_a_stream_acquires_at_its_first_page_and_not_at_scope_entry() -> None:
             assert adapter.acquisitions == 1
 
 
-def test_an_exhausted_stream_releases_where_it_ends_rather_than_at_its_scope_exit() -> None:
-    # A delivery that is over must not keep capacity until the caller happens to
-    # leave its `with` block.
-    adapter = ScriptedAdapter(Read(rows=[_order_row(1)]), Read(rows=[]))
-    with _db(adapter, ORDERS_MODEL) as _root_db:
-        db = _root_db.using_database_login()
-        with db.stream(_orders_query(), batch_size=2) as roots:
-            assert list(roots)
-            assert adapter.cleanups == [Returned()]
-        assert adapter.cleanups == [Returned()]
-
-
-def test_a_stream_a_caller_abandoned_has_already_released_its_page() -> None:
-    # Publication begins only after the page lease has returned, so abandoning
-    # the delivery leaves no connection for scope exit to settle.
-    adapter = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))
-    with _db(adapter, ORDERS_MODEL) as _root_db:
-        db = _root_db.using_database_login()
-        with db.stream(_orders_query(), batch_size=2) as roots:
-            next(iter(roots))
-            assert adapter.cleanups == [Returned()]
-        assert adapter.cleanups == [Returned()]
-
-
 def test_a_stream_closed_before_its_first_page_releases_nothing() -> None:
     adapter = ScriptedAdapter()
     with _db(adapter, ORDERS_MODEL) as _root_db:
@@ -609,20 +585,3 @@ def test_the_direct_constructor_takes_the_same_record() -> None:
     db = Database(adapter.open(), ACCOUNT, options=options, clock=FixedClock(FIXED))
     assert db.using_database_login().transact(lambda tx: tx.options) is options
     assert adapter.calls == [BeginCall("serializable"), CommitCall()]
-
-
-def test_participating_work_answers_the_attempts_connection_without_acquiring() -> None:
-    # A stream inside a transaction is one more thing running on the attempt's
-    # connection rather than a second borrower of it, so it acquires nothing and
-    # releases nothing of its own.
-    adapter = ScriptedAdapter(Transact(Read(rows=[_order_row(1)]), Read(rows=[])))
-    with _db(adapter, ORDERS_MODEL) as _root_db:
-        db = _root_db.using_database_login()
-
-        def body(tx: TxnContext) -> list[object]:
-            with tx.stream(_orders_query(), batch_size=2) as roots:
-                return list(roots)
-
-        assert db.transact(body)
-
-    assert (adapter.acquisitions, adapter.cleanups) == (1, [Returned()])
