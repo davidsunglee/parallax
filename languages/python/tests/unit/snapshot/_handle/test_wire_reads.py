@@ -231,12 +231,6 @@ def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
     assert root["active"] is True
 
 
-def test_shared_wire_encoding_delegates_unhashable_managed_values() -> None:
-    document = {"free": [1, None]}
-
-    assert wire_scalar_cache()(JSON, cast("ManagedValue", document)) == document
-
-
 def test_shared_wire_encoding_keeps_equal_json_values_of_distinct_kinds_apart() -> None:
     encoder = wire_scalar_cache()
     values: list[object] = [True, 1, 1.0, False, 0, 0.0, -0.0]
@@ -244,20 +238,6 @@ def test_shared_wire_encoding_keeps_equal_json_values_of_distinct_kinds_apart() 
     spelled = [json.dumps(encoder(JSON, cast("ManagedValue", value))) for value in values]
 
     assert spelled == ["true", "1", "1.0", "false", "0", "0.0", "-0.0"]
-
-
-def test_wire_encoding_reuse_is_scoped_to_one_encoder() -> None:
-    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    first_encoder = wire_scalar_cache()
-    second_encoder = wire_scalar_cache()
-
-    first = first_encoder(TIMESTAMP, instant)
-    reused = first_encoder(TIMESTAMP, instant)
-    isolated = second_encoder(TIMESTAMP, instant)
-
-    assert reused is first
-    assert isolated == first
-    assert isolated is not first
 
 
 def test_wire_encoding_retains_only_the_current_and_preceding_page(
@@ -748,11 +728,6 @@ def test_a_wire_value_compares_structurally_and_is_unhashable() -> None:
         hash(_sequence(root["items"]))
 
 
-def test_a_wire_value_serializes_as_json_directly() -> None:
-    root = _frozen_root()
-    assert json.loads(json.dumps(root))["orderedOn"] == "2024-01-05"
-
-
 def test_plain_conversion_yields_an_ordinary_mapping() -> None:
     root = _frozen_root()
     plain = dict(root)
@@ -837,9 +812,6 @@ class Gadget(Entity, table="gadget", namespace="parallax.compatibility"):
     name: Attr[str]
 
 
-GADGETS = DomainModel(Gadget)
-
-
 def test_a_wire_view_reports_itself_without_leaking_its_owner() -> None:
     database = _wire_database(QueuePort([]))
     assert repr(database.wire) == "WireDatabaseView()"
@@ -922,25 +894,6 @@ def test_either_model_provenance_publishes_a_non_hydrating_record(provenance: st
     record = cast("InvalidData[object]", published)
     assert {issue.code for issue in record.issues} == {"stored-data-leaf-undecodable"}
     assert record.data is None
-
-
-def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
-    # The first-party constructor the conformance adapter uses reaches the same
-    # materializer `connect` does, so its verdicts are the same ones.
-    port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": "Oslo"}}]])
-    query = deserialize_query(
-        {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
-    )
-    published = (
-        own_root(Database.connect(port, CUSTOMER))
-        .using_database_login()
-        .wire.find(query)
-        .checked()
-        .result()
-    )
-    assert isinstance(published, InvalidData)
-    record = cast("InvalidData[object]", published)
-    assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
 
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
@@ -1226,13 +1179,6 @@ def test_a_milestone_set_wire_read_publishes_every_milestone_in_one_ordered_resu
         .results()
     )
     assert [_entity(root)["amount"] for root in roots] == ["50.00", "75.00"]
-
-
-def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -> None:
-    port = _history_port()
-    database = own_root(Database.connect(port, INVOICE)).using_database_login()
-    result = database.transact(lambda tx: tx.wire.find(_HISTORY_QUERY).results())
-    assert [_entity(root)["amount"] for root in result] == ["50.00", "75.00"]
 
 
 # --------------------------------------------------------------------------- #

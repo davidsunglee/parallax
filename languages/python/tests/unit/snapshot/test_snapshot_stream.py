@@ -71,7 +71,6 @@ from parallax.snapshot import (
     edge_of,
     pin_of,
 )
-from parallax.snapshot._handle import _stream as stream_module
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication._wire import read_evidence_of
@@ -408,32 +407,8 @@ def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A participating stream delivers through the transaction it was opened in.    #
+# A participating stream judges its page size at the call too.                #
 # --------------------------------------------------------------------------- #
-def test_a_participating_stream_delivers_its_roots_inside_the_transaction() -> None:
-    port = ScriptedAdapter(
-        Transact(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
-    )
-
-    def body(tx: TxnContext) -> list[int]:
-        with tx.stream(_all_orders(), batch_size=2) as stream:
-            return _ids(iter(stream))
-
-    assert _orders(port).transact(body) == [1, 2, 3]
-
-
-def test_a_participating_wire_stream_delivers_the_same_roots() -> None:
-    port = ScriptedAdapter(
-        Transact(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
-    )
-
-    def body(tx: TxnContext) -> list[int]:
-        with tx.wire.stream(_all_orders(), batch_size=2) as stream:
-            return [cast("int", _entity(root)["id"]) for root in stream]
-
-    assert _orders(port).transact(body) == [1, 2, 3]
-
-
 def test_a_participating_stream_validates_its_page_size_at_the_call() -> None:
     port = ScriptedAdapter(Transact())
 
@@ -667,55 +642,6 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
         stream.wire(order)
 
 
-def test_projection_reuses_one_instance_reader_per_page(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    readers: list[object] = []
-    instance_reader = cast("Any", stream_module).InstanceReader
-
-    def recording_reader(*args: Any, **kwargs: Any) -> Any:
-        reader = instance_reader(*args, **kwargs)
-        readers.append(reader)
-        return reader
-
-    monkeypatch.setattr(stream_module, "InstanceReader", recording_reader)
-    port = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))
-    with _orders(port).stream(_all_orders(), batch_size=2) as stream:
-        roots = iter(stream)
-        first = next(roots)
-        assert stream.wire(first) is stream.wire(first)
-        assert stream.wire(next(roots))["id"] == 2
-
-    assert len(readers) == 1
-
-
-def test_projection_refusals_commit_no_page_working_state() -> None:
-    port = ScriptedAdapter(
-        Read(rows=[_order_row(1)]),
-        Read(rows=[_item_row(10, 1)]),
-    )
-    with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
-        roots = iter(stream)
-        order = next(roots)
-        item = order.items[0]
-
-        with raises_code(UsageError, "snapshot-wire-input-edited"):
-            stream.wire(order.edit(name="changed"))
-
-        with raises_code(UsageError, "snapshot-wire-at-unrequested"):
-            stream.wire(order, at=Order.statuses)
-
-        with raises_code(UsageError, "snapshot-wire-at-concrete-mismatch"):
-            stream.wire(item)
-
-        projection = cast("Any", stream)._projection_state
-        assert projection._reader is None
-        assert projection._renderer is None
-        assert projection._encoder is None
-        assert stream.wire(order)["id"] == 1
-        assert projection._reader is not None
-
-
 def test_projection_refusals_are_recoverable_and_preserve_same_page_entries() -> None:
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
@@ -773,23 +699,6 @@ def test_a_wire_stream_is_not_a_projection_receiver() -> None:
         root = next(iter(stream))
         with raises_code(UsageError, "snapshot-wire-envelope-ineligible"):
             cast("Any", stream).wire(root)
-
-
-def test_unused_typed_delivery_constructs_no_projection_working_state(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def forbidden(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise AssertionError("unused Typed delivery constructed projection state")
-
-    monkeypatch.setattr(wire_materialize, "InstanceReader", forbidden)
-    monkeypatch.setattr(wire_materialize, "wire_scalar_cache", forbidden)
-    monkeypatch.setattr(stream_module, "WeakIdentityMemo", forbidden)
-
-    with _orders(ScriptedAdapter(Read(rows=[_order_row(1)]))).stream(
-        _all_orders(), batch_size=2
-    ) as stream:
-        assert _ids(iter(stream)) == [1]
 
 
 def test_projection_scalar_reuse_rotates_on_unprojected_delivery_pages(

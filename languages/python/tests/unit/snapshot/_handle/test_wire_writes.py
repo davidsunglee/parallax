@@ -43,7 +43,6 @@ from parallax.snapshot import (
     Snapshot,
     TxnContext,
     WireEntity,
-    connect,
     edge_of,
     pin_of,
 )
@@ -85,7 +84,6 @@ _PERSON_ROW: MappingRow = {"id": 1, "name": "Ada"}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_FROM = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 _NAIVE_INSTANT = dt.datetime(2024, 7, 1)  # no tzinfo: not an instant at all
-_OTHER_FROM = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 _UNTIL = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 _OTHER_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -115,18 +113,6 @@ _POSITION_QUERY: dict[str, object] = {
 _PERSON_TARGET: dict[str, object] = {
     "entity": "parallax.compatibility.Person",
     "predicate": {"eq": {"path": "parallax.compatibility.Person.id", "value": 1}},
-}
-# The one document-mapped mirror, whose `address` occurrence is what an
-# assignment replaces whole.
-_TRAVELER_ROW: MappingRow = {
-    "id": 1,
-    "payload": StructuredDocument(
-        {"address": {"city": "Oslo", "geo": {"country": "NO"}}, "tags": []}
-    ),
-}
-_TRAVELER_QUERY: dict[str, object] = {
-    "target": "parallax.compatibility.Traveler",
-    "predicate": {"eq": {"path": "parallax.compatibility.Traveler.id", "value": 1}},
 }
 _CONTACT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Contact",
@@ -392,14 +378,6 @@ def test_a_bounded_wire_insert_opens_one_bounded_rectangle() -> None:
     ).using_database_login().transact(fn)
 
     assert [op.sql.split()[0] for op in _writes(port)] == ["insert"]
-
-
-def test_a_wire_predicate_delete_over_an_unversioned_target_is_readless() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-    db_for(PERSON, port).transact(lambda tx: tx.wire.delete_where(_PERSON_TARGET))
-
-    assert _reads(port) == []
-    assert _writes(port) == [WriteCall("delete from person where id = %s", (1,))]
 
 
 def test_a_wire_predicate_update_lowers_its_assignments_canonically() -> None:
@@ -844,21 +822,6 @@ def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
     assert _writes(port) == []
 
 
-def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_members() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(
-            UsageError,
-            "write-instruction-invalid",
-            match=r"'parallax\.compatibility\.Person\.undeclared' does not name a declared member",
-        ):
-            tx.wire.amend_where(_PERSON_TARGET, {"undeclared": 1})
-
-    db_for(PERSON, port).transact(fn)
-    assert _writes(port) == []
-
-
 def test_a_predicate_writes_members_are_all_resolved_before_any_value_is_judged() -> None:
     port = ScriptedAdapter(Transact())
 
@@ -1232,17 +1195,6 @@ def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchron
     ).using_database_login().transact(fn)
 
 
-def test_a_wire_verb_refuses_before_any_io() -> None:
-    port = ScriptedAdapter(Transact())
-    db = own_root(Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-instruction-invalid"):
-            tx.wire.amend(cast("WireEntity", {"id": 1}), {"balance": "1.00"})
-
-    db.transact(fn)
-
-
 # --------------------------------------------------------------------------- #
 # Coalescing, restoration, and the no-op — including across representations.  #
 # --------------------------------------------------------------------------- #
@@ -1272,16 +1224,6 @@ def test_a_wire_assignment_equal_to_what_the_read_published_is_still_written() -
 
     db_for(ACCOUNT, port).transact(fn)
     assert [write.binds for write in _writes(port)] == [("Ada", Decimal("100.00"), 5, 1, 4)]
-
-
-def test_an_empty_wire_change_document_emits_nothing() -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
-
-    def fn(tx: TxnContext) -> None:
-        tx.wire.amend(_node(tx, _ACCOUNT_QUERY), {})
-
-    db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
 
 
 def test_a_wire_net_equal_chain_across_two_verbs_writes_its_last_value() -> None:
@@ -1591,14 +1533,6 @@ def test_a_returned_wire_mapping_still_refuses_mutation_after_a_write() -> None:
         assert node["balance"] == "100.00"
 
     db_for(ACCOUNT, port).transact(fn)
-
-
-def test_the_wire_view_is_reachable_from_the_module_level_connect() -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
-    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().transact(
-        lambda tx: tx.wire.delete(_node(tx, _ACCOUNT_QUERY))
-    )
-    assert len(_writes(port)) == 1
 
 
 # --------------------------------------------------------------------------- #

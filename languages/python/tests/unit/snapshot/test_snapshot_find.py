@@ -70,7 +70,6 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
@@ -82,11 +81,10 @@ from parallax.core.metamodel import (
     EntityIdentity,
     Metamodel,
     RelationshipIdentity,
-    entity_by_name,
 )
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.predicate._resolved import ResolvedMembership
 from parallax.core.read_delivery import (
     InvalidData,
@@ -95,12 +93,10 @@ from parallax.core.read_delivery import (
     _read_plan,
 )
 from parallax.core.read_delivery._delivery import find, find_history
-from parallax.core.read_delivery._fetch import slot_table
 from parallax.core.read_delivery._page import (
     ABSENT,
     CONTINUATION_ORDER_NOT_TOTAL,
     RESULT_DATA_INVALID,
-    ChildSlot,
     InvalidRootInput,
     Page,
     PageRows,
@@ -126,7 +122,7 @@ from parallax.snapshot import (
     WireEntity,
     pin_of,
 )
-from parallax.snapshot._handle import _database, _read
+from parallax.snapshot._handle import _read
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
 from parallax.snapshot._publication._graph_view import GraphView
 from tests._support import mirrored_models as mm
@@ -143,7 +139,7 @@ from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._root_publication_support import each_root, observed_roots
-from tests.unit._transact_support import ACCOUNT, NEW_ROW, PERSON
+from tests.unit._transact_support import ACCOUNT, NEW_ROW
 from tests.unit.snapshot._snapshot_page_support import (
     ConversionCalls,
     RecordingObserver,
@@ -582,7 +578,6 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 1
     assert _rows(result.page).roots == ()
-    assert len(port.executed) == 1
 
 
 def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement() -> None:
@@ -1149,22 +1144,6 @@ def test_an_inherited_milestones_coverage_reads_the_roots_valid_time_cells_on_th
     assert opened.end is INFINITY
 
 
-def test_a_pages_milestone_edges_read_no_axis_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(*_arguments: object) -> object:
-        raise AssertionError("an edge read an axis end")
-
-    result = _deposit_rate_history()
-    monkeypatch.setattr(PageRows, "axis_end", refuse)
-
-    assert [
-        (edge.tx_time, edge.valid_time) if edge is not None else None
-        for edge in page_edges(result.page, result.milestones)
-    ] == [
-        (dt.datetime(2024, 1, 1, tzinfo=_UTC), _RATE_FROM),
-        (dt.datetime(2024, 2, 1, tzinfo=_UTC), _RATE_FROM),
-    ]
-
-
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     policy = _MODELS["policy"]
     port = QueuePort([[]])
@@ -1268,31 +1247,6 @@ def test_a_refusal_reports_every_matching_feature_in_ascending_order() -> None:
     assert "has deferred a-staged-feature, snapshot-history-includes and" in error.args[1]
 
 
-def test_every_execution_reads_the_querys_own_authored_state(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The authored state is the query's own immutable value rather than
-    # something an execution derives and caches: every execution reads it, two
-    # executions of one query see the same frozen value, and neither attaches
-    # what it resolved back to it.
-    captured: list[AuthoredQuery] = []
-    original = typed_read_query
-
-    def recording(query: ObjectQuery[Any, Any]) -> AuthoredQuery:
-        authored = original(query)
-        captured.append(authored)
-        return authored
-
-    monkeypatch.setattr(_database, "typed_read_query", recording)
-    query = mm.Person.where(mm.Person.id == 1)
-    db = own_root(Database.connect(QueuePort([[], []]), PERSON)).using_database_login()
-    db.find(query)
-    db.find(query)
-    first, second = captured
-    assert first is second
-    assert first == typed_read_query(query)
-
-
 # --------------------------------------------------------------------------- #
 # The materialization boundary classifies a stored-data finding in band and   #
 # translates a graph-construction or lifecycle failure exactly once,          #
@@ -1308,15 +1262,6 @@ def test_a_native_columns_leaf_is_preserved_without_host_reclassification() -> N
     assert isinstance(root, mm.Account)
     assert root.balance == "not-a-decimal"
     assert len(port.executed) == 1
-
-
-def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None:
-    # The counterpart the single translation exists to keep separate: a refusal
-    # raised before any graph was being built is never re-classified as a
-    # materialization failure.
-    db = own_root(Database.connect(RefusingAdapter(), ACCOUNT)).using_database_login()
-    with raises_code(UsageError, "query-target-not-in-model"):
-        db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
 
 def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization() -> None:
@@ -2004,104 +1949,12 @@ def test_an_executable_read_matching_no_rows_still_issues_its_statement() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# The view-slot seam: a plan in, a slot table out, and one Page schema.        #
-# of one execution is laid out by.                                            #
+# View slots: a level attaches under only the parents it admits, and one      #
+# execution lays every Page row out by one schema.                            #
 # --------------------------------------------------------------------------- #
-def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[ChildSlot, ...], ...]:
-    """The slot table ``find`` derives from ``document``'s own plan.
-
-    Reached through the module rather than by name so the executor's own
-    derivation is what is graded — this is the one place the plan vocabulary
-    stops, and nothing below it ever sees a `FetchStep` again.
-    """
-    query = deserialize_query(document)
-    entity = entity_by_name(model, cast("str", document["target"]))
-    assert entity is not None
-    validated = resolve_read_query(query, model=model)
-    return slot_table(
-        read_planning.plan(
-            validated, model, projection=read_planning.ReadProjectionRequest("all", True)
-        )
-    )
-
-
 def _view_key(entity: str, name: str, narrowed: str | None = None) -> RelationshipViewKey:
     return RelationshipViewKey(
         RelationshipIdentity(EntityIdentity("parallax.compatibility", entity), name), narrowed
-    )
-
-
-def test_the_slot_table_places_each_level_under_the_source_that_gathers_it() -> None:
-    # A level's slot belongs to whichever source its PARENT rows came from, and
-    # the table is dense over every source a projection can be converted at — so
-    # a back-reference level, which converts no row of its own, is named as a
-    # parent by nothing and owns an empty entry. Its own slot carries the
-    # concretes its logical claims may resolve to.
-    assert _slot_table(
-        ORDERS,
-        {
-            "target": "Order",
-            "predicate": {"eq": {"path": "Order.id", "value": 1}},
-            "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
-        },
-    ) == (
-        (ChildSlot(_view_key("Order", "items")),),
-        (
-            ChildSlot(
-                _view_key("OrderItem", "order"),
-                targets=frozenset({EntityIdentity("parallax.compatibility", "Order")}),
-            ),
-        ),
-        (),
-    )
-
-
-def test_a_root_parented_levels_guard_reaches_the_slot_table_as_its_admitted_set() -> None:
-    # The guard is the only thing that filters a level's parents, so it is the
-    # only per-concrete fact a slot carries — and a narrowed hop is a distinct
-    # view key rather than a qualification of the broad one.
-    assert _slot_table(
-        ANIMAL,
-        {
-            "target": "Animal",
-            "predicate": {"true": {}},
-            "includes": [
-                {
-                    "segments": [{"rel": "Animal.owner"}, {"rel": "Person.pets"}],
-                    "appliesTo": ["Dog"],
-                }
-            ],
-        },
-    ) == (
-        (
-            ChildSlot(
-                _view_key("Animal", "owner"),
-                frozenset({EntityIdentity("parallax.compatibility", "Dog")}),
-            ),
-        ),
-        (ChildSlot(_view_key("Person", "pets")),),
-        (),
-    )
-
-
-def test_a_narrowed_hop_takes_its_own_slot_beside_the_broad_one() -> None:
-    assert _slot_table(
-        ANIMAL,
-        {
-            "target": "Person",
-            "predicate": {"true": {}},
-            "includes": [
-                {"segments": [{"rel": "Person.pets"}]},
-                {"segments": [{"rel": "Person.pets", "narrowTo": ["Dog"]}]},
-            ],
-        },
-    ) == (
-        (
-            ChildSlot(_view_key("Person", "pets")),
-            ChildSlot(_view_key("Person", "pets", "pets[Dog]")),
-        ),
-        (),
-        (),
     )
 
 

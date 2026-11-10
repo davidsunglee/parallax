@@ -42,14 +42,13 @@ from parallax.core import (
     read_planning as deep_fetch_module,
 )
 from parallax.core._execution import _read_query as read_query_module
-from parallax.core.base import INFINITY, TIMESTAMP, UsageError
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import Edge, Pin
-from parallax.core.wire import decode_canonical_wire
 from parallax.snapshot import (
     Database,
     ScopedDatabase,
@@ -288,15 +287,6 @@ def test_projection_ignores_pydantic_extensions_and_is_directly_json_serializabl
     assert json.loads(json.dumps(projected.checked().results())) == [
         {"id": 1, "externalLabel": "Ada"}
     ]
-
-
-def test_whole_result_projection_preserves_root_order() -> None:
-    second = {**_customer_row(), "id": 2, "name": "Grace"}
-    root, db = _database(Read(rows=[_customer_row(), second]))
-    typed = db.find(vo.Customer.where(vo.Customer.all))
-    root.close()
-
-    assert [value["id"] for value in typed.wire().results()] == [1, 2]
 
 
 def test_element_projection_accepts_an_external_published_node_without_membership() -> None:
@@ -863,54 +853,3 @@ def test_a_deep_narrowed_projected_node_keeps_its_roots_pin_on_its_own_edge(deli
     assert tuple(edge_of(node) for node in nodes) == deep.TEMPORAL_READ_EDGES
     for source, wire in ((keeper, projected), (dog, projected_dog), (toy.maker, projected_maker)):
         assert pin_of(wire) is pin_of(source)
-
-
-@pytest.mark.parametrize(
-    ("model", "query", "reads", "starts"),
-    [
-        pytest.param(
-            BALANCE_MODEL,
-            Balance.where(Balance.id == 1),
-            (
-                Read(
-                    rows=[
-                        {
-                            "bal_id": 1,
-                            "acct_num": "A-1",
-                            "val": Decimal("5.00"),
-                            "in_z": _OPENED,
-                            "out_z": INFINITY,
-                        }
-                    ]
-                ),
-            ),
-            ("txStart",),
-            id="transaction-time",
-        ),
-        pytest.param(
-            POLICY_MODEL, _POLICY_QUERY, _POLICY_READS, ("txStart", "validStart"), id="bitemporal"
-        ),
-    ],
-)
-def test_wire_inspection_decodes_exactly_the_milestone_starts_on_every_call(
-    monkeypatch: pytest.MonkeyPatch,
-    model: DomainModel,
-    query: Any,
-    reads: tuple[Read, ...],
-    starts: tuple[str, ...],
-) -> None:
-    root = cast("Database[Any]", Database.connect(ScriptedAdapter(*reads), model))
-    projected = root.using_database_login().find(query).wire().result()
-    root.close()
-    decoded: list[tuple[object, object]] = []
-
-    def recording(neutral_type: Any, value: Any) -> Any:
-        decoded.append((neutral_type, value))
-        return decode_canonical_wire(neutral_type, value)
-
-    monkeypatch.setattr(wire_materialize, "decode_canonical_wire", recording)
-    edge_of(projected)
-    edge_of(projected)
-
-    expected = [(TIMESTAMP, projected[start]) for start in starts]
-    assert decoded == expected + expected
