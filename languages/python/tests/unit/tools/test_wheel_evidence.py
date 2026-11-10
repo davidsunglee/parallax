@@ -195,6 +195,20 @@ def test_job_without_its_own_creation_timestamp_has_unknown_queue_time() -> None
     assert evidence.job_timings(job, _OBSERVED)["queue_seconds"] is None
 
 
+def test_a_job_carried_over_from_an_earlier_attempt_has_unknown_queue_time() -> None:
+    carried = {**_job("native", "3.14"), "created_at": "2026-11-04T12:30:00Z"}
+    timing = evidence.job_timings(carried, _OBSERVED)
+    assert timing["queue_seconds"] is None
+    assert timing["runner_seconds"] == 120
+
+
+def test_a_run_stamped_as_started_before_its_creation_has_unknown_queue_time() -> None:
+    run = {**_run(), "run_started_at": "2026-11-04T11:59:59Z"}
+    timing = evidence.execution_timings([_job("native", "3.14")], run, _OBSERVED)
+    assert timing["workflow_queue_seconds"] is None
+    assert timing["workflow_execution_observed_seconds"] == 181
+
+
 def test_skipped_job_has_no_runner_time_despite_synthetic_reversed_timestamps(
     matrix: tuple[Path, list[Document], Document],
 ) -> None:
