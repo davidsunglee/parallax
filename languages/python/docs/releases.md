@@ -4,6 +4,87 @@
 
 These changes are not part of any published release.
 
+Applications now import from a small, fixed set of modules. Each distribution's root
+holds the calls, configuration, declarations and errors an application spells. Three
+vocabulary modules hold the types an application matches on or reads:
+`parallax.core.introspection`, `parallax.core.execution_lifecycle` and
+`parallax.evolution.operations`. `parallax.aws.postgres` stays separate because it needs
+the `parallax-aws[postgres]` extra. Every other module moved under
+`parallax.core.internal` or `parallax.evolution.internal`, which carry no compatibility
+promise. The [API snapshot](../tests/api/public_api.json) records the complete
+application surface, and each name in it has exactly one home. Import each name from
+its new home:
+
+| Previously imported from | Now import from |
+| -- | -- |
+| `parallax.core.base`, `parallax.core.entity`, `parallax.core.execution`, `parallax.core.db_error` or `parallax.core.read_delivery` | `parallax.core` |
+| `parallax.core.db_port`: credentials, pool metrics, `ConnectionAcquisitionError` and `DatabaseStartupError` | `parallax.core` |
+| `parallax.core.execution_lifecycle`: Providers, Handlers, `RootExecution`, pool observers and the two lifecycle codes | `parallax.core` |
+| `parallax.core.metamodel`: inheritance roles and strategies, key generation, `Document`, `Columns` and `MetamodelIssue` | `parallax.core` |
+| `parallax.core.metamodel`: identities and read-only metadata | `parallax.core.introspection` |
+| `parallax.evolution` or `parallax.evolution.model_evolution`: operation, detail, impact and fact types | `parallax.evolution.operations` |
+| `parallax.evolution.model_evolution` or `parallax.evolution.schema_delta`: `evolve`, `schema_delta`, `ABSENT` and the result types | `parallax.evolution` |
+| `parallax.postgres.adapter` | `parallax.postgres` |
+
+A name an application only holds or passes along has no application home and is now
+internal. That covers `Metamodel`, `model_of`, `FacetKey`, the Wire codec functions, the
+database port's adapter protocols, `FailureDiagnostic`, the document codec and storage
+layout modules, the `Cardinality` and `PersistenceMode` classes (their members stay at
+the root), the evolution `*Delta` unions, `*_ORDER` constants and
+`canonical_operation_key`, and the lifecycle per-kind outcome unions, `ActivityStarted`,
+`ActivityFinished`, `ActivityFailure`, `TransactionInvocation` and `Literal` aliases
+such as `RootExecutionKind`. Match lifecycle events on their concrete classes, and spell a union of them
+where you need one.
+
+`DomainModel.meta(key)` is replaced by `DomainModel.entity(key)`, which takes the same
+keys and raises the same errors. It returns resolved metadata, and `DomainModel.entities`
+lists every Entity's. The name `EntityMetadata` now means this resolved type, imported
+from `parallax.core.introspection`. Its `declared` profile holds what the Entity itself
+declares, and its `effective` profile adds the members, container, layout and primary
+key it inherits. Replace `meta(X).declared_attributes` with
+`entity(X).declared.attributes`, and likewise for relationships, Value Objects, As-Of
+Axes, container, persistence and layout. A relationship is now a resolved
+`RelationshipMetadata` direction rather than its authored declaration. `inheritance`
+answers the Entity's role (`AbstractRoot`, `AbstractSubtype` or `ConcreteSubtype`) and
+`parent` names its resolved parent. There is no lookup of an index by name; search
+`indices`.
+
+`evolve` takes Domain Models, as `prepare_model` and descriptor export already did.
+Replace `evolve(model_of(earlier), model_of(later))` with `evolve(earlier, later)`;
+`ABSENT` still provisions from nothing. Anything other than a Domain Model raises
+`TypeError`.
+
+The Parallax column type `Decimal` is now `Numeric`, so it no longer shares a name with
+Python's `decimal.Decimal`, which stays its value type. Messages that print a declared
+type now say `Numeric(precision=…, scale=…)`. The core type name, the descriptor's
+`decimal(p,s)` spelling and the Wire spelling are unchanged. Declaring
+`layout=Columns()` is now accepted and means the same as omitting `layout`.
+
+`InvalidValueError`, a new `UsageError` subclass, reports a value the calling code
+stated that doesn't fit its member: the wrong type, outside the type's value space, or
+absent where the member requires one. It is raised for `neutral-literal-*`,
+`write-value-type-mismatch`, `write-required-attribute-missing`,
+`write-required-value-object-missing`, `write-assignment-value-type-mismatch`, and a
+Typed query operand of the wrong type (`query-expression-invalid`), on both the Typed
+and Wire lanes. Those codes are unchanged, and `except UsageError` still catches it.
+Catch it around client input and answer 422. A Wire assignment whose value doesn't fit
+its member now reports `write-assignment-value-type-mismatch` in place of
+`write-instruction-invalid`.
+
+A `UsageError` with code `transaction-rollback-only` now answers `is_transient` from
+the failure that doomed the transaction. A caught transient conflict that outlasts the
+retries therefore reads as worth trying later rather than as a permanent failure.
+
+Nine code constants leave the `parallax.core` root: `WRITE_VALUE_NOT_STORED`,
+`WRITE_VALUE_ALREADY_STORED`, `WRITE_VALUE_FOREIGN_LIFECYCLE`,
+`TRANSACTION_ACCESS_MODE_MISMATCH`, `TRANSACTION_AUTHORITY_MISMATCH`,
+`TRANSACTION_OPTION_CONFLICT`, `TRANSACTION_OWNER_MISMATCH`,
+`TRANSACTION_TIME_PIN_READ_ONLY` and `EXECUTION_FEATURE_DEFERRED`. Decide from an
+error's class and fields. Where a log, alert or test needs a code, compare `code` with
+its string. The root keeps `QUERY_TARGET_NOT_IN_MODEL`, `PRINCIPAL_INVALID`,
+`LIFECYCLE_PROVIDER_FAILED` and `LIFECYCLE_REENTERED`, and now also publishes
+`StoredDataIssue` and `MISSING_STORED_VALUE` beside `InvalidData`.
+
 `pin_of` now accepts a Wire node as `edge_of` does: any node a Wire read published,
 direct or projected, answers the `Pin` its read retained, with no I/O and no write
 authority. A non-temporal node raises `snapshot-pin-unavailable`, and anything no read
@@ -47,10 +128,8 @@ a path narrowed to an abstract Entity, or to a concrete sharing its local name w
 another in its family, reads the view its include loaded instead of reporting it
 unloaded. A retained node answers under the Model Edition that published it.
 
-`parallax.core.db_port.JsonDocument` is removed. A database adapter now receives a
-structured-document bind as `StructuredDocument`, exported from
-`parallax.core.internal.db_port`, and reads its value from `document` rather than
-`value`. SQL NULL still binds as a bare `None`.
+`parallax.core.db_port.JsonDocument` is removed with no application replacement,
+because the database port is now internal.
 
 Starting with `0.2.0`, Parallax no longer supports Intel macOS or musl Linux, including
 Alpine, and publishes no `parallax-postgres` wheels for them. Published `0.1.0` wheels
