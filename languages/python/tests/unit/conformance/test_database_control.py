@@ -31,6 +31,7 @@ import pytest
 from psycopg.rows import TupleRow
 
 from parallax.conformance._database_control import TerminationReport
+from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._postgres_control import (
     ControlledAdapter,
     PostgresControl,
@@ -200,7 +201,9 @@ def _context(runtime: Any) -> Any:
 
 
 def _execution(connection: _FakeConnection, **kwargs: Any) -> PostgresInterleavedExecution:
-    return PostgresInterleavedExecution(_adapter(connection), SNAP_ORDERS_MODEL, **kwargs)
+    return PostgresInterleavedExecution(
+        _adapter(connection), SNAP_ORDERS_MODEL, observation=LifecycleObservation(), **kwargs
+    )
 
 
 def _connected_descriptor(stack: ExitStack) -> int:
@@ -391,7 +394,9 @@ def test_a_composition_that_refuses_the_model_opens_no_session_at_all() -> None:
     connection = _FakeConnection()
 
     with raises_code(UsageError, "snapshot-class-backed-model-required"):
-        PostgresInterleavedExecution(_adapter(connection), cast("Any", object()))
+        PostgresInterleavedExecution(
+            _adapter(connection), cast("Any", object()), observation=LifecycleObservation()
+        )
 
     assert connection.statements == []
     assert connection.closes == 0

@@ -41,7 +41,9 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     # The two halves the story takes: configuration the service connects from,
     # and the harness's own session standing in for the connection a deployment
     # runs its migrations on.
-    update = stories.a_running_service_publishes_an_evolved_model_without_restarting(seeded, seeded)
+    update = stories.a_running_service_publishes_an_evolved_model_without_restarting(
+        seeded, seeded, NICKNAMED_ACCOUNT_MODEL
+    )
     # The rollout ledger the host keeps, empty because this evolution adds a
     # Column and no Index; what a database accepted, and what it then answers
     # with, is the whole of what this test grades. The statements themselves are

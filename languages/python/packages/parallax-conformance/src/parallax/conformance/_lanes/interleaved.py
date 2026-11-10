@@ -243,6 +243,34 @@ def _refuse_a_replayed_abort(case: case_format.Case, labels: Iterable[str]) -> N
             )
 
 
+def _refuse_a_rolled_back_group_its_peer_outlasts(
+    case: case_format.Case, groups: Mapping[str, Sequence[int]]
+) -> None:
+    """Refuse a case grading a group rolled back while its peer still has a step
+    after that group's last one.
+
+    The turnstile passes a group's last step only once that group's transaction
+    commits, so a peer step waiting behind a rolled-back group would never be
+    handed its turn.
+    """
+    for label, indices in groups.items():
+        if case_document.unit_fate(case, label).get("outcome") != "rolledBack":
+            continue
+        later = [
+            index
+            for peer, peer_indices in groups.items()
+            if peer != label
+            for index in peer_indices
+            if index > indices[-1]
+        ]
+        if later:
+            raise UnclassifiedEngineError(
+                f"{case.path.name}: group {label!r} is graded rolled back, but its peer's "
+                f"steps {later} follow its last step; this lane runs a rolled-back group "
+                "only as the one holding the last grouped step"
+            )
+
+
 def _refuse_graph_oracles(steps: Sequence[Mapping[str, object]], case_name: str) -> None:
     if any("expectGraph" in step for step in steps):
         raise UnclassifiedEngineError(
@@ -303,7 +331,10 @@ def run_interleaved_scenario_case(
     positive retry bound is refused at the same point
     (:func:`_refuse_a_replayed_abort`): each group is one turnstile-sequenced
     production attempt, and a replayed group would re-run its steps against a
-    turnstile that has already passed them.
+    turnstile that has already passed them. So is a case grading a group rolled
+    back while its peer has a step after that group's last
+    (:func:`_refuse_a_rolled_back_group_its_peer_outlasts`): nothing hands that
+    step its turn.
     """
     steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
@@ -312,6 +343,7 @@ def run_interleaved_scenario_case(
     _refuse_graph_oracles(steps, case.path.name)
     groups = scenario_group_step_indices(steps)
     _refuse_a_replayed_abort(case, groups)
+    _refuse_a_rolled_back_group_its_peer_outlasts(case, groups)
     if len(groups) != 2:  # pragma: no cover - defensive: every case reaching this entry has two
         raise UnclassifiedEngineError(
             f"{case.path.name}: run_interleaved_scenario_case supports exactly the "
@@ -350,9 +382,9 @@ def run_interleaved_scenario_case(
         for name, observed, _indices, tx_instant, _result in plans:
             execution = execution_factory(
                 serving,
+                observation=observed,
                 options=context.options,
                 clock=FixedClock(normalize_instant(dt.datetime.fromisoformat(tx_instant))),
-                lifecycle_provider=observed.provider,
             )
             stack.callback(execution.close)
             executions[name] = execution

@@ -18,7 +18,7 @@ from parallax.core.dialect import Dialect
 from parallax.core.execution import ServingModel, TxnOptions
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
-from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext
+from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = ["planned_read"]
 
@@ -78,12 +78,7 @@ def planned_read(
     at all in a read-only one.
     """
     observation = LifecycleObservation()
-    with Database.connect(
-        _EmptyDatabase(dialect),
-        serving,
-        options=options,
-        lifecycle_provider=observation.provider,
-    ) as root:
+    with observation.connect(_EmptyDatabase(dialect), serving, options=options) as root:
         db = root.using_database_login()
 
         def read(source: ScopedDatabase | TxnContext | ReadOnlyTxnContext) -> object:

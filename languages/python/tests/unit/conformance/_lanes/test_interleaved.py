@@ -20,12 +20,13 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.interleaved import run_interleaved_scenario_case
+from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
 from parallax.core.execution import RetryPolicy, TxnOptions
-from parallax.snapshot import Database, ScopedDatabase
+from parallax.snapshot import ScopedDatabase
 from tests._support.case_corpus import case as corpus_case
 from tests._support.root_ownership import own_root
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
@@ -71,9 +72,9 @@ class _ScriptedExecution:
         port: ScriptedPort,
         model: Any,
         *,
+        observation: LifecycleObservation,
         options: TxnOptions | None = None,
         clock: Any = None,
-        lifecycle_provider: Any = None,
         trusted: bool = True,
     ) -> None:
         self.port = port
@@ -83,9 +84,7 @@ class _ScriptedExecution:
         self.cancel_calls = 0
         self.terminate_calls = 0
         self._database = own_root(
-            Database.connect(
-                port, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
-            )
+            observation.connect(port, model, options=options, clock=clock)
         ).using_database_login()
 
     @property
@@ -136,9 +135,9 @@ class _ScriptedExecutions:
         self,
         model: Any,
         *,
+        observation: LifecycleObservation,
         options: TxnOptions | None = None,
         clock: Any = None,
-        lifecycle_provider: Any = None,
     ) -> Any:
         index = len(self.opened)
         if index == self._refuse_at:
@@ -146,9 +145,9 @@ class _ScriptedExecutions:
         execution = _ScriptedExecution(
             self._ports[index],
             model,
+            observation=observation,
             options=options,
             clock=clock,
-            lifecycle_provider=lifecycle_provider,
             trusted=self._trusted[index],
         )
         self.opened.append(execution)
@@ -419,6 +418,22 @@ def test_an_interleaved_case_grading_a_conflict_abort_under_a_positive_bound_is_
     executions = _ScriptedExecutions(ScriptedPort(), ScriptedPort())
 
     with pytest.raises(UnclassifiedEngineError, match=f"under `maxRetries: {bound}`"):
+        run_interleaved_scenario_case(case, ScriptedPort(), executions)
+    assert executions.opened == []
+
+
+def test_a_case_grading_a_group_rolled_back_before_its_peers_last_step_is_refused() -> None:
+    # `m-concurrency-012` with the two groups' writes swapped: the rolled-back
+    # group's last step now comes before the concurrent group's write, and
+    # nothing would hand that write its turn once the group rolled back. Refused
+    # before either session is asked for.
+    case = _own_copy(_load_case("m-concurrency-012"))
+    when = cast("dict[str, Any]", case.document["when"])
+    steps = cast("list[dict[str, Any]]", when["scenario"])
+    steps[2], steps[3] = steps[3], steps[2]
+    executions = _ScriptedExecutions(ScriptedPort(), ScriptedPort())
+
+    with pytest.raises(UnclassifiedEngineError, match=r"'ours' is graded rolled back.*\[3\]"):
         run_interleaved_scenario_case(case, ScriptedPort(), executions)
     assert executions.opened == []
 

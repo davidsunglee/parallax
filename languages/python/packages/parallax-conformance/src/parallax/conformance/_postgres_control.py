@@ -32,12 +32,13 @@ from parallax.core.db_port import (
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres._connection import PostgresConnection, initialize_connection
-from parallax.snapshot import Database, ScopedDatabase
+from parallax.snapshot import ScopedDatabase
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
     from types import TracebackType
 
+    from parallax.conformance._lifecycle_observation import LifecycleObservation
     from parallax.core.db_port import (
         Bind,
         ConnectionContext,
@@ -52,7 +53,6 @@ if TYPE_CHECKING:
     )
     from parallax.core.entity import DomainModel
     from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
 
 __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
@@ -619,18 +619,16 @@ class PostgresInterleavedExecution:
         adapter: ControlledAdapter,
         model: DomainModel | ServingModel,
         *,
+        observation: LifecycleObservation,
         options: TxnOptions | None = None,
         clock: Clock | None = None,
-        lifecycle_provider: ExecutionLifecycleProvider | None = None,
         on_release: Callable[[PostgresInterleavedExecution], None] | None = None,
     ) -> None:
         # A composition that refuses the model or the options does so before the
         # configuration is opened, and one that fails after opening closes the
         # runtime it was handed — which is what retires this session, since the
         # runtime owns it.
-        self._root = Database.connect(
-            adapter, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
-        )
+        self._root = observation.connect(adapter, model, options=options, clock=clock)
         self._database = self._root.using_database_login()
         runtime = adapter.opened
         if runtime is None:  # pragma: no cover - a composed Database opened its runtime
@@ -644,18 +642,18 @@ class PostgresInterleavedExecution:
         conninfo: str,
         model: DomainModel | ServingModel,
         *,
+        observation: LifecycleObservation,
         options: TxnOptions | None = None,
         clock: Clock | None = None,
-        lifecycle_provider: ExecutionLifecycleProvider | None = None,
         on_release: Callable[[PostgresInterleavedExecution], None] | None = None,
     ) -> PostgresInterleavedExecution:
         """Open a dedicated session for one choreography and compose its Database."""
         return cls(
             ControlledAdapter(conninfo),
             model,
+            observation=observation,
             options=options,
             clock=clock,
-            lifecycle_provider=lifecycle_provider,
             on_release=on_release,
         )
 

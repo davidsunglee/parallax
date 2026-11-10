@@ -829,9 +829,7 @@ def run_standalone_find(
     """Run an ungrouped scenario find without opening a transaction."""
     query = step_query(step, context.model)
     observed = lifecycle.observation()
-    with Database.connect(
-        port, context.serving, options=context.options, lifecycle_provider=observed.provider
-    ) as _root_db:
+    with observed.connect(port, context.serving, options=context.options) as _root_db:
         db = _root_db.using_database_login()
         return (
             db.wire.find(query),
@@ -963,14 +961,17 @@ def _compiled_groups(
     """Each `uow` group's own step span, keyed ``start -> (end, doomed)``.
 
     An interleaved two-group race (:func:`_scenario_uow_spans` returns
-    ``None``) answers emptily: it needs two concurrent units a simulated
-    transaction has no way to model, and every case carrying that shape is
-    `compileEligibility: run-only` for the same reason, so its steps lower one
-    by one.
+    ``None``) is refused: it needs two concurrent units a simulated transaction
+    has no way to model, which is why a case carrying that shape must declare
+    `compileEligibility: run-only` and never reaches this lane.
     """
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
-        return {}
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: two interleaved `uow` groups need two concurrent units, "
+            "which compiling cannot model; the case must declare "
+            "`compileEligibility: run-only`"
+        )
     return {start: (end, _group_is_doomed(case, label)) for label, (start, end) in spans.items()}
 
 
@@ -1176,12 +1177,11 @@ def _execute_write_unit(
     model = context.model
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
-    with Database.connect(
+    with observed.connect(
         write_adapter(port, rollback=rollback),
         context.serving,
         options=context.options,
         clock=FixedClock(instant),
-        lifecycle_provider=observed.provider,
     ) as _root_database:
         database = _root_database.using_database_login()
 
@@ -1281,12 +1281,11 @@ def _run_readless_predicate_write(
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
-    with Database.connect(
+    with observed.connect(
         write_adapter(port, rollback=rollback),
         context.serving,
         options=context.options,
         clock=FixedClock(instant),
-        lifecycle_provider=observed.provider,
     ) as _root_database:
         database = _root_database.using_database_login()
         affected: list[int] = []
@@ -1509,12 +1508,8 @@ class GroupSession:
         observation: LifecycleObservation,
     ) -> None:
         object.__setattr__(self, "adapter", adapter)
-        root = Database.connect(
-            adapter,
-            context.serving,
-            options=context.options,
-            clock=FixedClock(instant),
-            lifecycle_provider=observation.provider,
+        root = observation.connect(
+            adapter, context.serving, options=context.options, clock=FixedClock(instant)
         )
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "database", root.using_database_login())
@@ -2221,12 +2216,8 @@ def _run_conflict_attempts(
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
     starts: list[int] = []
-    with Database.connect(
-        port,
-        serving,
-        options=options,
-        clock=FixedClock(instant),
-        lifecycle_provider=observed.provider,
+    with observed.connect(
+        port, serving, options=options, clock=FixedClock(instant)
     ) as _root_database:
         database = _root_database.using_database_login()
 

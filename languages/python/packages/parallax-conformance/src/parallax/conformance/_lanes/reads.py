@@ -27,7 +27,6 @@ from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import read_only, transact
 from parallax.core import read_delivery
 from parallax.core.db_port import MappingRow
-from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityMetadata,
@@ -65,7 +64,7 @@ __all__ = [
 def case_database(
     case: case_format.Case,
     port: CaseDatabase,
-    lifecycle: ExecutionLifecycleProvider,
+    observation: LifecycleObservation,
     *,
     clock: Clock | None = None,
 ) -> Database[object]:
@@ -79,12 +78,11 @@ def case_database(
     transactions a lane opens through it; a standalone read or stream stays the
     standalone operation it is under any root.
     """
-    return Database.connect(
+    return observation.connect(
         port,
         case_serving_model(case),
         options=case_format.database_options(case),
         clock=clock,
-        lifecycle_provider=lifecycle,
     )
 
 
@@ -265,7 +263,7 @@ def _wire_read(
     """
     observed = lifecycle.observation()
     apply_given_corrupt(case, load_case_setup_metamodel(case), port)
-    with case_database(case, port, observed.provider) as root:
+    with case_database(case, port, observed) as root:
         db = root.using_database_login()
         try:
             return (
@@ -423,7 +421,7 @@ def _wire_delivery(
     """
     observed = lifecycle_run(lifecycle).observation()
     apply_given_corrupt(case, load_case_setup_metamodel(case), port)
-    with case_database(case, port, observed.provider) as root:
+    with case_database(case, port, observed) as root:
         db = root.using_database_login()
 
         def drained(reader: _Reader) -> list[object]:

@@ -53,7 +53,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin
-from parallax.snapshot import Database, Snapshot, WireEntity
+from parallax.snapshot import Snapshot, WireEntity
 
 __all__ = ["compile_scenario", "run_scenario"]
 
@@ -254,9 +254,7 @@ def run_scenario(
     )
     apply_given_apply(case, port)
     observation = lifecycle.observation()
-    with Database.connect(
-        port, serving, options=context.options, lifecycle_provider=observation.provider
-    ) as _root_db:
+    with observation.connect(port, serving, options=context.options) as _root_db:
         db = _root_db.using_database_login()
         emissions: list[Emission] = []
         database_calls = 0

@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 from parallax.core.db_port import DatabaseAdapter, DatabaseConnection
 
 if TYPE_CHECKING:
+    from parallax.conformance._lifecycle_observation import LifecycleObservation
     from parallax.core.dialect import Dialect
     from parallax.core.entity import DomainModel
     from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
     from parallax.snapshot import ScopedDatabase
 
@@ -165,7 +165,7 @@ class InterleavedExecutionFactory(Protocol):
         self,
         model: DomainModel | ServingModel,
         *,
+        observation: LifecycleObservation,
         options: TxnOptions | None = None,
         clock: Clock | None = None,
-        lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> InterleavedExecution: ...

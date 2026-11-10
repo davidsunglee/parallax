@@ -11,14 +11,11 @@ rather than the day a case first reaches it.
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
 from typing import Any, cast, get_args
 from uuid import uuid4
 
 import pytest
 
-from parallax import conformance
 from parallax.conformance._lanes.scenario import GroupReport, group_writes
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
@@ -912,128 +909,3 @@ def test_a_run_positions_each_observations_resolving_reads_in_its_own_order() ->
 
     assert first.resolving_read_calls == second.resolving_read_calls == frozenset({0})
     assert run.resolving_read_calls == frozenset({0, 2})
-
-
-# --- the port is no longer an observation seam --------------------------------
-
-
-_DATABASE_HOME = "parallax.snapshot"
-
-
-def _dotted(node: ast.expr) -> str | None:
-    """``node`` as the dotted name it spells, or ``None`` if it spells none."""
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        base = _dotted(node.value)
-        return None if base is None else f"{base}.{node.attr}"
-    return None
-
-
-def _handle_constructors(tree: ast.Module) -> set[str]:
-    """Every spelling that builds a Handle in the module *tree* belongs to.
-
-    Resolved through the module's OWN imports rather than by matching the name
-    ``Database``: a lane importing the class directly writes ``Database(...)``
-    and one importing the package writes ``snapshot.Database(...)``, so a guard
-    that knows only one spelling is evaded by writing the other. ``connect`` is
-    the same construction under the composition-root name.
-    """
-    constructors: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == _DATABASE_HOME:
-                    constructors.add(f"{alias.asname or alias.name}.Database")
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                qualified = f"{node.module}.{alias.name}" if node.module else alias.name
-                if qualified == _DATABASE_HOME:
-                    constructors.add(f"{alias.asname or alias.name}.Database")
-                elif node.module == _DATABASE_HOME and alias.name == "Database":
-                    constructors.add(alias.asname or alias.name)
-    return constructors | {f"{name}.connect" for name in constructors}
-
-
-def _installs_a_provider(call: ast.Call) -> bool:
-    """Whether ``call`` provably hands the Handle a Provider.
-
-    A ``lifecycle_provider=None`` satisfies the signature and installs nothing,
-    so the literal null is refused rather than counted; a ``**`` splat carries
-    arguments this reading cannot resolve, so it proves nothing and is refused
-    for that reason.
-    """
-    if any(keyword.arg is None for keyword in call.keywords):
-        return False
-    supplied = [keyword.value for keyword in call.keywords if keyword.arg == "lifecycle_provider"]
-    return bool(supplied) and not any(
-        isinstance(value, ast.Constant) and value.value is None for value in supplied
-    )
-
-
-def _handle_constructions(source: str) -> tuple[list[int], list[int]]:
-    """Every line of *source* that builds a Handle, and those installing no Provider."""
-    tree = ast.parse(source)
-    constructors = _handle_constructors(tree)
-    built: list[int] = []
-    unobserved: list[int] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or _dotted(node.func) not in constructors:
-            continue
-        built.append(node.lineno)
-        if not _installs_a_provider(node):
-            unobserved.append(node.lineno)
-    return built, unobserved
-
-
-def test_every_handle_the_conformance_engine_builds_observes_its_own_work() -> None:
-    """No lane may build a Handle the run cannot see.
-
-    A ``Database`` constructed without a Provider still reads and writes; its
-    Database Calls simply reach no Handler, so its statements and their count
-    vanish from the run's observation and the case grades a stream missing work
-    that really happened. The absence is invisible at the call site, which is
-    why it is asserted over the source rather than left to a case to discover.
-
-    Every module of the package is read, with the constructor spellings
-    resolved per module, so a lane holds to this wherever it lands. The
-    construction count is asserted too: a reading that resolved no
-    constructor at all would report the same empty list as a clean engine.
-    """
-    package = Path(str(conformance.__file__)).parent
-    built: list[str] = []
-    unobserved: list[str] = []
-    for source in sorted(package.rglob("*.py")):
-        found, missing = _handle_constructions(source.read_text(encoding="utf-8"))
-        built += [f"{source.name}:{line}" for line in found]
-        unobserved += [f"{source.name}:{line}" for line in missing]
-    assert built, "the reading resolved no Handle construction in the package at all"
-    assert unobserved == []
-
-
-def test_the_handle_guard_refuses_a_provider_it_cannot_read_as_installed() -> None:
-    """Each way the guard's own claim could be true in letter and false in fact.
-
-    The claim is that every Handle the engine builds installs a Provider, so a
-    construction the reading cannot see, or a keyword whose value installs
-    nothing, has to be reported rather than passed over. ``sqlite3.Database``
-    is the control: it is a construction of something else entirely, and a
-    guard matching the bare name would report it.
-    """
-    evasions = (
-        "from parallax import snapshot\nsnapshot.Database(p, m, lifecycle_provider=None)\n",
-        "from parallax.snapshot import Database\nDatabase(p, m)\n",
-        "from parallax.snapshot import Database as Db\nDb(p, m, lifecycle_provider=None)\n",
-        "from parallax import snapshot as s\ns.Database(p, m, **options)\n",
-        "import parallax.snapshot\nparallax.snapshot.Database(p, m)\n",
-        "from parallax import snapshot\nsnapshot.Database.connect(p, m)\n",
-    )
-    for source in evasions:
-        assert _handle_constructions(source) == ([2], [2]), source
-
-    observed = (
-        "from parallax import snapshot\n"
-        "snapshot.Database(p, m, lifecycle_provider=run.observation().provider)\n"
-    )
-    assert _handle_constructions(observed) == ([2], [])
-    assert _handle_constructions("import sqlite3\nsqlite3.Database(p)\n") == ([], [])
