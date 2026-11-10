@@ -662,6 +662,19 @@ the route its pool serves. A `lifecycle_provider` that also implements
 `observe_pool` is offered each source once at composition; what it answers with
 is closed when the handle closes.
 
+```python
+from parallax.core import (
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
+    PoolAvailable,
+    PoolDetached,
+    PoolMetricsSource,
+    PoolSample,
+    PoolUnavailable,
+    RootExecution,
+)
+```
+
 <!-- story: observation_snippet -->
 
 ```python

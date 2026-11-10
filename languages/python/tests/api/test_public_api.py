@@ -328,8 +328,13 @@ _LIFECYCLE_SEAMS: Final = frozenset(
         "LIFECYCLE_PROVIDER_FAILED",
         "LIFECYCLE_REENTERED",
         "LoggingLifecycleProvider",
+        "PoolAvailable",
+        "PoolDetached",
         "PoolMetricsObserver",
+        "PoolMetricsSource",
         "PoolObservation",
+        "PoolSample",
+        "PoolUnavailable",
         "RootExecution",
     }
 )
