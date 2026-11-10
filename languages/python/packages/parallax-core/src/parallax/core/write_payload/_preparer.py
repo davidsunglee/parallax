@@ -4,7 +4,7 @@ from collections.abc import Hashable, Iterator, Mapping
 from itertools import chain
 from typing import cast
 
-from parallax.core.base import InternalError, Json, ManagedValue, NeutralType
+from parallax.core.base import InternalError, ManagedValue, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -18,7 +18,6 @@ from parallax.core.document_codec._document import prepare_managed_patches
 from parallax.core.document_codec._leaf import encode_managed_scalar_many
 from parallax.core.metamodel import (
     AttributeIdentity,
-    AttributeMetadata,
     EntityIdentity,
     Metamodel,
     ValueObjectIdentity,
@@ -110,14 +109,13 @@ class LayoutPayloadPreparer:
         # A member either row executes is where neighbours usually differ, so it
         # is compared before the rest; an executed occurrence is no scalar and
         # its lookups miss.
-        documented = cast("Mapping[Hashable, bool]", self._storage.entity(entity).scalars)
+        scalars = self._storage.entity(entity).scalars
         left_row, right_row = left.row, right.row
         for identity in chain(left.executed, right.executed, _stated_attributes(left_row)):
-            json = documented.get(identity)
-            if json is None:  # an interval member or an occurrence
+            if identity not in scalars:  # an interval member or an occurrence
                 continue
-            value = left_row.cell(cast("AttributeIdentity", identity))
-            other = right_row.cell(cast("AttributeIdentity", identity))
+            value = left_row.cell(identity)
+            other = right_row.cell(identity)
             if (
                 value is left_row.selection.absent
                 or other is right_row.selection.absent
@@ -125,7 +123,7 @@ class LayoutPayloadPreparer:
                 or _generated(other)
             ):
                 continue
-            if _scalar_differs(json, value, other):
+            if value != other:
                 return True
         return False
 
@@ -197,7 +195,7 @@ class LayoutPayloadPreparer:
         return comparison
 
 
-_INTERVAL, _DOCUMENT, _JSON, _SCALAR, _EXACT = range(5)
+_INTERVAL, _DOCUMENT, _EXACT = range(3)
 
 
 class _Comparison:
@@ -214,8 +212,6 @@ class _Comparison:
                 kind = _INTERVAL
             elif slot.tier is ColumnTier.DOCUMENT:
                 kind = _DOCUMENT
-            elif isinstance(contributor, AttributeIdentity):
-                kind = _JSON if isinstance(_attribute_type(view, contributor), Json) else _SCALAR
             else:
                 kind = _EXACT
             cells.append((contributor, kind))
@@ -315,12 +311,6 @@ def _collection_cell(element_type: NeutralType, value: object) -> object:
     return encode_managed_scalar_many(element_type, elements)
 
 
-def _attribute_type(view: EntityLayoutView, identity: AttributeIdentity) -> object:
-    binding = view.member_selection.bindings[view.member_selection.position(identity)]
-    assert isinstance(binding, AttributeMetadata)  # identities are disjoint
-    return binding.type
-
-
 def _stated_attributes(row: ManagedRow) -> Iterator[AttributeIdentity]:
     """The scalar members ``row`` states, in member order."""
     members = row.selection.members
@@ -342,14 +332,4 @@ def _cell_equal(kind: int, value: object, other: object) -> bool:
         return False
     if kind == _DOCUMENT:
         return persisted_document_equal(value, other)
-    if kind == _EXACT:
-        return value == other
-    return not _scalar_differs(kind == _JSON, value, other)
-
-
-def _scalar_differs(json: bool, value: object, other: object) -> bool:
-    if value is None or other is None:
-        return value is not other
-    if json:
-        return not persisted_document_equal(value, other)
-    return value != other
+    return value == other

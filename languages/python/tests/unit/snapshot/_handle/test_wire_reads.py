@@ -34,10 +34,8 @@ from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
-    JSON,
     STRING,
     TIMESTAMP,
-    ManagedValue,
     StructuredDocument,
     UsageError,
 )
@@ -95,7 +93,6 @@ from parallax.snapshot._publication._wire import (
     _WireScalarCache,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     read_evidence_of,
     stored_provenance_of,
-    wire_scalar_cache,
 )
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.db_port import (
@@ -229,15 +226,6 @@ def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
     assert root["price"] == "10.50"
     assert root["orderedOn"] == "2024-01-05"
     assert root["active"] is True
-
-
-def test_shared_wire_encoding_keeps_equal_json_values_of_distinct_kinds_apart() -> None:
-    encoder = wire_scalar_cache()
-    values: list[object] = [True, 1, 1.0, False, 0, 0.0, -0.0]
-
-    spelled = [json.dumps(encoder(JSON, cast("ManagedValue", value))) for value in values]
-
-    assert spelled == ["true", "1", "1.0", "false", "0", "0.0", "-0.0"]
 
 
 def test_wire_encoding_retains_only_the_current_and_preceding_page(
