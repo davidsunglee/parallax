@@ -89,8 +89,10 @@ def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_obje
     }
     assert projection.published_value_object(entries, "corrupt") == "corrupt"
     assert projection.published_value_object(profile, "corrupt") == "corrupt"
-    with pytest.raises(ValueError, match="element requires a mapping"):
-        projection.published_value_object(entries, ["corrupt"])
+    assert projection.published_value_object(entries, ["corrupt", {"value": "kept"}]) == [
+        "corrupt",
+        {"value": "kept"},
+    ]
 
     with pytest.raises(ValueError, match="no such Entity"):
         projection.object_key(ObjectKey(EntityIdentity(None, "Missing"), (("id", 1),)))

@@ -18,6 +18,7 @@ from parallax.core.db_port import (
     CleanupIssue,
     CleanupPhase,
     CleanupResult,
+    DatabaseAdapter,
     FallbackReason,
     Invalidated,
     ReleaseUnconfirmed,
@@ -26,6 +27,8 @@ from parallax.core.db_port import (
     RoutePolicy,
 )
 from parallax.core.diagnostics import FailureDiagnostic
+from parallax.core.entity import DomainModel
+from parallax.core.execution import ServingModel, TxnOptions
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -87,7 +90,8 @@ from parallax.core.execution_lifecycle import (
     TransactionInvocationStarted,
 )
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import FlushTrigger
+from parallax.core.unit_work import Clock, FlushTrigger
+from parallax.snapshot import Database
 
 __all__ = [
     "LifecycleObservation",
@@ -217,6 +221,25 @@ class LifecycleObservation:
     def provider(self) -> ExecutionLifecycleProvider:
         """The Provider to install on the Handle whose work this observes."""
         return self._recorder
+
+    def connect[Auth](
+        self,
+        adapter: DatabaseAdapter[Auth],
+        model: DomainModel | ServingModel,
+        *,
+        options: TxnOptions | None = None,
+        clock: Clock | None = None,
+    ) -> Database[Auth]:
+        """A Handle connected from ``adapter`` whose work this observation records.
+
+        The conformance engine composes every Handle it builds here. A Handle
+        installing no Provider still reads and writes, but its Database Calls
+        reach no Handler, so the case would be graded on a stream missing work
+        that really happened.
+        """
+        return Database.connect(
+            adapter, model, options=options, clock=clock, lifecycle_provider=self._recorder
+        )
 
     @contextlib.contextmanager
     def resolving_reads(self) -> Generator[None]:

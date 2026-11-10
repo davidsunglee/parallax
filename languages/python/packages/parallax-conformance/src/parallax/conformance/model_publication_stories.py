@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from parallax.conformance.story_models import (
-    ACCOUNT_MODEL,
-    NICKNAMED_ACCOUNT_MODEL,
-    NicknamedAccount,
-)
+from parallax.conformance.story_models import ACCOUNT_MODEL, NicknamedAccount
+from parallax.core import DomainModel
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
@@ -147,7 +144,7 @@ class PublishedUpdate:
 
 
 def a_running_service_publishes_an_evolved_model_without_restarting(
-    adapter: DatabaseAdapter, schema: DatabaseConnection, /
+    adapter: DatabaseAdapter, schema: DatabaseConnection, candidate: DomainModel, /
 ) -> PublishedUpdate:
     """Prepare, apply, publish — in that order — with the service still serving.
 
@@ -162,6 +159,10 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     Parallax applies no schema change, so the delta below runs where the
     application's own migrations run rather than on a connection borrowed from
     the pool that is serving traffic.
+
+    ``candidate`` is the later edition the update publishes: the earlier model
+    with ``NicknamedAccount``'s ``nickname`` added, which the write after the
+    publication names.
     """
     serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
     database = connect(adapter, serving)
@@ -173,7 +174,7 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # runs BEFORE any schema work. A candidate that cannot be prepared raises
     # here, with the database untouched and `a` still the selection every
     # execution adopts.
-    b = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
+    b = prepare_model(candidate, edition="2026-09-b")
 
     # An Evolution is described between two ACCEPTED models, which is what a
     # prepared selection carries its own of: `model_of` is the durable first-party

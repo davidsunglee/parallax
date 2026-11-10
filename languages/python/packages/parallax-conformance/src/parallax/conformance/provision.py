@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         DriverControl,
         InterleavedExecution,
     )
+    from parallax.conformance._lifecycle_observation import LifecycleObservation
     from parallax.conformance._postgres_control import (
         PostgresControl,
         PostgresInterleavedExecution,
@@ -67,7 +68,6 @@ if TYPE_CHECKING:
     )
     from parallax.core.entity import DomainModel
     from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
     from parallax.postgres import (
         OnDemandOptions,
@@ -327,27 +327,53 @@ def fixture_statements(
     member in the row is skipped, so only authored members bind; a
     table-per-hierarchy concrete's discriminator always binds its own derived
     ``tagValue``.
+
+    A block naming no row-owning Entity or naming one a second time, a block
+    that is not a list, a row that is not a mapping, and a row naming a member
+    its Entity's family does not declare are refused rather than dropped
+    (`m-case-format`), so a mistyped fixture cannot seed less than it states.
     """
     facet = storage_layout.view(model)
     statements: list[tuple[str, list[object]]] = []
+    loaded: set[str] = set()
     for entity in model.entities:
         view = facet.entity(entity.identity)
         if view is None:
             continue  # a rowless abstract position owns no fixture rows
-        rows = fixtures.get(entity.identity.canonical, fixtures.get(entity.identity.name))
-        if not isinstance(rows, Sequence) or isinstance(rows, str | bytes):
+        canonical = entity.identity.canonical
+        block = next((key for key in (canonical, entity.identity.name) if key in fixtures), None)
+        if block is None:
             continue
+        loaded.add(block)
+        rows = fixtures[block]
+        if not isinstance(rows, Sequence) or isinstance(rows, str | bytes):
+            raise ValueError(f"{canonical}: a fixture block must be a list of rows")
         residents = view.document_residents
-        statements.extend(
-            _fixture_insert(
-                model,
-                view,
-                None if residents is None else residents.shape,
-                cast("Mapping[str, object]", row),
-                dialect,
+        shape = view.member_selection.shape
+        for row in cast("Sequence[object]", rows):
+            if not isinstance(row, Mapping):
+                raise ValueError(f"{canonical}: a fixture row must be a mapping, not {row!r}")
+            authored = cast("Mapping[str, object]", row)
+            undeclared = sorted(member for member in authored if shape.position(member) is None)
+            if undeclared:
+                raise ValueError(
+                    f"{canonical}: a fixture row names {undeclared!r}, which the Entity's "
+                    "family declares no member of"
+                )
+            statements.append(
+                _fixture_insert(
+                    model,
+                    view,
+                    None if residents is None else residents.shape,
+                    authored,
+                    dialect,
+                )
             )
-            for row in cast("Sequence[object]", rows)
-            if isinstance(row, Mapping)
+    unloaded = sorted(block for block in fixtures if block not in loaded)
+    if unloaded:
+        raise ValueError(
+            f"fixture blocks {unloaded!r} name no row-owning Entity of the model, "
+            "or name one a second time"
         )
     return statements
 
@@ -819,9 +845,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self,
         model: DomainModel | ServingModel,
         *,
+        observation: LifecycleObservation,
         options: TxnOptions | None = None,
         clock: Clock | None = None,
-        lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> InterleavedExecution:
         """A dedicated session for one interleaved choreography, and its Database.
 
@@ -840,9 +866,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         execution = self._interleaved().open(
             make_conninfo(self._conninfo, password=_TEST_PASSWORD),
             model,
+            observation=observation,
             options=options,
             clock=clock,
-            lifecycle_provider=lifecycle_provider,
             on_release=self._open.discard,
         )
         self._open.add(execution)

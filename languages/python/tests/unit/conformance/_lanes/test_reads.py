@@ -1019,13 +1019,13 @@ def test_case_database_connects_with_the_cases_own_root_record() -> None:
     # `connect` is the case's `given.databaseOptions`, decoded by the case format,
     # and an unconfigured case connects the record's own defaults.
     port = FakeDbPort([])
-    provider = lifecycle_run(None).observation().provider
-    with reads.case_database(_rooted("m-value-object-001"), port, provider) as root:
+    observation = lifecycle_run(None).observation()
+    with reads.case_database(_rooted("m-value-object-001"), port, observation) as root:
         db = root.using_database_login()
         assert db.transact(lambda tx: tx.options) == case_format.database_options(
             _rooted("m-value-object-001")
         )
     assert port.levels == ["serializable"]
-    with reads.case_database(_load_case("m-value-object-001"), FakeDbPort([]), provider) as root:
+    with reads.case_database(_load_case("m-value-object-001"), FakeDbPort([]), observation) as root:
         db = root.using_database_login()
         assert db.transact(lambda tx: tx.options) == TxnOptions()

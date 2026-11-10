@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from parallax.conformance import model_publication_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL, NICKNAMED_ACCOUNT_MODEL
-from parallax.core import InternalError
+from parallax.core import DomainModel
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
@@ -29,9 +29,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
-from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import model_of
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution import (
     ModelSelection,
     ServingModel,
@@ -152,11 +150,6 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     # rather than the surface's — the database is untouched, the holder is
     # unmoved, and the next execution of the handle the recipe connected before
     # the attempt still adopts A.
-    #
-    # The candidate is the story's own later model and the derivation that fails
-    # is a real one — its graph construction, refusing for that model alone
-    # because a Domain Model that composes at all is one every derivation
-    # accepts, and A's preparation must reach the recipe unharmed.
     port = _AccountPort()
     connected: list[tuple[ServingModel, ModelSelection, Database[Any]]] = []
 
@@ -165,22 +158,13 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
         connected.append((serving, serving.current(), root))
         return root
 
-    candidate = model_of(NICKNAMED_ACCOUNT_MODEL)
-    derive_entity_facts = graph_construction_module._entity_facts  # pyright: ignore[reportPrivateUsage] - the real derivation this refusal stands in front of
-
-    def refuse_the_candidate(cataloged: CatalogedModel, *derivation: Any) -> Any:
-        if cataloged.meta is candidate:
-            raise InternalError(
-                "entity-graph-layout-mismatch",
-                "the candidate's per-Entity facts could not be derived",
-            )
-        return derive_entity_facts(cataloged, *derivation)
-
     monkeypatch.setattr(stories, "connect", connect_and_hold)
-    monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse_the_candidate)
+    unpreparable = cast("DomainModel", object())
 
-    with pytest.raises(InternalError):
-        stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
+    with pytest.raises(TypeError, match="prepare_model takes a Domain Model"):
+        stories.a_running_service_publishes_an_evolved_model_without_restarting(
+            port, port, unpreparable
+        )
 
     ((serving, a, root),) = connected
     assert port.writes == []
@@ -227,7 +211,9 @@ def test_the_generated_delta_that_did_not_apply_publishes_nothing() -> None:
     # the new member — the one an adopted later edition would make — never runs.
     port = _RefusingPort(RuntimeError("relation is locked"))
     with pytest.raises(stories.UnpublishableUpdateError):
-        stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
+        stories.a_running_service_publishes_an_evolved_model_without_restarting(
+            port, port, NICKNAMED_ACCOUNT_MODEL
+        )
 
     assert port.writes == []
 

@@ -111,7 +111,8 @@ class ActualWireProjection:
         return encode_wire(member.type, managed)
 
     def published_value_object(self, occurrence: OccurrenceMetadata, value: object) -> object:
-        """Project a provider-observed Value Object without repairing corruption."""
+        """Project a provider-observed Value Object, keeping every corrupt carrier
+        or element as observed."""
         if value is None:
             return None
         canonical = encode_wire(JSON, decode_canonical_wire(JSON, cast("WireValue", value)))
@@ -122,8 +123,6 @@ class ActualWireProjection:
                 return canonical
             source = cast("Sequence[object]", canonical)
             return [self._published_value_object_element(occurrence, item) for item in source]
-        if not isinstance(canonical, Mapping):
-            return canonical
         return self._published_value_object_element(occurrence, canonical)
 
     def table_row(self, layout: TableLayout, row: Mapping[str, object]) -> MappingRow:
@@ -228,11 +227,9 @@ class ActualWireProjection:
 
     def _published_value_object_element(
         self, occurrence: OccurrenceMetadata, value: object
-    ) -> dict[str, object]:
+    ) -> object:
         if not isinstance(value, Mapping):
-            raise ValueError(
-                f"{occurrence.identity.path}: a value-object element requires a mapping"
-            )
+            return value
         source = cast(
             "Mapping[str, object]",
             encode_wire(JSON, decode_canonical_wire(JSON, cast("WireValue", value))),

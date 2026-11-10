@@ -84,24 +84,31 @@ def test_load_fixtures_missing_model_is_empty() -> None:
     assert provision.load_fixtures("models/does-not-exist.yaml") == {}
 
 
-def test_fixture_statements_skip_non_list_and_non_mapping_rows() -> None:
-    fixtures = {
-        "Grade": [
-            {"id": 1, "ordinal": 1, "label": "low", "unknownKey": "ignored"},
-            "not-a-mapping",
-        ],
-        "Missing": {"not": "a list"},
-    }
-    statements = provision.fixture_statements(_MODELS["grade"], fixtures)
-    # Only the one valid mapping row produces a statement; the unknown key is dropped.
-    assert len(statements) == 1
-    _sql, binds = statements[0]
-    assert binds == [1, 1, "low"]
+_GRADE_ROW = {"id": 1, "ordinal": 1, "label": "low"}
 
 
-def test_fixture_statements_skip_a_non_list_entity_block() -> None:
-    # An entity whose fixture value is not a list contributes no insert statements.
-    assert provision.fixture_statements(_MODELS["customer"], {"Customer": "not-a-list"}) == []
+@pytest.mark.parametrize(
+    ("fixtures", "refusal"),
+    [
+        ({"parallax.compatibility.Grade": "not-a-list"}, "must be a list of rows"),
+        ({"parallax.compatibility.Grade": None}, "must be a list of rows"),
+        ({"parallax.compatibility.Grade": [_GRADE_ROW, "not-a-mapping"]}, "must be a mapping"),
+        (
+            {"parallax.compatibility.Grade": [{**_GRADE_ROW, "unknownKey": "x"}]},
+            r"names \['unknownKey'\]",
+        ),
+        ({"parallax.compatibility.Grdae": [_GRADE_ROW]}, "name no row-owning Entity"),
+        (
+            {"parallax.compatibility.Grade": [_GRADE_ROW], "Grade": [_GRADE_ROW]},
+            r"\['Grade'\] name no row-owning Entity of the model, or name one a second time",
+        ),
+    ],
+)
+def test_fixture_statements_refuse_a_malformed_fixture(
+    fixtures: dict[str, object], refusal: str
+) -> None:
+    with pytest.raises(ValueError, match=refusal):
+        provision.fixture_statements(_MODELS["grade"], fixtures)
 
 
 def test_fixture_statements_refuse_infinity_for_an_ordinary_timestamp() -> None:

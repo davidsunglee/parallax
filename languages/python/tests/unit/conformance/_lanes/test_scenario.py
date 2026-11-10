@@ -405,26 +405,15 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
     ]
 
 
-def test_scenario_compile_lane_stages_nothing_for_a_doomed_interleaved_group() -> None:
-    # A doomed group that INTERLEAVES with another is the one shape the compile
-    # lane's staging cannot represent — two concurrent units advance one tracker
-    # there, so restoring the whole tracker would discard the committed group's
-    # advances too. Every case carrying the shape is `compileEligibility:
-    # run-only`, so the lane lowers the steps in authored order and stages
-    # nothing rather than refusing.
-    steps = _two_group_interleave_steps()
+def test_scenario_compile_lane_refuses_two_interleaved_groups() -> None:
+    # Two concurrent units are what a simulated transaction cannot model, so the
+    # compile lane refuses the shape rather than lowering its steps as ungrouped.
     case = _synthetic_write(
         "scenario",
-        {
-            "when": {"scenario": steps},
-            "then": {"databaseCalls": 3, "units": {"a": {"outcome": "rolledBack"}}},
-        },
+        {"when": {"scenario": _two_group_interleave_steps()}, "then": {"databaseCalls": 3}},
     )
-    emissions, _database_calls = scenario.compile_scenario_case(case, "postgres")
-    assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/1/objectQuery",
-    ]
+    with pytest.raises(UnclassifiedEngineError, match="compileEligibility: run-only"):
+        scenario.compile_scenario_case(case, "postgres")
 
 
 def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_scenario_case() -> (
