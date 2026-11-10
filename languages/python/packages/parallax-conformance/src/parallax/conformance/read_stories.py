@@ -22,9 +22,8 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.read_models import Balance as _Balance
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
-from parallax.core import ObjectQuery
+from parallax.core import LATEST, ObjectQuery
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.object_query import LATEST
 
 __all__ = ["READ_STORIES", "ReadStory", "read_story_snippet"]
 

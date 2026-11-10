@@ -17,8 +17,8 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    Decimal,
     NeutralType,
+    Numeric,
 )
 
 __all__ = ["format_type_spelling", "parse_type_spelling"]
@@ -71,7 +71,7 @@ def parse_type_spelling(spelling: str) -> NeutralType | None:
     scale = _int_from_digits(parameters.group(2))
     if precision < 1 or not 0 <= scale <= precision:
         return None
-    return Decimal(precision, scale)
+    return Numeric(precision, scale)
 
 
 def format_type_spelling(neutral: NeutralType) -> str:
@@ -80,11 +80,11 @@ def format_type_spelling(neutral: NeutralType) -> str:
 
     ``decimal`` is the sole parameterized spelling: its precision and scale are
     written as unsigned canonical digits with no interior whitespace, so the
-    result round-trips back to the same bounded :class:`~parallax.core.base.Decimal`.
+    result round-trips back to the same bounded :class:`~parallax.core.base.Numeric`.
     Every other variant has a single lowercase token. Total over a precision of
     any digit count, matching the unbounded ``m-core`` domain.
     """
-    if isinstance(neutral, Decimal):
+    if isinstance(neutral, Numeric):
         return f"decimal({_digits_from_int(neutral.precision)},{_digits_from_int(neutral.scale)})"
     return _NULLARY_FORMATS[neutral]
 

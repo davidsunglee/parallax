@@ -8,6 +8,7 @@ from typing import Any, Final
 
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import ExecutionLifecycleProvider
 from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.instructions import (
@@ -19,7 +20,6 @@ from parallax.core.db_port import DatabaseAdapter, RoutePolicy
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ServingModel, TxnOptions, prepare_model
-from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     admitted_write,

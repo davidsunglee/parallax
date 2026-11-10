@@ -51,20 +51,20 @@ from decimal import Decimal
 
 from parallax.core import (
     ONE_TO_MANY,
+    POSTGRES,
     Attr,
     DomainModel,
     Entity,
     Int32,
     NoResultFound,
+    Password,
     Rel,
     TooManyResultsFound,
+    TxnOptions,
     attr,
     index,
     rel,
 )
-from parallax.core.db_port import Password
-from parallax.core.dialect import POSTGRES
-from parallax.core.execution import TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect

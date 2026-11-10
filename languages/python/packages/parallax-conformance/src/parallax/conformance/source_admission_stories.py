@@ -5,9 +5,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from parallax.conformance.story_models import Account
-from parallax.core import UsageError
+from parallax.core import DomainModel, UsageError
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.entity import DomainModel
 from parallax.core.unit_work import WRITE_EVIDENCE_UNAVAILABLE
 from parallax.snapshot import TxnContext, connect
 

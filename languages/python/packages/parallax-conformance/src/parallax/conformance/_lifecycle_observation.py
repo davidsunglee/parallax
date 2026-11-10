@@ -11,6 +11,7 @@ from parallax.conformance.case_format import (
     serialized_access_mode,
     serialized_isolation,
 )
+from parallax.core import ExecutionLifecycleProvider
 from parallax.core.base import ParallaxError
 from parallax.core.db_port import (
     AcquisitionReason,
@@ -33,21 +34,16 @@ from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
     AcquisitionStarted,
-    ActivityFinished,
-    ActivityStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
-    AttemptPhase,
     AttemptRollbackFailed,
     AttemptRolledBack,
     CausedFailure,
     ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
-    DatabaseCallKind,
     DatabaseCallNotExecuted,
-    DatabaseCallOutcome,
     DatabaseCallStarted,
     DatabaseCallUnconfirmed,
     DatabaseFailureDiagnostic,
@@ -56,7 +52,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteRowsCompleted,
     DirectFailure,
     ExecutionEvent,
-    ExecutionLifecycleProvider,
     FlushCompleted,
     FlushFailed,
     FlushFinished,
@@ -73,8 +68,6 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
-    ResultRepresentation,
-    RootExecutionKind,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -101,6 +94,41 @@ __all__ = [
     "execution_lifecycle_observation",
     "lifecycle_run",
 ]
+
+# The application vocabulary publishes the event family's members and the union
+# naming it, not its per-kind subsets; spelling these from the members keeps the
+# projection exhaustive, because a transition or outcome added to the family no
+# longer fits the subset its dispatcher hands on, and fails to type-check there.
+type _ActivityStarted = (
+    ReadStarted
+    | FlushStarted
+    | DatabaseCallStarted
+    | TransactionInvocationStarted
+    | TransactionAttemptStarted
+    | StreamStarted
+    | StreamBatchStarted
+    | AcquisitionStarted
+    | ReleaseStarted
+)
+type _ActivityFinished = (
+    ReadFinished
+    | FlushFinished
+    | DatabaseCallFinished
+    | TransactionInvocationFinished
+    | TransactionAttemptFinished
+    | StreamFinished
+    | StreamBatchFinished
+    | AcquisitionFinished
+    | ReleaseFinished
+)
+type _DatabaseCallOutcome = (
+    DatabaseReadCompleted
+    | DatabaseWriteCompleted
+    | DatabaseWriteRowsCompleted
+    | DatabaseCallFailed
+    | DatabaseCallNotExecuted
+    | DatabaseCallUnconfirmed
+)
 
 
 class StatementIndexError(RuntimeError):
@@ -129,18 +157,18 @@ class ObservedCall:
 # is still written out: the tables are what makes the corpus token independent of
 # the runtime one, so deriving any member — by casing rule or by falling back to
 # the runtime value — would make a Python rename silently rewrite the oracle.
-_CALL_KIND: Final[dict[DatabaseCallKind, Literal["read", "write"]]] = {
+_CALL_KIND: Final[dict[str, Literal["read", "write"]]] = {
     "read": "read",
     "write": "write",
 }
 
-_ROOT_KIND: Final[dict[RootExecutionKind, str]] = {
+_ROOT_KIND: Final[dict[str, str]] = {
     "read": "read",
     "transaction_invocation": "transaction-invocation",
     "stream": "stream",
 }
 
-_READ_PURPOSE: Final[dict[ResultRepresentation | Literal["row-acquisition"], str]] = {
+_READ_PURPOSE: Final[dict[str, str]] = {
     "typed": "typed",
     "wire": "wire",
     "row-acquisition": "row-acquisition",
@@ -152,7 +180,7 @@ _FLUSH_TRIGGER: Final[dict[FlushTrigger, str]] = {
     "pre_commit": "pre-commit",
 }
 
-_ATTEMPT_PHASE: Final[dict[AttemptPhase, str]] = {
+_ATTEMPT_PHASE: Final[dict[str, str]] = {
     "callback": "callback",
     "pre_commit": "pre-commit",
     "commit": "commit",
@@ -579,7 +607,7 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             return _finished(event)
 
 
-def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, object]:
+def _started(event: _ActivityStarted, indexer: _StatementIndexer) -> dict[str, object]:
     match event:
         case ReadStarted(target=target, purpose=purpose, edition=edition):
             return {
@@ -626,7 +654,7 @@ def _stated(key: str, value: object | None) -> dict[str, object]:
     return {} if value is None else {key: value}
 
 
-def _finished(event: ActivityFinished) -> dict[str, object]:
+def _finished(event: _ActivityFinished) -> dict[str, object]:
     match event:
         case ReadFinished(outcome=outcome):
             return {"readFinished": _read_outcome(outcome)}
@@ -722,7 +750,7 @@ def _flush_outcome(outcome: FlushCompleted | FlushFailed) -> dict[str, object]:
             assert_never(unreachable)
 
 
-def _database_call_outcome(outcome: DatabaseCallOutcome) -> dict[str, object]:
+def _database_call_outcome(outcome: _DatabaseCallOutcome) -> dict[str, object]:
     """A call's own terminal outcome.
 
     A failed or unconfirmed call is the ONE place the neutral `m-db-error`

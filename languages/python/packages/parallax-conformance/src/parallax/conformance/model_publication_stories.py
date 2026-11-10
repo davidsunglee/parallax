@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.conformance.story_models import ACCOUNT_MODEL, NicknamedAccount
-from parallax.core import DomainModel
+from parallax.core import DomainModel, ServingModel, prepare_model
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
@@ -11,10 +11,6 @@ from parallax.core.db_port import (
     DatabaseConnection,
     RollbackFailed,
     RolledBack,
-)
-from parallax.core.execution import (
-    ServingModel,
-    prepare_model,
 )
 from parallax.evolution import (
     CreatedIndex,

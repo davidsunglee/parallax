@@ -67,7 +67,10 @@ override.
 slot may contain `attr(...)`, never a bare default value. Nullability comes only
 from the annotation (`T | None`); there is no `nullable=` option. `int` means
 Int64 and `float` means Float64; `type=Int32` and `type=Float32` narrow those
-families. Decimal requires both `precision=` and `scale=`. `primary_key=True`
+families. Decimal requires both `precision=` and `scale=`. `parallax.core`
+publishes each Neutral Type as the class an attribute's metadata reads back, named
+as the core names it except Decimal, which Python names `Numeric` so that it never
+shadows the `decimal.Decimal` carrier. `primary_key=True`
 means application-assigned; `MAX` and `Sequence(...)` imply an integer primary
 key. No free-form JSON member annotation exists.
 

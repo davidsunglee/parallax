@@ -342,7 +342,7 @@ def test_a_managed_array_membership_projects_each_element_to_its_wire_value() ->
 
     statement = _template(read(["1.50"]), ORDERS, POSTGRES).render(query=read(["2.50", "10.00"]))
     (bind,) = statement.statement.binds
-    assert bind == ArrayBind(base.Decimal(18, 2), [Decimal("2.50"), Decimal("10.00")])
+    assert bind == ArrayBind(base.Numeric(18, 2), [Decimal("2.50"), Decimal("10.00")])
     assert statement.statement.typed_bind_spans == ()
     assert statement.statement.wire_binds() == (["2.50", "10.00"],)
 

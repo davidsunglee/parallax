@@ -15,9 +15,14 @@ import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
 
-from parallax.core import ConnectionAcquisitionError, UsageError
-from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, Password
-from parallax.core.execution import TRANSACTION_AUTHORITY_MISMATCH
+from parallax.core import (
+    DRIVER_MANAGED,
+    TRANSACTION_AUTHORITY_MISMATCH,
+    ConnectionAcquisitionError,
+    CredentialSource,
+    Password,
+    UsageError,
+)
 from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 ```

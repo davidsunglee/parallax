@@ -16,7 +16,7 @@ from parallax.core.base import UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.entity import DomainModel
-from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
+from parallax.core.execution_lifecycle._activity import ExecutionLifecycleProvider
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,

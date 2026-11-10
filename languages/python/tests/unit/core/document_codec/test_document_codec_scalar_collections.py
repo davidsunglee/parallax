@@ -30,11 +30,11 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    Decimal,
     DocumentValue,
     FrozenMap,
     ManagedValue,
     NeutralType,
+    Numeric,
     ScalarConverter,
     StructuredDocument,
     typed_converter,
@@ -75,7 +75,7 @@ from tests._support.managed_documents import encoded_document
 
 _MANY = Multiplicity.MANY
 _TAGS = ScalarDefinition("tags", STRING, False, _MANY)
-_AMOUNTS = ScalarDefinition("amounts", Decimal(6, 2), False, _MANY)
+_AMOUNTS = ScalarDefinition("amounts", Numeric(6, 2), False, _MANY)
 _MARKS = ScalarDefinition("marks", INT32, False, _MANY)
 _LINE = MemberShape(members=(ScalarDefinition("sku", STRING, False), _MARKS))
 _DETAIL = MemberShape(members=(ScalarDefinition("labels", STRING, False, _MANY),))
@@ -196,7 +196,7 @@ def test_document_authoring_fills_an_unnamed_collection_and_refuses_a_null_one()
 
 
 def test_a_collection_encodes_as_its_ordered_canonical_array() -> None:
-    assert encode_scalar_many(Decimal(6, 2), (decimal.Decimal("1.5"), decimal.Decimal(7))) == (
+    assert encode_scalar_many(Numeric(6, 2), (decimal.Decimal("1.5"), decimal.Decimal(7))) == (
         "1.50",
         "7.00",
     )
@@ -220,7 +220,7 @@ _ADMITTED_COLLECTIONS: Mapping[str, tuple[NeutralType, tuple[object, ...], tuple
     "float32": (FLOAT32, (1.2000000476837158, 0.5, 1.2000000476837158), (1.2, 0.5, 1.2)),
     "float64": (FLOAT64, (0.1, 2.5, 0.1), (0.1, 2.5, 0.1)),
     "decimal": (
-        Decimal(6, 2),
+        Numeric(6, 2),
         (decimal.Decimal("1.5"), decimal.Decimal(7), decimal.Decimal("1.50")),
         ("1.50", "7.00", "1.50"),
     ),

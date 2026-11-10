@@ -11,7 +11,7 @@ gates turns an unrelated slow machine into a failed merge.
 
 **Two variants, interleaved.** The same workload runs with no Provider installed and
 against a production shape — one
-:class:`~parallax.core.execution_lifecycle.FanoutLifecycleProvider` over Safe
+:class:`~parallax.core.FanoutLifecycleProvider` over Safe
 logging at INFO into an application-owned bounded queue, bounded metrics, and
 sampled tracing into a bounded exporter. The variants alternate rather than running
 one after the other, and the order inside each pair alternates too, so frequency
@@ -90,6 +90,14 @@ from parallax.conformance.cost_envelope import (
 )
 from parallax.conformance.story_models import ACCOUNT_MODEL, Account
 from parallax.conformance.workloads import workload_digest
+from parallax.core import (
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
+    ExecutionLifecycleProvider,
+    FanoutLifecycleProvider,
+    LoggingLifecycleProvider,
+    RootExecution,
+)
 from parallax.core.base import DocumentReadOrdinals
 from parallax.core.db_port import (
     Bind,
@@ -110,15 +118,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution_lifecycle import (
-    ExecutionEvent,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProvider,
-    FanoutLifecycleProvider,
-    LoggingLifecycleProvider,
-    RootExecution,
-)
+from parallax.core.execution_lifecycle import ExecutionEvent
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from production_origins import require_source_origins
 

@@ -8,11 +8,8 @@ from uuid import uuid4
 import pytest
 
 from parallax.conformance import execution_lifecycle_stories
+from parallax.core import ExecutionLifecycleHandlerError, RootExecution
 from parallax.core.diagnostics import FailureDiagnostic
-from parallax.core.execution_lifecycle import (
-    ExecutionLifecycleHandlerError,
-    RootExecution,
-)
 
 
 def test_the_storys_provider_refuses_to_swallow_a_handler_failure() -> None:

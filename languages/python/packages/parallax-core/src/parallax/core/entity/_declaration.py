@@ -27,10 +27,10 @@ from pydantic._internal._model_construction import ModelMetaclass
 from parallax.core.base import (
     FLOAT32,
     INT32,
-    Decimal,
     Float32,
     Int32,
     NeutralType,
+    Numeric,
     UsageError,
     coerce_neutral_input,
     matches_typed_carrier,
@@ -1015,7 +1015,7 @@ def _scalar_type(base: object, spec: AttrSpec, where: str) -> NeutralType:
                 f"{where}: a decimal member declares precision= and scale=",
             )
         try:
-            return Decimal(spec.precision, spec.scale)
+            return Numeric(spec.precision, spec.scale)
         except ValueError as error:
             raise UsageError(ENTITY_OPTION_INVALID_VALUE, f"{where}: {error}") from error
     if spec.precision is not None:

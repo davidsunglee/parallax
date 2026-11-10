@@ -177,6 +177,11 @@ import pytest
 
 import parallax.core.execution_lifecycle._activity as _activity
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import (
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleProvider,
+    FanoutLifecycleProvider,
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -193,9 +198,6 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleProvider,
-    FanoutLifecycleProvider,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,

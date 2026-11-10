@@ -55,7 +55,6 @@ from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -69,6 +68,7 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     refuse_reentry,
 )
+from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._acquired_rows import (

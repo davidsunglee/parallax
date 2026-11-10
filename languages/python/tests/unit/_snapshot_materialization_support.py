@@ -649,7 +649,7 @@ DECLARABLE_TYPES: Final = frozenset(
         "Float32",
         "Float64",
         "String",
-        "Decimal",
+        "Numeric",
         "Bytes",
         "Date",
         "Time",

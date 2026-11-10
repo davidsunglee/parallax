@@ -13,7 +13,7 @@ for publication status. The distribution includes Apache-2.0 `LICENSE` and `NOTI
 ## Connecting
 
 ```python
-from parallax.core.db_port import Password
+from parallax.core import Password
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import connect
 
@@ -45,10 +45,10 @@ PostgresEndpoint("postgresql://app:<password>@db.internal/app", credentials=Pass
 ValueError: connection_string must not carry a password; supply it through credentials.
 ```
 
-There are three spellings, all exported from `parallax.core.db_port`:
+There are three spellings, all exported from `parallax.core`:
 
 ```python
-from parallax.core.db_port import DRIVER_MANAGED, Password
+from parallax.core import DRIVER_MANAGED, Password
 
 # a constant secret; `Password` is its own source and keeps it out of every repr
 PostgresEndpoint("postgresql://app@db.internal:5432/app", credentials=Password("s3cret"))

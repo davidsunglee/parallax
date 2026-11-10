@@ -21,8 +21,7 @@ import pytest
 from pydantic import ValidationError
 
 from parallax.core import MANY_TO_ONE, Attr, DomainModel, Entity, Rel, ValueObject, attr, rel
-from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32, UsageError
-from parallax.core.base import Decimal as NeutralDecimal
+from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32, Numeric, UsageError
 from parallax.core.entity._declaration import declaration_of, shape_of
 from parallax.core.entity._errors import EditError
 from parallax.core.metamodel import Multiplicity, ScalarDefinition
@@ -62,7 +61,7 @@ def test_a_tuple_annotation_declares_a_collection_of_its_shaped_element_type() -
     assert _attribute("tags").definition == ScalarDefinition("tags", STRING, False, _MANY)
     assert _attribute("tags").storage.name == "tag_list"
     assert _attribute("marks").definition == ScalarDefinition("marks", INT32, False, _MANY)
-    assert _attribute("amounts").type == NeutralDecimal(12, 2)
+    assert _attribute("amounts").type == Numeric(12, 2)
     assert _attribute("tokens").read_only
     leaves = shape_of(Detail).shape.attributes
     assert [leaf.definition for leaf in leaves] == [
@@ -103,7 +102,7 @@ def test_construction_requires_an_exact_tuple() -> None:
             "amounts",
             (Decimal("1.50"), 1.5),
             "amounts[1]: value 1.5 does not match the declared element type "
-            "Decimal(precision=12, scale=2)",
+            "Numeric(precision=12, scale=2)",
         ),
         (
             "tokens",

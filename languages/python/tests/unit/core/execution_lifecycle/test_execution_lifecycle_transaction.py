@@ -69,11 +69,13 @@ from parallax.core.execution_lifecycle import (
     ReadFinished,
     ReadStarted,
     TransactionAttemptFinished,
-    TransactionAttemptOutcome,
     TransactionAttemptStarted,
     TransactionInvocationFinished,
-    TransactionInvocationOutcome,
     TransactionInvocationStarted,
+)
+from parallax.core.execution_lifecycle._events import (
+    TransactionAttemptOutcome,
+    TransactionInvocationOutcome,
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT

@@ -35,8 +35,7 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.base import Decimal as NeutralDecimal
-from parallax.core.base import Float32, Int32, Int64, String, Timestamp
+from parallax.core.base import Float32, Int32, Int64, Numeric, String, Timestamp
 from parallax.core.entity import (
     IncludePath,
     Predicate,
@@ -183,7 +182,7 @@ def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
     assert by_name["id"].type == Int64()
     assert by_name["qty"].type == Int32()
     assert by_name["rating"].type == Float32()
-    assert by_name["amount"].type == NeutralDecimal(18, 2)
+    assert by_name["amount"].type == Numeric(18, 2)
     assert by_name["placedAt"].type == Timestamp()
     assert Customer.attributes[1].type == String()
 

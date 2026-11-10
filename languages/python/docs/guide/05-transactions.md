@@ -16,12 +16,15 @@ shop model from [Modeling](02-modeling.md) and these imports:
 ```python
 from decimal import Decimal
 
-from parallax.core import ConflictError, DomainModel, UsageError, WritePreconditionError
-from parallax.core.execution import (
+from parallax.core import (
     AdaptiveBackoff,
+    ConflictError,
+    DomainModel,
     ReadOnlyTxnOptions,
     RetryPolicy,
     TxnOptions,
+    UsageError,
+    WritePreconditionError,
 )
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import (

@@ -14,9 +14,9 @@ from parallax.core.base import (
     INT64,
     STRING,
     TIMESTAMP,
-    Decimal,
     FrozenMap,
     NeutralType,
+    Numeric,
     ScalarConverter,
     UsageError,
     typed_converter,
@@ -44,7 +44,7 @@ from parallax.core.wire._codec import wire_converter
 _ABSENT: Final = object()
 _GEO = MemberShape(
     (
-        ScalarDefinition("lat", Decimal(8, 5), False),
+        ScalarDefinition("lat", Numeric(8, 5), False),
         ScalarDefinition("note", STRING, True),
     )
 )
@@ -265,7 +265,7 @@ def test_a_catalog_compiles_one_plan_per_shape_and_one_converter_per_type() -> N
     assert catalog.plan(_ROW) is plan
     assert catalog.plan(_ADDRESS) is catalog.plan(_ADDRESS)
     assert sorted(map(repr, compiled)) == sorted(
-        map(repr, (INT64, STRING, TIMESTAMP, Decimal(8, 5)))
+        map(repr, (INT64, STRING, TIMESTAMP, Numeric(8, 5)))
     )
 
 

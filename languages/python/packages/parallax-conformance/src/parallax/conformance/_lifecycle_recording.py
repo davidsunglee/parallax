@@ -3,12 +3,8 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
-from parallax.core.execution_lifecycle import (
-    ExecutionEvent,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleHandlerError,
-    RootExecution,
-)
+from parallax.core import ExecutionLifecycleHandler, ExecutionLifecycleHandlerError, RootExecution
+from parallax.core.execution_lifecycle import ExecutionEvent
 
 __all__ = ["RecordedRoot", "RecordingLifecycleProvider"]
 

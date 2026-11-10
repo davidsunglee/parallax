@@ -30,6 +30,7 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Order
+from parallax.core import ExecutionLifecycleHandler, ExecutionLifecycleHandlerError, RootExecution
 from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
@@ -41,12 +42,9 @@ from parallax.core.execution_lifecycle import (
     AcquisitionStarted,
     CausedFailure,
     ExecutionEvent,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleHandlerError,
     FlushFinished,
     FlushStarted,
     ReleaseStarted,
-    RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,

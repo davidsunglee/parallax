@@ -49,8 +49,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import Decimal as NeutralDecimal
-from parallax.core.base import UsageError
+from parallax.core.base import Numeric, UsageError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import _authored_resolver
 from parallax.core.entity._authored_resolver import include_path_node, object_query_node
@@ -557,7 +556,7 @@ def test_a_prepared_operation_retains_managed_operands_and_their_preparation_typ
     authored = (Priced.amount == Decimal("1.5")).authored
     assert isinstance(authored, PreparedOperation)
     assert authored.operands == (Decimal("1.50"),)
-    assert authored.prepared_type == NeutralDecimal(precision=10, scale=2)
+    assert authored.prepared_type == Numeric(precision=10, scale=2)
 
 
 def test_membership_captures_its_entries_in_an_owned_tuple() -> None:

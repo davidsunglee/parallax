@@ -5,9 +5,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from parallax.conformance.story_models import Account
+from parallax.core import DomainModel, RetryPolicy, TxnOptions
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.entity import DomainModel
-from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [

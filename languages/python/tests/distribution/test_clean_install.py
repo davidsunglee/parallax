@@ -261,6 +261,7 @@ def test_core_and_evolution(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # private modules, fails here and nowhere else in the clean-install lane.
     assert _import_ok(python, "parallax.evolution.model_evolution")
     assert _import_ok(python, "parallax.evolution.schema_delta")
+    assert _import_ok(python, "parallax.evolution.operations")
     # No Descriptor Frontend, descriptor parser, schema validator, sibling
     # lifecycle, adapter, driver, or conformance harness.
     assert not _import_ok(python, "parallax.descriptor")

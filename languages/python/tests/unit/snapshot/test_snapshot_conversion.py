@@ -45,8 +45,8 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    Decimal,
     NeutralType,
+    Numeric,
 )
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
@@ -605,7 +605,7 @@ _SAMPLE_LEAVES: list[tuple[str, NeutralType, object]] = [
     ("ratio", FLOAT32, 1048576.25),
     ("measure", FLOAT64, 562949953421312.25),
     ("text", STRING, "alpha"),
-    ("amount", Decimal(12, 2), decimal.Decimal("1.5")),
+    ("amount", Numeric(12, 2), decimal.Decimal("1.5")),
     ("blob", BYTES, b"\x0a\x1b"),
     ("day", DATE, dt.date(2026, 1, 15)),
     ("clock", TIME, dt.time(23, 59, 59, 500000)),

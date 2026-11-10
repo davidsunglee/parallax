@@ -22,7 +22,12 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import UsageError
+from parallax.core import (
+    ExecutionLifecycleHandlerError,
+    ExecutionLifecycleProvider,
+    RootExecution,
+    UsageError,
+)
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._unit_work import preparation as preparation_module
 from parallax.core.db_error import DatabaseError
@@ -30,11 +35,6 @@ from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
-from parallax.core.execution_lifecycle import (
-    ExecutionLifecycleHandlerError,
-    ExecutionLifecycleProvider,
-    RootExecution,
-)
 from parallax.core.metamodel import UnresolvedEntityDeclaration
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm

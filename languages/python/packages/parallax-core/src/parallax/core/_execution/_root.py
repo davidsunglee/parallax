@@ -20,8 +20,8 @@ from parallax.core.execution_authority._authority import (
     capture_database_login,
     capture_principal,
 )
-from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
+    ExecutionLifecycleProvider,
     InstalledLifecycle,
     installed_lifecycle,
 )

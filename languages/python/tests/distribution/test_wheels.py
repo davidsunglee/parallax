@@ -124,10 +124,11 @@ def test_evolution_wheel_ships_each_of_its_scopes(wheelhouse: Wheelhouse) -> Non
     # missing one, and the top-level set excludes a `model_evolution.py` beside the
     # package, which is what a stale build or a half-applied split looks like. One
     # wheel carries both behavioral modules, because they declare the same
-    # manifest, and the Domain Model door beside them.
+    # manifest, the Domain Model door beside them, and the operations vocabulary.
     assert _modules_directly_in(wheelhouse, "parallax-evolution", "parallax/evolution/") == {
         "parallax/evolution/__init__.py",
         "parallax/evolution/_domain_models.py",
+        "parallax/evolution/operations.py",
     }
     assert _modules_directly_in(
         wheelhouse, "parallax-evolution", "parallax/evolution/model_evolution/"
@@ -220,6 +221,14 @@ def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) 
         "parallax/descriptor/_records.py",
         "parallax/descriptor/_type_spelling.py",
     }
+
+
+def test_postgres_wheel_ships_its_adapter_only_behind_the_root(wheelhouse: Wheelhouse) -> None:
+    # The root publishes `PostgresAdapter`, so the module defining it is private;
+    # a public `adapter.py` beside it is what a stale build looks like.
+    names = _names(wheelhouse, "parallax-postgres")
+    assert "parallax/postgres/_adapter.py" in names
+    assert "parallax/postgres/adapter.py" not in names
 
 
 def test_postgres_wheel_ships_compiled_loaders_for_this_interpreter(

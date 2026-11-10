@@ -86,7 +86,7 @@ def test_an_inherited_member_is_judged_as_its_declaring_class_judges_it() -> Non
             owner.rate.set(_TOO_PRECISE)
         (violation,) = refused.value.violations
         assert violation.message.endswith(
-            "does not match the declared type Decimal(precision=4, scale=2)"
+            "does not match the declared type Numeric(precision=4, scale=2)"
         )
 
 

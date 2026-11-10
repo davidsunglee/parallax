@@ -26,7 +26,6 @@ from parallax.core.base import (
     Boolean,
     Bytes,
     Date,
-    Decimal,
     Float32,
     Float64,
     Int32,
@@ -34,6 +33,7 @@ from parallax.core.base import (
     Json,
     ManagedValue,
     NeutralType,
+    Numeric,
     ScalarConverter,
     String,
     Time,
@@ -227,7 +227,7 @@ _ENCODED_JSON_KIND: Final[Mapping[type[NeutralType], EncodedJsonKind | None]] = 
         String: "string",
         Float32: "number",
         Float64: "number",
-        Decimal: "string",
+        Numeric: "string",
         Bytes: "string",
         Date: "string",
         Time: "string",
@@ -263,7 +263,7 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
         case Float64():
             float_value = cast("float", managed)
             return 0.0 if float_value == 0.0 else float_value
-        case Decimal(_precision, scale):
+        case Numeric(_precision, scale):
             return _exact_decimal(cast("decimal.Decimal", managed), scale)
         case Bytes():
             return bytes.hex(cast("bytes", managed))
@@ -308,7 +308,7 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
             return _decode_float32(value, neutral_type)
         case Float64():
             return _decode_float64(value, neutral_type)
-        case Decimal():
+        case Numeric():
             return _decode_decimal(value, neutral_type)
         case String():
             return _decode_string(value, neutral_type)
@@ -444,7 +444,7 @@ def _decode_integer_to_float(value: int, neutral_type: Float32 | Float64) -> _De
     return _DecodedWireLiteral(managed)
 
 
-def _decode_decimal(value: object, neutral_type: Decimal) -> _DecodedWireLiteral:
+def _decode_decimal(value: object, neutral_type: Numeric) -> _DecodedWireLiteral:
     if not isinstance(value, str):
         _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, neutral_type)
     text = str.__str__(value)
@@ -590,7 +590,7 @@ def _is_canonical_output(
             return isinstance(written, str) and canonical == str.__str__(written)
         case Boolean() | String() | Json():
             return True
-        case Decimal() | Bytes() | Date() | Uuid():
+        case Numeric() | Bytes() | Date() | Uuid():
             return True
         case _ as unreachable:
             assert_never(unreachable)
@@ -770,7 +770,7 @@ _WIRE_DECODERS: Final[Mapping[type[NeutralType], Callable[[object, Any], _Decode
             Int64: _decode_integer,
             Float32: _decode_float32,
             Float64: _decode_float64,
-            Decimal: _decode_decimal,
+            Numeric: _decode_decimal,
             String: _decode_string,
             Bytes: _decode_bytes,
             Date: _decode_date,

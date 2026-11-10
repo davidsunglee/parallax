@@ -1,25 +1,64 @@
 from __future__ import annotations
 
-from parallax.core._execution._publication import PublicationConflictError
-from parallax.core._execution._transaction._runner import TransactionRollbackError
+from parallax.core._execution._features import EXECUTION_FEATURE_DEFERRED
+from parallax.core._execution._keyed_writes import TRANSACTION_TIME_PIN_READ_ONLY
+from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions
+from parallax.core._execution._planning import prepare_model
+from parallax.core._execution._publication import (
+    ModelSelection,
+    PublicationConflictError,
+    ServingModel,
+)
+from parallax.core._execution._read_query import QUERY_TARGET_NOT_IN_MODEL
+from parallax.core._execution._transaction._runner import (
+    TRANSACTION_ACCESS_MODE_MISMATCH,
+    TRANSACTION_AUTHORITY_MISMATCH,
+    TRANSACTION_OPTION_CONFLICT,
+    TRANSACTION_OWNER_MISMATCH,
+    TransactionRollbackError,
+)
+from parallax.core._execution._unit_work._errors import (
+    WRITE_VALUE_ALREADY_STORED,
+    WRITE_VALUE_FOREIGN_LIFECYCLE,
+    WRITE_VALUE_NOT_STORED,
+)
 from parallax.core._execution._unit_work.effects import WritePreconditionError
-from parallax.core._stored_data import InvalidDataError
+from parallax.core._stored_data import InvalidData, InvalidDataError
+from parallax.core.auto_retry import AdaptiveBackoff, RetryPolicy
 from parallax.core.base import (
+    Boolean,
+    Bytes,
     ConflictError,
+    Date,
+    Float32,
+    Float64,
+    Int32,
+    Int64,
     InternalError,
+    Json,
     NoResultFound,
+    Numeric,
     ParallaxError,
+    String,
     TemporalBound,
+    Time,
+    Timestamp,
     TooManyResultsFound,
     UnsupportedError,
     UsageError,
+    Uuid,
 )
-from parallax.core.db_error import DatabaseError
+from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import (
+    DRIVER_MANAGED,
     ConnectionAcquisitionError,
     CredentialResolutionError,
+    CredentialSource,
     DatabaseStartupError,
+    DriverManaged,
+    Password,
 )
+from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
     MANY_TO_ONE,
     MAX,
@@ -39,9 +78,7 @@ from parallax.core.entity import (
     EditError,
     EditViolation,
     Entity,
-    Float32,
     IncludePath,
-    Int32,
     ObjectQuery,
     Predicate,
     Rel,
@@ -57,66 +94,135 @@ from parallax.core.entity import (
     index,
     rel,
 )
+from parallax.core.execution_authority._authority import PRINCIPAL_INVALID, Principal
+from parallax.core.execution_lifecycle._activity import (
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleProvider,
+)
+from parallax.core.execution_lifecycle._errors import (
+    LIFECYCLE_PROVIDER_FAILED,
+    LIFECYCLE_REENTERED,
+    ExecutionLifecycleHandlerError,
+)
+from parallax.core.execution_lifecycle._events import RootExecution
+from parallax.core.execution_lifecycle._fanout import FanoutLifecycleProvider
+from parallax.core.execution_lifecycle._logging import LoggingLifecycleProvider
+from parallax.core.execution_lifecycle._pool_observation import (
+    PoolMetricsObserver,
+    PoolObservation,
+)
+from parallax.core.metamodel import ApplicationAssigned, Columns, MetamodelIssue
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
 from parallax.core.temporal_read import Edge, Pin
 
 __all__ = [
+    "DRIVER_MANAGED",
+    "EXECUTION_FEATURE_DEFERRED",
     "LATEST",
+    "LIFECYCLE_PROVIDER_FAILED",
+    "LIFECYCLE_REENTERED",
     "MANY_TO_ONE",
     "MAX",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
+    "POSTGRES",
+    "PRINCIPAL_INVALID",
+    "QUERY_TARGET_NOT_IN_MODEL",
     "READ_ONLY",
     "READ_WRITE",
     "TABLE_PER_CONCRETE_SUBTYPE",
+    "TRANSACTION_ACCESS_MODE_MISMATCH",
+    "TRANSACTION_AUTHORITY_MISMATCH",
+    "TRANSACTION_OPTION_CONFLICT",
+    "TRANSACTION_OWNER_MISMATCH",
+    "TRANSACTION_TIME_PIN_READ_ONLY",
     "TX_TIME",
     "VALID_TIME",
+    "WRITE_VALUE_ALREADY_STORED",
+    "WRITE_VALUE_FOREIGN_LIFECYCLE",
+    "WRITE_VALUE_NOT_STORED",
     "AbstractRoot",
     "AbstractSubtype",
+    "AdaptiveBackoff",
     "AllPredicate",
+    "ApplicationAssigned",
     "Attr",
     "Bitemporal",
+    "Boolean",
+    "Bytes",
+    "Category",
+    "Columns",
     "ConcreteSubtype",
     "ConflictError",
     "ConnectionAcquisitionError",
     "CredentialResolutionError",
+    "CredentialSource",
     "DatabaseError",
     "DatabaseStartupError",
+    "Date",
     "Document",
     "DomainModel",
+    "DriverManaged",
     "Edge",
     "EditError",
     "EditViolation",
     "Entity",
+    "ExecutionLifecycleHandler",
+    "ExecutionLifecycleHandlerError",
+    "ExecutionLifecycleProvider",
+    "FanoutLifecycleProvider",
     "Float32",
+    "Float64",
     "IncludePath",
     "Int32",
+    "Int64",
     "InternalError",
+    "InvalidData",
     "InvalidDataError",
+    "Json",
+    "LoggingLifecycleProvider",
+    "MetamodelIssue",
     "MetamodelValidationError",
+    "ModelSelection",
     "NoResultFound",
+    "Numeric",
     "ObjectQuery",
     "ParallaxError",
+    "Password",
+    "PhysicalIndexName",
     "Pin",
+    "PoolMetricsObserver",
+    "PoolObservation",
     "Predicate",
+    "Principal",
     "PublicationConflictError",
+    "ReadOnlyTxnOptions",
     "Rel",
+    "RetryPolicy",
+    "RootExecution",
     "Sequence",
+    "ServingModel",
     "SortKey",
+    "String",
     "TablePerHierarchy",
     "TemporalBound",
+    "Time",
+    "Timestamp",
     "TooManyResultsFound",
     "TransactionRollbackError",
     "TxTemporal",
+    "TxnOptions",
     "UnloadedRelationshipError",
     "UnsupportedError",
     "UsageError",
+    "Uuid",
     "ValueObject",
     "WritePreconditionError",
     "asc",
     "attr",
     "desc",
     "index",
+    "prepare_model",
     "rel",
 ]

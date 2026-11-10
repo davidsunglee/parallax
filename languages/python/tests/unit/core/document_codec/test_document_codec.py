@@ -33,10 +33,10 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    Decimal,
     DocumentValue,
     FrozenMap,
     NeutralType,
+    Numeric,
     StructuredDocument,
     UsageError,
 )
@@ -94,7 +94,7 @@ _TABLE: list[tuple[NeutralType, object, object]] = [
     (FLOAT32, 1.5, 1.5),
     (FLOAT64, 2.25, 2.25),
     (STRING, "alpha", "alpha"),
-    (Decimal(12, 2), decimal.Decimal("1.5"), "1.50"),
+    (Numeric(12, 2), decimal.Decimal("1.5"), "1.50"),
     (BYTES, b"\x0a\x1b", "0a1b"),
     (DATE, dt.date(2026, 1, 15), "2026-01-15"),
     (TIME, dt.time(9, 30), "09:30:00"),
@@ -158,20 +158,20 @@ def test_a_value_outside_its_declared_space_has_no_spelling() -> None:
     with pytest.raises(LeafEncodingError):
         encode_leaf(DATE, "2026-01-15")
     with pytest.raises(LeafEncodingError):
-        encode_leaf(Decimal(4, 2), decimal.Decimal("1.005"))
+        encode_leaf(Numeric(4, 2), decimal.Decimal("1.005"))
     with pytest.raises(LeafEncodingError):
         encode_leaf(TIMESTAMP, dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14))))
 
 
 def test_an_exact_decimal_pads_to_its_declared_scale_and_signs_only_below_zero() -> None:
-    assert encode_leaf(Decimal(12, 2), decimal.Decimal("-0.5")) == "-0.50"
-    assert encode_leaf(Decimal(12, 2), decimal.Decimal("-0.00")) == "0.00"
-    assert encode_leaf(Decimal(12, 0), decimal.Decimal("7")) == "7"
-    assert encode_leaf(Decimal(12, 2), decimal.Decimal("0.05")) == "0.05"
+    assert encode_leaf(Numeric(12, 2), decimal.Decimal("-0.5")) == "-0.50"
+    assert encode_leaf(Numeric(12, 2), decimal.Decimal("-0.00")) == "0.00"
+    assert encode_leaf(Numeric(12, 0), decimal.Decimal("7")) == "7"
+    assert encode_leaf(Numeric(12, 2), decimal.Decimal("0.05")) == "0.05"
     # Exactness beyond any rounding context's default precision: 38 significant
     # digits, rescaled by construction rather than by `quantize`.
     wide = decimal.Decimal("0.12345678901234567890123456789012345678")
-    assert encode_leaf(Decimal(38, 38), wide) == "0.12345678901234567890123456789012345678"
+    assert encode_leaf(Numeric(38, 38), wide) == "0.12345678901234567890123456789012345678"
 
 
 def test_a_float_encodes_as_the_shortest_number_that_decodes_back_to_it() -> None:
@@ -549,9 +549,9 @@ def test_document_classification_rejects_container_subclasses() -> None:
 @pytest.mark.parametrize(
     ("neutral_type", "stored"),
     [
-        (Decimal(12, 2), "1.5"),
-        (Decimal(12, 2), 1.5),
-        (Decimal(12, 2), "01.50"),
+        (Numeric(12, 2), "1.5"),
+        (Numeric(12, 2), 1.5),
+        (Numeric(12, 2), "01.50"),
         (BYTES, "0A1B"),
         (DATE, "20260115"),
         (TIME, "09:30"),
@@ -598,7 +598,7 @@ def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
         assert is_text_compared(text_compared)
     # `decimal(p, s)`'s document form is a JSON string too and it is deliberately
     # absent: the domain is fixed by how a type COMPARES, and a decimal casts.
-    for cast_compared in (BOOLEAN, INT32, INT64, FLOAT32, FLOAT64, Decimal(12, 2)):
+    for cast_compared in (BOOLEAN, INT32, INT64, FLOAT32, FLOAT64, Numeric(12, 2)):
         assert not is_text_compared(cast_compared)
         with pytest.raises(ValueError, match="no comparison text"):
             comparison_text(cast_compared, 1)
@@ -612,7 +612,7 @@ _ENTRY = ValueObjectShapeDeclaration(
     key=ValueObjectShapeKey(),
     attributes=(
         ValueObjectAttributeDeclaration(name="kind", type=STRING, nullable=True),
-        ValueObjectAttributeDeclaration(name="price", type=Decimal(12, 2), nullable=True),
+        ValueObjectAttributeDeclaration(name="price", type=Numeric(12, 2), nullable=True),
     ),
 )
 _ORIGIN = ValueObjectShapeDeclaration(

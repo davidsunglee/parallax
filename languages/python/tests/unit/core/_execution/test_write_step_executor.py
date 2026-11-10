@@ -26,6 +26,7 @@ from parallax.core import (
     Bitemporal,
     ConflictError,
     DomainModel,
+    ExecutionLifecycleProvider,
     InternalError,
     ParallaxError,
     attr,
@@ -45,7 +46,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseCallStarted,
     DatabaseWriteCompleted,
-    ExecutionLifecycleProvider,
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
