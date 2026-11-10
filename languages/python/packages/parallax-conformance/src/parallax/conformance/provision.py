@@ -23,10 +23,12 @@ from parallax.core.document_codec import (
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
+    EntityIdentity,
     Metamodel,
     Multiplicity,
     TemporalDimension,
     ValueObjectIdentity,
+    entity_by_name,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
@@ -328,23 +330,20 @@ def fixture_statements(
     table-per-hierarchy concrete's discriminator always binds its own derived
     ``tagValue``.
 
-    A block naming no row-owning Entity or naming one a second time, a block
-    that is not a list, a row that is not a mapping, and a row naming a member
-    its Entity's family does not declare are refused rather than dropped
-    (`m-case-format`), so a mistyped fixture cannot seed less than it states.
+    A block naming no row-owning Entity, naming one a second time, or spelling a
+    bare local name two namespaces share, a block that is not a list, a row that
+    is not a mapping, and a row naming a member its Entity's family does not
+    declare are refused rather than dropped (`m-case-format`), so a mistyped
+    fixture cannot seed less, or other tables, than it states.
     """
-    facet = storage_layout.view(model)
+    blocks = _fixture_blocks(model, fixtures)
     statements: list[tuple[str, list[object]]] = []
-    loaded: set[str] = set()
     for entity in model.entities:
-        view = facet.entity(entity.identity)
-        if view is None:
-            continue  # a rowless abstract position owns no fixture rows
-        canonical = entity.identity.canonical
-        block = next((key for key in (canonical, entity.identity.name) if key in fixtures), None)
-        if block is None:
+        resolved = blocks.get(entity.identity)
+        if resolved is None:
             continue
-        loaded.add(block)
+        (block, view) = resolved
+        canonical = entity.identity.canonical
         rows = fixtures[block]
         if not isinstance(rows, Sequence) or isinstance(rows, str | bytes):
             raise ValueError(f"{canonical}: a fixture block must be a list of rows")
@@ -369,13 +368,42 @@ def fixture_statements(
                     dialect,
                 )
             )
-    unloaded = sorted(block for block in fixtures if block not in loaded)
-    if unloaded:
-        raise ValueError(
-            f"fixture blocks {unloaded!r} name no row-owning Entity of the model, "
-            "or name one a second time"
-        )
     return statements
+
+
+def _fixture_blocks(
+    model: Metamodel, fixtures: Mapping[str, object]
+) -> dict[EntityIdentity, tuple[str, EntityLayoutView]]:
+    """The one fixture block each row-owning Entity's rows come from, with its
+    view, resolving every block key by the reference-position spelling rule."""
+    facet = storage_layout.view(model)
+    blocks: dict[EntityIdentity, tuple[str, EntityLayoutView]] = {}
+    for block in fixtures:
+        entity = entity_by_name(model, block)
+        if entity is None:
+            shared = sorted(
+                candidate.identity.canonical
+                for candidate in model.entities
+                if candidate.identity.name == block
+            )
+            if shared:
+                raise ValueError(
+                    f"fixture block {block!r} is ambiguous: {shared!r} share that local "
+                    "name; key it by one canonical spelling"
+                )
+            raise ValueError(f"fixture block {block!r} names no Entity of the model")
+        identity = entity.identity
+        view = facet.entity(identity)
+        if view is None:
+            raise ValueError(
+                f"fixture block {block!r} names {identity.canonical}, which owns no rows"
+            )
+        (earlier, _view) = blocks.setdefault(identity, (block, view))
+        if earlier != block:
+            raise ValueError(
+                f"fixture blocks {earlier!r} and {block!r} both name {identity.canonical}"
+            )
+    return blocks
 
 
 def load_fixtures(model_ref: str) -> dict[str, object]:
