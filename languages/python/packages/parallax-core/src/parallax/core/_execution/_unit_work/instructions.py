@@ -19,6 +19,7 @@ from parallax.core.base import (
     INFINITY,
     INSTANT_INVALID,
     TIMESTAMP,
+    InvalidValueError,
     NeutralType,
     UsageError,
     coerce_neutral_input,
@@ -27,6 +28,7 @@ from parallax.core.base import (
 from parallax.core.document_codec._plan import AuthoringRefusal, RootPolicy
 from parallax.core.metamodel import (
     WRITE_ASSIGNMENT_CODES,
+    WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
     AttributeMetadata,
     AuthoringViolation,
     CompiledEntity,
@@ -207,13 +209,18 @@ type WriteRejectionCode = Literal[
     "write-required-attribute-missing",
     "write-required-value-object-missing",
     "write-value-type-mismatch",
+    "write-assignment-value-type-mismatch",
 ]
 """Why a write instruction is refused before any SQL, as a
 :class:`~parallax.core.base.UsageError`.
 
 ``write-instruction-invalid`` is this binding's own: the instruction is not a
-well-formed canonical instruction its target can mean. Every other code is the
+well-formed canonical instruction its target can mean.
+``write-assignment-value-type-mismatch`` is the assignment judgement's own: a
+value assigned beside the key does not fit its member. Every other code is the
 core ``rejectedRule`` spelling of a model-aware rule the instruction breaks.
+The two value-type mismatches and the two required-member codes are raised as
+:class:`~parallax.core.base.InvalidValueError`.
 """
 
 WRITE_INSTRUCTION_INVALID: Final = "write-instruction-invalid"
@@ -1474,8 +1481,13 @@ def _refuse_owned_names(
 
 def _restated_assignment_refusal(entity: CompiledEntity, error: UsageError) -> UsageError:
     """The assignment judgement's ``error`` restated as the refusal of a write
-    to ``entity``."""
-    return UsageError(WRITE_INSTRUCTION_INVALID, f"{entity.identity.canonical}.{error.args[1]}")
+    to ``entity``: a value its member does not admit keeps the judgement's own
+    code, and a designation that admits no assignment is the binding's
+    ``write-instruction-invalid``."""
+    message = f"{entity.identity.canonical}.{error.args[1]}"
+    if error.code == WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH:
+        return InvalidValueError(WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH, message)
+    return UsageError(WRITE_INSTRUCTION_INVALID, message)
 
 
 def _row_refusal(
@@ -1533,7 +1545,7 @@ def _replacement_refusal(
             if violation.reason == "attribute-missing"
             else WRITE_REQUIRED_VALUE_OBJECT_MISSING
         )
-        return UsageError(
+        return InvalidValueError(
             rule,
             f"{entity.identity.name}.{name}: a replacement states every required member, and "
             "this one is absent",
@@ -1548,7 +1560,7 @@ its structural finding is weighed."""
 
 def _member_refusal(
     owner: str, member: MemberDefinition, violation: AuthoringViolation
-) -> UsageError:
+) -> InvalidValueError:
     """The refusal of a stated row's top-level ``member`` for ``violation``."""
     base = f"{owner}.{member.name}"
     scalar = isinstance(member, ScalarDefinition)
@@ -1557,31 +1569,31 @@ def _member_refusal(
         rule = WRITE_REQUIRED_ATTRIBUTE_MISSING if scalar else WRITE_REQUIRED_VALUE_OBJECT_MISSING
         kind = "attribute" if scalar else "value object"
         if many:
-            return UsageError(rule, f"{base}: a `many` {kind} is never null")
-        return UsageError(rule, f"{base}: required {kind} is absent (or null)")
+            return InvalidValueError(rule, f"{base}: a `many` {kind} is never null")
+        return InvalidValueError(rule, f"{base}: required {kind} is absent (or null)")
     path = joined_path(base, violation.path)
     if violation.reason == "not-a-list":
         expected = "a list of scalar values" if scalar else "a list of documents"
         kind = "attribute" if scalar else "value object"
-        return UsageError(
+        return InvalidValueError(
             WRITE_VALUE_TYPE_MISMATCH,
             f"{path}: a `many` {kind} must bind {expected}, got {type(violation.value).__name__}",
         )
     if violation.reason == "not-a-document":
-        return UsageError(
+        return InvalidValueError(
             WRITE_VALUE_TYPE_MISMATCH,
             f"{path}: expected a document (mapping), got {type(violation.value).__name__}",
         )
     if violation.reason == "attribute-missing":
-        return UsageError(
+        return InvalidValueError(
             WRITE_REQUIRED_ATTRIBUTE_MISSING, f"{path}: required attribute is absent (or null)"
         )
     if violation.reason == "value-object-missing":
-        return UsageError(
+        return InvalidValueError(
             WRITE_REQUIRED_VALUE_OBJECT_MISSING,
             f"{path}: required value object is absent (or null)",
         )
-    return UsageError(
+    return InvalidValueError(
         WRITE_VALUE_TYPE_MISMATCH,
         f"{path}: value {violation.value!r} does not match the declared type "
         f"{violation.declared_type!r}",

@@ -16,6 +16,7 @@ from parallax.core import (
     EditError,
     EditViolation,
     InternalError,
+    InvalidValueError,
     MetamodelValidationError,
     NoResultFound,
     ParallaxError,
@@ -49,6 +50,11 @@ def _invalid_root() -> InvalidData[object]:
 
 _KEPT: tuple[tuple[ParallaxError, type[ParallaxError], str], ...] = (
     (UsageError("query-clause-invalid", "m"), UsageError, "query-clause-invalid"),
+    (
+        InvalidValueError("write-value-type-mismatch", "m"),
+        UsageError,
+        "write-value-type-mismatch",
+    ),
     (InternalError("sql-generation-failed", "m"), InternalError, "sql-generation-failed"),
     (
         EditError((EditViolation("edit-read-only", EntityLocation(_ORDER), "total"),)),
@@ -140,6 +146,7 @@ def test_an_unhandled_error_renders_its_class_code_and_message() -> None:
 
 def test_only_a_conflict_its_raise_site_called_transient_is_transient() -> None:
     assert not UsageError("query-clause-invalid", "m").is_transient
+    assert not InvalidValueError("write-value-type-mismatch", "m").is_transient
     assert not InternalError("sql-generation-failed", "m").is_transient
     assert not ConflictError("missing-target", "m").is_transient
     assert ConflictError("optimistic-lock-conflict", "m", transient=True).is_transient

@@ -8,6 +8,7 @@ from typing import Final, cast
 __all__ = [
     "ConflictError",
     "InternalError",
+    "InvalidValueError",
     "NoResultFound",
     "ParallaxError",
     "TooManyResultsFound",
@@ -74,6 +75,16 @@ class UsageError(ParallaxError):
     """The calling code asked for something that contradicts Parallax's
     semantics; correcting the code, the declaration, or the input it passes is
     the fix."""
+
+
+class InvalidValueError(UsageError):
+    """A value the calling code stated does not fit the member it is stated
+    for: it is not of the member's declared type, it is outside that type's
+    value space, or it is absent where the member requires one.
+
+    A reference to a member the model does not declare, and any other
+    structural mistake, is a plain :class:`UsageError`.
+    """
 
 
 class UnsupportedError(ParallaxError):

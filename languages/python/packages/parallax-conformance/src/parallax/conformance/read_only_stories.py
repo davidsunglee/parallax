@@ -5,12 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from parallax.conformance.story_models import Account
-from parallax.core import (
-    TRANSACTION_ACCESS_MODE_MISMATCH,
-    DomainModel,
-    ReadOnlyTxnOptions,
-    UsageError,
-)
+from parallax.core import DomainModel, ReadOnlyTxnOptions, UsageError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.snapshot import ReadOnlyTxnContext, connect
 
@@ -59,7 +54,7 @@ def reads_run_in_one_read_only_transaction_at_a_chosen_isolation(
             try:
                 db.transact(lambda tx: tx.find(query).result())
             except UsageError as refusal:
-                if refusal.code != TRANSACTION_ACCESS_MODE_MISMATCH:
+                if refusal.code != "transaction-access-mode-mismatch":
                     raise
                 refused = True
             return ReadOnlyReport(

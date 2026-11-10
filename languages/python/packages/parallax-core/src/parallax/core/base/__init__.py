@@ -10,6 +10,7 @@ from typing import ClassVar, Final, Self, TypeGuard, cast, overload
 from parallax.core.base._errors import (
     ConflictError,
     InternalError,
+    InvalidValueError,
     NoResultFound,
     ParallaxError,
     TooManyResultsFound,
@@ -88,6 +89,7 @@ __all__ = [
     "Int32",
     "Int64",
     "InternalError",
+    "InvalidValueError",
     "Json",
     "ManagedValue",
     "NeutralType",

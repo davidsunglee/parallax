@@ -39,6 +39,7 @@ from parallax.core import (
     InternalError,
     InvalidData,
     InvalidDataError,
+    InvalidValueError,
     MetamodelIssue,
     MetamodelValidationError,
     NoResultFound,
@@ -60,7 +61,7 @@ from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, is_view_lo
 
 ## One root and a few classes
 
-Twenty classes cover every error Parallax raises for what you ask of it. Only an
+Twenty-one classes cover every error Parallax raises for what you ask of it. Only an
 argument of the wrong kind, such as `None` where a transaction option belongs, raises
 Python's own `TypeError` or `ValueError`, and constructing an entity validates its
 values with Pydantic, whose `ValidationError` it raises.
@@ -68,6 +69,7 @@ values with Pydantic, whose `ValidationError` it raises.
 ```text
 ParallaxError
 ├── UsageError                       the calling code must change
+│   ├── InvalidValueError            a stated value doesn't fit its member
 │   ├── EditError
 │   ├── MetamodelValidationError
 │   ├── DescriptorError
@@ -199,11 +201,12 @@ parsing messages.
 - **A write.** A write verb checks what it is handed before it buffers anything.
   Each refusal is a `UsageError` whose `code` says why. A `write-evidence-*` code means
   the value carries no licence this attempt can use (see
-  [No blind writes](05-transactions.md#no-blind-writes)). A `write-value-*` code means
-  the verb was handed a value it can't take, and its message names the verb that does:
-  `tx.amend` of a value you constructed rather than read names `tx.insert`, and
-  `tx.insert` of a value a read returned names `tx.amend`. Otherwise the write breaks a
-  rule, and its `code` names the rule: `"write-instruction-invalid"` for
+  [No blind writes](05-transactions.md#no-blind-writes)). A verb handed an object it
+  can't take names the verb that does: `tx.amend` of a value you constructed rather than
+  read names `tx.insert`, and `tx.insert` of a value a read returned names `tx.amend`.
+  A member's value that doesn't fit is an `InvalidValueError`, as the next item
+  describes. Otherwise the write breaks a rule, and its `code` names the rule:
+  `"write-instruction-invalid"` for
   a write its target can't mean, such as `tx.delete` on a temporal entity, whose message
   names `terminate`, or a target write on an entity with no revision;
   `"set-based-write-target-unsupported"` for a
@@ -215,6 +218,14 @@ parsing messages.
   it still commit. If it escapes, it reaches you from `transact`.
   `"transaction-time-pin-read-only"` means the value was read as of a past Transaction
   Time, which [can't be rewritten](04-writing.md#correct-the-past).
+- **A value.** A value that doesn't fit the member it is stated for raises
+  `InvalidValueError`, a `UsageError` that says the value, not the shape of the request,
+  is wrong: a value of the wrong type, one outside its type's range, or no value where
+  the member requires one. A write raises it for a member's value, and a
+  [Wire](03-reading.md#the-wire-api) query for a value it compares a member with. Its
+  `code` names the rule, such as `write-required-attribute-missing`, or
+  `neutral-literal-type-mismatch` for a Wire value of the wrong type. A name the model
+  doesn't declare is a plain `UsageError`.
 
 A release check can report every problem in a model at once:
 
@@ -599,13 +610,17 @@ answers that, on every error. It is `True` for:
   `"temporal-conflict"`, once Parallax's retries are spent;
 - a `DatabaseError` whose `category` is `"deadlock"` or `"lockWaitTimeout"`;
 - a `ConnectionAcquisitionError` whose `reason` is `"timeout"`, `"queue_rejected"` or
-  `"unavailable"`.
+  `"unavailable"`;
+- a `UsageError` whose `code` is `"transaction-rollback-only"`, when the failure that
+  doomed the transaction is one of these. A callback that catches a deadlock and returns
+  leaves the transaction rollback-only, and once retries are spent the refusal answers
+  for the deadlock it carries as its `__cause__`.
 
 It is `False` for everything else, including a failed precondition, whose caller has to
-read again and decide, and every `UsageError`, `UnsupportedError` and `InternalError`.
-`is_transient` is broader than what Parallax retries itself: a lock wait that timed out
-and a pool that had no connection to spare aren't retried within the call, because
-retrying at once rarely helps, but a later run may well succeed.
+read again and decide, every other `UsageError`, and every `UnsupportedError` and
+`InternalError`. `is_transient` is broader than what Parallax retries itself: a lock
+wait that timed out and a pool that had no connection to spare aren't retried within the
+call, because retrying at once rarely helps, but a later run may well succeed.
 
 A job queue that redelivers failed work uses it to decide which failures to run again:
 
@@ -625,8 +640,10 @@ def run_or_retry_later(
 <!-- /example -->
 
 A deadlock that outlasts every retry, a lock timeout or an exhausted pool hands the job
-back to run later. A duplicate key, a refused write or your own exception escapes, so
-the queue reports it rather than running it again and failing the same way.
+back to run later, and so does a deadlock the job caught itself, which left the
+transaction rollback-only. A duplicate key, a refused write or your own exception
+escapes, so the queue reports it rather than running it again and failing the same way,
+even when the job caught it and left the transaction rollback-only.
 
 ## Errors at the edge of a web API
 
@@ -644,7 +661,7 @@ def http_status_for(error: Exception) -> int:
             return 412
         case ConflictError():
             return 409
-        case EditError():
+        case EditError() | InvalidValueError():
             return 422
         case UnsupportedError():
             return 501
@@ -658,16 +675,17 @@ def http_status_for(error: Exception) -> int:
 Every branch is a class or `is_transient`. A result that isn't there is 404. A target
 write whose precondition failed is 412, and the response can name the `key` and the
 `expected` revision that no longer holds. Any other conflict that survived Parallax's
-retries is 409, and an edit the model refused is 422, with each field's problem in
-`violations`. A request this version can't serve is 501, and a failure a later attempt
+retries is 409. An edit the model refused is 422, with each field's problem in
+`violations`, and so is a value that doesn't fit its member, which usually came from
+the client. A request this version can't serve is 501, and a failure a later attempt
 may get past is 503, which a client can retry. The order matters: a `WritePreconditionError` is a `ConflictError`,
 and a conflict can be transient, so the more specific cases come first.
 
-Everything else is 500, including a `UsageError`. Once it has escaped the request, it is
-a mistake in your application's code rather than in what the client sent. Where client
-input can cause one, catch it around the one call that consumes the input. This handler
-takes a client's [query document](03-reading.md#the-wire-api) and answers a refusal
-with 400:
+Everything else is 500, including any other `UsageError`. Once it has escaped the
+request, it is a mistake in your application's code rather than in what the client sent.
+Where client input can cause one, catch it around the one call that consumes the input.
+This handler takes a client's [query document](03-reading.md#the-wire-api) and answers a
+value that doesn't fit with 422 and any other refusal with 400:
 
 <!-- example: answer-a-client-query -->
 ```python
@@ -677,16 +695,20 @@ def find_with_a_client_query(
     """Answer a query document a client sent: its results, or why it was refused."""
     try:
         return 200, db.wire.find(document).results()
+    except InvalidValueError as refused:
+        return 422, {"code": refused.code, "detail": str(refused)}
     except UsageError as refused:
         return 400, {"code": refused.code, "detail": str(refused)}
 ```
 <!-- /example -->
 
 The `try` covers only the read of the client's document, so a `UsageError` there is the
-client's mistake. Its `code` passes through unchanged, and for a refused query it is the
-same rule name every Parallax implementation refuses that query with, such as
-`path-unknown-member` for a path naming no member of its entity, or
-`neutral-literal-type-mismatch` for a value of the wrong type. An `UnsupportedError`
+client's mistake. An `InvalidValueError`, such as `neutral-literal-type-mismatch` for a
+value of the wrong type, is caught first and answered 422, as `http_status_for` answers
+it. Any other refusal, such as `path-unknown-member` for a path naming no member of its
+entity, is 400. Either way its `code` passes through unchanged, and for a refused query
+it is the same rule name every Parallax implementation refuses that query with. An
+`UnsupportedError`
 isn't caught: the client asked for something reasonable, so it reaches
 `http_status_for` and answers 501.
 
@@ -694,7 +716,7 @@ isn't caught: the client asked for something reasonable, so it reaches
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, descriptor, query, edit or write, such as a class's, query's or write's `UsageError`, `MetamodelValidationError`, `DescriptorError` or `EditError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, descriptor, query, edit, write or value, such as a class's, query's or write's `UsageError`, `MetamodelValidationError`, `DescriptorError`, `EditError` or `InvalidValueError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
 | A `UsageError` whose `code` is `"read-only-write-target"` | by the write verb, before anything is buffered | No | Leave the entity's rows to the system that owns them, or drop `persistence=READ_ONLY` if your application owns them |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |

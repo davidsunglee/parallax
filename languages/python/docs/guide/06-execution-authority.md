@@ -17,7 +17,6 @@ from pathlib import Path
 
 from parallax.core import (
     DRIVER_MANAGED,
-    TRANSACTION_AUTHORITY_MISMATCH,
     ConnectionAcquisitionError,
     CredentialSource,
     Password,
@@ -167,7 +166,7 @@ A nested `transact` joins the running transaction only when it runs as the same 
 scope derived again from equal values carries the same actor, so a helper can derive its
 own scope and still join. A different user, or the same user under another role, is
 refused before its callback runs, with a `UsageError` whose code is
-`TRANSACTION_AUTHORITY_MISMATCH`, `"transaction-authority-mismatch"`:
+`"transaction-authority-mismatch"`:
 
 <!-- example: keep-one-actor-per-transaction -->
 ```python
@@ -191,7 +190,7 @@ def another_user_can_join(
         try:
             rename_a_customer(database.using_principal(other), customer_id, "Ada Lovelace")
         except UsageError as refusal:
-            if refusal.code != TRANSACTION_AUTHORITY_MISMATCH:
+            if refusal.code != "transaction-authority-mismatch":
                 raise
             return False
         return True

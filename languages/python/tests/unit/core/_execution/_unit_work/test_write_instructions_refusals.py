@@ -35,9 +35,9 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
+    InvalidValueError,
     NeutralType,
     Numeric,
-    UsageError,
 )
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -180,8 +180,8 @@ def _refused(
     row: Mapping[str, object],
     *,
     mutation: KeyedMutation = "insert",
-) -> UsageError:
-    with pytest.raises(UsageError) as exc_info:
+) -> InvalidValueError:
+    with pytest.raises(InvalidValueError) as exc_info:
         _prepare(model, entity, row, mutation=mutation)
     return exc_info.value
 
@@ -202,7 +202,7 @@ def _accept(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> No
     _prepare(_WIDGET_MODEL, "Widget", row, mutation=mutation)
 
 
-def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> UsageError:
+def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> InvalidValueError:
     return _refused(_WIDGET_MODEL, "Widget", row, mutation=mutation)
 
 

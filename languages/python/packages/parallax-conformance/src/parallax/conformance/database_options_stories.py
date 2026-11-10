@@ -6,7 +6,6 @@ from decimal import Decimal
 
 from parallax.conformance.story_models import Account
 from parallax.core import (
-    TRANSACTION_OPTION_CONFLICT,
     AdaptiveBackoff,
     DomainModel,
     RetryPolicy,
@@ -72,7 +71,7 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
             try:
                 db.transact(joined_body, isolation="repeatable_read")
             except UsageError as refusal:
-                if refusal.code != TRANSACTION_OPTION_CONFLICT:
+                if refusal.code != "transaction-option-conflict":
                     raise
                 refused = True
             return ResolvedOptions(
@@ -122,7 +121,7 @@ def a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole(
             try:
                 db.transact(joined_body, retry=RetryPolicy(max_retries=1, backoff=tuned.backoff))
             except UsageError as refusal:
-                if refusal.code != TRANSACTION_OPTION_CONFLICT:
+                if refusal.code != "transaction-option-conflict":
                     raise
                 refused = True
             return ResolvedRetryPolicies(

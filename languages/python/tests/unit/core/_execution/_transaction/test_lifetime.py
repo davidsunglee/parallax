@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import threading
 
-from parallax.core import UsageError
+import pytest
+
+from parallax.core import ConflictError, DatabaseError, UsageError, WritePreconditionError
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import TRANSACTION_ROLLBACK_ONLY
 from tests._support.errors import raises_code
 
@@ -35,6 +38,41 @@ def test_a_doomed_lifetime_refuses_each_with_its_first_cause() -> None:
         with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY, match=message) as refused:
             refusal()
         assert refused.value.__cause__ is first
+
+
+@pytest.mark.parametrize(
+    ("cause", "transient"),
+    [
+        pytest.param(
+            ConflictError("optimistic-lock-conflict", "m", transient=True), True, id="conflict"
+        ),
+        pytest.param(
+            DatabaseError(category="deadlock", native_code="40P01", message="m"),
+            True,
+            id="deadlock",
+        ),
+        pytest.param(
+            WritePreconditionError(EntityIdentity("shop", "Order"), {"id": 1}, 3),
+            False,
+            id="precondition",
+        ),
+        pytest.param(
+            DatabaseError(category="uniqueViolation", native_code="23505", message="m"),
+            False,
+            id="duplicate-key",
+        ),
+        pytest.param(LookupError("the application's own"), False, id="application"),
+    ],
+)
+def test_a_rollback_only_refusal_is_transient_exactly_when_its_cause_is(
+    cause: Exception, transient: bool
+) -> None:
+    lifetime = TxnAttemptLifetime()
+    lifetime.doom(cause)
+    for refusal in (lifetime.ensure_open, lifetime.refuse_join, lifetime.refuse_commit):
+        with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused:
+            refusal()
+        assert refused.value.is_transient is transient
 
 
 def test_a_binding_is_visible_to_the_thread_that_bound_it_alone() -> None:

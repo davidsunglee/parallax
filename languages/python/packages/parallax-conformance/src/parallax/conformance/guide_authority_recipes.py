@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from parallax.conformance.guide_models import Customer, Order
-from parallax.core import TRANSACTION_AUTHORITY_MISMATCH, Password, UsageError
+from parallax.core import Password, UsageError
 from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 
@@ -82,7 +82,7 @@ def another_user_can_join(
         try:
             rename_a_customer(database.using_principal(other), customer_id, "Ada Lovelace")
         except UsageError as refusal:
-            if refusal.code != TRANSACTION_AUTHORITY_MISMATCH:
+            if refusal.code != "transaction-authority-mismatch":
                 raise
             return False
         return True

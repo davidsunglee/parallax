@@ -35,7 +35,7 @@ from typing import Final
 import pytest
 
 from parallax.core import UnsupportedError
-from parallax.core.base import UsageError
+from parallax.core.base import InvalidValueError, UsageError
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -501,7 +501,7 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
         PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="none"),
         _wire(
             _refused(
-                UsageError,
+                InvalidValueError,
                 "Person.name: a replacement states every required member, and this one is absent",
                 code="write-required-attribute-missing",
             )

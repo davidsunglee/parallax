@@ -29,7 +29,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     serialize,
 )
-from parallax.core.base import UsageError
+from parallax.core.base import InvalidValueError, UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import AttributeAssignment, DomainModel
 from parallax.core.entity._expressions import AttributeRef
@@ -75,6 +75,15 @@ def _row(version: int = 3) -> dict[str, object]:
     return {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": version}
 
 
+_VALUE_CODES = frozenset(
+    {
+        "neutral-literal-type-mismatch",
+        "write-value-type-mismatch",
+        "write-assignment-value-type-mismatch",
+    }
+)
+
+
 def _refused(
     call: Callable[[TxnContext], object],
     match: str,
@@ -83,8 +92,9 @@ def _refused(
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, code, match=match):
+        with raises_code(UsageError, code, match=match) as refused:
             call(tx)
+        assert isinstance(refused.value, InvalidValueError) is (code in _VALUE_CODES)
 
     account_db(port).transact(fn)
     assert _calls(port) == []
@@ -275,7 +285,7 @@ def _raw(member: str, value: object) -> AttributeAssignment[Any]:
         ((_raw("id", 2),), "primary-key", "write-instruction-invalid"),
         ((_raw("version", 9),), "framework-owned", "framework-owned-member-assigned"),
         ((Wallet.balance.set(Decimal(1)),), "declares or inherits", "write-instruction-invalid"),
-        ((_raw("balance", "much"),), "balance", "write-instruction-invalid"),
+        ((_raw("balance", "much"),), "balance", "write-assignment-value-type-mismatch"),
         ((_raw("nickname", "x"),), "declares or inherits", "write-instruction-invalid"),
     ],
     ids=["duplicate", "primary-key", "version", "foreign", "ill-typed", "undeclared"],
@@ -473,8 +483,9 @@ def test_wire_replacement_data_stands_alone(
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
         if refused:
             code, match = cast("tuple[str, str]", outcome)
-            with raises_code(UsageError, code, match=match):
+            with raises_code(UsageError, code, match=match) as failed:
                 tx.wire.replace(node, data)
+            assert isinstance(failed.value, InvalidValueError) is code.startswith("write-required")
         else:
             tx.wire.replace(node, data)
 
@@ -513,7 +524,7 @@ def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
 
     def fn(tx: TxnContext) -> None:
         node = tx.wire.find({"target": "Account", "predicate": _ONE}).result()
-        with raises_code(UsageError, "neutral-literal-type-mismatch"):
+        with raises_code(InvalidValueError, "neutral-literal-type-mismatch"):
             tx.wire.amend(node, {"id": "one", "balance": "5.00"})
 
     account_db(port).transact(fn)

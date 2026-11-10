@@ -29,6 +29,7 @@ from parallax.core.base import (
     Float64,
     Int32,
     Int64,
+    InvalidValueError,
     Json,
     ManagedValue,
     NeutralType,
@@ -65,9 +66,9 @@ type NeutralLiteralCode = Literal[
 ]
 """Why a serialized literal does not decode under its declared Neutral Type: it
 is not of the type at all, it is not the type's canonical spelling, or it names
-no member of the declared value space. A decoding refusal is a
-:class:`~parallax.core.base.UsageError` with one of these codes, which are the
-core ``rejectedRule`` spellings."""
+no member of the declared value space. A decoding refusal is an
+:class:`~parallax.core.base.InvalidValueError` with one of these codes, which
+are the core ``rejectedRule`` spellings."""
 
 NEUTRAL_LITERAL_TYPE_MISMATCH: Final = "neutral-literal-type-mismatch"
 NEUTRAL_LITERAL_NONCANONICAL: Final = "neutral-literal-noncanonical"
@@ -77,15 +78,17 @@ NEUTRAL_LITERAL_CODES: Final[frozenset[str]] = frozenset(
 )
 
 
-def is_decoding_refusal(failure: object) -> TypeIs[UsageError]:
+def is_decoding_refusal(failure: object) -> TypeIs[InvalidValueError]:
     """Whether ``failure`` is this codec's refusal to decode a literal."""
-    return isinstance(failure, UsageError) and failure.code in NEUTRAL_LITERAL_CODES
+    return isinstance(failure, InvalidValueError) and failure.code in NEUTRAL_LITERAL_CODES
 
 
 def located_refusal(refusal: UsageError, where: str) -> UsageError:
     """``refusal`` restated at ``where``, the position in a larger input whose
-    literal it refused, keeping its code and caused by it."""
-    located = UsageError(refusal.code, f"{where}: {refusal.args[1]}")
+    literal it refused, keeping its code and whether it is an
+    :class:`~parallax.core.base.InvalidValueError`, and caused by it."""
+    kind = InvalidValueError if isinstance(refusal, InvalidValueError) else UsageError
+    located = kind(refusal.code, f"{where}: {refusal.args[1]}")
     located.__cause__ = refusal
     return located
 
@@ -728,7 +731,7 @@ def _fail(
     value: object,
     neutral_type: NeutralType,
 ) -> NoReturn:
-    raise UsageError(
+    raise InvalidValueError(
         code, f"{_diagnostic(value)} for the declared value space {_diagnostic(neutral_type)}"
     )
 
