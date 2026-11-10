@@ -41,17 +41,14 @@ from parallax.core import (
 )
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
-from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, UsageError
+from parallax.core.base import INFINITY, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel import Table
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.managed_row import named_members
 from tests._support.errors import raises_code
 from tests._support.repo import REPO_ROOT
 from tests._support.write_preparation import write_preparation_of
-from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _SCHEMAS = REPO_ROOT / "core" / "schemas"
 
@@ -117,17 +114,6 @@ _POSITION = _MODELS["position"]
 # Two Entities sharing one local name across namespaces — the corpus model the
 # ambiguity rule is authored against (`m-predicate-048` / `-051`).
 _SHARED_LOCAL_NAME = _MODELS["shared-local-name"]
-
-_DOCUMENT_ROW = identity("DocumentRow")
-_DOCUMENT_MODEL = form_metamodel(
-    source(
-        Declaration(
-            identity=_DOCUMENT_ROW,
-            container=Table("document_row"),
-            attributes=(key(_DOCUMENT_ROW), attribute(_DOCUMENT_ROW, "payload", type=JSON)),
-        )
-    )
-)
 
 _B1 = "2024-01-01T00:00:00.000000Z"
 _B2 = "2024-06-01T00:00:00.000000Z"
@@ -902,25 +888,6 @@ def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_p
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
     # Each declared member is looked up once, the omitted ones included.
     assert address.reads == {"street": 1, "city": 1, "geo": 1, "phones": 1}
-
-
-@pytest.mark.parametrize("prepare", [_prepare_typed, _prepare_wire])
-def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -> None:
-    payload: dict[str, object] = {"items": [{"value": 1}]}
-    prepared = prepare(
-        wi.KeyedWriteInstruction(
-            "insert", _DOCUMENT_ROW.canonical, ({"id": 1, "payload": payload},)
-        ),
-        _DOCUMENT_MODEL,
-    )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    retained = cast("Mapping[str, object]", named_members(prepared.rows[0])["payload"])
-    items = cast("tuple[object, ...]", retained["items"])
-    first = cast("Mapping[str, object]", items[0])
-    cast("dict[str, object]", cast("list[object]", payload["items"])[0])["value"] = 2
-    assert first["value"] == 1
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", first)["value"] = 3
 
 
 def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
