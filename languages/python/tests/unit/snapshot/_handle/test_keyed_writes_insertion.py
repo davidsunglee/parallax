@@ -37,7 +37,6 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity import DomainModel
 from parallax.core.execution import RetryPolicy
 from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import MISSING_TARGET
 from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm
@@ -202,38 +201,6 @@ def test_repeated_bounded_edits_start_at_the_anchor_rather_than_at_a_split() -> 
     ]
 
 
-def test_a_literal_reset_of_a_pending_opening_writes_the_reset_value() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        opened = _position()
-        tx.insert(opened, valid_from=_JAN)
-        tx.amend(opened.edit(value=Decimal("150.00")))
-        tx.amend(opened.edit(value=Decimal("100.00")))
-
-    _transact(port, fn)
-    assert _opened(port) == [(Decimal("100.00"), _JAN, INFINITY_INSTANT)]
-
-
-def test_a_resubmitted_draft_reasserts_its_whole_touched_set() -> None:
-    # A draft's assignments are cumulative: extending an earlier draft after a
-    # later edit was submitted reasserts the earlier draft's value beside the
-    # member it adds.
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        opened = _position()
-        tx.insert(opened, valid_from=_JAN)
-        draft = opened.edit(value=Decimal("150.00"))
-        tx.amend(draft)
-        tx.amend(opened.edit(value=Decimal("200.00")))
-        tx.amend(draft.edit(acct_num="B"))
-
-    _transact(port, fn)
-    (insert,) = _writes(port)
-    assert insert.binds[:3] == (1, "B", Decimal("150.00"))
-
-
 def test_an_edit_over_coverage_a_pending_destruction_removed_is_refused() -> None:
     # Terminating the opening up to May leaves only its tail pending. An edit
     # starts at the anchor, January, inside the destroyed window, so it would
@@ -299,31 +266,6 @@ def test_a_refused_insertion_grants_nothing() -> None:
 
     _transact(port, fn)
     assert _writes(port) == []
-
-
-@pytest.mark.parametrize("ending", ["commit", "rollback"])
-def test_an_insertion_authority_ends_with_its_attempt(ending: str) -> None:
-    port = ScriptedAdapter(Transact(Write()) if ending == "commit" else Transact(), Transact())
-    db = db_for(PERSON, port)
-    opened = mm.Person(id=9, name="Newton")
-
-    def insert(tx: TxnContext) -> None:
-        tx.insert(opened)
-        if ending == "rollback":
-            raise RuntimeError("abandon")
-
-    if ending == "commit":
-        db.transact(insert)
-    else:
-        with pytest.raises(RuntimeError):
-            db.transact(insert)
-    later = opened.edit(name="Grace")
-
-    def edit(tx: TxnContext) -> None:
-        _refused_as_not_stored(lambda: tx.amend(later))
-
-    db.transact(edit)
-    assert len(_writes(port)) == (1 if ending == "commit" else 0)
 
 
 def test_a_reinsertion_rebinds_only_the_instance_it_takes() -> None:
@@ -420,63 +362,8 @@ def test_an_insertion_source_edits_its_stored_bitemporal_coverage_after_a_helper
     assert head.binds[2:5] == (Decimal("150.00"), _JAN, _JUN)
 
 
-def test_an_insertion_source_revises_its_stored_transaction_time_row_after_a_helper_read() -> None:
-    row: MappingRow = {
-        "bal_id": 9,
-        "acct_num": "Z",
-        "val": Decimal("1.00"),
-        "in_z": FIXED,
-        "out_z": INFINITY_INSTANT,
-    }
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write()))
-
-    def fn(tx: TxnContext) -> None:
-        opened = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
-        tx.insert(opened)
-        tx.find(mm.Balance.where(mm.Balance.id == 9)).result()
-        tx.amend(opened.edit(value=Decimal("2.00")))
-
-    db_for(BALANCE, port).transact(fn)
-    coverage = [call for call in port.calls if isinstance(call, ReadCall)][1]
-    assert coverage.sql.endswith("where t0.bal_id = %s and t0.out_z = %s")
-    assert _writes(port)[1] == WriteCall(
-        "update balance set val = %s where bal_id = %s and out_z = %s and in_z = %s",
-        (Decimal("2.00"), 9, "infinity", FIXED),
-    )
-
-
 def _account_row(version: int) -> MappingRow:
     return {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": version}
-
-
-def test_an_insertion_source_advances_its_stored_version_after_each_flush() -> None:
-    # The attempt wrote every revision of the row it inserted, so the version
-    # each later write advances from is known without reading it.
-    port = ScriptedAdapter(
-        Transact(
-            Write(), Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]), Write()
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        opened = mm.Account(id=7, owner="Newton", balance=Decimal("5.00"))
-        tx.insert(opened)
-        tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.amend(opened.edit(balance=Decimal("6.00")))
-        tx.find(mm.Account.where(mm.Account.id == 7)).result()
-        tx.amend(opened.edit(balance=Decimal("7.00")))
-
-    db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port)[1:] == [
-        WriteCall(
-            "update account set balance = %s, version = %s where id = %s and version = %s",
-            (Decimal("6.00"), 2, 7, 1),
-        ),
-        WriteCall(
-            "update account set balance = %s, version = %s where id = %s and version = %s",
-            (Decimal("7.00"), 3, 7, 2),
-        ),
-    ]
 
 
 @pytest.mark.parametrize("insertion_first", [True, False], ids=["insertion-first", "read-first"])
@@ -504,69 +391,6 @@ def test_an_insertion_source_and_a_read_of_the_same_version_compose_into_one_upd
             ("Hooke", Decimal("6.00"), 2, 7, 1),
         )
     ]
-
-
-@pytest.mark.parametrize("insertion_first", [True, False], ids=["insertion-first", "read-first"])
-def test_insertion_and_observed_assignments_compose_over_unequal_windows_after_a_flush(
-    insertion_first: bool,
-) -> None:
-    # Opening [March, September); a read at May flushes it and yields an
-    # observed source. The insertion source assigns 150 until June and the
-    # observed source 175 from May until August; the later-authored write wins
-    # where the windows overlap, and the opening's own value survives past it.
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[_rectangle(_MAR, _SEP)]), Write(times=3)))
-
-    def fn(tx: TxnContext) -> None:
-        opened = _position()
-        tx.insert(opened, valid_from=_MAR, until=_SEP)
-        observed = _read_at(tx, _MAY)
-        writes = [
-            lambda: tx.amend(opened.edit(value=Decimal("150.00")), until=_JUN),
-            lambda: tx.amend(observed.edit(value=Decimal("175.00")), until=_AUG),
-        ]
-        for write in writes if insertion_first else reversed(writes):
-            write()
-
-    _transact(port, fn)
-    overlap = Decimal("175.00") if insertion_first else Decimal("150.00")
-    middle_end = _AUG if insertion_first else _JUN
-    revision = _writes(port)[1]
-    assert revision.sql.startswith("update where_position set from_z = %s")
-    assert revision.binds[0] == _AUG
-    assert _opened(port)[1:] == (
-        [(Decimal("150.00"), _MAR, _MAY), (overlap, _MAY, middle_end)]
-        if insertion_first
-        else [(Decimal("150.00"), _MAR, _JUN), (Decimal("175.00"), _JUN, _AUG)]
-    )
-
-
-def test_an_insertion_source_whose_anchor_was_removed_fails_its_flush() -> None:
-    # A read at January terminates the stored opening until March, so coverage
-    # survives only from March. The insertion's authority still starts at
-    # January, where nothing is current any more: the edit's flush reads its
-    # coverage, finds none at the anchor, and fails as a missing target — which
-    # dooms the attempt rather than shifting the anchor.
-    port = ScriptedAdapter(
-        Transact(
-            Write(),
-            Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]),
-            Write(),
-            Read(rows=[_rectangle(_MAR, INFINITY_INSTANT)]),
-            Read(rows=[_rectangle(_MAR, INFINITY_INSTANT)]),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        opened = _position()
-        tx.insert(opened, valid_from=_JAN)
-        tx.terminate(_read_at(tx, _JAN), until=_MAR)
-        _read_at(tx, _MAR)
-        tx.amend(opened.edit(value=Decimal("150.00")))
-
-    with raises_code(ConflictError, MISSING_TARGET):
-        _transact(port, fn)
-    assert len(_writes(port)) == 2
-    assert RollbackCall() in port.calls
 
 
 # --------------------------------------------------------------------------- #

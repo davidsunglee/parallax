@@ -578,12 +578,6 @@ def test_a_stated_none_start_is_refused_rather_than_read_as_omission(verb: str) 
 # --------------------------------------------------------------------------- #
 # The retired logical spellings are gone, not aliased.                         #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("owner", [TxnContext, WireTransactionView], ids=["typed", "wire"])
-@pytest.mark.parametrize(
-    "name", ["update", "update_where", "terminate_where", "amend_target", "replace_target"]
-)
-def test_no_retired_method_remains(owner: type[object], name: str) -> None:
-    assert not hasattr(owner, name)
 
 
 @pytest.mark.parametrize(

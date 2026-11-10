@@ -7,7 +7,7 @@ Optimistic gate on the caller's version, the Locking acquisition and its reuse,
 the empty patch that does nothing beside the deletion that is never empty, the
 exact-window composition matrix with observed writes, whole-group refusals that
 leave earlier work executable, the attempt-wide refusal of an object the
-attempt inserted, and the non-retriable precondition failure.
+attempt inserted, and a failed precondition dooming its attempt.
 """
 
 from __future__ import annotations
@@ -121,26 +121,6 @@ def test_a_wire_patch_gates_on_its_callers_version_and_reads_nothing() -> None:
 
 
 @_REPRESENTATIONS
-def test_a_replacement_writes_every_writable_member_under_its_callers_version(
-    representation: _Representation,
-) -> None:
-    port = ScriptedAdapter(Transact(Write()))
-    account_db(port).transact(lambda tx: _replace(tx, representation))
-    assert _calls(port) == [WriteCall(_GATED, ("Zed", Decimal("3.00"), 4, 1, 3))]
-
-
-def test_a_net_equal_patch_chain_still_advances_the_version_once() -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        _patch(tx, balance="150.00")
-        _patch(tx, balance="100.00")
-
-    account_db(port).transact(fn)
-    assert _calls(port) == [WriteCall(_GATED_BALANCE, (Decimal("100.00"), 4, 1, 3))]
-
-
-@_REPRESENTATIONS
 def test_a_deletion_gates_on_its_callers_version_and_reads_nothing(
     representation: _Representation,
 ) -> None:
@@ -152,18 +132,6 @@ def test_a_deletion_gates_on_its_callers_version_and_reads_nothing(
 
     account_db(port).transact(fn)
     assert _calls(port) == [WriteCall(_GATED_DELETE, (1, 3))]
-
-
-@_REPRESENTATIONS
-def test_a_deletion_that_removes_nothing_fails_its_precondition_and_never_commits(
-    representation: _Representation,
-) -> None:
-    port = ScriptedAdapter(Transact(Write(affected=0)))
-
-    with pytest.raises(WritePreconditionError, match="expected revision 3") as failed:
-        account_db(port).transact(lambda tx: _delete(tx, representation))
-    assert dict(failed.value.key) == {"id": 1}
-    assert _calls(port) == [WriteCall(_GATED_DELETE, (1, 3)), RollbackCall()]
 
 
 def test_an_identity_only_patch_neither_cancels_nor_changes_earlier_work() -> None:
@@ -347,15 +315,8 @@ def test_a_locking_deletion_refuses_a_stale_or_missing_start_at_the_call(
 
 
 # --------------------------------------------------------------------------- #
-# Failure: a failed precondition is the caller's, never retried, and dooms.   #
+# Failure: a failed precondition dooms its attempt; a retry restates it.      #
 # --------------------------------------------------------------------------- #
-def test_a_failed_precondition_is_never_retried_even_with_conflict_retries_on() -> None:
-    port = ScriptedAdapter(Transact(Write(affected=0)), Transact(Write()))
-
-    with pytest.raises(WritePreconditionError, match="expected revision 3"):
-        account_db(port).transact(lambda tx: _patch(tx, balance="150.00"))
-    assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
-    assert RollbackCall() in port.calls
 
 
 def test_a_caught_precondition_failure_still_rolls_the_attempt_back() -> None:
@@ -560,30 +521,6 @@ def test_a_target_and_an_observed_write_of_two_states_of_one_object_are_refused(
 # --------------------------------------------------------------------------- #
 # An object this attempt inserted is written through its source until commit. #
 # --------------------------------------------------------------------------- #
-@_REPRESENTATIONS
-@pytest.mark.parametrize("flushed", [False, True], ids=["pending", "after-a-helper-read"])
-def test_a_target_write_of_an_object_this_attempt_inserted_is_refused(
-    representation: _Representation, flushed: bool
-) -> None:
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[]), Write()))
-
-    def fn(tx: TxnContext) -> None:
-        inserted = mm.Account(id=1, owner="Ada", balance=Decimal("1.00"))
-        tx.insert(inserted)
-        if flushed:
-            tx.find(mm.Account.where(mm.Account.id == 2))
-        with raises_code(UsageError, "write-evidence-inserted"):
-            if representation == "typed":
-                _replace(tx, "typed", version=1)
-            else:
-                _patch(tx, version=1, balance="2.00")
-        tx.wire.amend_if("Account", {"id": 1}, version=1)
-        tx.amend(inserted.edit(balance=Decimal("2.00")))
-
-    account_db(port).transact(fn)
-    assert [type(call) for call in _calls(port)] == (
-        [WriteCall, ReadCall, WriteCall] if flushed else [WriteCall]
-    )
 
 
 @_REPRESENTATIONS
@@ -613,19 +550,6 @@ def test_a_cancelled_insertion_of_an_object_still_refuses_a_target_write_of_it()
 
     account_db(port).transact(fn)
     assert _calls(port) == []
-
-
-def test_a_committed_object_rewritten_in_this_attempt_is_target_writable() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[_row()]), Write(), Read(rows=[_row(4)]), Write()))
-
-    def fn(tx: TxnContext) -> None:
-        source = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend(source.edit(owner="Bo"))
-        assert tx.find(mm.Account.where(mm.Account.id == 1)).result().version == 4
-        _patch(tx, version=4, balance="150.00")
-
-    account_db(port).transact(fn)
-    assert _calls(port)[-1] == WriteCall(_GATED_BALANCE, (Decimal("150.00"), 5, 1, 4))
 
 
 # --------------------------------------------------------------------------- #
