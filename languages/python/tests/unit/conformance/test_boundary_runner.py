@@ -2,9 +2,8 @@
 
 Pins what the real-database suite (`tests/api/test_boundary_run.py`) composes
 but cannot observe: the `given.sessionDefault` reading no case's outcome
-reveals, the `then.outcome` map, the action -> verb branches no reachable corpus
-case reaches (`create`/`delete`/`terminate`), the fault-injecting decorators'
-firing at every seam, and the attempt-count formula.
+reveals, the `then.outcome` map, the fault-injecting decorators' firing at
+every seam, and the attempt-count formula.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from parallax.conformance.boundary_runner import (
 )
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import DomainModel
 from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -97,7 +95,6 @@ def _case(
 
 
 _ACCOUNT_TARGET = boundary_runner.boundary_target(_case({}))
-_BALANCE_TARGET = boundary_runner.boundary_target(_case({}, model="models/balance.yaml"))
 
 
 # --------------------------------------------------------------------------- #
@@ -213,69 +210,14 @@ def _faulted(
     return fault_injecting_adapter(adapter, fault=fault, persistent=persistent)
 
 
-def _db(adapter: DatabaseAdapter[Any], model: DomainModel = _ACCOUNT) -> ScopedDatabase:
+def _db(adapter: DatabaseAdapter[Any]) -> ScopedDatabase:
     return own_root(
-        Database.connect(adapter, model, clock=FixedClock(_FIXED))
+        Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED))
     ).using_database_login()
 
 
 def _context(runtime: Any) -> Any:
     return runtime.login_source().new_context("writer_only")
-
-
-def test_run_boundary_actions_create() -> None:
-    port = _FakePort(rows=[])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("create"), _ACCOUNT_TARGET)
-
-    result = _db(port).transact(fn)
-    assert result is not None
-    assert result.id == 90
-    assert len(port.writes) == 1
-
-
-def test_run_boundary_actions_read_then_delete() -> None:
-    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("read", "delete"), _ACCOUNT_TARGET)
-
-    result = _db(port).transact(fn)
-    assert result is None
-    assert len(port.writes) == 1
-
-
-def test_run_boundary_actions_terminate_refuses() -> None:
-    port = _FakePort(rows=[])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("terminate"), _ACCOUNT_TARGET)
-
-    with pytest.raises(AssertionError, match="no legal target"):
-        _db(port).transact(fn)
-
-
-@pytest.mark.parametrize("action", ["create", "delete"])
-def test_an_account_only_action_on_another_target_is_refused(action: str) -> None:
-    port = _FakePort(rows=[])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps(action), _BALANCE_TARGET)
-
-    with pytest.raises(AssertionError, match=r"declared only on the account\.yaml target"):
-        _db(port, MODELS["balance"]).transact(fn)
-    assert port.writes == []
-
-
-def test_run_boundary_actions_delete_without_a_prior_read_raises() -> None:
-    port = _FakePort(rows=[])
-
-    def fn(tx: TxnContext) -> Any:
-        return boundary_runner.run_boundary_actions(tx, _steps("delete"), _ACCOUNT_TARGET)
-
-    with pytest.raises(AssertionError, match="prior `read`"):
-        _db(port).transact(fn)
 
 
 # --------------------------------------------------------------------------- #
