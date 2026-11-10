@@ -5,9 +5,9 @@ packages:
 # Every infrastructure dependency is pinned exactly, once, here; packages refer
 # to an entry with `catalog:`.
 catalog:
-  "@aws-sdk/client-secrets-manager": 3.1163.0
+  "@aws-sdk/client-secrets-manager": 3.1164.0
   "@eslint/js": 10.0.1
-  "@types/node": 24.19.2
+  "@types/node": 26.6.6
   "@vitest/coverage-v8": 5.1.0
   ajv: 8.20.0
   aws-cdk: 2.1148.0
@@ -17,10 +17,10 @@ catalog:
   eslint: 10.14.0
   jiti: 2.7.0
   json-schema-to-typescript: 16.0.0
-  knip: 6.44.1
+  knip: 6.44.2
   postgres: 4.1.0
   prettier: 3.9.10
-  typescript: 6.0.3
+  typescript: 7.0.2
   typescript-eslint: 8.72.1
   vite: 8.3.6
   vitest: 5.1.0
