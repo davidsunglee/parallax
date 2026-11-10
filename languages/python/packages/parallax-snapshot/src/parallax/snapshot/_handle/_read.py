@@ -108,7 +108,9 @@ _WIRE_AT_OMITTED = object()
 
 
 class Snapshot[T]:
-    """The Python reification of a core Snapshot Graph: ``db.find`` /
+    """The result of a `find`: immutable result roots and the ways to read them.
+
+    The Python reification of a core Snapshot Graph: ``db.find`` /
     ``tx.find``'s result. The complete surface: :meth:`result`,
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
     :meth:`checked`, :meth:`wire`,
@@ -410,7 +412,7 @@ def _project_eager_values(
 
 
 class CheckedSnapshot[T]:
-    """A :class:`Snapshot`'s roots as ``T | InvalidData[T]``.
+    """A `Snapshot` whose roots are `T | InvalidData[T]`, so reads continue past bad rows.
 
     The whole eager checked surface: the same three arity accessors, the same
     :attr:`pin`, the same :attr:`edition`, and nothing else. It shares the

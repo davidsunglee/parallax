@@ -3,7 +3,8 @@
 This guide teaches the Python API task by task, from a first program to the advanced
 cases. Every example is copied from Parallax's tests, which run it against a real
 PostgreSQL database, so the code shown here runs as written. The
-[Python binding](../../spec/python.md) owns the API contracts, and the
+[Python binding](../../spec/python.md) owns the API contracts, the
+[API reference](../api-reference.md) lists every name an application imports, and the
 [PostgreSQL lifecycle guide](../postgresql-lifecycle.md) covers running Parallax in
 production.
 

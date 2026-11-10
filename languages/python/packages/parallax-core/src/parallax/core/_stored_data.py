@@ -68,6 +68,7 @@ class MissingStoredValue:
 
 
 MISSING_STORED_VALUE: Final[MissingStoredValue] = MissingStoredValue()
+"""Marks a member absent from stored data, as distinct from a stored null."""
 
 
 def _structural_hash(value: object) -> int:
@@ -92,7 +93,9 @@ def _structural_hash(value: object) -> int:
 
 @dataclass(frozen=True, slots=True)
 class StoredDataIssue:
-    """One stored state that contradicts the model, as the public diagnosis of it.
+    """One way stored data contradicts the model; `code` says which.
+
+    One stored state that contradicts the model, as the public diagnosis of it.
 
     ``entity`` is the concrete Entity the violation was judged against, which for
     an unresolved family tag is the queried family root — the only case with no
@@ -169,7 +172,7 @@ class StoredDataIssue:
 
 @dataclass(frozen=True, slots=True)
 class InvalidData[T]:
-    """One result root some stored state contradicted, in the position it occupied.
+    """One result root that stored data contradicted, with the issues found.
 
     ``data`` is the complete hydrated root wherever every value could be produced
     without inventing one, and ``None`` where it could not — a leaf outside its
@@ -216,8 +219,7 @@ at one Continuation Order coordinate."""
 
 
 class InvalidDataError(ParallaxError):
-    """A refusal of stored data Parallax cannot read as valid results, or
-    cannot revise as stored.
+    """Stored data contradicts the model, so Parallax cannot read it as valid or revise it.
 
     Under :data:`RESULT_DATA_INVALID`, a default accessor refused a result:
     :attr:`invalid_data` is nonempty, in result order, and is the refusal's

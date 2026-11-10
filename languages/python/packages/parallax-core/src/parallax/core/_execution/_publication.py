@@ -92,7 +92,7 @@ class SelectedWriteModel:
 
 
 class ModelSelection:
-    """One Domain Model prepared under one Model Edition, complete.
+    """A Domain Model prepared under a named edition, ready for a `ServingModel` to serve.
 
     Opaque by construction: :func:`select_model` is the only builder there is,
     and it runs behind ``prepare_model``, which answers a complete selection or
@@ -196,8 +196,7 @@ def write_projection(selection: ModelSelection, /) -> SelectedWriteModel:
 
 
 class PublicationConflictError(ConflictError):
-    """A publication was refused because the Serving Model did not hold the
-    selection the publisher expected.
+    """`publish` found a different model selection serving than the one it expected.
 
     Refused rather than retried or reordered: editions are never ordered to
     pick a winner. :attr:`expected` is what the publisher believed was held and
@@ -231,7 +230,7 @@ class PublicationConflictError(ConflictError):
 
 
 class ServingModel:
-    """The one holder of a current Model Selection.
+    """Holds the model selection a database serves, and publishes replacements.
 
     Always holds a complete selection, from the initial one on. ``current()``
     is one reference read — no lock, no callback, no I/O, no preparation — so

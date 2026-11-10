@@ -57,7 +57,9 @@ class DescriptorViolation:
 
 
 class DescriptorError(UsageError):
-    """A descriptor document fails one phase of the three-phase ingestion
+    """A descriptor document failed validation; `violations` lists every problem.
+
+    A descriptor document fails one phase of the three-phase ingestion
     contract, or a record graph refuses to adapt into a declaration.
 
     ``code`` names the phase. ``format``, ``line``, and ``column`` are set by

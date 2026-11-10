@@ -1,3 +1,5 @@
+"""Declare models, configure and observe execution, and handle errors."""
+
 from __future__ import annotations
 
 from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions

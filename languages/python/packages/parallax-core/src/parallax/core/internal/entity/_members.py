@@ -97,22 +97,32 @@ __all__ = [
 # `AbstractRoot`, `Document`), and the two narrowable Neutral Types (`Int32`, `Float32`) are
 # re-exported from here for the same reason: the authoring surface is one import.
 ONE_TO_ONE: Final = Cardinality.ONE_TO_ONE
+"""Relationship cardinality: one source row has at most one target row."""
 MANY_TO_ONE: Final = Cardinality.MANY_TO_ONE
+"""Relationship cardinality: many source rows refer to one target row."""
 ONE_TO_MANY: Final = Cardinality.ONE_TO_MANY
+"""Relationship cardinality: one source row has many target rows."""
 READ_WRITE: Final = PersistenceMode.READ_WRITE
+"""Persistence mode for an Entity the application reads and writes; the default."""
 READ_ONLY: Final = PersistenceMode.READ_ONLY
+"""Persistence mode for an Entity whose rows another system writes."""
 
 
 @dataclass(frozen=True, slots=True)
 class AbstractSubtype:
-    """The rowless interior family position. Python subclassing supplies the
+    """Inheritance role for an abstract Entity between a family's root and its concrete subtypes.
+
+    The rowless interior family position. Python subclassing supplies the
     parent, so the role carries nothing; ``inheritance=AbstractSubtype`` and
-    ``inheritance=AbstractSubtype()`` are the same declaration."""
+    ``inheritance=AbstractSubtype()`` are the same declaration.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class ConcreteSubtype:
-    """The row-bearing family position, tagged under a hierarchy strategy.
+    """Inheritance role for a concrete Entity in a family, with the tag value that marks its rows.
+
+    The row-bearing family position, tagged under a hierarchy strategy.
 
     Python subclassing supplies the parent. A tag value is either absent or
     nonempty, matching the accepted variant it compiles to.
@@ -293,7 +303,9 @@ def attr(
     read_only: bool = False,
     optimistic_locking: bool = False,
 ) -> Any:
-    """Declare one scalar or Value Object member's non-annotation facts.
+    """Declare a member's options, such as its column, primary-key role or type details.
+
+    Declare one scalar or Value Object member's non-annotation facts.
 
     Returns ``Any`` so the assignment slot of an ``Attr[T]`` member type-checks
     as ``T``. Every argument is validated here: an intrinsically invalid value
@@ -353,7 +365,7 @@ def _order_by(terms: object) -> tuple[OrderTerm, ...]:
 
 
 def asc(member: str) -> OrderTerm:
-    """An ascending ordering term — the explicit twin of a bare member name.
+    """An ascending ordering term over a member; the same as naming the member alone.
 
     Only the term these helpers return carries the single-shot
     ``.nulls_first()`` / ``.nulls_last()`` placement modifiers, so placement is
@@ -363,7 +375,7 @@ def asc(member: str) -> OrderTerm:
 
 
 def desc(member: str) -> OrderTerm:
-    """A descending ordering term (see :func:`asc`)."""
+    """A descending ordering term over a member."""
     return OrderTerm(_required_name(member, "desc"), SortDirection.DESCENDING)
 
 
@@ -382,7 +394,9 @@ def rel(
     order_by: _Sequence[str | OrderTerm] | None = None,
     name: str | None = None,
 ) -> Any:
-    """Declare one relationship in exactly one of the two mutually exclusive forms.
+    """Declare a relationship: its cardinality and join, or the relationship it reverses.
+
+    Declare one relationship in exactly one of the two mutually exclusive forms.
 
     The defining form owns cardinality, the join, dependency, and its own
     ordering; the reverse form names the target's defining relationship. Mixing
@@ -434,7 +448,7 @@ def index(name: str, *members: str, unique: bool = False) -> IndexSpec:
 
 
 class Attr[T]:
-    """The scalar and Value Object member annotation, and the descriptor it installs.
+    """The annotation that declares a scalar or Value Object member on an Entity class.
 
     Class access through an Entity Class yields the member expression its kind
     and multiplicity select — a scalar, a scalar collection, a Value Object, or
@@ -582,7 +596,7 @@ class ElementAttr[T]:
 
 
 class Rel[T]:
-    """The relationship annotation, and the descriptor it installs.
+    """The annotation that declares a relationship on an Entity class.
 
     Class access yields a :class:`~parallax.core.internal.entity._expressions.RelationshipExpr`
     for a single relationship and a

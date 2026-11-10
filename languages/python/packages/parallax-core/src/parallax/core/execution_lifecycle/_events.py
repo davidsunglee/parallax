@@ -36,7 +36,9 @@ classifiable without parsing its SQL."""
 
 @dataclass(frozen=True, slots=True)
 class RootExecution:
-    """One outermost Handle operation and everything it causally contains.
+    """One top-level database operation, as a lifecycle Provider sees it.
+
+    One outermost Handle operation and everything it causally contains.
 
     ``id`` is a random UUIDv4 whose equality and canonical text are meaningful;
     concurrent outermost operations are distinct roots with independent
@@ -70,12 +72,12 @@ class _Event:
 
 @dataclass(frozen=True, slots=True)
 class ReadCompleted:
-    """The Read published its public result."""
+    """A read returned its result."""
 
 
 @dataclass(frozen=True, slots=True)
 class ReadFailed:
-    """The Read did not reach publication."""
+    """A read failed before returning a result."""
 
     failure: ActivityFailure
 
@@ -111,16 +113,19 @@ class ReadFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class DatabaseReadCompleted:
-    """A query call's completion: the PHYSICAL number of rows the statement
+    """A query finished; carries the number of rows the database returned.
+
+    A query call's completion: the PHYSICAL number of rows the statement
     returned — never a count of result roots, unique graph nodes, or projection
-    views."""
+    views.
+    """
 
     returned_rows: int
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseWriteCompleted:
-    """A DML call's completion: the affected-row count the driver reported.
+    """A write statement finished; carries the affected-row count the driver reported.
 
     A count that falls short of what the step addressed is still a COMPLETION —
     the call reached the database and came back — and post-call enforcement of
@@ -132,31 +137,39 @@ class DatabaseWriteCompleted:
 
 @dataclass(frozen=True, slots=True)
 class DatabaseWriteRowsCompleted:
-    """A row-producing DML call's completion: the PHYSICAL number of rows the
+    """A row-returning write statement finished; carries the number of rows returned.
+
+    A row-producing DML call's completion: the PHYSICAL number of rows the
     statement returned — neither an affected-row count nor a count of the
-    mutations it made, since one returned row may describe several."""
+    mutations it made, since one returned row may describe several.
+    """
 
     returned_rows: int
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallFailed:
-    """The port could not complete the call."""
+    """A statement failed."""
 
     diagnostic: DatabaseFailureDiagnostic
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallNotExecuted:
-    """The call was presented to the port and confirmed never to execute: an
+    """A statement confirmed never to have run.
+
+    The call was presented to the port and confirmed never to execute: an
     earlier call of the same transport invocation failed, or the transport
     established it never sent the statement. It carries no count and no
-    diagnostic of its own."""
+    diagnostic of its own.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallUnconfirmed:
-    """Whether the call executed cannot be established, because the transport
+    """A statement whose execution cannot be confirmed, because its transport was interrupted.
+
+    Whether the call executed cannot be established, because the transport
     invocation carrying it was interrupted.
 
     ``diagnostic`` describes that transport failure, shared by every call it
@@ -179,7 +192,9 @@ type DatabaseCallOutcome = (
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallStarted(_Event):
-    """One statement is about to be presented to the port, alone or as one of
+    """A statement is about to be sent to the database.
+
+    One statement is about to be presented to the port, alone or as one of
     an ordered transport invocation's statements; neither proves it executes.
 
     ``statement`` is the exact deeply immutable Lowered Statement presented to
@@ -195,7 +210,7 @@ class DatabaseCallStarted(_Event):
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCallFinished(_Event):
-    """The call finished, however it finished.
+    """A statement finished, however it finished.
 
     ``statement`` repeats the same borrowed value Started carried.
     ``duration_ns`` is monotonic elapsed time around the port invocation alone:
@@ -216,7 +231,9 @@ class DatabaseCallFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class FlushCompleted:
-    """Every write the Flush still held after planning, and the statement of
+    """A flush sent all its pending writes to the database.
+
+    Every write the Flush still held after planning, and the statement of
     the predicate-selected write it executed for where there is one, reached
     the database.
 
@@ -227,7 +244,7 @@ class FlushCompleted:
 
 @dataclass(frozen=True, slots=True)
 class FlushFailed:
-    """The Flush did not spend its buffer."""
+    """A flush failed before sending all its pending writes."""
 
     failure: ActivityFailure
 
@@ -238,7 +255,9 @@ type FlushOutcome = FlushCompleted | FlushFailed
 
 @dataclass(frozen=True, slots=True)
 class FlushStarted(_Event):
-    """A nonempty unit-of-work buffer, or a predicate-selected write with
+    """Pending writes are being flushed to the database.
+
+    A nonempty unit-of-work buffer, or a predicate-selected write with
     whatever is buffered before it, is being flushed for ``trigger``.
 
     It starts BEFORE planning, so a Flush a planning refusal ended is still a
@@ -259,7 +278,7 @@ class FlushFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class OuterInvocation:
-    """The invocation that opened the boundary, and therefore the root activity.
+    """The transaction call that opened the transaction, and so the root activity.
 
     It contains every physical attempt and every joined invocation beneath them.
 
@@ -282,7 +301,7 @@ class OuterInvocation:
 
 @dataclass(frozen=True, slots=True)
 class JoinedInvocation:
-    """An invocation that joined the boundary already active on this thread.
+    """A transaction call that joined a transaction already running on this thread.
 
     It shares the outer root, sequence, unit of work, and transaction, and runs
     no attempt of its own, so it carries neither concurrency nor retry policy:
@@ -296,12 +315,15 @@ type TransactionInvocation = OuterInvocation | JoinedInvocation
 
 @dataclass(frozen=True, slots=True)
 class OuterInvocationCommitted:
-    """The boundary committed and the callback's value is the caller's."""
+    """The outer transaction committed and returned the callback's value."""
 
 
 @dataclass(frozen=True, slots=True)
 class OuterInvocationFailed:
-    """The boundary did not commit, whatever its attempts did on the way."""
+    """The outer transaction did not commit.
+
+    The boundary did not commit, whatever its attempts did on the way.
+    """
 
     failure: ActivityFailure
 
@@ -333,7 +355,7 @@ type TransactionInvocationOutcome = (
 
 @dataclass(frozen=True, slots=True)
 class TransactionInvocationStarted(_Event):
-    """One call to callback demarcation opened."""
+    """A `transact` or `read_only` call started."""
 
     invocation: TransactionInvocation
 
@@ -395,7 +417,7 @@ class AttemptRollbackFailed:
 
 @dataclass(frozen=True, slots=True)
 class AttemptBeginFailed:
-    """The database boundary never opened, so the callback never ran.
+    """A transaction attempt could not begin, so its callback never ran.
 
     Terminal without retry however retriable the error's own category is: no
     work ran that a re-execution could repeat. It carries an Activity Failure
@@ -418,7 +440,9 @@ type TransactionAttemptOutcome = (
 
 @dataclass(frozen=True, slots=True)
 class TransactionAttemptStarted(_Event):
-    """One physical attempt is running under the Model Edition it adopted.
+    """A transaction attempt started.
+
+    One physical attempt is running under the Model Edition it adopted.
 
     It starts after adoption and before the database boundary is asked to
     begin, so a begin failure is an outcome of this attempt rather than the
@@ -440,13 +464,18 @@ class TransactionAttemptFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class StreamExhausted:
-    """The stream yielded its last page and finished at the moment that was
-    discovered."""
+    """A stream yielded its last page.
+
+    The stream yielded its last page and finished at the moment that was
+    discovered.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class StreamClosedEarly:
-    """The caller stopped before exhaustion — a break, an explicit close, an
+    """The caller stopped a stream before it was exhausted.
+
+    The caller stopped before exhaustion — a break, an explicit close, an
     exception of its own, or a cancellation.
 
     It describes only that the stream ended early. The caller's control flow is
@@ -457,7 +486,9 @@ class StreamClosedEarly:
 
 @dataclass(frozen=True, slots=True)
 class StreamFailed:
-    """Parallax's own work ended the stream: planning, a database call,
+    """Parallax's own work ended a stream with an error.
+
+    Parallax's own work ended the stream: planning, a database call,
     conversion, materialization, invalid data, or resource cleanup.
 
     Reserved for those. Once a stream is exhausted a later caller error cannot
@@ -498,12 +529,15 @@ class StreamFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class StreamBatchCompleted:
-    """The whole page is ready to yield, a page that kept no root included."""
+    """A stream page is ready to yield.
+
+    The whole page is ready to yield, a page that kept no root included.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class StreamBatchFailed:
-    """The page did not become ready."""
+    """A stream page failed before it was ready."""
 
     failure: ActivityFailure
 
@@ -547,7 +581,7 @@ class ConnectionAcquired:
 
 @dataclass(frozen=True, slots=True)
 class AcquisitionFailed:
-    """No connection was granted, and ``reason`` says which way.
+    """Connection acquisition failed; `reason` says why.
 
     ``failure`` is the acquisition's own Activity Failure, which is always
     Direct: an acquisition opens no child, so there is nothing beneath it to
@@ -577,7 +611,7 @@ type AcquisitionOutcome = ConnectionAcquired | AcquisitionFailed
 
 @dataclass(frozen=True, slots=True)
 class AcquisitionStarted(_Event):
-    """The activity that owns this operation's connection is asking for one.
+    """An activity is asking for a database connection.
 
     ``route_policy`` is the routing role the acquisition requested — the
     operation's own, or ``writer_only`` once it has fallen back. Which activity
@@ -666,4 +700,4 @@ type ActivityFinished = (
 """Every transition that closes an activity with its terminal outcome."""
 
 type ExecutionEvent = ActivityStarted | ActivityFinished
-"""Every concrete transition a Handler receives."""
+"""Any lifecycle event a Handler receives."""

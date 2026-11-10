@@ -49,7 +49,7 @@ def inverted(cardinality: Cardinality) -> Cardinality:
 
 @dataclass(frozen=True, slots=True)
 class RelationshipMetadata:
-    """One navigable direction of one association.
+    """Resolved metadata for one navigable relationship direction.
 
     The target is ``join.target.entity`` and appears nowhere else: there is no
     second target member, foreign-key hint, or many-to-many value. ``reverse``

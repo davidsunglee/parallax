@@ -68,7 +68,7 @@ def served_model(model: DomainModel | ServingModel, refusal: str) -> ServingMode
 
 
 class ScopedDatabase:
-    """An immutable, connectionless execution view with captured authority."""
+    """A database view bound to a principal's authority; it holds no connection."""
 
     __slots__ = ("_execution",)
 
@@ -167,7 +167,7 @@ class ScopedDatabase:
 
 
 class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
-    """Owns a runtime; close it explicitly or use it as a context manager.
+    """A connected database; close it, or use it as a context manager.
 
     Option and routing aliases and execution scopes share that runtime. Closing
     any root alias closes it for all of them; creating a scope acquires no
@@ -232,3 +232,4 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
 
 
 connect = Database.connect
+"""Open a `Database` over an adapter and a model; the same as `Database.connect`."""

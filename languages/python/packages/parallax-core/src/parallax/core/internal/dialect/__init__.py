@@ -853,3 +853,4 @@ POSTGRES: Final[Dialect] = Dialect(
     binds_arrays=True,
     exclusion_violation_codes=frozenset({"23P01"}),
 )
+"""The PostgreSQL Dialect."""

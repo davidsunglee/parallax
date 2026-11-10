@@ -182,7 +182,7 @@ _TRANSIENT_ACQUISITION_REASONS: Final[frozenset[AcquisitionReason]] = frozenset(
 
 
 class ConnectionAcquisitionError(ParallaxError):
-    """No connection was acquired, and ``reason`` says which way.
+    """No database connection could be acquired; `reason` says why.
 
     A neutral outer message with the native cause chained where one exists, in
     the same shape as translated statement failures. Admission that was refused
@@ -231,7 +231,7 @@ back. All five share one budget, which is never restarted between them.
 
 
 class DatabaseStartupError(ParallaxError):
-    """A runtime did not become ready, so no ``Database`` was published.
+    """`connect` could not make the database ready, so no `Database` was returned.
 
     ``route`` names whose readiness failed, so a reader that refused its login
     is never read as a writer outage. ``phase`` names where that route's

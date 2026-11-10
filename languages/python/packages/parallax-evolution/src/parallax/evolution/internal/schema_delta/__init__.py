@@ -35,7 +35,9 @@ __all__ = [
 
 
 def schema_delta(evolution: UnilateralEvolution, dialect: Dialect) -> SchemaDelta:
-    """The ordered ``dialect`` statements that apply ``evolution`` to a database.
+    """Render a `UnilateralEvolution` as SQL statements for a Dialect.
+
+    The ordered ``dialect`` statements that apply ``evolution`` to a database.
 
     The complete plan is named, ordered, and rendered before any statement
     escapes, so a Dialect that cannot spell one operation yields no partial

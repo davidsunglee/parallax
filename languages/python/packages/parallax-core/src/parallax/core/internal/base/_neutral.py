@@ -71,32 +71,40 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class Boolean:
-    """The two truth values."""
+    """Column type for true or false values."""
 
 
 @dataclass(frozen=True, slots=True)
 class Int32:
-    """32-bit signed integers."""
+    """Column type for 32-bit signed integers."""
 
 
 @dataclass(frozen=True, slots=True)
 class Int64:
-    """64-bit signed integers."""
+    """Column type for 64-bit signed integers."""
 
 
 @dataclass(frozen=True, slots=True)
 class Float32:
-    """Finite IEEE-754 binary32 values; NaN and the infinities are not members."""
+    """Column type for 32-bit floating-point numbers.
+
+    Finite IEEE-754 binary32 values; NaN and the infinities are not members.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class Float64:
-    """Finite IEEE-754 binary64 values; NaN and the infinities are not members."""
+    """Column type for 64-bit floating-point numbers.
+
+    Finite IEEE-754 binary64 values; NaN and the infinities are not members.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class Numeric:
-    """Exact fixed-point values at a declared precision and scale.
+    """Column type for exact fixed-point numbers.
+
+    Exact fixed-point values at a declared precision and scale.
 
     The core specification names this type Decimal; Python names it after the
     SQL type so that it never shadows the :class:`decimal.Decimal` carrier its
@@ -120,37 +128,49 @@ class Numeric:
 
 @dataclass(frozen=True, slots=True)
 class String:
-    """UTF-8 encodable Unicode text compared by codepoint."""
+    """Column type for Unicode text.
+
+    UTF-8 encodable Unicode text compared by codepoint.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class Bytes:
-    """Finite octet sequences."""
+    """Column type for binary data."""
 
 
 @dataclass(frozen=True, slots=True)
 class Date:
-    """Timezone-naive proleptic-Gregorian calendar dates."""
+    """Column type for calendar dates without a time zone.
+
+    Timezone-naive proleptic-Gregorian calendar dates.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class Time:
-    """Timezone-naive wall-clock times of day at microsecond precision."""
+    """Column type for times of day without a time zone.
+
+    Timezone-naive wall-clock times of day at microsecond precision.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class Timestamp:
-    """Absolute UTC instants at microsecond precision."""
+    """Column type for UTC instants.
+
+    Absolute UTC instants at microsecond precision.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class Uuid:
-    """128-bit UUID values; text case carries no information."""
+    """Column type for UUIDs; letter case carries no meaning."""
 
 
 @dataclass(frozen=True, slots=True)
 class Json:
-    """Structured content: any JSON data-model value except a bare top-level null."""
+    """Column type for JSON values, except a bare top-level null."""
 
 
 type NeutralType = (

@@ -87,7 +87,7 @@ class ValueObjectMeta(ModelMetaclass):
 
 
 class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
-    """The frozen base every Parallax Value Object Class extends.
+    """Base class for every Value Object class.
 
     Instances are the only legal value for a Value Object member: a caller never
     assigns a raw mapping where an occurrence is declared.

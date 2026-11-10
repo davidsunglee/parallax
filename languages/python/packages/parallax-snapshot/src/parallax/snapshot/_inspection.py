@@ -330,7 +330,9 @@ _TYPED_MILESTONE_ROWS: Final = _TypedMilestoneRows()
 
 
 def is_view_loaded(node: object, path: IncludePath[Any, Any]) -> bool:
-    """Whether every relationship view ``path`` traverses, on every branch it
+    """Whether the read that produced a node loaded every relationship on a path.
+
+    Whether every relationship view ``path`` traverses, on every branch it
     reaches, was loaded by the read that produced ``node``.
 
     Never issues SQL and never raises for an unloaded view — that is the whole

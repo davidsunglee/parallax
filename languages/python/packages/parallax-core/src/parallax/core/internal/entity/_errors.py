@@ -143,9 +143,7 @@ writes that slot."""
 
 
 class UnloadedRelationshipError(UsageError, AttributeError):
-    """A closed-world relationship (or narrowed view) was not fetched by the read
-    that produced this node: access raises, naming the path and the
-    ``.include(...)`` fix rather than issuing lazy SQL.
+    """A relationship the read did not load was accessed; add it with `.include(...)`.
 
     Also an :class:`AttributeError`, so ``hasattr`` and ``getattr`` with a
     default treat an unloaded relationship as absent.
@@ -214,7 +212,9 @@ class EditViolation:
 
 
 class EditError(UsageError):
-    """Every assignment rule the authored edit breaks, in one report.
+    """An edit broke assignment rules; `violations` lists every one.
+
+    Every assignment rule the authored edit breaks, in one report.
 
     One class covers both authoring surfaces — ``Entity.edit(**changes)`` and a
     predicate write's ``Attr.set(...)`` — because the assignment rules are one

@@ -1,3 +1,5 @@
+"""Connect to a database, run transactions, and read results."""
+
 from parallax.core.internal.temporal_read import Edge, Pin
 from parallax.core.internal.wire import WireValue
 from parallax.snapshot._handle._database import Database, ScopedDatabase, connect
@@ -52,7 +54,9 @@ __all__ = [
 
 
 def edge_of(node: object) -> Edge:
-    """``node``'s own milestone :class:`~parallax.core.internal.temporal_read.Edge` — the
+    """Where a temporal node starts, as an `Edge`.
+
+    ``node``'s own milestone :class:`~parallax.core.internal.temporal_read.Edge` — the
     finite from-instant on every axis its family declares.
 
     A Typed node a Snapshot read materialized and every edit of it answer equal
@@ -71,7 +75,9 @@ def edge_of(node: object) -> Edge:
 
 
 def pin_of(node: object) -> Pin:
-    """The :class:`~parallax.core.internal.temporal_read.Pin` retained for the read that
+    """Where the read that published a node stood, as a `Pin`.
+
+    The :class:`~parallax.core.internal.temporal_read.Pin` retained for the read that
     published ``node`` — where the read stood, not where ``node`` itself starts,
     which is :func:`edge_of`'s answer.
 

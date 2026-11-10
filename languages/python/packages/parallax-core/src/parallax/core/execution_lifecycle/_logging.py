@@ -932,7 +932,7 @@ class _LoggingHandler:
 
 
 class LoggingLifecycleProvider:
-    """Log every accepted root through a Logger the application configured.
+    """A Provider that logs each root execution through a Logger you configure.
 
     It accepts every root and opens one Handler per root, holding nothing
     across roots itself: the Logger is the application's, and everything about

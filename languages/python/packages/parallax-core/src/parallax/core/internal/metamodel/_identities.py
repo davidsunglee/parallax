@@ -74,8 +74,10 @@ class AttributeIdentity:
 
 @dataclass(frozen=True, slots=True)
 class RelationshipIdentity:
-    """One Relationship declared by its source Entity; an empty name raises
-    :class:`ValueError`."""
+    """One Relationship, named by its source Entity.
+
+    An empty name raises :class:`ValueError`.
+    """
 
     source_entity: EntityIdentity
     name: str
@@ -87,7 +89,10 @@ class RelationshipIdentity:
 
 @dataclass(frozen=True, slots=True)
 class IndexIdentity:
-    """One Index of one Entity; an empty name raises :class:`ValueError`."""
+    """One Index of one Entity.
+
+    An empty name raises :class:`ValueError`.
+    """
 
     entity: EntityIdentity
     name: str
@@ -118,8 +123,10 @@ class ValueObjectIdentity:
 
 @dataclass(frozen=True, slots=True)
 class ValueObjectAttributeIdentity:
-    """One scalar Attribute of one Value Object occurrence; an empty name raises
-    :class:`ValueError`."""
+    """One scalar Attribute of one Value Object occurrence.
+
+    An empty name raises :class:`ValueError`.
+    """
 
     value_object: ValueObjectIdentity
     name: str

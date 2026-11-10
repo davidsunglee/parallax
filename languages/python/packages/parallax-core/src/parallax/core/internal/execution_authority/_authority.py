@@ -32,9 +32,12 @@ class Principal[Authorization](Protocol):
 
 
 PRINCIPAL_INVALID: Final = "principal-invalid"
-"""A Principal cannot be captured for the selected database runtime: its subject
+"""Code for a Principal whose subject or authorization the database runtime cannot accept.
+
+A Principal cannot be captured for the selected database runtime: its subject
 is no Subject Actor, or the runtime refused its authorization's shape, which is
-the refusal's ``__cause__``."""
+the refusal's ``__cause__``.
+"""
 
 
 @dataclass(frozen=True, slots=True, eq=False)

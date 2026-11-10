@@ -41,7 +41,9 @@ it carries."""
 
 
 def validate_inheritance_families(document: Mapping[str, object]) -> None:
-    """Validate ``document``'s inheritance-family invariants before formation.
+    """Check a descriptor document's inheritance families before building a model.
+
+    Validate ``document``'s inheritance-family invariants before formation.
 
     The public door onto the walk below. It parses ``document`` into records and
     checks the family invariants the walk classifies on the raw record graph:

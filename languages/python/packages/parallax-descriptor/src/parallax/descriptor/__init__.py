@@ -1,3 +1,5 @@
+"""Build Domain Models from JSON or YAML descriptors, and export them."""
+
 from __future__ import annotations
 
 from parallax.descriptor._errors import (

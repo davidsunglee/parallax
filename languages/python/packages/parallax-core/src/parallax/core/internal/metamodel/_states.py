@@ -139,7 +139,7 @@ class CandidateMetamodel(Protocol):
 
 
 class ValueObjectAttributeMetadata(Protocol):
-    """One self-identifying scalar leaf of a Value Object occurrence.
+    """Resolved metadata for one scalar Attribute inside a Value Object.
 
     A leaf carries no Entity-only storage, primary-key, generation, locking, or
     container fact.
@@ -188,7 +188,7 @@ class OccurrenceMetadata(Protocol):
 
 
 class NestedValueObjectMetadata(OccurrenceMetadata, Protocol):
-    """One nested Value Object occurrence.
+    """Resolved metadata for one nested Value Object occurrence.
 
     Its identity path has length two or more. A nested occurrence owns no
     Storage Location: the top-level occurrence's location covers the whole
@@ -197,7 +197,7 @@ class NestedValueObjectMetadata(OccurrenceMetadata, Protocol):
 
 
 class ValueObjectMetadata(OccurrenceMetadata, Protocol):
-    """One top-level Value Object occurrence.
+    """Resolved metadata for one top-level Value Object occurrence.
 
     Its identity path has length one, and it alone carries the occurrence's
     Storage Location. Structured-column storage under that location is

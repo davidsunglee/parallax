@@ -155,7 +155,7 @@ class _StreamWireProjection:
 
 
 class SnapshotStream[T]:
-    """Scope-bound, single-pass delivery; enter before accessing any property.
+    """A single-pass stream of results; use it inside a `with` block.
 
     Entry adopts the model edition. Take exactly one iterator, either the default
     view (invalid stored data raises) or ``checked()`` (invalid roots are records).

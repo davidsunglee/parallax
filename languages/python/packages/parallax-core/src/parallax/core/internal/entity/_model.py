@@ -66,7 +66,9 @@ class ClassIndex:
 
 
 class DomainModel:
-    """One sealed model, composed from a fixed source.
+    """A complete, sealed model of Entities, built from classes or a descriptor.
+
+    One sealed model, composed from a fixed source.
 
     A class-backed model additionally holds the index of the Entity Classes it
     composed; a descriptor-backed model composes none and holds none. Both

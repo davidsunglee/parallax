@@ -435,7 +435,7 @@ def _use_edit(cls: type, door: str) -> EditError:
 
 
 class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
-    """The frozen base every Parallax Entity Class extends.
+    """Base class for every Entity class.
 
     Every question about what a value physically holds is answered one level
     down, by :class:`~parallax.core.internal.entity._instance_state.BackedModel` — which
@@ -854,7 +854,7 @@ def lifecycle_state(value: BaseModel) -> object | None:
 
 
 class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACTION_TIME,)):
-    """The Transaction-Time-only framework base.
+    """Base class for an Entity with Transaction Time history only.
 
     Extending it declares the Entity's temporal shape with no temporal
     boilerplate: the engine supplies the reserved ``tx_start``/``tx_end`` members
@@ -876,7 +876,7 @@ class Bitemporal(
     _mint=FRAMEWORK_MINT,
     _axes=(TemporalDimension.VALID_TIME, TemporalDimension.TRANSACTION_TIME),
 ):
-    """The bitemporal framework base.
+    """Base class for an Entity with both Valid Time and Transaction Time history.
 
     Extending it supplies ``valid_start``/``valid_end`` (``from_z``/``thru_z``)
     and ``tx_start``/``tx_end`` (``in_z``/``out_z``), Valid Time first, plus both

@@ -24,7 +24,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class CreatedIndex:
-    """One newly created Index, as a host correlates a later violation with it."""
+    """An index a schema change creates, so a later violation can be traced to it."""
 
     physical_index_name: PhysicalIndexName
     physical_table: Table
@@ -49,8 +49,11 @@ class SchemaDelta:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalLocation:
-    """Where one physical operation acts: its Table and the member within it,
-    or the database-wide ``extension`` a tableless prerequisite installs."""
+    """The table and member, or database extension, a schema operation acts on.
+
+    Where one physical operation acts: its Table and the member within it,
+    or the database-wide ``extension`` a tableless prerequisite installs.
+    """
 
     table: Table | None = None
     column: Column | None = None
@@ -60,7 +63,7 @@ class PhysicalLocation:
 
 @dataclass(frozen=True, slots=True)
 class UnsupportedSchemaOperation:
-    """One physical operation the selected Dialect's renderer cannot spell.
+    """An operation the Dialect cannot express as SQL.
 
     ``kind`` is the private algebra's own operation name, which is the one part
     of that algebra a caller sees: it is what makes the refusal legible without
@@ -77,7 +80,7 @@ SCHEMA_EVOLUTION_UNSUPPORTED: Final = "schema-evolution-unsupported"
 
 
 class UnsupportedSchemaEvolutionError(UnsupportedError):
-    """No statement for this Dialect: every operation it cannot render, at once.
+    """`schema_delta` cannot render some operations for this Dialect; `operations` lists them.
 
     Renderer support is a deployment capability rather than a model-semantic
     fact, so this never reclassifies the dialect-independent Unilateral Evolution

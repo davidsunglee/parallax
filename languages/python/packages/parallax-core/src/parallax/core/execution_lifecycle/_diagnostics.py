@@ -8,8 +8,7 @@ from parallax.core.internal.diagnostics import FailureDiagnostic, diagnostic_for
 
 @dataclass(frozen=True, slots=True)
 class DatabaseFailureDiagnostic:
-    """A failed Database Call's diagnostic: the ordinary projection plus the two
-    neutral database facts.
+    """Details of a failed statement, including the database's own error facts.
 
     ``category`` and ``native_code`` are copied straight off the `m-db-error`
     Database Error and are never reclassified here. An unexpected non-Database
@@ -24,7 +23,7 @@ class DatabaseFailureDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class DirectFailure:
-    """The failure this activity has no child to name for.
+    """A failure attributed to the activity itself rather than to a child.
 
     Either no report ever paired this exception value with a direct child of it
     — neither a child finishing failed with the value nor an explicit
@@ -38,8 +37,7 @@ class DirectFailure:
 
 @dataclass(frozen=True, slots=True)
 class CausedFailure:
-    """The failure is attributed to an already-finished DIRECT child: the one
-    this activity holds its single attribution for.
+    """A failure attributed to a child activity that already finished.
 
     Attribution follows exception identity or an explicit enforcement relation,
     never temporal proximity, so a completed zero-row write call can be named by

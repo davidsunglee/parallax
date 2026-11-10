@@ -1,3 +1,5 @@
+"""Connect Parallax to PostgreSQL."""
+
 from __future__ import annotations
 
 from parallax.postgres._adapter import PostgresAdapter

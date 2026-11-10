@@ -63,7 +63,9 @@ __all__ = [
 ]
 
 type WireChanges = Mapping[str, object]
-"""A Wire write's authored assignments: declared member names to accepted wire
+"""A Wire write's assignments: declared member names mapped to Wire values.
+
+A Wire write's authored assignments: declared member names to accepted wire
 values. Version, temporal-axis, computed, read-only, and relationship members
 are refused rather than assigned. A primary-key entry is addressing data, never
 an assignment: a target write's names the object it writes, a source
@@ -79,12 +81,15 @@ any other, then dropped as the no-op it is, in every family. A replacement's
 ``{}`` is its complete stated state, completed like any other."""
 
 type WirePredicateTarget = ObjectQuery[Any, Any] | Mapping[str, object]
-"""A Wire predicate write's target: a Typed Object Query carrying nothing but
+"""The target of a Wire predicate write: an Entity and a predicate.
+
+A Wire predicate write's target: a Typed Object Query carrying nothing but
 its target and predicate, kept as authored, or exactly ``{"entity",
 "predicate"}``, the canonical selection document. An Object Query node or its
 document is no write target: ordering, the cap, temporal selection, result
 narrowing, and Include Paths all shape a RESULT, and a set-based write has none
-to shape."""
+to shape.
+"""
 
 
 def wire_insert(

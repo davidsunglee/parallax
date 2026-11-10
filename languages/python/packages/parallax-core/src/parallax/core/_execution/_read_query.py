@@ -17,7 +17,7 @@ from parallax.core.internal.predicate import REFERENCE_AMBIGUOUS_ENTITY_NAME
 __all__ = ["QUERY_TARGET_NOT_IN_MODEL", "resolve_read_query"]
 
 QUERY_TARGET_NOT_IN_MODEL: Final = "query-target-not-in-model"
-"""The connected model declares no Entity for a query's target.
+"""Code for a query whose target Entity the connected model does not declare.
 
 The identical query succeeds against a model declaring the Entity, so the
 refusal names the model rather than the query, and retains neither.

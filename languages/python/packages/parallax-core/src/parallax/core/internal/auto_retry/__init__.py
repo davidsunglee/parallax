@@ -72,7 +72,7 @@ def _positive_seconds(field: str, value: object) -> float:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AdaptiveBackoff:
-    """The two timing inputs of the wait before each re-execution, in seconds.
+    """The wait before each retry: a base delay doubled per attempt, up to a maximum, in seconds.
 
     ``base_delay`` is the first window, doubled per attempt, and ``max_delay``
     is the longest window however long the failed attempt took. Each only
@@ -101,7 +101,7 @@ class AdaptiveBackoff:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RetryPolicy:
-    """The complete retry configuration of an invocation.
+    """How a transaction retries after a transient failure.
 
     ``max_retries`` bounds re-executions rather than attempts: ``0`` runs the
     callback once and ``N`` admits at most ``N + 1`` attempts. It is an exact
