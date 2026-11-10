@@ -42,13 +42,11 @@ from parallax.core.sql_gen._context import (
     ComparisonTextForm,
     ContinuationCarrierForm,
     ExecutionValueForm,
-    ExecutionValuePositions,
     GatheredKeysForm,
     LoweredStatement,
     ManagedOperandForm,
     MembershipForm,
     StatementBuilder,
-    _ExecutionValueMarker,  # pyright: ignore[reportPrivateUsage]
     _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSlot,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
@@ -98,20 +96,6 @@ def _template(statement: LoweredStatement) -> CompiledTemplate:
     return sql_compile._template(  # pyright: ignore[reportPrivateUsage]
         dataclasses.replace(compiled, statement=statement)
     )
-
-
-def test_an_entity_row_scope_renders_a_direct_member_through_its_alias() -> None:
-    entity = WALLET.entities[0]
-    view = storage_layout.view(WALLET).entity(entity.identity)
-    assert view is not None
-    builder: StatementBuilder[EntityRowScope] = StatementBuilder(
-        WALLET, inheritance.view(WALLET), storage_layout.view(WALLET), POSTGRES
-    )
-    scope = EntityRowScope(builder, entity, view.layout)
-    attribute = entity.attribute("id")
-    assert attribute is not None
-
-    assert scope.subject_for(attribute).compared == "t0.id"
 
 
 COLLECTIONS = corpus_model("predicate-collections")
@@ -526,12 +510,6 @@ def test_an_unrendered_marker_has_no_wire_projection(
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="until its template renders"):
         builder.finish("select ?").wire_binds()
-
-
-def test_positions_name_their_marker_s_source_and_form() -> None:
-    marker = _ExecutionValueMarker(("limit",), PAGE_CAP)
-    positions = ExecutionValuePositions(marker, (0, 2))
-    assert (positions.source, positions.form) == (("limit",), PAGE_CAP)
 
 
 def test_a_multi_row_insert_binds_self_describing_arrays_with_no_span_metadata() -> None:

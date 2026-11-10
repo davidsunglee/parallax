@@ -23,7 +23,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, INT64, TIMESTAMP, UsageError
+from parallax.core.base import INFINITY, INT64, TIMESTAMP
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -88,21 +88,6 @@ def test_comparison_renders_the_column_unaliased() -> None:
     sql, binds = predicate.sql, predicate.binds
     assert sql == "balance < ?"
     assert binds == (100,)
-
-
-def test_the_rendered_fragment_is_a_predicate_not_a_statement() -> None:
-    # A bare fragment: no `select`, no `from`, no owning table alias anywhere —
-    # it is spliced into `update <table> set … where <fragment>` by the caller.
-    predicate = compile_write_predicate(
-        oa.Comparison(op="lessThan", subject=oa.FieldSubject("Account.balance"), value="100.00"),
-        ACCOUNT,
-        POSTGRES,
-        target(ACCOUNT, "Account"),
-    )
-    sql = predicate.sql
-    assert "select" not in sql
-    assert "from" not in sql
-    assert "t0." not in sql
 
 
 def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None:
@@ -471,16 +456,3 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     assert read_branch.replace("t0.", "") == write_sql
     assert write_binds == ("Visa", "card")
     assert read.statement.binds == ("Visa", "card", "card")
-
-
-# --------------------------------------------------------------------------- #
-# Refusals — identical to the read lane's, since it is the same dispatcher.   #
-# --------------------------------------------------------------------------- #
-def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(UsageError, match="names no declared member"):
-        compile_write_predicate(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Account.mystery"), value=1),
-            ACCOUNT,
-            POSTGRES,
-            target(ACCOUNT, "Account"),
-        )

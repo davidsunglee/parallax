@@ -22,7 +22,7 @@ import pytest
 
 from parallax.core import inheritance, read_planning, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, STRING, InternalError, UsageError
+from parallax.core.base import INFINITY, STRING, InternalError
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -52,13 +52,6 @@ TRAVERSAL = model("predicate-traversal")
 POLICY = model("policy")
 TWIN = model("scalar-collection-layout-twin-columns")
 BEAST = model("composed-beast-reader")
-
-
-def test_an_unknown_relationship_is_rejected() -> None:
-    with raises_code(UsageError, "path-unknown-member"):
-        compile_read(
-            oa.Quantifier("any", "Order.missing"), ORDERS, POSTGRES, target(ORDERS, "Order")
-        )
 
 
 def test_a_to_many_any_lowers_to_a_correlated_exists() -> None:

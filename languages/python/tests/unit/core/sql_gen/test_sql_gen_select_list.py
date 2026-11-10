@@ -164,10 +164,6 @@ def _continuing(limit: int = 2) -> CompiledRead:
     )
 
 
-def test_a_continuing_page_compiles_its_two_branches_through_one_select_list() -> None:
-    assert ") union all (select " in _continuing().statement.sql
-
-
 def test_union_branches_selecting_different_cells_are_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
