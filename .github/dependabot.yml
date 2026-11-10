@@ -16,12 +16,9 @@ updates:
       prefix-development: "chore"
       include: "scope"
     groups:
-      npm-minor-patch:
+      pnpm-workspace:
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
 
   - package-ecosystem: "uv"
     directory: "/reference-harness"
@@ -35,6 +32,10 @@ updates:
       prefix: "chore"
       prefix-development: "chore"
       include: "scope"
+    groups:
+      reference-harness:
+        patterns:
+          - "*"
 
   - package-ecosystem: "uv"
     directory: "/languages/python"
@@ -48,6 +49,10 @@ updates:
       prefix: "chore"
       prefix-development: "chore"
       include: "scope"
+    groups:
+      python:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -60,9 +65,6 @@ updates:
     commit-message:
       prefix: "chore"
     groups:
-      actions-minor-patch:
+      github-actions:
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
