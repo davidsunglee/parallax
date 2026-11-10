@@ -10,13 +10,13 @@ import psycopg
 import pytest
 
 from parallax.conformance import cli
-from tests._support.distributions import TOP_PACKAGE_NAMES, importable_submodules
+from tests._support.distributions import DISTRIBUTION_ROOTS, importable_submodules
 
 
 def test_every_scope_submodule_imports() -> None:
     """Every enforcement-scope skeleton under the five packages imports cleanly."""
     imported: list[str] = []
-    for name in TOP_PACKAGE_NAMES:
+    for name in DISTRIBUTION_ROOTS.values():
         for module in importable_submodules(name):
             importlib.import_module(module)
             imported.append(module)

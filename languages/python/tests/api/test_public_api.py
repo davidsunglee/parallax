@@ -1,9 +1,9 @@
-"""Griffe public-API snapshot diff (`api_surface` marker).
+"""Griffe public-API snapshot diff.
 
 Python tooling cannot prove an export unused, so the compensating control is a
-committed snapshot of every production distribution's declared public surface
-(its ``__all__``). Any change to the public API is therefore a reviewed diff
-against ``public_api.json``.
+committed snapshot of every public production module's declared surface (its
+``__all__``). Any change to the public API is therefore a reviewed diff against
+``public_api.json``.
 
 An export list cannot observe a constructor added to an exported class, so the
 snapshot also records, for a class named as ``<public module>:<Class>``, the
@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, TypeAliasType, get_args
 
 import pytest
-from griffe import Alias, Class, GriffeLoader, Module
+from griffe import Alias, Class, GriffeLoader, Module, Object
 
 from parallax import snapshot
 from parallax.core import ParallaxError, read_delivery, wire
@@ -33,9 +33,15 @@ from parallax.snapshot import (
     WireDatabaseView,
     WireTransactionView,
 )
-from tests._support.distributions import TOP_PACKAGE_NAMES, importable_submodules
+from tests._support.distributions import (
+    DISTRIBUTION_ROOTS,
+    PRODUCTION_PACKAGES,
+    importable_submodules,
+)
 
 _SNAPSHOT = Path(__file__).parent / "public_api.json"
+
+_PRODUCTION_ROOTS: Final = tuple(DISTRIBUTION_ROOTS[package] for package in PRODUCTION_PACKAGES)
 
 
 @functools.cache
@@ -48,31 +54,51 @@ def _namespace() -> GriffeLoader:
     return loader
 
 
+def _member(path: str) -> Object | Alias:
+    return _namespace().modules_collection.get_member(path)
+
+
 def _module(path: str) -> Module:
-    module = _namespace().modules_collection.get_member(path)
+    module = _member(path)
     assert isinstance(module, Module), path
     return module
 
 
-def _public_api(package: str) -> list[str]:
-    module = _module(package)
-    exports = module.exports
-    if exports is None:
-        # No ``__all__``: public surface is every non-underscore public member.
-        return sorted(
-            name
-            for name, member in module.members.items()
-            if member.is_public and not name.startswith("_")
+def _public_modules(roots: Iterable[Module]) -> list[Module]:
+    """Each root and every module beneath it reached only through public names.
+
+    A child whose name starts with ``_`` or is ``internal`` is private, and so
+    is everything beneath it. Re-exported modules are aliases, not children.
+    Griffe parses source rather than importing it, so a module whose optional
+    dependencies are absent is still found.
+    """
+    discovered: list[Module] = []
+    pending = list(roots)
+    while pending:
+        module = pending.pop()
+        discovered.append(module)
+        pending.extend(
+            child
+            for name, child in module.members.items()
+            if isinstance(child, Module) and not name.startswith("_") and name != "internal"
         )
-    return sorted(str(name) for name in exports)
+    return sorted(discovered, key=lambda module: module.path)
 
 
-def _public_constructors(public_class: str) -> list[str]:
-    package, _, class_name = public_class.partition(":")
-    declared = _module(package).members[class_name]
+@functools.cache
+def _production_modules() -> tuple[Module, ...]:
+    return tuple(_public_modules(_module(root) for root in _PRODUCTION_ROOTS))
+
+
+def _declared_exports(module: Module) -> list[str]:
+    assert module.exports is not None, f"public module {module.path} must declare __all__"
+    return sorted(str(name) for name in module.exports)
+
+
+def _classmethod_constructors(declared: Object | Alias) -> list[str]:
     if isinstance(declared, Alias):
         declared = declared.final_target
-    assert isinstance(declared, Class), public_class
+    assert isinstance(declared, Class), declared.path
     return sorted(
         name
         for name, member in declared.members.items()
@@ -80,17 +106,120 @@ def _public_constructors(public_class: str) -> list[str]:
     )
 
 
-def _public_surface(recorded: str) -> list[str]:
-    return _public_constructors(recorded) if ":" in recorded else _public_api(recorded)
+def _snapshot_correction(actual: Mapping[str, list[str]], expected: Mapping[str, list[str]]) -> str:
+    corrected = {key: names for key, names in sorted(actual.items()) if expected.get(key) != names}
+    stale = sorted(expected.keys() - actual.keys())
+    lines = [
+        "public API drift detected; review the change and, if intended, update "
+        f"{_SNAPSHOT.relative_to(_SNAPSHOT.parents[2])}"
+    ]
+    if corrected:
+        lines += ["with these entries:", json.dumps(corrected, indent=2)]
+    if stale:
+        lines += ["and remove these keys:", json.dumps(stale, indent=2)]
+    return "\n".join(lines)
 
 
 def test_public_api_matches_committed_snapshot() -> None:
     expected: dict[str, list[str]] = json.loads(_SNAPSHOT.read_text())
-    actual = {recorded: _public_surface(recorded) for recorded in expected}
-    assert actual == expected, (
-        "public API drift detected; review the change and update "
-        f"{_SNAPSHOT.relative_to(_SNAPSHOT.parents[2])} if intended"
+    actual = {module.path: _declared_exports(module) for module in _production_modules()} | {
+        recorded: _classmethod_constructors(_member(recorded.replace(":", ".")))
+        for recorded in expected
+        if ":" in recorded
+    }
+    assert actual == expected, _snapshot_correction(actual, expected)
+
+
+def _load(root: Path, files: Mapping[str, str]) -> Module:
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    package = GriffeLoader(search_paths=[root]).load("pkg")
+    assert isinstance(package, Module)
+    return package
+
+
+def test_discovery_descends_through_public_children_only(tmp_path: Path) -> None:
+    package = _load(
+        tmp_path,
+        {
+            "pkg/__init__.py": "from pkg import leaf as republished\n",
+            "pkg/leaf.py": "",
+            "pkg/added.py": "",
+            "pkg/nested/__init__.py": "",
+            "pkg/nested/deeper.py": "",
+            "pkg/nested/_private.py": "",
+            "pkg/_private/__init__.py": "",
+            "pkg/_private/public_name.py": "",
+            "pkg/internal/__init__.py": "",
+            "pkg/internal/public_name.py": "",
+        },
     )
+
+    assert [module.path for module in _public_modules([package])] == [
+        "pkg",
+        "pkg.added",
+        "pkg.leaf",
+        "pkg.nested",
+        "pkg.nested.deeper",
+    ]
+
+
+def test_production_discovery_covers_every_distribution_root_but_conformance() -> None:
+    discovered = {module.path for module in _production_modules()}
+
+    assert {root for root in DISTRIBUTION_ROOTS.values() if root not in discovered} == {
+        "parallax.conformance"
+    }
+    assert not {path for path in discovered if path.startswith("parallax.conformance")}
+
+
+def test_a_public_module_without_all_names_itself(tmp_path: Path) -> None:
+    package = _load(tmp_path, {"pkg/__init__.py": "", "pkg/silent.py": "VALUE = 1\n"})
+
+    with pytest.raises(AssertionError, match=r"public module pkg\.silent must declare __all__"):
+        _declared_exports(package.modules["silent"])
+
+
+def test_exports_and_constructors_are_recorded_sorted(tmp_path: Path) -> None:
+    package = _load(
+        tmp_path,
+        {
+            "pkg/__init__.py": (
+                "from pkg._made import Made\n__all__ = ['zeta', 'Made', 'alpha']\n"
+            ),
+            "pkg/_made.py": (
+                "class Made:\n"
+                "    @classmethod\n"
+                "    def zeta(cls): ...\n"
+                "    @classmethod\n"
+                "    def alpha(cls): ...\n"
+                "    @classmethod\n"
+                "    def _hidden(cls): ...\n"
+                "    @staticmethod\n"
+                "    def helper(): ...\n"
+                "    def method(self): ...\n"
+            ),
+        },
+    )
+
+    assert _declared_exports(package) == ["Made", "alpha", "zeta"]
+    assert _classmethod_constructors(package.members["Made"]) == ["alpha", "zeta"]
+
+
+def test_drift_prints_the_entries_that_correct_the_snapshot() -> None:
+    correction = _snapshot_correction(
+        {"kept": ["a"], "changed": ["a", "b"], "added": ["c"]},
+        {"kept": ["a"], "changed": ["a"], "removed": ["d"]},
+    )
+
+    corrected, _, stale = correction.partition("and remove these keys:")
+    assert json.loads(corrected.partition("with these entries:")[2]) == {
+        "added": ["c"],
+        "changed": ["a", "b"],
+    }
+    assert json.loads(stale) == ["removed"]
 
 
 @pytest.mark.parametrize(
@@ -149,11 +278,15 @@ def test_no_read_handle_offers_row_delivery(handle: type) -> None:
 
 
 def test_row_envelopes_left_the_surface_and_what_graph_reads_publish_stayed() -> None:
-    assert not {"RowsResult", "PublishedRow"} & set(_public_api("parallax.core.read_delivery"))
+    assert not {"RowsResult", "PublishedRow"} & set(
+        _declared_exports(_module("parallax.core.read_delivery"))
+    )
     assert not hasattr(read_delivery, "RowsResult")
     assert not hasattr(read_delivery, "PublishedRow")
-    assert "InvalidData" in _public_api("parallax.core.read_delivery")
-    assert {"WireValue", "edge_of", "pin_of"} <= set(_public_api("parallax.snapshot"))
+    assert "InvalidData" in _declared_exports(_module("parallax.core.read_delivery"))
+    assert {"WireValue", "edge_of", "pin_of"} <= set(
+        _declared_exports(_module("parallax.snapshot"))
+    )
 
 
 def test_snapshot_exports_the_one_wire_value_alias() -> None:
@@ -180,7 +313,7 @@ def test_a_published_wire_node_is_a_wire_value() -> None:
 
 def test_unit_work_exports_the_codes_a_refused_write_instruction_carries() -> None:
     assert {"WRITE_INSTRUCTION_INVALID", "WriteRejectionCode"} <= set(
-        _public_api("parallax.core.unit_work")
+        _declared_exports(_module("parallax.core.unit_work"))
     )
 
 
@@ -249,22 +382,19 @@ def _error_surface() -> frozenset[type[BaseException]]:
 
 
 def _exported_exceptions() -> dict[str, type[BaseException]]:
-    expected: dict[str, list[str]] = json.loads(_SNAPSHOT.read_text())
-    modules = {recorded for recorded in expected if ":" not in recorded}
     exported: dict[str, type[BaseException]] = {}
-    for module in sorted({*modules, "parallax.core.unit_work"}):
-        for name in _public_api(module):
-            value = getattr(import_module(module), name)
+    for module in _production_modules():
+        for name in _declared_exports(module):
+            value = getattr(import_module(module.path), name)
             if isinstance(value, type) and issubclass(value, BaseException):
-                exported[f"{module}.{name}"] = value
+                exported[f"{module.path}.{name}"] = value
     return exported
 
 
 def _shipped_exceptions() -> list[type[BaseException]]:
-    for package in TOP_PACKAGE_NAMES:
-        if package != "parallax.conformance":
-            for module in importable_submodules(package):
-                import_module(module)
+    for root in _PRODUCTION_ROOTS:
+        for module in importable_submodules(root):
+            import_module(module)
     pending: list[type[BaseException]] = [BaseException]
     shipped: list[type[BaseException]] = []
     while pending:
@@ -281,7 +411,9 @@ def test_every_application_error_is_rooted_in_parallax_error() -> None:
     assert all(issubclass(kind, ParallaxError) for kind in _error_surface())
     assert len(_error_surface()) == 20
     assert {
-        name for name in _public_api("parallax.core") if name.endswith(("Error", "Found"))
+        name
+        for name in _declared_exports(_module("parallax.core"))
+        if name.endswith(("Error", "Found"))
     } == _ERROR_SURFACE["parallax.core"]
 
 
