@@ -22,7 +22,7 @@ from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, I
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import _temporal as temporal_naming
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
+from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve_metamodels
 from parallax.evolution.schema_delta import PHYSICAL_INDEX_NAME_COLLISION, schema_delta
 from parallax.evolution.schema_delta import _naming as naming
 from parallax.evolution.schema_delta._naming import NamedIndex, census, collision_groups
@@ -212,7 +212,7 @@ def test_a_generated_delta_refuses_a_collision_rather_than_renaming(
     # name for one of them: a definition's name is its own.
     monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
     with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
-        schema_delta(evolve(ABSENT, entity_with_two_indices_over_one_column()), POSTGRES)
+        schema_delta(evolve_metamodels(ABSENT, entity_with_two_indices_over_one_column()), POSTGRES)
     assert raised.value.args[1] == (
         "postgres derived colliding Physical Index Names: "
         "pxi_widget_widget_widget_code_00000000000000000000000000000000 is derived by "
@@ -227,7 +227,7 @@ def test_a_temporal_collision_reports_the_authored_components_without_the_axis_e
     monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
     model = corpus()["temporal-authored-index"]
     with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
-        schema_delta(evolve(ABSENT, model), POSTGRES)
+        schema_delta(evolve_metamodels(ABSENT, model), POSTGRES)
     message = str(raised.value)
     assert (
         "Index parallax.compatibility.Assignment.assignment_code on assignment (code) " in message
@@ -294,7 +294,7 @@ def _one_fingerprint(definition: IndexDefinition) -> str:
 
 def _moving_an_index(earlier_table: str, later_table: str) -> UnilateralEvolution:
     """One authored Index dropped from one Table and declared on another."""
-    evolution = evolve(_indexed(earlier_table), _indexed(later_table))
+    evolution = evolve_metamodels(_indexed(earlier_table), _indexed(later_table))
     assert isinstance(evolution, UnilateralEvolution)
     return evolution
 
@@ -325,7 +325,9 @@ def _indexed(table: str) -> AcceptedMetamodel:
 
 def _gaining_a_second_index() -> UnilateralEvolution:
     """Declaring a second Index beside one both endpoints already hold."""
-    evolution = evolve(_widget_with_one_index(), entity_with_two_indices_over_one_column())
+    evolution = evolve_metamodels(
+        _widget_with_one_index(), entity_with_two_indices_over_one_column()
+    )
     assert isinstance(evolution, UnilateralEvolution)
     return evolution
 
@@ -412,7 +414,7 @@ def test_a_generated_delta_counts_temporal_constraints_in_the_census(
 
     monkeypatch.setattr(temporal_naming, "constraint_name", shared)
     with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
-        schema_delta(evolve(ABSENT, formed(_RECORDS_BALANCE)), POSTGRES)
+        schema_delta(evolve_metamodels(ABSENT, formed(_RECORDS_BALANCE)), POSTGRES)
     assert raised.value.args[1] == (
         f"postgres derived colliding Physical Index Names: {_SHARED.value} is derived by "
         "temporal exclusion on balance (bal_id, in_z, out_z) [later], "

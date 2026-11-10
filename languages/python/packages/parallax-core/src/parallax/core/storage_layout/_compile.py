@@ -545,7 +545,7 @@ def _layout(
     else:
         drafts.append(
             _SlotDraft(
-                column=group.document.column,
+                column=Column(group.document.column),
                 tier=ColumnTier.DOCUMENT,
                 contributor=RelationalDocument(group.root),
                 declaring_owner=group.root,

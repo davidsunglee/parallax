@@ -83,7 +83,7 @@ def _customer(db: ScopedDatabase, customer_id: int) -> Customer | None:
 
 def _rollout() -> SchemaDelta:
     """The delta that provisions the shop model, as the database under test was."""
-    return schema_delta(evolve(ABSENT, model_of(SHOP_MODEL)), POSTGRES)
+    return schema_delta(evolve(ABSENT, SHOP_MODEL), POSTGRES)
 
 
 def _tracking_index() -> PhysicalIndexName:

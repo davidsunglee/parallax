@@ -69,6 +69,7 @@ from parallax.core.relationship import (
     RULE_SET,
     RelationshipFacet,
     RelationshipMetadata,
+    is_back_reference,
     project_join_endpoints,
     relationship_facet_of,
 )
@@ -348,6 +349,60 @@ def test_a_reverse_name_is_either_absent_or_nonempty() -> None:
             ),
             reverse="",
         )
+
+
+def _hop(
+    source: EntityIdentity,
+    name: str,
+    target: EntityIdentity,
+    *,
+    cardinality: Cardinality,
+    reverse: str | None,
+) -> RelationshipMetadata:
+    return RelationshipMetadata(
+        identity=RelationshipIdentity(source, name),
+        cardinality=cardinality,
+        join=RelationshipJoin(
+            source=AttributeIdentity(source, "id"), target=AttributeIdentity(target, "peerId")
+        ),
+        reverse=reverse,
+    )
+
+
+_ITEMS_HOP = _hop(_ORDER, "items", _ITEM, cardinality=Cardinality.ONE_TO_MANY, reverse="order")
+_ORDER_HOP = _hop(_ITEM, "order", _ORDER, cardinality=Cardinality.MANY_TO_ONE, reverse="items")
+
+
+def test_a_to_one_peer_of_the_arrival_is_a_back_reference() -> None:
+    assert is_back_reference(_ORDER_HOP, _ITEMS_HOP)
+
+
+@pytest.mark.parametrize(
+    ("direction", "arrival"),
+    [
+        pytest.param(_ORDER_HOP, None, id="leaving-the-root"),
+        pytest.param(_ITEMS_HOP, _ORDER_HOP, id="to-many-peer"),
+        pytest.param(
+            _ORDER_HOP,
+            _hop(_ORDER, "items", _ITEM, cardinality=Cardinality.ONE_TO_MANY, reverse="other"),
+            id="arrival-names-another-reverse",
+        ),
+        pytest.param(
+            _hop(_ITEM, "order", _ORDER, cardinality=Cardinality.MANY_TO_ONE, reverse="other"),
+            _ITEMS_HOP,
+            id="direction-names-another-reverse",
+        ),
+        pytest.param(
+            _hop(_ITEM, "order", _ITEM, cardinality=Cardinality.MANY_TO_ONE, reverse="items"),
+            _ITEMS_HOP,
+            id="direction-targets-another-entity",
+        ),
+    ],
+)
+def test_anything_but_a_to_one_peer_of_the_arrival_is_no_back_reference(
+    direction: RelationshipMetadata, arrival: RelationshipMetadata | None
+) -> None:
+    assert not is_back_reference(direction, arrival)
 
 
 # --------------------------------------------------------------------------

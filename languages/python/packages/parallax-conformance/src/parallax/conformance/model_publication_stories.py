@@ -12,7 +12,6 @@ from parallax.core.db_port import (
     RollbackFailed,
     RolledBack,
 )
-from parallax.core.entity import model_of
 from parallax.core.execution import (
     ServingModel,
     prepare_model,
@@ -176,10 +175,9 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # execution adopts.
     b = prepare_model(candidate, edition="2026-09-b")
 
-    # An Evolution is described between two ACCEPTED models, which is what a
-    # prepared selection carries its own of: `model_of` is the durable first-party
-    # seam a schema-owning host reads one through.
-    evolution = unilateral(evolve(model_of(a.model), model_of(b.model)))
+    # An Evolution is described between the two Domain Models the selections
+    # were prepared from, which each selection carries.
+    evolution = unilateral(evolve(a.model, b.model))
     # The statements are applied exactly as given — never reordered,
     # deduplicated, or made idempotent — because a delta states what must happen
     # to a database at the earlier edition rather than reconciling an unknown one.

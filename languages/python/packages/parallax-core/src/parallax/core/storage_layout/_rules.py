@@ -149,7 +149,7 @@ def _claims(
             for contributor in group.declaration_contributors
             if _document_resident_member(contributor, document.roles) is None
         ),
-        (document.layout.column, EntityLocation(group.root)),
+        (Column(document.layout.column), EntityLocation(group.root)),
     )
 
 

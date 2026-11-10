@@ -24,7 +24,9 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    Columns,
     ConcreteSubtype,
+    Document,
     EntityIdentity,
     ExactEntityReference,
     MemberShape,
@@ -333,6 +335,32 @@ def test_a_family_inherits_the_root_declared_persistence() -> None:
         view = facet.entity(position)
         assert view is not None
         assert view.persistence is PersistenceMode.READ_ONLY
+
+
+def test_a_family_carries_the_root_declared_layout_and_defaults_to_columns() -> None:
+    root = identity("Ledger")
+    entry = identity("LedgerEntry")
+    model = form_metamodel(
+        source(
+            Declaration(
+                identity=root,
+                container=Table("ledger"),
+                layout=Document("body"),
+                attributes=(key(root),),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            Declaration(
+                identity=entry,
+                inheritance=ConcreteSubtype(ExactEntityReference(root), "entry"),
+            ),
+        )
+    )
+    facet = inheritance.inheritance_facet_of(model)
+    for position in (root, entry):
+        view = facet.entity(position)
+        assert view is not None
+        assert view.layout == Document("body")
+    assert _view(_corpus("animal"), "Dog").layout == Columns()
 
 
 # --------------------------------------------------------------------------

@@ -20,6 +20,7 @@ from parallax.core.entity._graph_construction import (
     lifecycle_state_of,
     relationship_value_of,
 )
+from parallax.core.entity._introspection import EntityMetadata, EntityProfile
 from parallax.core.entity._members import (
     MANY_TO_ONE,
     MAX,
@@ -70,6 +71,8 @@ __all__ = [
     "EditViolation",
     "Entity",
     "EntityGraphConstruction",
+    "EntityMetadata",
+    "EntityProfile",
     "Float32",
     "IncludePath",
     "IndexedGraph",

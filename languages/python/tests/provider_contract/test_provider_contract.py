@@ -47,7 +47,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.wire import loads
 from parallax.core.wire._json import authored_token
-from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution.model_evolution import ABSENT, evolve_metamodels
 from parallax.evolution.schema_delta import schema_delta
 from parallax.postgres import PoolOptions, isolation_spelling
 
@@ -472,7 +472,7 @@ def _provision(profile_run: Any, model_file: str) -> Any:
         profile_run.port.execute_write(statement, [])
     for statement in provision.schema_statements(model):
         profile_run.port.execute_write(statement, [])
-    return evolve(ABSENT, model)
+    return evolve_metamodels(ABSENT, model)
 
 
 def test_a_name_at_the_identifier_limit_is_stored_exactly_as_generated(

@@ -31,7 +31,7 @@ from parallax.core.dialect import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import Table
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
+from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve_metamodels
 from parallax.evolution.schema_delta import (
     PhysicalLocation,
     UnsupportedSchemaEvolutionError,
@@ -98,7 +98,7 @@ def _widget(*, bound: int, indexed: bool) -> AcceptedMetamodel:
 
 def _widened_and_indexed() -> UnilateralEvolution:
     """One evolution widening a Column and putting an access path over it."""
-    evolution = evolve(_widget(bound=8, indexed=False), _widget(bound=64, indexed=True))
+    evolution = evolve_metamodels(_widget(bound=8, indexed=False), _widget(bound=64, indexed=True))
     assert isinstance(evolution, UnilateralEvolution)
     return evolution
 
@@ -108,7 +108,9 @@ def test_every_operation_a_dialect_refuses_is_reported_at_once() -> None:
     # anything is returned, so both refusals arrive in one error rather than the
     # first one arriving alone.
     with raises_code(UnsupportedSchemaEvolutionError, SCHEMA_EVOLUTION_UNSUPPORTED) as raised:
-        schema_delta(evolve(ABSENT, entity_with_two_indices_over_one_column()), _refusing())
+        schema_delta(
+            evolve_metamodels(ABSENT, entity_with_two_indices_over_one_column()), _refusing()
+        )
     error = raised.value
     assert isinstance(error, UnsupportedError) and not error.is_transient
     assert str(error) == (
@@ -190,7 +192,7 @@ def test_an_unsupported_prerequisite_is_reported_at_a_database_wide_location() -
     )
     model = formed(corpus_records()["balance"])
     with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
-        schema_delta(evolve(ABSENT, model), dialect)
+        schema_delta(evolve_metamodels(ABSENT, model), dialect)
     (refusal,) = raised.value.operations
     assert refusal.kind == "CreateExtension"
     assert refusal.location == PhysicalLocation(extension="btree_gist")

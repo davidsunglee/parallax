@@ -40,6 +40,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     AttributePrimaryKey,
     Cardinality,
+    Document,
     Max,
     Multiplicity,
     NullPlacement,
@@ -93,7 +94,7 @@ __all__ = [
 # unspellable combination is a static error before it is a runtime one. The
 # payload-free variants owned elsewhere (`MAX`, `TABLE_PER_CONCRETE_SUBTYPE`),
 # their payload-carrying siblings (`Sequence`, `TablePerHierarchy`,
-# `AbstractRoot`), and the two narrowable Neutral Types (`Int32`, `Float32`) are
+# `AbstractRoot`, `Document`), and the two narrowable Neutral Types (`Int32`, `Float32`) are
 # re-exported from here for the same reason: the authoring surface is one import.
 ONE_TO_ONE: Final = Cardinality.ONE_TO_ONE
 MANY_TO_ONE: Final = Cardinality.MANY_TO_ONE
@@ -129,25 +130,6 @@ class ConcreteSubtype:
 
 type InheritanceRole = AbstractRoot | AbstractSubtype | ConcreteSubtype
 """The parent-free authoring counterpart of the core ``Inheritance`` algebra."""
-
-
-DEFAULT_STRUCTURED_COLUMN: Final = "payload"
-"""The Structured Column name ``layout=Document()`` supplies for an author who
-names none. It is an authoring convenience: accepted metadata and the exported
-descriptor always carry the resolved name."""
-
-
-@dataclass(frozen=True, slots=True)
-class Document:
-    """Relational Document Layout, as a class header spells it.
-
-    The column name is optional, so ``layout=Document`` and ``layout=Document()``
-    are the same declaration. ``Columns`` has no counterpart here: omitting
-    ``layout=`` is what selects it, and a second spelling of the default would be
-    a way to say nothing.
-    """
-
-    column: str = DEFAULT_STRUCTURED_COLUMN
 
 
 @dataclass(frozen=True, slots=True)

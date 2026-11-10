@@ -78,7 +78,7 @@ def test_a_stale_publisher_is_refused_and_rebases_onto_what_is_held(profile_run:
     db = own_root(connect(port, serving)).using_database_login()
 
     first = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
-    evolution = stories.unilateral(evolve(model_of(a.model), model_of(first.model)))
+    evolution = stories.unilateral(evolve(a.model, first.model))
     stories.apply_schema_delta(port, schema_delta(evolution, port.dialect))
     serving.publish(first, expected=a)
 

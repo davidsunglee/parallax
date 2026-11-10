@@ -121,7 +121,10 @@ def _preflight(
 ) -> tuple[IncludePathNode, ...]:
     """Build the Includes clause ``path`` authors and validate it as a read does."""
     query = canonical_query(root.where(root.all).include(path), models)
-    validate_object_query(models.meta(root), query, model_of(models))
+    accepted = model_of(models)
+    target = accepted.entity(models.entity(root).identity)
+    assert target is not None
+    validate_object_query(target, query, accepted)
     return query.includes
 
 

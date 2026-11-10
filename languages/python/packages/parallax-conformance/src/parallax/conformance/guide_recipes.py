@@ -33,7 +33,6 @@ from parallax.core import (
 )
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import model_of
 from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.core.read_delivery import InvalidData
 from parallax.evolution import ABSENT, evolve, schema_delta
@@ -150,7 +149,7 @@ def table_statements(model: DomainModel) -> tuple[str, ...]:
 
     Parallax never changes a schema itself: run these with your migration tool.
     """
-    return schema_delta(evolve(ABSENT, model_of(model)), POSTGRES).statements
+    return schema_delta(evolve(ABSENT, model), POSTGRES).statements
 
 
 def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:

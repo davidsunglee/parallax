@@ -18,6 +18,7 @@ from parallax.core.metamodel import (
     PersistenceMode,
     RelationshipDeclaration,
     StorageContainer,
+    StorageLayout,
     ValueObjectMetadata,
 )
 from parallax.core.metamodel._accepted import FacetKey, facet_of
@@ -75,8 +76,9 @@ class InheritanceEntityView(Protocol):
     its applicable members are its own. For a participant, ``ancestry`` runs
     root first, the ``applicable_*`` sequences are that chain's declared members
     in chain order, and ``container``/``tag_column``/``tag_value`` are the
-    physical facts the root's strategy fixes. ``persistence`` is the effective
-    root-owned mode and is never absent. ``primary_key`` is the family's one key
+    physical facts the root's strategy fixes. ``persistence`` and ``layout`` are
+    the effective root-owned mode and Storage Layout, and are never absent.
+    ``primary_key`` is the family's one key
     Attribute: the root's accepted declaration, the same object at every
     position of the family.
     """
@@ -101,6 +103,8 @@ class InheritanceEntityView(Protocol):
     def tag_value(self) -> str | None: ...
     @property
     def persistence(self) -> PersistenceMode: ...
+    @property
+    def layout(self) -> StorageLayout: ...
     @property
     def member_selection(self) -> EntityMemberSelection: ...
     @property
@@ -172,6 +176,7 @@ class InheritanceEntityFacts:
     tag_column: str | None
     tag_value: str | None
     persistence: PersistenceMode
+    layout: StorageLayout
     member_selection: EntityMemberSelection
     applicable_relationships: tuple[RelationshipDeclaration, ...]
     declared: CompiledEntity
@@ -312,6 +317,7 @@ class _InheritanceEntityView:
     tag_column: str | None
     tag_value: str | None
     persistence: PersistenceMode
+    layout: StorageLayout
     member_selection: EntityMemberSelection
     applicable_relationships: tuple[RelationshipDeclaration, ...]
     superset_attributes: tuple[AttributeMetadata, ...]
@@ -434,6 +440,7 @@ def _entity_view(position: InheritanceEntityFacts, superset: _Members) -> _Inher
         tag_column=position.tag_column,
         tag_value=position.tag_value,
         persistence=position.persistence,
+        layout=position.layout,
         member_selection=position.member_selection,
         applicable_relationships=position.applicable_relationships,
         superset_attributes=superset[0],

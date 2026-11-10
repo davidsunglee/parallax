@@ -14,6 +14,7 @@ from parallax.core.inheritance._facet import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeMetadata,
+    Columns,
     CompiledEntity,
     CompiledMetadata,
     ConcreteSubtype,
@@ -23,6 +24,7 @@ from parallax.core.metamodel import (
     PrimaryKey,
     RelationshipDeclaration,
     StorageContainer,
+    StorageLayout,
     TablePerConcreteSubtype,
     TablePerHierarchy,
     ValueObjectMetadata,
@@ -175,6 +177,7 @@ def _facts(
         tag_column=_tag_column(strategy),
         tag_value=_tag_value(entity, strategy),
         persistence=_persistence(root),
+        layout=_layout(root),
         member_selection=member_selection(applicable_attributes, applicable_value_objects),
         applicable_relationships=tuple(applicable_relationships),
         declared=entity,
@@ -226,6 +229,18 @@ def _persistence(root: CompiledEntity) -> PersistenceMode:
     if root.declared_persistence is None:
         return PersistenceMode.READ_WRITE
     return root.declared_persistence
+
+
+_COLUMNS: Final[Columns] = Columns()
+
+
+def _layout(root: CompiledEntity) -> StorageLayout:
+    """The family's effective Storage Layout, defaulted at its one owner.
+
+    Layout is root-owned and uniform, so absence on the root is the Columns
+    default rather than an unanswered question.
+    """
+    return _COLUMNS if root.declared_layout is None else root.declared_layout
 
 
 class InheritanceModelCompiler:

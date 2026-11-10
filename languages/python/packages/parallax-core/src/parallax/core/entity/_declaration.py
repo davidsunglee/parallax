@@ -86,6 +86,7 @@ from parallax.core.metamodel import (
     AttributeReference,
     AuthoringViolation,
     Column,
+    Columns,
     DerivedAxis,
     EntityIdentity,
     EntityReference,
@@ -128,7 +129,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
-from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 
 __all__ = [
@@ -1606,23 +1606,23 @@ def _persistence(cls_name: str, header: EntityHeader) -> PersistenceMode | None:
 
 
 def _layout(cls_name: str, header: EntityHeader) -> StorageLayout | None:
-    """The Storage Layout this class itself declares, with its name resolved.
+    """The Storage Layout this class itself declares, or absence for ``Columns``.
 
-    ``Document`` carries no payload in the common case, so the class object
-    reads as naturally as an instance. The conventional column name is supplied
-    here rather than left to a consumer, so accepted metadata never carries an
-    unresolved one; whether this class may declare a layout at all is a
-    family-wide question formation answers.
+    ``Document`` and ``Columns`` carry no required payload, so a class object
+    reads as naturally as an instance. ``Columns`` states the default, so it
+    normalizes to the absence omission leaves; whether this class may declare a
+    layout at all is a family-wide question formation answers.
     """
     declared: object = header.layout
     if declared is Document:
         declared = Document()
-    if declared is None:
+    if declared is None or declared is Columns or isinstance(declared, Columns):
         return None
     if not isinstance(declared, Document):
         raise UsageError(
             ENTITY_HEADER_INVALID_VALUE,
-            f"{cls_name}: layout= takes Document or Document(column=...), got {declared!r}",
+            f"{cls_name}: layout= takes Document, Document(column=...), or Columns, "
+            f"got {declared!r}",
         )
     # A frozen dataclass records its payload without checking it, so the declared
     # field type is a promise to the type checker rather than a fact about what a
@@ -1633,7 +1633,7 @@ def _layout(cls_name: str, header: EntityHeader) -> StorageLayout | None:
             ENTITY_HEADER_INVALID_VALUE,
             f"{cls_name}: Document(column=) takes a nonempty string, got {column!r}",
         )
-    return AcceptedDocument(Column(column))
+    return declared
 
 
 def _entity_name(cls_name: str, header: EntityHeader) -> str:

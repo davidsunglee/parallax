@@ -111,7 +111,7 @@ def _accept(layout: StorageLayout | None) -> Metamodel:
 
 def document_model() -> Metamodel:
     """`Person` and `Marker` under `Document` layout, both sharing the column `payload`."""
-    return _accept(Document(Column("payload")))
+    return _accept(Document("payload"))
 
 
 def columns_model() -> Metamodel:

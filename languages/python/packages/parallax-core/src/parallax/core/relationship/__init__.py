@@ -7,6 +7,7 @@ from parallax.core.relationship._facet import (
     RELATIONSHIP_MODULE,
     RelationshipFacet,
     RelationshipMetadata,
+    is_back_reference,
     relationship_facet_of,
 )
 from parallax.core.relationship._rules import ISSUE_CODES, RULE_SET
@@ -19,6 +20,7 @@ __all__ = [
     "RULE_SET",
     "RelationshipFacet",
     "RelationshipMetadata",
+    "is_back_reference",
     "project_join_endpoints",
     "relationship_facet_of",
 ]

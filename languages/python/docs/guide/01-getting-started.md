@@ -64,7 +64,6 @@ from parallax.core import (
 )
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import model_of
 from parallax.core.execution import TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
@@ -126,14 +125,13 @@ def table_statements(model: DomainModel) -> tuple[str, ...]:
 
     Parallax never changes a schema itself: run these with your migration tool.
     """
-    return schema_delta(evolve(ABSENT, model_of(model)), POSTGRES).statements
+    return schema_delta(evolve(ABSENT, model), POSTGRES).statements
 ```
 <!-- /example -->
 
-`model_of(model)` takes out of the `DomainModel` its language-neutral form: the same
-entities, attributes and relationships as the core specification defines them, without
-your Python classes. A YAML descriptor holds a model in that form too, so `evolve` can
-compare a model rebuilt from a descriptor with one built from classes. `ABSENT` stands
+`evolve` compares models by their entities, attributes and relationships, not by your
+Python classes, so it can compare a `DomainModel` rebuilt from a YAML descriptor with one
+built from classes. `ABSENT` stands
 for no model at all, as in an empty database, so `evolve(ABSENT, ...)` describes
 creating everything this model needs. That change is always one `schema_delta` accepts,
 and its type says so. `schema_delta` turns the change into PostgreSQL statements. For a

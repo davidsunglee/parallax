@@ -22,6 +22,7 @@ __all__ = [
     "RelationshipFacet",
     "RelationshipMetadata",
     "inverted",
+    "is_back_reference",
     "relationship_facet",
     "relationship_facet_of",
 ]
@@ -70,24 +71,27 @@ class RelationshipMetadata:
         if self.reverse is not None and not self.reverse:
             raise ValueError("a reverse relationship name is either absent or nonempty")
 
-    def is_back_reference_from(self, arrival: RelationshipMetadata | None) -> bool:
-        """Whether this direction is a to-one peer of ``arrival``, the two navigable
-        directions of ONE association, each naming the other as its reverse.
 
-        This is what proves a hop lands on the very object the path arrived from
-        rather than merely on that object's family: the two directions share one
-        join, so the arrived-at row's correlation attribute holds the arrival hop's
-        own source key. Both reverse names are checked, and the target Entity with
-        them, so two unrelated associations sharing a local relationship name cannot
-        pair. An absent arrival is a hop leaving the root, which nothing preceded.
-        """
-        return (
-            arrival is not None
-            and self.cardinality is not Cardinality.ONE_TO_MANY
-            and arrival.reverse == self.identity.name
-            and self.reverse == arrival.identity.name
-            and self.join.target.entity == arrival.identity.source_entity
-        )
+def is_back_reference(
+    direction: RelationshipMetadata, arrival: RelationshipMetadata | None
+) -> bool:
+    """Whether ``direction`` is a to-one peer of ``arrival``, the two navigable
+    directions of ONE association, each naming the other as its reverse.
+
+    This is what proves a hop lands on the very object the path arrived from
+    rather than merely on that object's family: the two directions share one
+    join, so the arrived-at row's correlation attribute holds the arrival hop's
+    own source key. Both reverse names are checked, and the target Entity with
+    them, so two unrelated associations sharing a local relationship name cannot
+    pair. An absent arrival is a hop leaving the root, which nothing preceded.
+    """
+    return (
+        arrival is not None
+        and direction.cardinality is not Cardinality.ONE_TO_MANY
+        and arrival.reverse == direction.identity.name
+        and direction.reverse == arrival.identity.name
+        and direction.join.target.entity == arrival.identity.source_entity
+    )
 
 
 @dataclass(frozen=True, slots=True)

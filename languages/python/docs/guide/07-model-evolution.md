@@ -23,7 +23,6 @@ from parallax.core import (
     attr,
 )
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import model_of
 from parallax.core.execution import ModelSelection, ServingModel, prepare_model
 from parallax.core.read_delivery import InvalidData
 from parallax.descriptor import domain_model_from_yaml, export_yaml
@@ -97,9 +96,8 @@ The shop's second release accepts gift cards. It adds a concrete subtype to the
 model lists every class it serves, a family's root included, and a concrete subtype it
 leaves out is not part of it, so release 1's model is the same list without
 `GiftCardPayment`.
-`evolve(earlier, later)` describes what changes between two models. It compares the
-checked, language-neutral form of each, which `model_of` takes out of a `DomainModel`.
-The earlier model is the one you deployed last, so keep a copy of it at each deployment.
+`evolve(earlier, later)` describes what changes between two `DomainModel`s. It compares
+their entities, attributes and relationships, not your Python classes. The earlier model is the one you deployed last, so keep a copy of it at each deployment.
 `export_yaml`, from the `parallax-descriptor` distribution, writes a model as a descriptor,
 and `domain_model_from_yaml` reads one back:
 
@@ -111,13 +109,12 @@ class GiftCardPayment(Payment, inheritance=ConcreteSubtype(tag_value="gift-card"
 
 def changes_since(deployed: str, release: DomainModel) -> Evolution:
     """What changes between the model deployed last, kept as a descriptor, and ``release``."""
-    return evolve(model_of(domain_model_from_yaml(deployed)), model_of(release))
+    return evolve(domain_model_from_yaml(deployed), release)
 ```
 <!-- /example -->
 
 `deployed` is the descriptor's YAML text, not a file path. `domain_model_from_yaml`
-builds from it a `DomainModel` with no entity classes, which is all `model_of` and
-`evolve` need.
+builds from it a `DomainModel` with no entity classes, which is all `evolve` needs.
 
 `evolve` reads only the two models. It never looks at a database, so the description is
 the same wherever you compute it, for example in a release check before you deploy. It

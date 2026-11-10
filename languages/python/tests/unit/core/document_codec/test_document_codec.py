@@ -1323,7 +1323,7 @@ def test_a_compiled_occurrence_yields_the_same_shape_as_its_declaration() -> Non
     # plain names on a declaration, identities on accepted Metadata — so the one place
     # that difference is unwound has to answer identically for both.
     (entity,) = DomainModel(Holder).entities
-    (occurrence,) = entity.declared_value_objects
+    (occurrence,) = entity.declared.value_objects
     assert occurrence_shape(occurrence) is occurrence.document_shape
     assert occurrence_shape(occurrence) == MemberShape(
         members=(

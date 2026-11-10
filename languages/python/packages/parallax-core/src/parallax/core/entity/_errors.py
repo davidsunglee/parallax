@@ -100,7 +100,7 @@ METAMODEL_DUPLICATE_ENTITY_CLASS: Final = "metamodel-duplicate-entity-class"
 type MetamodelLookupCode = Literal[
     "metamodel-invalid-entity-reference", "metamodel-entity-not-found"
 ]
-"""The ``models.meta(...)`` lookups that find no Entity, refused as a
+"""The ``models.entity(...)`` lookups that find no Entity, refused as a
 :class:`~parallax.core.base.UsageError`. The class-free lookup protocol returns
 absence instead."""
 

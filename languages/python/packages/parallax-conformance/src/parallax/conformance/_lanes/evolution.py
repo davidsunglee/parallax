@@ -12,7 +12,7 @@ from parallax.conformance.evolution_wire import (
     schema_cell,
     unsupported_cell,
 )
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
+from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve_metamodels
 from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
 
 __all__ = ["run_evolution_case"]
@@ -22,7 +22,7 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
     """The observations an `evolution` case's two endpoints produce.
 
     `when.evolve.earlier` is a model descriptor path or the explicit
-    fresh-provisioning sentinel `null`, which reaches `evolve` as `ABSENT` rather
+    fresh-provisioning sentinel `null`, which reaches `evolve_metamodels` as `ABSENT` rather
     than as an empty model. Both endpoints form through the same public door
     every other corpus model does, so a case cannot describe an evolution between
     models this implementation would not otherwise accept.
@@ -53,7 +53,7 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
             f"{case.path.name}: `when.evolve.earlier` is a string path or the null sentinel"
         )
     earlier = ABSENT if earlier_ref is None else models.load_model(model_path(earlier_ref))
-    evolution = evolve(earlier, models.load_model(model_path(later_ref)))
+    evolution = evolve_metamodels(earlier, models.load_model(model_path(later_ref)))
     observations: dict[str, Any] = {"evolution": evolution_observation(evolution)}
     if isinstance(evolution, UnilateralEvolution):
         observations["schema"] = _schema_matrix(evolution)

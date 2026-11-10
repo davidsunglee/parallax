@@ -259,14 +259,14 @@ def test_export_writes_the_resolved_structured_column_only_where_the_root_owns_i
         fake_metadata.FakeCompiledEntity(
             root,
             declared_container=Table("record"),
-            declared_layout=Document(Column("payload")),
+            declared_layout=Document("payload"),
             declared_attributes=(
                 AttributeMetadata(AttributeIdentity(root, "note"), STRING, Column("note")),
             ),
         ),
         fake_metadata.FakeCompiledEntity(
             child,
-            declared_layout=Document(Column("payload")),
+            declared_layout=Document("payload"),
             inheritance=ConcreteSubtype(root, "card"),
         ),
     )

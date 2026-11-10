@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.evolution._domain_models import evolve
 from parallax.evolution.model_evolution import (
     ABSENT,
     ATTRIBUTE_DELTA_ORDER,
@@ -101,7 +102,6 @@ from parallax.evolution.model_evolution import (
     WritesDisabled,
     WritesEnabled,
     canonical_operation_key,
-    evolve,
 )
 from parallax.evolution.schema_delta import (
     CreatedIndex,

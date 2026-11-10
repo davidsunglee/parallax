@@ -19,7 +19,8 @@ There is no global model registry and no generated class surface.
 Entity `name=` overrides the class name verbatim. `namespace=` is local to each
 class and is never inherited from a base or module. Entity tables are explicit.
 The class header uses exceptional `persistence=READ_ONLY` and
-`layout=Document(column=...)`; omission means Read Write and Columns. Descendants
+`layout=Document(column=...)`; omission means Read Write and Columns, and
+`layout=Columns()` states that default explicitly. Descendants
 cannot redeclare a family's persistence or layout. A Read Only family takes no
 writes ([Unit of Work](../../../core/spec/m-unit-work.md#writes-to-a-readonly-family)).
 Inheritance uses `AbstractRoot(strategy)`, `AbstractSubtype`, and
@@ -27,7 +28,8 @@ Inheritance uses `AbstractRoot(strategy)`, `AbstractSubtype`, and
 concrete subtype supplies its table.
 
 `Document`'s column defaults to `payload` at authoring; accepted metadata and
-descriptor output always contain that resolved name. `Document` and
+descriptor output always contain that resolved name, and reading a layout back
+answers the same `Document` class an author writes. `Document` and
 `Document()` are equivalent, as are other all-optional variant classes and
 their zero-argument instances. Required-argument variants must be instantiated.
 
@@ -175,10 +177,17 @@ descriptors. Text decoding failures are `DescriptorError` with
 `descriptor-invalid-syntax`; document input starts at schema validation. A descriptor-backed model has no Entity Classes
 and supports Wire execution without Typed materialization.
 
-`model.meta(...)` accepts a composed Entity Class, canonical identity spelling,
-or `EntityIdentity`. It returns local immutable metadata, not flattened inherited
-members or effective convenience aliases. Invalid spelling and unknown identity
-raise `UsageError` with `metamodel-invalid-entity-reference` and
-`metamodel-entity-not-found`, respectively. The underlying class-free lookup
-protocol continues to answer absence. Python spells the core's local
+`model.entity(...)` accepts a composed Entity Class, canonical identity
+spelling, or `EntityIdentity`, and `model.entities` enumerates the same objects
+in canonical Entity order. Each is a resolved, read-only `EntityMetadata` from
+`parallax.core.introspection`, built once when the model is sealed: its
+`declared` `EntityProfile` holds what the Entity itself declares, and its
+`effective` profile what is in force on it, including members inherited along
+its ancestry. Both profiles answer paired relationship directions as
+`RelationshipMetadata`, and the effective members are the declared profiles'
+own objects. Indices are local. `inheritance` reads back the role as the author
+spelled it, with `parent` the resolved parent Entity. Invalid spelling and
+unknown identity raise `UsageError` with `metamodel-invalid-entity-reference`
+and `metamodel-entity-not-found`, respectively. The underlying class-free
+lookup protocol continues to answer absence. Python spells the core's local
 declaration view of Entity Metadata `CompiledEntity`, a first-party type.

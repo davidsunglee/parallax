@@ -24,7 +24,12 @@ from parallax.descriptor._records import (
     Inheritance,
     Metamodel,
 )
-from parallax.evolution.model_evolution import ABSENT, EntityAdded, UnilateralEvolution, evolve
+from parallax.evolution.model_evolution import (
+    ABSENT,
+    EntityAdded,
+    UnilateralEvolution,
+    evolve_metamodels,
+)
 from parallax.evolution.schema_delta._order import order, order_key
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
@@ -285,7 +290,7 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule(
     # `zeta`'s create and report an order that is in fact correct. Under an
     # unchanged temporal profile the target still ends with the root's axis end
     # and is still created before the earlier Index is dropped.
-    evolution = evolve(
+    evolution = evolve_metamodels(
         _tpcs_family_altering_a_root_declared_index(unique=False, temporal=temporal),
         _tpcs_family_altering_a_root_declared_index(unique=True, temporal=temporal),
     )
@@ -318,7 +323,7 @@ def test_every_generated_plan_is_ordered_so_that_no_rule_is_broken() -> None:
         _MODELS["rate"],
         entity_with_two_indices_over_one_column(),
     ):
-        ordered = order(plan(evolve(ABSENT, model), POSTGRES).operations)
+        ordered = order(plan(evolve_metamodels(ABSENT, model), POSTGRES).operations)
         assert _dependency_violations(ordered) == ()
 
 
@@ -335,7 +340,7 @@ def test_every_incremental_plan_is_ordered_so_that_no_rule_is_broken() -> None:
     ]
     assert pairs
     for earlier, later in pairs:
-        evolution = evolve(earlier, later)
+        evolution = evolve_metamodels(earlier, later)
         if not isinstance(evolution, UnilateralEvolution):
             continue
         assert _dependency_violations(order(plan(evolution, POSTGRES).operations)) == ()

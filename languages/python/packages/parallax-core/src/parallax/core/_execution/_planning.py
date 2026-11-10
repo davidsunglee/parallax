@@ -38,11 +38,6 @@ __all__ = ["build_write_planner", "build_write_preparation", "prepare_model", "w
 def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
     """Prepare one complete immutable model selection without database I/O."""
     check_edition(edition)
-    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise TypeError(
-            f"prepare_model takes a Domain Model — one composed from Entity Classes, or one a "
-            f"descriptor produced — not {model!r}"
-        )
     catalog = CatalogedModel(model_of(model))
     classes = class_index(model)
     if classes is None:

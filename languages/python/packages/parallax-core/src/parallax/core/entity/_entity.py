@@ -59,6 +59,7 @@ from parallax.core.entity._pydantic_storage import attach_instance_state
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
+    Columns,
     EntityIdentity,
     EntityLocation,
     IndexMetadata,
@@ -196,7 +197,7 @@ class EntityMeta(ModelMetaclass):
         name: str | None = None,
         namespace: str | None = None,
         persistence: PersistenceMode | None = None,
-        layout: Document | type[Document] | None = None,
+        layout: StorageLayout | type[Document] | type[Columns] | None = None,
         inheritance: InheritanceRole | type[AbstractSubtype] | type[ConcreteSubtype] | None = None,
         indices: tuple[IndexSpec, ...] = (),
         _mint: object | None = None,

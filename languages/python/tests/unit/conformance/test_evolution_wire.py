@@ -565,7 +565,7 @@ _JOIN_SPELLING = {"source": f"{_ORDER_SPELLING}.id", "target": f"{_ORDER_SPELLIN
     [
         (_ORDER, _ORDER_SPELLING),
         (Columns(), "columns"),
-        (Document(Column("doc")), {"document": {"column": "doc"}}),
+        (Document("doc"), {"document": {"column": "doc"}}),
         (NOT_PRIMARY_KEY, False),
         (PrimaryKey(APPLICATION_ASSIGNED), {"generation": "application-assigned"}),
         (PrimaryKey(MAX), {"generation": "max"}),

@@ -384,7 +384,7 @@ def test_the_adapter_resolves_the_structured_column_a_document_layout_names() ->
     layout = records.DocumentLayout(column="payload")
     entity = records.Entity(name="Account", table="account", layout=layout, attributes=(key,))
     (declaration,) = unresolved_metamodel(records.Metamodel((entity,))).entities
-    assert declaration.layout == Document(Column("payload"))
+    assert declaration.layout == Document("payload")
     plain = records.Entity(name="Account", table="account", attributes=(key,))
     (bare,) = unresolved_metamodel(records.Metamodel((plain,))).entities
     assert bare.layout is None
