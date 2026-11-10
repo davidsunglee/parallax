@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
 
 from parallax.core.base import (
+    InvalidValueError,
     ManagedValue,
     NeutralType,
     String,
@@ -113,13 +114,14 @@ __all__ = [
 
 
 def _invalid_operand(
+    kind: type[UsageError],
     path: str,
     neutral_type: NeutralType | None,
     value: object,
     rule: str,
 ) -> UsageError:
     declared = "<unresolved>" if neutral_type is None else repr(neutral_type)
-    return UsageError(
+    return kind(
         QUERY_EXPRESSION_INVALID,
         f"{path}: declared NeutralType {declared}; supplied Python carrier "
         f"{type(value).__name__}; developer-input rule violated: {rule}",
@@ -132,6 +134,7 @@ def managed_literal(path: str, neutral_type: NeutralType, value: object) -> Mana
     to, or a refusal naming ``path``."""
     if value is None:
         raise _invalid_operand(
+            UsageError,
             path,
             neutral_type,
             value,
@@ -140,6 +143,7 @@ def managed_literal(path: str, neutral_type: NeutralType, value: object) -> Mana
     managed = coerce_neutral_input(value, neutral_type)
     if not matches_neutral_type(managed, neutral_type):
         raise _invalid_operand(
+            InvalidValueError,
             path,
             neutral_type,
             value,

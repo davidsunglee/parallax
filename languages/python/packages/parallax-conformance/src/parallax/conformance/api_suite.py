@@ -913,7 +913,7 @@ EXAMPLES: Final[list[Example]] = [
         "m-value-object-038",
         "A nested comparison whose literal type mismatches the declared attribute",
         "Customer.where(Customer.address.city == 42)\n"
-        '# raises UsageError(code="nested-literal-type-mismatch")',
+        '# raises InvalidValueError(code="query-expression-invalid")',
     ),
     Example(
         "m-inheritance-040",

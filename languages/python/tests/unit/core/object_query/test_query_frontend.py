@@ -24,6 +24,7 @@ from parallax.core import (
     DomainModel,
     Entity,
     Int32,
+    InvalidValueError,
     ObjectQuery,
     Predicate,
     TxTemporal,
@@ -83,12 +84,17 @@ def test_scalar_comparison_operators() -> None:
     }
 
 
-@pytest.mark.parametrize("value", ["not-an-int", None], ids=["wrong-carrier", "none"])
+@pytest.mark.parametrize(
+    ("value", "kind"),
+    [("not-an-int", InvalidValueError), (2**100, InvalidValueError), (None, UsageError)],
+    ids=["wrong-carrier", "out-of-range", "none"],
+)
 def test_invalid_top_level_operands_report_the_complete_developer_input_rule(
-    value: object,
+    value: object, kind: type[UsageError]
 ) -> None:
     with raises_code(UsageError, "query-expression-invalid") as caught:
         _ = Widget.id == value
+    assert type(caught.value) is kind
     message = str(caught.value)
     assert "parallax.compatibility.Widget.id" in message
     assert "declared NeutralType" in message
