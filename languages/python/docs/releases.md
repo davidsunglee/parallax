@@ -19,7 +19,7 @@ row whose Value Object holds invalid stored data now arrives as `InvalidData` wh
 `read_rows` never looked at it, and either read inside a transaction can retain Read
 Evidence where `read_rows` retained none.
 
-`parallax.snapshot.WireValue` is now `parallax.core.wire.WireValue`. Its object member is
+The object member of `parallax.snapshot.WireValue` is now
 `Mapping[str, WireValue]` rather than `dict[str, WireValue]`, so an immutable mapping
 type-checks where a `WireValue` is expected, and code that treated a value as a `dict`
 statically needs a `Mapping` annotation or a narrowing check. Runtime values are
@@ -48,9 +48,9 @@ another in its family, reads the view its include loaded instead of reporting it
 unloaded. A retained node answers under the Model Edition that published it.
 
 `parallax.core.db_port.JsonDocument` is removed. A database adapter now receives a
-structured-document bind as `StructuredDocument`, exported from the same module,
-and reads its value from `document` rather than `value`. SQL NULL still binds as a
-bare `None`.
+structured-document bind as `StructuredDocument`, exported from
+`parallax.core.internal.db_port`, and reads its value from `document` rather than
+`value`. SQL NULL still binds as a bare `None`.
 
 Starting with `0.2.0`, Parallax no longer supports Intel macOS or musl Linux, including
 Alpine, and publishes no `parallax-postgres` wheels for them. Published `0.1.0` wheels
