@@ -1,0 +1,14 @@
+# Negative (m-inheritance, m-object-query): result narrowing selects a dormant
+# abstract subtype, whose effective concrete-subtype set is empty.
+model: models/dormant-position-layout-twin-columns.yaml
+tags: [m-inheritance, m-predicate, m-object-query, rejected, negative, narrow, slice-snapshot-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Gadget
+    predicate:
+      "true": {}
+    narrowTo:
+      - parallax.compatibility.Prototype
+then:
+  rejectedRule: narrow-empty-effective-set

@@ -101,10 +101,7 @@ from .keyed_write_validate import (
 from .metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
-from .metamodel import (
-    validate_index_identities,
-    validate_temporal_member_names,
-)
+from .metamodel import validate_foundations
 from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_oracle.includes import refuse_path_past_back_reference
@@ -114,7 +111,7 @@ from .predicate_write_validate import PREDICATE_WRITE_REJECTED_RULES, validate_p
 from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
-from .relationship import validate_relationship_types
+from .relationship import validate_relationship_declarations, validate_relationship_types
 from .sql_canonical import sqlglot_dialect
 from .sql_normalize import normalize
 from .storage_layout import (
@@ -678,11 +675,11 @@ def _assert_rejected(case: Case) -> None:
     re-read a row as an instruction. Membership can decide the form only for an
     OBJECT carrying one form's carriers, so :func:`_rejected_write_input` refuses
     anything else before dispatch. Inline
-    models run the foundational ``validate_index_identities`` and
-    ``validate_temporal_member_names`` before the semantic rule sets — Inheritance's
-    ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
-    standalone Table ownership and Column claims, then defining-join type equality.
-    The referenced top-level model
+    models run the foundational resolver oracles (``validate_foundations``) before
+    the semantic rule sets — Inheritance's ``validate_family`` and Storage Layout’s
+    ``validate_storage_layout``, including standalone Table ownership and Column
+    claims, then defining-join type equality and each relationship declaration's
+    own coherence. The referenced top-level model
     remains valid and loadable.
 
     The raised rule must match exactly. No rejected variant reaches dialect
@@ -737,11 +734,11 @@ def _assert_rejected(case: Case) -> None:
             if not isinstance(inline_entities, list):
                 inline_entity = inline_model.get("entity")
                 inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
-            validate_index_identities(inline_entities)
-            validate_temporal_member_names(inline_entities)
+            validate_foundations(inline_entities)
             validate_family(inline_model)
             validate_storage_layout(inline_entities)
             validate_relationship_types(inline_entities)
+            validate_relationship_declarations(inline_entities)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(
                 f"{case.path.name}: rejected case needs when.objectQuery / when.write / when.model"

@@ -43,6 +43,9 @@ _FORMATION_OWNED_RULES: Final[frozenset[str]] = frozenset(
     {
         "inheritance-materialization-key-collision",
         "inheritance-concrete-subtype-with-children",
+        "inheritance-primary-key-missing",
+        "inheritance-primary-key-multiple",
+        "inheritance-member-shadowing",
     }
 )
 """The family rules whose defects survive adaptation into the accepted algebra,
@@ -87,7 +90,7 @@ families."""
 
 
 def test_every_descriptor_rejection_case_is_covered() -> None:
-    assert len(_RAW_ONLY_REJECTIONS) == 19
+    assert len(_RAW_ONLY_REJECTIONS) == 22
 
 
 @pytest.mark.parametrize(

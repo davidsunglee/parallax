@@ -67,7 +67,6 @@ from reference_harness.keyed_write_validate import (
     validate_keyed_write,
 )
 from reference_harness.metamodel import (
-    METAMODEL_INDEX_IDENTITY_DUPLICATE,
     METAMODEL_TEMPORAL_MEMBER_RESERVED,
     validate_temporal_member_names,
 )
@@ -183,7 +182,7 @@ def test_model_negatives_use_closed_owner_vocabularies() -> None:
         STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
     } <= used
-    assert {METAMODEL_INDEX_IDENTITY_DUPLICATE, METAMODEL_TEMPORAL_MEMBER_RESERVED} <= used
+    assert METAMODEL_MODEL_REJECTED_RULES <= used
     assert RELATIONSHIP_MODEL_REJECTED_RULES <= used
 
 
@@ -335,6 +334,7 @@ def _dormant_tpcs_position(members: dict[str, Any]) -> dict[str, Any]:
             {
                 "name": "Animal",
                 "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
             },
             {
                 "name": "Dog",

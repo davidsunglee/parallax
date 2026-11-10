@@ -1,0 +1,27 @@
+# Negative (m-inheritance family invariants): a concrete subtype redeclares an
+# Attribute name its root declares. The redeclaration keeps a Column of its own,
+# so only the member name is shared.
+model: models/payment.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        table: animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: name, type: string, maxLength: 64 }
+      - name: Dog
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: name, type: string, maxLength: 64, column: dog_name, nullable: true }
+then:
+  rejectedRule: inheritance-member-shadowing

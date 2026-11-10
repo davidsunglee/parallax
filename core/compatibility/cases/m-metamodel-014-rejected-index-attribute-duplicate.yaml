@@ -1,0 +1,16 @@
+# Negative (m-metamodel): one Attribute occurs twice in one Index.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Person
+      table: person
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: name, type: string, maxLength: 64 }
+      indices:
+        - { name: person_name, attributes: [name, name] }
+then:
+  rejectedRule: metamodel-index-attribute-duplicate

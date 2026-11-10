@@ -61,11 +61,11 @@ from .keyed_write_validate import (
     validate_keyed_write,
     validate_keyed_write_shape,
 )
-from .metamodel import validate_index_identities, validate_temporal_member_names
+from .metamodel import validate_foundations
 from .predicate_write_validate import PredicateWriteValidationError, validate_predicate_write
 from .providers import DIALECT_CATALOG
 from .query_references import collect_query_reference_classes
-from .relationship import validate_relationship_types
+from .relationship import validate_relationship_declarations, validate_relationship_types
 from .retry_policy_validate import retry_policy_problems
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
@@ -1104,11 +1104,11 @@ def _validate_models(
         families[model_path.name] = Family(entity_defs)
         model_entities[model_path.name] = entity_defs
         try:
-            validate_index_identities(entity_defs)
-            validate_temporal_member_names(entity_defs)
+            validate_foundations(entity_defs)
             validate_family_defs(entity_defs)
             validate_storage_layout(entity_defs)
             validate_relationship_types(entity_defs)
+            validate_relationship_declarations(entity_defs)
         except RejectionError as exc:
             errors.append(f"model {model_path.name}: {exc.rule}: {exc.detail}")
     return families, model_entities

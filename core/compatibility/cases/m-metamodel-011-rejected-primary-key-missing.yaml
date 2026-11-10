@@ -1,0 +1,14 @@
+# Negative (m-metamodel): a standalone Entity declares no primary-key Attribute.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Person
+      table: person
+      attributes:
+        - { name: id, type: int64 }
+        - { name: name, type: string, maxLength: 64 }
+then:
+  rejectedRule: metamodel-primary-key-missing

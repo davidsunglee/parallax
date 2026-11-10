@@ -1,0 +1,21 @@
+# Negative (m-metamodel): a reverse declaration names a relationship its peer
+# Entity does not declare.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, m-relationship, rejected, negative, relationship, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Child
+        table: child
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: parentId, type: int64 }
+        relationships:
+          - { name: parent, reverseOf: Parent.children }
+then:
+  rejectedRule: metamodel-unresolved-relationship-reference

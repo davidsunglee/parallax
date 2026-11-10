@@ -1,0 +1,23 @@
+# Negative (m-relationship): a one-to-many join's One side is joined on a non-key
+# Attribute, so the join cannot identify the single row that side promises.
+model: models/identifier-types.yaml
+tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+          - {name: childId, type: int64}
+        relationships:
+          - name: children
+            cardinality: one-to-many
+            join: {source: childId, target: {entity: Child, attribute: id}}
+      - name: Child
+        table: child
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+then:
+  rejectedRule: relationship-cardinality-join-mismatch

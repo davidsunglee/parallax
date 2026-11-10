@@ -2630,10 +2630,22 @@ against any row's contents):
 
 **Model** rules (accepted-model formation — foundational, Inheritance, Storage Layout, and Relationship invariants that per-entity schema validation cannot express,
 carried inline under `when.model`):
-`relationship-join-type-mismatch`: a defining join's resolved endpoints have unequal declared neutral types (see `m-relationship`),
+`relationship-join-source-invalid`, `relationship-join-type-mismatch`: a defining
+join's resolved endpoints have unequal declared neutral types,
+`relationship-cardinality-join-mismatch`,
+`relationship-reverse-inconsistent`, `relationship-defining-duplicate`,
+`relationship-order-on-to-one`, `relationship-order-attribute-invalid`
+(see `m-relationship`),
+`metamodel-duplicate-entity-identity`,
+`metamodel-unresolved-entity-reference`,
+`metamodel-unresolved-attribute-reference`,
+`metamodel-unresolved-relationship-reference`,
+`metamodel-local-member-collision`, `metamodel-primary-key-missing`,
+`metamodel-primary-key-multiple`,
 `metamodel-index-identity-duplicate`: two Indices of one Entity bear one name,
-counting the derived primary-key Index a frontend hands over
-(see `m-metamodel`),
+counting the derived primary-key Index a frontend hands over,
+`metamodel-index-attribute-missing`, `metamodel-index-attribute-not-local`,
+`metamodel-index-attribute-duplicate`,
 `metamodel-temporal-member-reserved`: a top-level member other than an As-Of Axis
 endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
 `inheritance-unknown-parent`, `inheritance-cycle`,
@@ -2645,6 +2657,7 @@ endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
 `inheritance-tph-descendant-table-forbidden`,
 `inheritance-tpcs-abstract-table-forbidden`,
 `inheritance-tpcs-concrete-table-required`,
+`inheritance-primary-key-missing`, `inheritance-primary-key-multiple`,
 `inheritance-abstract-node-fixture-rows`,
 `inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
 `inheritance-duplicate-tag-value`,
@@ -2652,7 +2665,7 @@ endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
 `inheritance-temporality-not-root-owned`,
 `inheritance-optimistic-locking-not-root-owned`,
 `inheritance-persistence-not-root-owned`,
-`inheritance-layout-not-root-owned`,
+`inheritance-layout-not-root-owned`, `inheritance-member-shadowing`,
 `inheritance-materialization-key-collision` (see `m-inheritance`),
 `storage-layout-table-mapping-collision`: a later independent mapping owner
 claims a structural Table already claimed by the first canonical owner,

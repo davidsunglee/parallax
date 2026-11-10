@@ -1,0 +1,25 @@
+# Negative (m-inheritance family invariants): a concrete subtype declares a second
+# primary-key Attribute beneath its root's, so its ancestry chain carries two.
+model: models/payment.yaml
+tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        table: animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Dog
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: dogId, type: int64, primaryKey: true }
+then:
+  rejectedRule: inheritance-primary-key-multiple

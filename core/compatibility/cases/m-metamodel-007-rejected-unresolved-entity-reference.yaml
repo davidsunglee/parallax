@@ -1,0 +1,18 @@
+# Negative (m-metamodel): a defining join targets an Entity the model does not
+# declare.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, m-relationship, rejected, negative, relationship, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+        relationships:
+          - name: children
+            cardinality: one-to-many
+            join: { source: id, target: { entity: Ghost, attribute: parentId } }
+then:
+  rejectedRule: metamodel-unresolved-entity-reference

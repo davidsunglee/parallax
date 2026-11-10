@@ -1,0 +1,31 @@
+# Negative (m-inheritance family invariants): a table-per-concrete-subtype abstract
+# subtype declares a table. The root is tableless, so the abstract subtype is the
+# only abstract position that owns one.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-concrete-subtype
+          role: root
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Pet
+        table: pet
+        inheritance:
+          role: abstract-subtype
+          parent: Animal
+        attributes:
+          - { name: licenseId, type: string, maxLength: 32, nullable: true }
+      - name: Dog
+        table: dog
+        inheritance:
+          role: concrete-subtype
+          parent: Pet
+        attributes:
+          - { name: barkVolume, type: int32, nullable: true }
+then:
+  rejectedRule: inheritance-tpcs-abstract-table-forbidden

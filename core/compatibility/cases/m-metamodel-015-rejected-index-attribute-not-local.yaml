@@ -1,0 +1,29 @@
+# Negative (m-metamodel, m-inheritance): a concrete subtype's Index names an
+# Attribute its root declares. Index components are local to their Entity, so an
+# inherited Attribute is not one.
+model: models/payment.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, m-inheritance, rejected, negative, index, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        table: animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: name, type: string, maxLength: 64 }
+      - name: Dog
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, nullable: true }
+        indices:
+          - { name: dog_name, attributes: [name] }
+then:
+  rejectedRule: metamodel-index-attribute-not-local

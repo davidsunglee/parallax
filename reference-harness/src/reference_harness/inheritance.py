@@ -93,6 +93,9 @@ INHERITANCE_TPH_ROOT_TABLE_REQUIRED = "inheritance-tph-root-table-required"
 INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN = "inheritance-tph-descendant-table-forbidden"
 INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN = "inheritance-tpcs-abstract-table-forbidden"
 INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED = "inheritance-tpcs-concrete-table-required"
+# Every position's ancestry chain carries exactly one primary-key Attribute.
+INHERITANCE_PRIMARY_KEY_MISSING = "inheritance-primary-key-missing"
+INHERITANCE_PRIMARY_KEY_MULTIPLE = "inheritance-primary-key-multiple"
 INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS = "inheritance-abstract-node-fixture-rows"
 INHERITANCE_STRATEGY_REDECLARED = "inheritance-strategy-redeclared"
 INHERITANCE_MISSING_TAG_VALUE = "inheritance-missing-tag-value"
@@ -114,6 +117,9 @@ INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED = "inheritance-persistence-not-root-owned
 # conventionally-mapped root whose descendant declares a layout, and a
 # document-mapped root whose descendant redeclares, repeats, or overrides it.
 INHERITANCE_LAYOUT_NOT_ROOT_OWNED = "inheritance-layout-not-root-owned"
+# A descendant never redeclares a member name its ancestry declares, in any
+# category; disjoint sibling branches may reuse one.
+INHERITANCE_MEMBER_SHADOWING = "inheritance-member-shadowing"
 INHERITANCE_MATERIALIZATION_KEY_COLLISION = "inheritance-materialization-key-collision"
 
 TYPE_KEY = "_type"
@@ -130,6 +136,8 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
         INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
         INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
+        INHERITANCE_PRIMARY_KEY_MISSING,
+        INHERITANCE_PRIMARY_KEY_MULTIPLE,
         INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS,
         INHERITANCE_STRATEGY_REDECLARED,
         INHERITANCE_MISSING_TAG_VALUE,
@@ -139,6 +147,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
         INHERITANCE_LAYOUT_NOT_ROOT_OWNED,
+        INHERITANCE_MEMBER_SHADOWING,
         INHERITANCE_MATERIALIZATION_KEY_COLLISION,
     }
 )
@@ -890,6 +899,54 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
             _check_table_per_concrete_subtype_family(family, members)
         if strategy == STRATEGY_TPH:
             _check_table_per_hierarchy_family(family, root_definition, members)
+    _check_family_primary_keys(family, participants)
+    _check_member_shadowing(family, participants)
+
+
+def _check_family_primary_keys(family: Family, participants: list[dict[str, Any]]) -> None:
+    """Every position's ancestry chain, abstract positions included, carries
+    exactly one primary-key Attribute."""
+    for definition in participants:
+        chain = family.ancestry(family.key_of(definition))
+        keys = [
+            attribute
+            for ancestor in chain
+            for attribute in _declared(family.defs[ancestor], "attributes")
+            if attribute.get("primaryKey") is True
+        ]
+        if not keys:
+            raise RejectionError(
+                INHERITANCE_PRIMARY_KEY_MISSING,
+                f"the ancestry chain of {definition['name']!r} carries no primary-key Attribute",
+            )
+        if len(keys) > 1:
+            raise RejectionError(
+                INHERITANCE_PRIMARY_KEY_MULTIPLE,
+                f"the ancestry chain of {definition['name']!r} carries {len(keys)} primary-key "
+                f"Attributes",
+            )
+
+
+def _member_names(definition: dict[str, Any]) -> set[str]:
+    return {
+        str(member.get("name"))
+        for kind in ("attributes", "relationships", "valueObjects")
+        for member in _declared(definition, kind)
+    }
+
+
+def _check_member_shadowing(family: Family, participants: list[dict[str, Any]]) -> None:
+    """No participant redeclares an Attribute, Relationship, or top-level Value
+    Object name an ancestor declares, whatever the two members' categories."""
+    for definition in participants:
+        ancestors = family.ancestry(family.key_of(definition))[:-1]
+        inherited = set().union(*(_member_names(family.defs[name]) for name in ancestors))
+        shadowed = sorted(_member_names(definition) & inherited)
+        if shadowed:
+            raise RejectionError(
+                INHERITANCE_MEMBER_SHADOWING,
+                f"{definition['name']!r} redeclares inherited member(s) {shadowed!r}",
+            )
 
 
 def _check_parents_declared(family: Family, participants: list[dict[str, Any]]) -> None:
