@@ -1,0 +1,23 @@
+# Negative (m-metamodel): a defining join's target names an Attribute its target
+# Entity neither declares nor inherits.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, m-relationship, rejected, negative, relationship, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+        relationships:
+          - name: children
+            cardinality: one-to-many
+            join: { source: id, target: { entity: Child, attribute: guardianId } }
+      - name: Child
+        table: child
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: parentId, type: int64 }
+then:
+  rejectedRule: metamodel-unresolved-attribute-reference

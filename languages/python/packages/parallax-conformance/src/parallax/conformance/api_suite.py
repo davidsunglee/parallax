@@ -1892,6 +1892,22 @@ _RELATIONSHIP_QUANTIFIER_SIBLING_REASON: Final[str] = (
 
 # A back-reference level's refusal and its narrowed views: the ordinary include
 # spelling, whose count and selection the run sweep grades.
+_INHERITANCE_FAMILY_FORMATION_REJECT_REASON: Final[str] = (
+    "a `when.model` family invariant Model Formation's Inheritance Rule Set classifies "
+    "at model construction (a `MetamodelValidationError` issue), not a query or write "
+    "the Usage Guide's statement- and verb-level examples could spell; the observable is "
+    "a rejected model, which the rejected sweep grades"
+)
+
+# A result narrow naming a dormant position: the exercised narrow spelling over an
+# empty selection.
+_NARROW_EMPTY_EFFECTIVE_SET_REASON: Final[str] = (
+    "the rejected lane's `narrow-empty-effective-set`: the developer spelling is the "
+    "ordinary result narrow the exercised `m-inheritance-040` example shows, here naming "
+    "an abstract subtype with no composed concrete descendant, and the refusal is graded "
+    "by the rejected sweep"
+)
+
 _BACK_REFERENCE_PATH_REFUSAL_REASON: Final[str] = (
     "the rejected lane's `deep-fetch-past-back-reference`: the developer spelling is the "
     "ordinary include path the exercised orders stories show, and the refusal is graded by "
@@ -2185,6 +2201,13 @@ _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
     "observable is a rejected model, not a developer verb an idiomatic story can narrate"
 )
 
+_METAMODEL_FORMATION_REJECT_REASON: Final[str] = (
+    "a `when.model` foundational Metamodel invariant the fixed resolver classifies at "
+    "model construction (a `MetamodelValidationError` issue), not a query or write the "
+    "Usage Guide's statement- and verb-level examples could spell; the observable is a "
+    "rejected model, which the rejected sweep grades"
+)
+
 _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` foundational Metamodel invariant the fixed resolver classifies at "
     "model construction (a `MetamodelValidationError` issue), not a query or write the "
@@ -2398,6 +2421,13 @@ _RELATIONSHIP_FORMATION_REASON: Final[str] = (
     "negative matrix and detailed issues"
 )
 
+_RELATIONSHIP_DECLARATION_REJECT_REASON: Final[str] = (
+    "a `when.model` relationship declaration invariant Model Formation's Relationship "
+    "Rule Set classifies at model construction (a `MetamodelValidationError` issue), not "
+    "a query or write the Usage Guide's statement- and verb-level examples could spell; "
+    "the observable is a rejected model, which the rejected sweep grades"
+)
+
 _TARGET_REPLACEMENT_TWIN_REASON: Final[str] = (
     "a layout-twin replacement graded per twin by the compile/run conformance lanes and "
     "by the reference harness; its developer spelling is the exercised `m-temporal-write-016` "
@@ -2449,6 +2479,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-007": _RELATIONSHIP_FORMATION_REASON,
+    "m-relationship-010": _RELATIONSHIP_DECLARATION_REJECT_REASON,
+    "m-relationship-011": _RELATIONSHIP_DECLARATION_REJECT_REASON,
+    "m-relationship-012": _RELATIONSHIP_DECLARATION_REJECT_REASON,
+    "m-relationship-013": _RELATIONSHIP_DECLARATION_REJECT_REASON,
+    "m-relationship-014": _RELATIONSHIP_DECLARATION_REJECT_REASON,
+    "m-relationship-015": _RELATIONSHIP_DECLARATION_REJECT_REASON,
     # -- m-edit: portable Wire adapter, independently run-graded -------------- #
     "m-edit-010": _WIRE_EDIT_OCCURRENCE_REASON,
     "m-edit-011": _WIRE_EDIT_OCCURRENCE_REASON,
@@ -2770,6 +2806,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-175": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-176": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-177": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` formation rejects (no story) ------------ #
     "m-inheritance-115": _INHERITANCE_FORMATION_REJECT_REASON,
     "m-inheritance-116": _INHERITANCE_FORMATION_REJECT_REASON,
@@ -2781,12 +2820,27 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-167": _INHERITANCE_FORMATION_REJECT_REASON,
     "m-inheritance-168": _INHERITANCE_FORMATION_REJECT_REASON,
     "m-inheritance-171": _INHERITANCE_FORMATION_REJECT_REASON,
+    "m-inheritance-172": _INHERITANCE_FAMILY_FORMATION_REJECT_REASON,
+    "m-inheritance-173": _INHERITANCE_FAMILY_FORMATION_REJECT_REASON,
+    "m-inheritance-174": _INHERITANCE_FAMILY_FORMATION_REJECT_REASON,
+    # -- m-inheritance: result narrow over an empty selection ----------------- #
+    "m-inheritance-178": _NARROW_EMPTY_EFFECTIVE_SET_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #
     "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
     "m-metamodel-002": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
     "m-metamodel-003": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
     "m-metamodel-004": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
     "m-metamodel-005": _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON,
+    "m-metamodel-006": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-007": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-008": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-009": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-010": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-011": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-012": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-013": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-014": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-015": _METAMODEL_FORMATION_REJECT_REASON,
     # -- m-navigate: relationship quantifier siblings -------------------------- #
     "m-navigate-001": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
     "m-navigate-005": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,

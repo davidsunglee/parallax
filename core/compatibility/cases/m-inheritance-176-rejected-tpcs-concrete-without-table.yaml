@@ -1,0 +1,22 @@
+# Negative (m-inheritance family invariants): a table-per-concrete-subtype concrete
+# subtype declares no table of its own.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-concrete-subtype
+          role: root
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Dog
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+        attributes:
+          - { name: barkVolume, type: int32, nullable: true }
+then:
+  rejectedRule: inheritance-tpcs-concrete-table-required

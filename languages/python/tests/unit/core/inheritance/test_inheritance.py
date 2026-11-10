@@ -431,6 +431,12 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     ),
     "m-inheritance-168-rejected-dormant-value-object-type-column": (MATERIALIZATION_KEY_COLLISION),
     "m-inheritance-171-rejected-tag-type-column": MATERIALIZATION_KEY_COLLISION,
+    "m-inheritance-172-rejected-primary-key-missing": PRIMARY_KEY_MISSING,
+    "m-inheritance-173-rejected-primary-key-multiple": PRIMARY_KEY_MULTIPLE,
+    "m-inheritance-174-rejected-member-shadowing": MEMBER_SHADOWING,
+    "m-inheritance-175-rejected-tph-root-without-table": TPH_ROOT_TABLE_REQUIRED,
+    "m-inheritance-176-rejected-tpcs-concrete-without-table": TPCS_CONCRETE_TABLE_REQUIRED,
+    "m-inheritance-177-rejected-tpcs-abstract-subtype-with-table": TPCS_ABSTRACT_TABLE_FORBIDDEN,
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 

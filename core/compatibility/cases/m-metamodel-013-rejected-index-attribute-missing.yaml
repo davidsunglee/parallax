@@ -1,0 +1,16 @@
+# Negative (m-metamodel): an Index component names no Attribute of its Entity.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Person
+      table: person
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: name, type: string, maxLength: 64 }
+      indices:
+        - { name: person_nickname, attributes: [nickname] }
+then:
+  rejectedRule: metamodel-index-attribute-missing

@@ -1,0 +1,16 @@
+# Negative (m-metamodel): two Attributes of one Entity share a name. Each keeps a
+# Column of its own, so the collision is in the member namespace alone.
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Person
+      table: person
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: name, type: string, maxLength: 64, column: given_name }
+        - { name: name, type: string, maxLength: 64, column: family_name }
+then:
+  rejectedRule: metamodel-local-member-collision

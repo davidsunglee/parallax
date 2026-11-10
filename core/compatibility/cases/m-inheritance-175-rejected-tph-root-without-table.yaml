@@ -1,0 +1,24 @@
+# Negative (m-inheritance family invariants): a table-per-hierarchy root declares
+# no shared table.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Animal
+        inheritance:
+          strategy: table-per-hierarchy
+          role: root
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: Dog
+        inheritance:
+          role: concrete-subtype
+          parent: Animal
+          tagValue: dog
+        attributes:
+          - { name: barkVolume, type: int32, nullable: true }
+then:
+  rejectedRule: inheritance-tph-root-table-required

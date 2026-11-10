@@ -1,0 +1,26 @@
+# Negative (m-relationship): an ordering term names a scalar collection of the
+# target Entity, which has no whole-collection ordering.
+model: models/identifier-types.yaml
+tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+        relationships:
+          - name: children
+            cardinality: one-to-many
+            join: {source: id, target: {entity: Child, attribute: parentId}}
+            orderBy:
+              - {attribute: nicknames}
+      - name: Child
+        table: child
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+          - {name: parentId, type: int64}
+          - {name: nicknames, type: string, multiplicity: many}
+then:
+  rejectedRule: relationship-order-attribute-invalid

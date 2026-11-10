@@ -1,0 +1,23 @@
+# Negative (m-relationship): a defining join's source names no Attribute of the
+# declaring Entity.
+model: models/identifier-types.yaml
+tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Parent
+        table: parent
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+        relationships:
+          - name: children
+            cardinality: one-to-many
+            join: {source: parentKey, target: {entity: Child, attribute: parentId}}
+      - name: Child
+        table: child
+        attributes:
+          - {name: id, type: int64, primaryKey: true}
+          - {name: parentId, type: int64}
+then:
+  rejectedRule: relationship-join-source-invalid
