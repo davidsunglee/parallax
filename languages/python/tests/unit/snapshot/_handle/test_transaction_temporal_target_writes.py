@@ -220,6 +220,33 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
     assert seen == [(1, 0, acquired)]
 
 
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        pytest.param([], id="no-coverage"),
+        pytest.param([_rectangle(_JUN, INFINITY_INSTANT)], id="a-gap-at-its-start"),
+        pytest.param([_rectangle(_JAN, _JUN, tx_start=_T1)], id="another-revision"),
+    ],
+)
+def test_an_optimistic_target_whose_start_moved_fails_before_any_write_and_never_retries(
+    coverage: list[MappingRow],
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=coverage)))
+    attempts = 0
+
+    def fn(tx: TxnContext) -> None:
+        nonlocal attempts
+        attempts += 1
+        _replace(tx)
+
+    with pytest.raises(WritePreconditionError) as failed:
+        _db(port).transact(fn)
+    assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _T0)
+    assert attempts == 1
+    assert _writes(port) == []
+    assert isinstance(port.calls[-1], RollbackCall)
+
+
 # --------------------------------------------------------------------------- #
 # Locking: the start is read under the shared lock at the call, or reused.     #
 # --------------------------------------------------------------------------- #
