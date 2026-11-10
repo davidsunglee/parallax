@@ -23,10 +23,13 @@ An older-line backport requires an explicit case-by-case decision.
 
 The initial public surface is the implemented binding: public signatures and
 exports, [error contracts](../spec/execution.md#transactions-and-failure-boundaries)
-and [temporal spelling](../spec/queries-and-results.md), with their
-[API snapshot](../tests/api/public_api.json) and executable examples. A future
-release must preserve that contract within a minor line. A changed public
-contract belongs in its binding owner and release notes with migration guidance.
+and [temporal spelling](../spec/queries-and-results.md), with executable
+examples. The [API snapshot](../tests/api/public_api.json) records the `__all__`
+of every public module in the production distributions: each module reached
+from a distribution root without a `_`-prefixed or `internal` name. Every such
+module declares `__all__`. A future release must preserve that contract within
+a minor line. A changed public contract belongs in its binding owner and release
+notes with migration guidance.
 
 Python and dependency support belong to package metadata; platform support
 belongs to the [wheel targets](../tools/wheel_targets.json). A retired target

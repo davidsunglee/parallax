@@ -1,15 +1,15 @@
 """Parity canary: every workspace distribution appears in every inventory that
 is meant to list all of them.
 
-Adding a distribution means spelling it into seven hand-maintained inventories
+Adding a distribution means spelling it into six hand-maintained inventories
 whose shapes have nothing in common — TOML requirement strings, TOML source
-roots, a JSON list of type-check roots, Python tuples of distribution names, a
-distribution-to-package-directory map, and a tuple of dotted root packages.
-Collapsing them into one generated source would fight ``check_dag_sync``'s
-ownership of its own generated block for no real gain; failing loudly when
-``packages/*`` gains a member an inventory does not know about buys the same
-protection. An omission is silent otherwise: a missing type-check root disables
-strict checking over a whole distribution without any gate going red.
+roots, a JSON list of type-check roots, Python tuples of distribution names, and
+a distribution-to-root-package map. Collapsing them into one generated source
+would fight ``check_dag_sync``'s ownership of its own generated block for no
+real gain; failing loudly when ``packages/*`` gains a member an inventory does
+not know about buys the same protection. An omission is silent otherwise: a
+missing type-check root disables strict checking over a whole distribution
+without any gate going red.
 
 The import-linter roots are not an inventory: ``check_dag_sync`` derives them
 from the enforcement scopes §7 declares. What is asserted of them is that the
@@ -22,12 +22,10 @@ Two inventories encode the production/development split rather than the full
 set, so membership is asserted as "production xor development" instead of
 "present in the production list".
 
-``tests/api/public_api.json`` is deliberately not asserted per
-distribution: it is keyed by public *module* surface, not by distribution. It
-carries the sub-scopes ``parallax.core.metamodel`` and
-``parallax.core.execution`` and omits ``parallax.conformance`` entirely, whose
-``__all__`` is empty. The strongest true statement about it is that every key
-sits under some distribution's root package, which is what is checked here.
+``tests/api/public_api.json`` is not a distribution inventory: it is keyed by
+public *module*, and ``tests/api/test_public_api.py`` discovers those modules
+from the production distributions' roots, so it inherits their coverage from
+the root map checked here.
 """
 
 from __future__ import annotations
@@ -44,16 +42,14 @@ import pytest
 import check_dag_sync as dag
 from tests._support.distributions import (
     ALL_PACKAGES,
+    DISTRIBUTION_ROOTS,
     PRODUCTION_PACKAGES,
-    TOP_PACKAGE_DIR,
-    TOP_PACKAGE_NAMES,
 )
 from tests._support.repo import PY_ROOT
 
 _PACKAGES_DIR = PY_ROOT / "packages"
 _WORKSPACE_PYPROJECT = PY_ROOT / "pyproject.toml"
 _PYRIGHT_CONFIG = PY_ROOT / "pyrightconfig.json"
-_PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
 
 _REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
@@ -73,9 +69,6 @@ def _root_package(distribution: str) -> str:
     )
     assert len(tops) == 1, f"{distribution} ships {tops}, expected one top package"
     return f"parallax.{tops[0]}"
-
-
-ROOT_PACKAGES = {distribution: _root_package(distribution) for distribution in DISTRIBUTIONS}
 
 
 def _toml(path: Path) -> Mapping[str, object]:
@@ -171,33 +164,15 @@ def test_the_test_suite_package_tuples_cover_every_distribution() -> None:
     )
 
 
-def test_every_distribution_has_a_wheel_top_package_directory() -> None:
-    packaged = {
-        distribution: root.replace(".", "/") for distribution, root in ROOT_PACKAGES.items()
-    }
-    assert packaged == TOP_PACKAGE_DIR, (
-        "_support.distributions.TOP_PACKAGE_DIR does not match packages/*"
+def test_every_distribution_has_its_root_package_recorded() -> None:
+    recorded = {distribution: _root_package(distribution) for distribution in DISTRIBUTIONS}
+    assert recorded == DISTRIBUTION_ROOTS, (
+        "_support.distributions.DISTRIBUTION_ROOTS does not match packages/*"
     )
 
 
 def test_every_root_package_is_an_import_linter_root() -> None:
-    assert set(dag.root_packages()) == set(ROOT_PACKAGES.values()), (
+    assert set(dag.root_packages()) == set(DISTRIBUTION_ROOTS.values()), (
         "the roots check_dag_sync.root_packages() derives from the declared scopes do not "
         "match packages/*"
     )
-
-
-def test_every_root_package_is_import_smoke_tested() -> None:
-    assert set(TOP_PACKAGE_NAMES) == set(ROOT_PACKAGES.values()), (
-        "_support.distributions.TOP_PACKAGE_NAMES does not match packages/*"
-    )
-
-
-def test_every_public_api_surface_sits_under_a_root_package() -> None:
-    roots = set(ROOT_PACKAGES.values())
-    snapshot = cast(
-        "Mapping[str, object]", json.loads(_PUBLIC_API_SNAPSHOT.read_text(encoding="utf-8"))
-    )
-    for surface in snapshot:
-        root = ".".join(surface.split(".")[:2])
-        assert root in roots, f"{surface} in public_api.json names no distribution"

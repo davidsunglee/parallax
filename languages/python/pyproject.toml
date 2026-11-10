@@ -165,7 +165,7 @@ known-first-party = ["parallax", "tests"]
 # ---------------------------------------------------------------------------
 # Vulture — dead-code scan. `main` is the packaging-metadata console-script
 # entry point (referenced by `[project.scripts]`, not by in-repo code); the
-# compensating public-surface check is the api_surface griffe snapshot.
+# compensating public-surface check is the Griffe public-API snapshot.
 # The four capitalized names are botocore's own parameter spelling for the RDS
 # presign, which `parallax.aws` both declares in a Protocol and passes by
 # keyword; vulture reads a keyword argument as a definition rather than a use,

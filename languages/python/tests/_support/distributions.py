@@ -26,26 +26,21 @@ PRODUCTION_PACKAGES: tuple[str, ...] = (
 )
 ALL_PACKAGES: tuple[str, ...] = (*PRODUCTION_PACKAGES, "parallax-conformance")
 
-# Each distribution's top regular package under the shared PEP 420 namespace.
-TOP_PACKAGE_DIR: dict[str, str] = {
-    "parallax-core": "parallax/core",
-    "parallax-descriptor": "parallax/descriptor",
-    "parallax-evolution": "parallax/evolution",
-    "parallax-snapshot": "parallax/snapshot",
-    "parallax-postgres": "parallax/postgres",
-    "parallax-aws": "parallax/aws",
-    "parallax-conformance": "parallax/conformance",
+# Each distribution's root package: its one top regular package under the shared
+# PEP 420 namespace.
+DISTRIBUTION_ROOTS: dict[str, str] = {
+    "parallax-core": "parallax.core",
+    "parallax-descriptor": "parallax.descriptor",
+    "parallax-evolution": "parallax.evolution",
+    "parallax-snapshot": "parallax.snapshot",
+    "parallax-postgres": "parallax.postgres",
+    "parallax-aws": "parallax.aws",
+    "parallax-conformance": "parallax.conformance",
 }
 
-TOP_PACKAGE_NAMES: tuple[str, ...] = (
-    "parallax.core",
-    "parallax.descriptor",
-    "parallax.evolution",
-    "parallax.snapshot",
-    "parallax.postgres",
-    "parallax.aws",
-    "parallax.conformance",
-)
+TOP_PACKAGE_DIR: dict[str, str] = {
+    distribution: root.replace(".", "/") for distribution, root in DISTRIBUTION_ROOTS.items()
+}
 
 
 def needs_an_absent_driver_build(module: str) -> bool:
