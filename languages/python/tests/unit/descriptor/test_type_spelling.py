@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.base import Numeric
+from parallax.core.internal.base import Numeric
 from parallax.descriptor._type_spelling import format_type_spelling, parse_type_spelling
 
 # Comfortably above CPython's default int/str conversion guard

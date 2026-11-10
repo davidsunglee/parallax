@@ -18,7 +18,7 @@ import pytest
 
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     AccessMode,
     Committed,
     ConnectionAcquisitionError,
@@ -26,9 +26,9 @@ from parallax.core.db_port import (
     IsolationLevel,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
-from parallax.core.unit_work import SubjectActor
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
+from parallax.core.internal.unit_work import SubjectActor
 from tests._support.db_port import ConnectsAsItself, ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, root
 

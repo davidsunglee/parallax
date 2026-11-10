@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import ast
 import builtins
+import json
 import re
-from importlib import import_module
+from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
 from parallax.conformance import case_format, guide_models
 from parallax.conformance.usage_guide import snippet_sources
-from tests._support.distributions import DISTRIBUTION_ROOTS, PRODUCTION_PACKAGES
 
 _GUIDE = case_format.find_repo_root() / "languages" / "python" / "docs" / "guide"
 _MARKER = re.compile(r"<!-- example: ([a-z0-9][a-z0-9-]*) -->")
@@ -19,16 +20,14 @@ _EXAMPLE_BLOCK = re.compile(r"<!-- example: .*?<!-- /example -->", re.DOTALL)
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 _SHOP_MODEL_NAMES: frozenset[str] = frozenset(guide_models.__all__) - {"SHOP_MODEL"}
 _NOTHING_ASSUMED: frozenset[str] = frozenset()
-_APPLICATION_MODULES: frozenset[str] = frozenset(
-    {DISTRIBUTION_ROOTS[package] for package in PRODUCTION_PACKAGES}
-    | {
-        "parallax.core.execution_lifecycle",
-        "parallax.core.introspection",
-        "parallax.evolution.operations",
-        "parallax.aws.postgres",
-    }
-)
-"""The distribution roots, the three vocabulary modules, and the one extra module."""
+_APPLICATION_EXPORTS: Mapping[str, frozenset[str]] = {
+    module: frozenset(names)
+    for module, names in json.loads(
+        (Path(__file__).parent / "public_api.json").read_text(encoding="utf-8")
+    ).items()
+    if ":" not in module
+}
+"""Each application module's exports, as the committed API snapshot records them."""
 
 
 def _bound_and_loaded(source: str) -> tuple[set[str], set[str]]:
@@ -108,9 +107,7 @@ def test_every_guide_import_names_an_exported_name_of_an_application_module() ->
                 isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "parallax"
             ):
                 module = node.module or ""
-                exported: set[str] = (
-                    set(import_module(module).__all__) if module in _APPLICATION_MODULES else set()
-                )
+                exported = _APPLICATION_EXPORTS.get(module, frozenset())
                 misplaced += [
                     f"{source_id}: from {module} import {alias.name}"
                     for alias in node.names

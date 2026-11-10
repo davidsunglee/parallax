@@ -37,10 +37,10 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import UsageError
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
-from parallax.core.unit_work import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     WritePreconditionError,
 )

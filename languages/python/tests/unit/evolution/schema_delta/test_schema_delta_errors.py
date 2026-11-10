@@ -20,7 +20,7 @@ from collections.abc import Sequence
 import pytest
 
 from parallax.core import UnsupportedError
-from parallax.core.dialect import (
+from parallax.core.internal.dialect import (
     POSTGRES,
     ColumnDdl,
     Dialect,
@@ -28,16 +28,20 @@ from parallax.core.dialect import (
     PhysicalIndexName,
     Unsupported,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel import Table
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.metamodel import Table
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve_metamodels
-from parallax.evolution.schema_delta import (
+from parallax.evolution.internal.model_evolution import (
+    ABSENT,
+    UnilateralEvolution,
+    evolve_metamodels,
+)
+from parallax.evolution.internal.schema_delta import (
     PhysicalLocation,
     UnsupportedSchemaEvolutionError,
     schema_delta,
 )
-from parallax.evolution.schema_delta._values import SCHEMA_EVOLUTION_UNSUPPORTED
+from parallax.evolution.internal.schema_delta._values import SCHEMA_EVOLUTION_UNSUPPORTED
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column

@@ -14,12 +14,12 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan.payload import AssignmentPayload
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan.payload import AssignmentPayload
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
     STALE_WRITE,
     SUPERSEDED,

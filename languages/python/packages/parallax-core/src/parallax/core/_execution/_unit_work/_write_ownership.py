@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Final, Literal, final
 
-from parallax.core import concurrency, temporal_read
 from parallax.core._execution._unit_work._errors import WRITE_VALUE_ALREADY_STORED
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
@@ -18,24 +17,25 @@ from parallax.core._execution._unit_work.write_items import (
     KeyedInsert,
     ReadAuthorizedWrite,
 )
-from parallax.core.base import INFINITY, TemporalBound, UsageError, retain_document_value
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.coverage import CoverageTransform
-from parallax.core.write_plan.keys import (
+from parallax.core.internal import concurrency, temporal_read
+from parallax.core.internal.base import INFINITY, TemporalBound, UsageError, retain_document_value
+from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.coverage import CoverageTransform
+from parallax.core.internal.write_plan.keys import (
     ObjectKey,
     ObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.managed_row import ManagedRow, full_width
-from parallax.core.write_plan.observe import PredecessorRow
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.managed_row import ManagedRow, full_width
+from parallax.core.internal.write_plan.observe import PredecessorRow
+from parallax.core.internal.write_plan.plan import (
     CurrentRowOutput,
     Derivation,
     Openings,
     TemporalRowCoordinates,
 )
-from parallax.core.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
+from parallax.core.internal.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
 
 __all__ = [
     "INSERTION_AUTHORITY_INVALID",

@@ -23,7 +23,6 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._unit_work.instructions import (
     PredicateSelection,
@@ -31,30 +30,31 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import JSON, FrozenMap, InternalError, retain_document_value
-from parallax.core.db_port import ArrayBind, StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import _managed as managed
-from parallax.core.document_codec import persisted_document_equal
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.metamodel import (
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import JSON, FrozenMap, InternalError, retain_document_value
+from parallax.core.internal.db_port import ArrayBind, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import _managed as managed
+from parallax.core.internal.document_codec import persisted_document_equal
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._layout import LayoutCatalog
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.sql_gen._write import InsertStatementBuilder
-from parallax.core.unit_work import KeyedWriteInstruction
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import PredecessorRow
-from parallax.core.write_plan.managed_row import ManagedRow, predecessor_state
-from parallax.core.write_plan.observe import (
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import InsertStatementBuilder
+from parallax.core.internal.unit_work import KeyedWriteInstruction
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import PredecessorRow
+from parallax.core.internal.write_plan.managed_row import ManagedRow, predecessor_state
+from parallax.core.internal.write_plan.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,

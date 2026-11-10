@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final, Literal, TypeGuard
 
-from parallax.core.base import ConflictError, InternalError
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import ConflictError, InternalError
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.write_plan.steps import (
     AnyCount,
     FailedPrecondition,
     KeyTarget,
@@ -50,7 +50,7 @@ type WriteEffectCode = Literal[
     "optimistic-lock-conflict",
     "write-precondition-failed",
 ]
-"""The :class:`~parallax.core.base.ConflictError` codes a write's effect is
+"""The :class:`~parallax.core.internal.base.ConflictError` codes a write's effect is
 refused by, of which only an Optimistic Lock Conflict is transient."""
 
 MISSING_TARGET: Final = "missing-target"
@@ -193,7 +193,7 @@ def allocated_keys(step: PlannedInsert, rows: Sequence[Sequence[object]]) -> tup
     The statement answers one row per entry, each holding exactly the
     allocated key: an integer, distinct from every other the statement
     answered. Anything else raises the ``write-result-invalid``
-    :class:`~parallax.core.base.InternalError` before any key is used.
+    :class:`~parallax.core.internal.base.InternalError` before any key is used.
     """
     expected = len(step.entries)
     if len(rows) != expected:

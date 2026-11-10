@@ -25,8 +25,9 @@ import pytest
 from griffe import Alias, Class, GriffeLoader, Module, Object
 
 from parallax import snapshot
-from parallax.core import ParallaxError, read_delivery, wire
-from parallax.core.base import JSON
+from parallax.core import ParallaxError
+from parallax.core.internal import read_delivery, wire
+from parallax.core.internal.base import JSON
 from parallax.snapshot import (
     ReadOnlyTxnContext,
     ScopedDatabase,
@@ -131,6 +132,14 @@ def test_public_api_matches_committed_snapshot() -> None:
     assert actual == expected, _snapshot_correction(actual, expected)
 
 
+def test_every_application_name_has_one_home() -> None:
+    homes: dict[str, list[str]] = {}
+    for module in _production_modules():
+        for name in _declared_exports(module):
+            homes.setdefault(name, []).append(module.path)
+    assert {name: paths for name, paths in homes.items() if len(paths) > 1} == {}
+
+
 def _load(root: Path, files: Mapping[str, str]) -> Module:
     for relative, text in files.items():
         path = root / relative
@@ -227,8 +236,8 @@ def test_drift_prints_the_entries_that_correct_the_snapshot() -> None:
     ("public_module", "defining_module", "name", "variants"),
     [
         (
-            "parallax.core.storage_layout",
-            "parallax.core.storage_layout._facet",
+            "parallax.core.internal.storage_layout",
+            "parallax.core.internal.storage_layout._facet",
             "ColumnContributor",
             (
                 "AttributeIdentity",
@@ -238,14 +247,14 @@ def test_drift_prints_the_entries_that_correct_the_snapshot() -> None:
             ),
         ),
         (
-            "parallax.core.storage_layout._facet",
-            "parallax.core.storage_layout._facet",
+            "parallax.core.internal.storage_layout._facet",
+            "parallax.core.internal.storage_layout._facet",
             "MemberPlacement",
             ("DirectColumn", "DocumentPath"),
         ),
         (
-            "parallax.core.inheritance",
-            "parallax.core.inheritance._table_groups",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.inheritance._table_groups",
             "TableGroupContributor",
             (
                 "AttributeTableContributor",
@@ -280,11 +289,11 @@ def test_no_read_handle_offers_row_delivery(handle: type) -> None:
 
 def test_row_envelopes_left_the_surface_and_what_graph_reads_publish_stayed() -> None:
     assert not {"RowsResult", "PublishedRow"} & set(
-        _declared_exports(_module("parallax.core.read_delivery"))
+        _declared_exports(_module("parallax.core.internal.read_delivery"))
     )
     assert not hasattr(read_delivery, "RowsResult")
     assert not hasattr(read_delivery, "PublishedRow")
-    assert "InvalidData" in _declared_exports(_module("parallax.core.read_delivery"))
+    assert "InvalidData" in _declared_exports(_module("parallax.core.internal.read_delivery"))
     assert {"WireValue", "edge_of", "pin_of"} <= set(
         _declared_exports(_module("parallax.snapshot"))
     )
@@ -314,7 +323,7 @@ def test_a_published_wire_node_is_a_wire_value() -> None:
 
 def test_unit_work_exports_the_codes_a_refused_write_instruction_carries() -> None:
     assert {"WRITE_INSTRUCTION_INVALID", "WriteRejectionCode"} <= set(
-        _declared_exports(_module("parallax.core.unit_work"))
+        _declared_exports(_module("parallax.core.internal.unit_work"))
     )
 
 
@@ -426,21 +435,21 @@ _ERROR_SURFACE: Final[dict[str, frozenset[str]]] = {
         }
     ),
     "parallax.descriptor": frozenset({"DescriptorError"}),
-    "parallax.evolution.schema_delta": frozenset({"UnsupportedSchemaEvolutionError"}),
+    "parallax.evolution": frozenset({"UnsupportedSchemaEvolutionError"}),
 }
 """Every exception class an application may catch, by the module that defines
 its import home."""
 
 _MODULE_PRIVATE_CARRIERS: Final = frozenset(
     {
-        "parallax.core.auto_retry._RetryCandidate",
-        "parallax.core.base._neutral.JsonCarrierFailure",
-        "parallax.core.document_codec._leaf.LeafEncodingError",
-        "parallax.core.document_codec._plan.AuthoringRefusal",
-        "parallax.core.document_codec._plan._Refused",
-        "parallax.core.entity._row_fill._InvalidOccurrence",
-        "parallax.core.wire._codec._JsonFailure",
-        "parallax.core.wire._json._HostSpellingChangesMeaning",
+        "parallax.core.internal.auto_retry._RetryCandidate",
+        "parallax.core.internal.base._neutral.JsonCarrierFailure",
+        "parallax.core.internal.document_codec._leaf.LeafEncodingError",
+        "parallax.core.internal.document_codec._plan.AuthoringRefusal",
+        "parallax.core.internal.document_codec._plan._Refused",
+        "parallax.core.internal.entity._row_fill._InvalidOccurrence",
+        "parallax.core.internal.wire._codec._JsonFailure",
+        "parallax.core.internal.wire._json._HostSpellingChangesMeaning",
         "parallax.postgres._connection.IncompatibleSessionError",
         "parallax.postgres._context._Condition",
         "parallax.postgres._context._FellBack",

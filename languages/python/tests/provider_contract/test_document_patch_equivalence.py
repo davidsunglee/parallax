@@ -25,15 +25,15 @@ import pytest
 
 from parallax.core import Attr, Document, DomainModel, TxTemporal, ValueObject, attr
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.base import SQL_NULL, StructuredDocument
-from parallax.core.db_error import DatabaseError
-from parallax.core.dialect import DocumentLeafAssignment
-from parallax.core.document_codec import apply_prepared_patches, persisted_document_equal
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import SQL_NULL, StructuredDocument
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.dialect import DocumentLeafAssignment
+from parallax.core.internal.document_codec import apply_prepared_patches, persisted_document_equal
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
+from parallax.core.internal.sql_gen._write import compile_write_step
+from parallax.core.internal.write_plan.payload import AssignmentPayload, PatchedDocument
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     STALE_WRITE,
     UNGATED,

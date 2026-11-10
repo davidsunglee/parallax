@@ -22,8 +22,8 @@ from typing import Final
 
 import pytest
 
-from parallax.core import concurrency, inheritance, temporal_read
-from parallax.core.metamodel import (
+from parallax.core.internal import concurrency, inheritance, temporal_read
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeMetadata,

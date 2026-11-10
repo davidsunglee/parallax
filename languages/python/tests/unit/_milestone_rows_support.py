@@ -16,21 +16,13 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Final, Literal
 
-from parallax.core import (
-    Attr,
-    Bitemporal,
-    Document,
-    DomainModel,
-    Entity,
-    ValueObject,
-    attr,
-    temporal_read,
-)
-from parallax.core.base import INFINITY
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import model_of
-from parallax.core.write_plan import PredecessorRows, PredecessorRowsBuilder
+from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, ValueObject, attr
+from parallax.core.internal import temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._layout import LayoutCatalog
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.write_plan import PredecessorRows, PredecessorRowsBuilder
 from tests.unit._positional_row_support import positional_row
 
 __all__ = [

@@ -33,14 +33,14 @@ from parallax.conformance.vo_models import (
 from parallax.core import Attr, attr
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import write_projection
-from parallax.core.base import INFINITY, DocumentValue, StructuredDocument, UsageError
-from parallax.core.db_port import MappingRow
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import _entity as entity_module
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery import InvalidData
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.managed_row import named_members
+from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument, UsageError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity import Entity as EntityBase
+from parallax.core.internal.entity import _entity as entity_module
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.write_plan.managed_row import named_members
 from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,

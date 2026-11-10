@@ -15,9 +15,9 @@ from typing import cast
 
 import pytest
 
-import parallax.core.wire as wire
-import parallax.core.wire._codec as wire_codec
-from parallax.core.base import (
+import parallax.core.internal.wire as wire
+import parallax.core.internal.wire._codec as wire_codec
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -40,7 +40,7 @@ from parallax.core.base import (
     matches_neutral_type,
     nearest_float_at_width,
 )
-from parallax.core.base._neutral import ManagedValueExclusion
+from parallax.core.internal.base._neutral import ManagedValueExclusion
 from tests._support.binary32 import rounded_once, rounding_witnesses, shortest_spelling
 from tests._support.errors import raises_code
 
@@ -1163,7 +1163,7 @@ _CONVERTER_SPELLINGS: tuple[str, ...] = (
 def test_a_wire_converter_decodes_and_owns_exactly_as_decoding_then_retaining(
     declared: NeutralType,
 ) -> None:
-    from parallax.core.base import retain_document_value
+    from parallax.core.internal.base import retain_document_value
 
     convert = wire_codec.wire_converter(declared)
     for spelling in _CONVERTER_SPELLINGS:

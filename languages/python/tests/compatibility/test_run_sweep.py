@@ -26,9 +26,9 @@ import pytest
 
 from parallax.conformance import adapter, case_format, concurrency_runner, engine, models
 from parallax.conformance.profile import Profile
-from parallax.core import storage_layout
-from parallax.core.db_error import Category, DatabaseError
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal import storage_layout
+from parallax.core.internal.db_error import Category, DatabaseError
+from parallax.core.internal.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.case_corpus import reachable_cases
 from tests._support.corpus import (

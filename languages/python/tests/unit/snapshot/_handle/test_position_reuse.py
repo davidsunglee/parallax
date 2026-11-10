@@ -29,16 +29,16 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import UnsupportedError
-from parallax.core.entity._model import model_of
-from parallax.core.execution import (
+from parallax.core.internal.base import UnsupportedError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.inheritance._facet import _InheritanceFacet
-from parallax.core.metamodel import EntityIdentity, TablePerConcreteSubtype
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.storage_layout._facet import _StorageLayoutFacet
+from parallax.core.internal.inheritance._facet import _InheritanceFacet
+from parallax.core.internal.metamodel import EntityIdentity, TablePerConcreteSubtype
+from parallax.core.internal.sql_gen import _compile as sql_compile
+from parallax.core.internal.storage_layout._facet import _StorageLayoutFacet
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 

@@ -24,9 +24,9 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import ExecutionLifecycleHandler, ExecutionLifecycleHandlerError, RootExecution
-from parallax.core.base import UsageError
-from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution_lifecycle import ExecutionEvent
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

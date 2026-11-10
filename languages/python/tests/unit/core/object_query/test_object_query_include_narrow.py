@@ -39,23 +39,23 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import TIMESTAMP, Numeric, UsageError
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._entity import build_object_query
-from parallax.core.entity._expressions import authored_include_path
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query import AsOf, AsOfRange, History, IncludeSegment
-from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.predicate import (
+from parallax.core.internal.base import TIMESTAMP, Numeric, UsageError
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._entity import build_object_query
+from parallax.core.internal.entity._expressions import authored_include_path
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.object_query import AsOf, AsOfRange, History, IncludeSegment
+from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.object_query._nodes import IncludePathNode
+from parallax.core.internal.predicate import (
     Comparison,
     FieldSubject,
     Narrow,
     Quantifier,
     TrueNode,
 )
-from parallax.core.wire import encode_wire
+from parallax.core.internal.wire import encode_wire
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support.errors import raises_code

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     ConnectionContext,
     ConnectionContextSource,
     DatabaseAdapter,
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from types import TracebackType
 
-    from parallax.core.db_port import (
+    from parallax.core.internal.db_port import (
         CleanupResult,
         DatabaseRuntime,
         PoolMetricsSource,
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         RoutePolicy,
         RouteSelection,
     )
-    from parallax.core.dialect import Dialect
+    from parallax.core.internal.dialect import Dialect
 
 __all__ = ["Decorate", "DecoratingAdapter"]
 

@@ -4,24 +4,24 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core import inheritance
-from parallax.core.base import typed_converter
-from parallax.core.document_codec._plan import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import typed_converter
+from parallax.core.internal.document_codec._plan import (
     BORROWED_DOCUMENTS,
     MAPPING_DOCUMENTS,
     AuthoringCatalog,
     AuthoringLane,
     AuthoringPlan,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
     Multiplicity,
     judge_assignment,
 )
-from parallax.core.wire._codec import wire_converter
-from parallax.core.write_plan.managed_row import RowSelection
+from parallax.core.internal.wire._codec import wire_converter
+from parallax.core.internal.write_plan.managed_row import RowSelection
 
 __all__ = ["TYPED_LANE", "WIRE_LANE", "EntityPreparation", "WritePreparation"]
 
@@ -68,7 +68,7 @@ class EntityPreparation:
         nothing.
 
         Raises the assignment judgement's
-        :class:`~parallax.core.base.UsageError`.
+        :class:`~parallax.core.internal.base.UsageError`.
         """
         if position != self.key:
             judge_assignment(

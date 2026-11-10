@@ -12,10 +12,6 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._routing import OperationRouting
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity._authored_resolver import typed_query_interpretation
-from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     DatabaseCallScope,
@@ -27,11 +23,15 @@ from parallax.core.execution_lifecycle._activity import (
     open_stream_root,
 )
 from parallax.core.execution_lifecycle._events import ResultRepresentation
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import ObjectQueryNode, QueryInput
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._delivery import deliver_find, deliver_history
-from parallax.core.read_delivery._page_reader import (
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import DatabaseConnection
+from parallax.core.internal.entity._authored_resolver import typed_query_interpretation
+from parallax.core.internal.entity._expressions import AuthoredQuery
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import ObjectQueryNode, QueryInput
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._delivery import deliver_find, deliver_history
+from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageRequest,
     PageOriginCollector,
@@ -39,11 +39,11 @@ from parallax.core.read_delivery._page_reader import (
     StreamPageRequest,
     StreamPageResult,
 )
-from parallax.core.read_delivery._paging import At, PagingPlan
-from parallax.core.read_delivery._publication import Publication
-from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.read_delivery._stream import StreamRead
-from parallax.core.temporal_read import scans_resolved_axis
+from parallax.core.internal.read_delivery._paging import At, PagingPlan
+from parallax.core.internal.read_delivery._publication import Publication
+from parallax.core.internal.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.read_delivery._stream import StreamRead
+from parallax.core.internal.temporal_read import scans_resolved_axis
 
 __all__ = [
     "BegunRead",

@@ -52,17 +52,17 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity._entity import (
+from parallax.core.internal.entity._entity import (
     CHANGE_RECORD_SLOT,
     ChangeRecord,
     attach_lifecycle_state,
     lifecycle_state,
 )
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity._instance_state import (
     is_published,
     named_state_value,
 )
-from parallax.core.entity._pydantic_storage import attach_instance_state
+from parallax.core.internal.entity._pydantic_storage import attach_instance_state
 from tests._support.typed_write_source import TypedWriteSource
 from tests.unit.core.entity._compact_support import (
     published,

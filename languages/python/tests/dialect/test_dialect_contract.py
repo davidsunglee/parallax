@@ -21,7 +21,7 @@ from importlib.resources import files
 
 import pytest
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -40,7 +40,7 @@ from parallax.core.base import (
     Numeric,
     StructuredDocument,
 )
-from parallax.core.dialect import (
+from parallax.core.internal.dialect import (
     POSTGRES,
     ColumnDdl,
     Dialect,
@@ -64,7 +64,9 @@ IDS = [d.name for d in DIALECTS]
 
 def test_packaged_reserved_words_match_normative_source() -> None:
     source = (REPO_ROOT / "core/schemas/dialect-reserved-words.json").read_bytes()
-    packaged = files("parallax.core.dialect").joinpath("dialect-reserved-words.json").read_bytes()
+    packaged = (
+        files("parallax.core.internal.dialect").joinpath("dialect-reserved-words.json").read_bytes()
+    )
     assert packaged == source, "Run: uv run python tools/sync_reserved_words.py"
 
 

@@ -2,7 +2,7 @@
 
 An Object Query and a Predicate expose no canonical inspection and no
 serialization: the one way to see what they carry canonically is the first-party
-export through :func:`~parallax.core.object_query.object_query_node`, which
+export through :func:`~parallax.core.internal.object_query.object_query_node`, which
 judges and spells the query under a serving model exactly as a read of it would.
 These helpers are that export plus the canonical serde; execution itself never
 consumes it.
@@ -16,15 +16,15 @@ from typing import Any
 from parallax.core._execution._publication import SelectedReadModel, read_projection
 from parallax.core._execution._read_pipeline import interpreted
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.entity import DomainModel
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.execution import prepare_model
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.object_query.serde import serialize
-from parallax.core.predicate import PredicateNode
-from parallax.core.predicate import serialize as serialize_predicate
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.execution import prepare_model
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.object_query.serde import serialize
+from parallax.core.internal.predicate import PredicateNode
+from parallax.core.internal.predicate import serialize as serialize_predicate
 
 __all__ = [
     "canonical_document",

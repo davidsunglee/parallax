@@ -15,7 +15,7 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, Float32, ValueObject, attr
-from parallax.core.db_port import StructuredDocument
+from parallax.core.internal.db_port import StructuredDocument
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests._support.root_ownership import own_root

@@ -32,10 +32,10 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import TablePerConcreteSubtype
-from parallax.core.read_delivery import InvalidData
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import TablePerConcreteSubtype
+from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, is_view_loaded
 from tests._support.root_ownership import own_root
 

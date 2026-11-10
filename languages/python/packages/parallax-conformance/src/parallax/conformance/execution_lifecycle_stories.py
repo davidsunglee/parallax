@@ -11,13 +11,13 @@ from parallax.core import (
     ExecutionLifecycleHandlerError,
     RootExecution,
 )
-from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     JoinedInvocation,
     TransactionAttemptStarted,
     TransactionInvocationStarted,
 )
+from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [

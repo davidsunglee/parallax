@@ -1,0 +1,891 @@
+from __future__ import annotations
+
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Final, Literal, NamedTuple, TypeGuard
+
+from parallax.core.internal import inheritance, relationship
+from parallax.core.internal.base import INFINITY, InternalError, ManagedValue
+from parallax.core.internal.inheritance import (
+    InheritanceEntityView,
+    InheritanceFacet,
+    InheritancePositionView,
+)
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    Cardinality,
+    CompiledEntity,
+    EntityIdentity,
+    Metamodel,
+    NullPlacement,
+    SortDirection,
+    TemporalDimension,
+    ValueObjectIdentity,
+    ValueObjectMetadata,
+)
+from parallax.core.internal.navigate import (
+    PropagatedRootSelections,
+    RootSelections,
+    TemporallyResolvedPredicate,
+    resolve_sourced_temporal_visibility,
+    resolve_temporal_visibility,
+)
+from parallax.core.internal.object_query._resolved import (
+    Paging,
+    ResolvedAsOfSelection,
+    ResolvedHistorySelection,
+    ResolvedIncludePath,
+    ResolvedIncludeSegment,
+    ResolvedLatestSelection,
+    ResolvedObjectQuery,
+    ResolvedOrderTerm,
+    ResolvedTemporalSelection,
+    resolved_order_term,
+)
+from parallax.core.internal.predicate import SubtypeSelection
+from parallax.core.internal.predicate._execution_values import (
+    NO_EXECUTION_VALUE_SOURCES,
+    ExecutionValueSources,
+)
+from parallax.core.internal.predicate._resolved import (
+    ResolvedPredicate,
+)
+from parallax.core.internal.predicate._resolved import (
+    conjunction as _conjunction,
+)
+from parallax.core.internal.predicate._resolved import deferred_membership as _deferred_membership
+from parallax.core.internal.predicate._resolved import disjunction as _disjunction
+from parallax.core.internal.predicate._resolved import managed_comparison as _managed_comparison
+from parallax.core.internal.relationship import RelationshipMetadata, is_back_reference
+from parallax.core.internal.temporal_read import TimeInterval
+
+from ._include_tree import (
+    IncludeTree,
+    PositionId,
+    PositionSeed,
+    RelationshipViewKey,
+    RenderToken,
+    build_include_tree,
+)
+
+__all__ = [
+    "BackReferenceFetchStep",
+    "FetchStep",
+    "IncludeTree",
+    "NarrowedViewKeys",
+    "ObjectQueryPlan",
+    "ParentRef",
+    "PlannedEntityQuery",
+    "PositionId",
+    "QueryFetchStep",
+    "ReadProjectionRequest",
+    "RelationshipViewKey",
+    "RenderToken",
+    "RootRef",
+    "narrowed_view_key",
+    "narrowed_view_keys",
+    "plan",
+    "plan_coverage_read",
+    "plan_root",
+    "plan_target_read",
+    "release_execution_value_sources",
+]
+
+
+DEEP_FETCH_PLANNING_FAILED: Final = "deep-fetch-planning-failed"
+"""A validated deep-fetch path cannot be planned against the model it was validated
+against."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReadProjectionRequest:
+    """Snapshot-owned demand that deep fetch resolves against a read's effective position."""
+
+    value_objects: Literal["none", "all"] | frozenset[str]
+    observe_structured_document: bool
+
+
+_NO_VALUE_OBJECTS: Final[frozenset[ValueObjectIdentity]] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedReadProjection:
+    """The exact resolved Value Object/document demand lowerable by SQL."""
+
+    value_objects: tuple[ValueObjectMetadata, ...]
+    observe_structured_document: bool
+    _selected: frozenset[ValueObjectIdentity] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_selected",
+            frozenset(member.identity for member in self.value_objects)
+            if self.value_objects
+            else _NO_VALUE_OBJECTS,
+        )
+
+    def includes_value_object(self, identity: ValueObjectIdentity) -> bool:
+        """Whether ``identity`` is exactly one of :attr:`value_objects`, matched
+        by structural identity rather than storage spelling."""
+        return identity in self._selected
+
+
+@dataclass(frozen=True, slots=True)
+class RootRef:
+    """A level's parent rows are the root query's own rows."""
+
+
+@dataclass(frozen=True, slots=True)
+class LevelRef:
+    """A level's parent rows are an earlier level's, named by its plan index."""
+
+    index: int
+
+
+ParentRef = RootRef | LevelRef
+
+
+@dataclass(frozen=True, slots=True)
+class CorrelationMember:
+    """One owner-side endpoint of a level's correlation.
+
+    A level correlates on an Attribute. ``identity`` is the modeled member
+    addressed at the parent position and ``column`` is its physical column.
+    """
+
+    identity: AttributeIdentity
+    column: str
+
+
+@dataclass(frozen=True, slots=True)
+class QueryCorrelationMember:
+    """A child-side correlation and the Attribute its child query keys on."""
+
+    identity: AttributeIdentity
+    column: str
+    member: AttributeMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedEntityQuery:
+    """One planned flat read accepted by the private SQL compiler.
+
+    ``position`` is the inheritance owner's view of the concrete types the read
+    can return: the target's own view, or the view its narrowing resolves to.
+    ``projection`` was resolved against that same view.
+    ``execution_value_sources`` is present only while a template is prepared
+    from this read: where its predicate's occurrences obtain execution values.
+    """
+
+    target: EntityIdentity
+    entity: CompiledEntity
+    position: InheritancePositionView = field(compare=False, hash=False)
+    predicate: TemporallyResolvedPredicate
+    projection: ResolvedReadProjection
+    narrow_to: tuple[EntityIdentity, ...] | None = None
+    order_by: tuple[ResolvedOrderTerm, ...] = ()
+    limit: int | None = None
+    paging: Paging | None = None
+    execution_value_sources: ExecutionValueSources | None = field(
+        default=None, compare=False, repr=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class QueryFetchStep:
+    """Execution instruction for one include position that issues a child query.
+
+    ``query`` is the level's complete child read, its gathered key set deferred.
+    """
+
+    position: PositionId
+    parent: ParentRef
+    owner: CorrelationMember
+    related: QueryCorrelationMember
+    query: PlannedEntityQuery
+
+
+@dataclass(frozen=True, slots=True)
+class BackReferenceFetchStep:
+    """Execution instruction resolving an already-fetched inverse-edge target."""
+
+    position: PositionId
+    parent: ParentRef
+    owner: CorrelationMember
+    family: EntityIdentity
+
+
+type FetchStep = QueryFetchStep | BackReferenceFetchStep
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectQueryPlan:
+    """A root query, one logical include tree, and execution-only fetch steps."""
+
+    root: PlannedEntityQuery
+    includes: IncludeTree
+    fetch_steps: tuple[FetchStep, ...]
+
+
+def plan(
+    query: ResolvedObjectQuery,
+    model: Metamodel,
+    *,
+    projection: ReadProjectionRequest,
+    defer_execution_values: bool = False,
+) -> ObjectQueryPlan:
+    """Plan validated Includes and resolve the caller's projection request;
+    a plan that will ``defer_execution_values`` to a template carries their
+    sources until :func:`release_execution_value_sources`."""
+    entity = query.root
+    families = inheritance.inheritance_facet_of(model)
+    root = plan_root(
+        query, model, projection=projection, defer_execution_values=defer_execution_values
+    )
+    builder = _PlanBuilder(
+        model=model,
+        families=families,
+        root_selections=query.temporal,
+        defer_execution_values=defer_execution_values,
+    )
+    builder.seed_root(entity)
+    for path in query.includes:
+        builder.add_path(path)
+    return ObjectQueryPlan(
+        root=root,
+        includes=build_include_tree(
+            queried=entity.identity,
+            root=builder.root_admission(root.narrow_to),
+            positions=builder.positions,
+        ),
+        fetch_steps=tuple(builder.steps),
+    )
+
+
+def plan_root(
+    query: ResolvedObjectQuery,
+    model: Metamodel,
+    *,
+    projection: ReadProjectionRequest,
+    defer_execution_values: bool = False,
+) -> PlannedEntityQuery:
+    """The root read :func:`plan` plans for ``query``, without planning its
+    Includes."""
+    entity = query.root
+    narrow_to = (
+        None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
+    )
+    position = _effective_position(inheritance.inheritance_facet_of(model), entity, narrow_to)
+    resolution = RootSelections(query.temporal)
+    sources: ExecutionValueSources | None = None
+    if defer_execution_values:
+        predicate, sources = resolve_sourced_temporal_visibility(
+            query.predicate,
+            ExecutionValueSources.authored(query.predicate),
+            target=entity,
+            model=model,
+            resolution=resolution,
+        )
+    else:
+        predicate = resolve_temporal_visibility(
+            query.predicate, target=entity, model=model, resolution=resolution
+        )
+    return PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        position=position,
+        predicate=predicate,
+        narrow_to=narrow_to,
+        order_by=query.order_by,
+        projection=_resolve_projection(position, projection),
+        limit=query.limit,
+        paging=query.paging,
+        execution_value_sources=sources,
+    )
+
+
+def release_execution_value_sources(planned: ObjectQueryPlan) -> ObjectQueryPlan:
+    """``planned`` without the execution-value sources its template
+    preparation consumed."""
+    steps = planned.fetch_steps
+    if any(_sourced(step) for step in steps):
+        steps = tuple(
+            replace(step, query=_released(step.query)) if _sourced(step) else step for step in steps
+        )
+    elif planned.root.execution_value_sources is None:
+        return planned
+    return ObjectQueryPlan(_released(planned.root), planned.includes, steps)
+
+
+def _sourced(step: FetchStep) -> TypeGuard[QueryFetchStep]:
+    return isinstance(step, QueryFetchStep) and step.query.execution_value_sources is not None
+
+
+def _released(query: PlannedEntityQuery) -> PlannedEntityQuery:
+    return replace(query, execution_value_sources=None)
+
+
+def plan_coverage_read(
+    entity: CompiledEntity,
+    *,
+    model: Metamodel,
+    key: str,
+    terms: Sequence[tuple[ManagedValue, tuple[TimeInterval, ...]]],
+) -> PlannedEntityQuery:
+    """The one flat read of the current coverage execution-bound ranges
+    transform: for each object ``terms`` names by its ``key`` value, its rows
+    overlapping any of the Valid-Time windows named beside it, each window
+    bounded by its endpoints as they are, with no upper term where it runs to
+    the open bound, and several windows read as alternatives. A
+    Transaction-Time-Only object has no Valid Time to bound, so its read
+    names one object and selects its current row. One object's read keys the
+    conjunction directly; several objects' reads are alternatives of their own.
+
+    Every row it selects is current on Transaction Time and is projected whole,
+    every document included, because the range carries each row's unassigned
+    members forward. A row overlapping a window is selected whole, however
+    little of it the window reaches.
+    """
+    assert terms  # a coverage read names at least one object
+    families = inheritance.inheritance_facet_of(model)
+    root = inheritance.root_metadata(families, model, entity.identity)
+    view = _entity_view(families, entity.identity)
+    key_member = _declared_attribute(view, key)
+    selections: list[ResolvedTemporalSelection] = []
+    valid: tuple[AttributeMetadata, AttributeMetadata] | None = None
+    for axis in root.declared_as_of_axes:
+        if axis.dimension is TemporalDimension.TRANSACTION_TIME:
+            selections.append(ResolvedLatestSelection(axis))
+            continue
+        selections.append(ResolvedHistorySelection(axis))
+        valid = (
+            _declared_attribute(view, axis.start_attribute.name),
+            _declared_attribute(view, axis.end_attribute.name),
+        )
+
+    def overlapping(intervals: tuple[TimeInterval, ...]) -> ResolvedPredicate:
+        assert valid is not None and intervals  # a Valid-Time axis bounds every range over it
+        start, end = valid
+        return _disjunction(
+            *(_overlapping(interval, start=start, end=end) for interval in intervals)
+        )
+
+    def keyed(key_value: ManagedValue) -> ResolvedPredicate:
+        return _managed_comparison(op="eq", member=key_member, value=key_value)
+
+    if len(terms) == 1:
+        ((key_value, intervals),) = terms
+        named = (
+            keyed(key_value)
+            if valid is None
+            else _conjunction(keyed(key_value), overlapping(intervals))
+        )
+    else:
+        named = _disjunction(
+            *(
+                _conjunction(keyed(key_value), overlapping(intervals))
+                for key_value, intervals in terms
+            )
+        )
+    return PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        position=view,
+        predicate=resolve_temporal_visibility(
+            named, target=entity, model=model, resolution=RootSelections(tuple(selections))
+        ),
+        projection=_resolve_projection(view, ReadProjectionRequest("all", True)),
+    )
+
+
+def _overlapping(
+    window: TimeInterval, *, start: AttributeMetadata, end: AttributeMetadata
+) -> ResolvedPredicate:
+    """The rows whose Valid Time overlaps ``window``: ending after its start
+    and, where it is bounded, starting before its end."""
+    after = _managed_comparison(op="greaterThan", member=end, value=window.start)
+    until = window.end
+    if until is INFINITY:
+        return after
+    return _conjunction(after, _managed_comparison(op="lessThan", member=start, value=until))
+
+
+def plan_target_read(
+    entity: CompiledEntity,
+    *,
+    model: Metamodel,
+    key: str,
+    key_value: ManagedValue,
+    valid_from: ManagedValue | None = None,
+    retain_predecessor: bool = False,
+) -> PlannedEntityQuery:
+    """The one flat point read of the stored row a target write starts
+    from: the object ``key`` names — on a temporal object its current row, at
+    Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
+    since what is read is the row's presence and revision, or, where the row is
+    retained as the write's predecessor, projected whole as a coverage read
+    projects it."""
+    families = inheritance.inheritance_facet_of(model)
+    root = inheritance.root_metadata(families, model, entity.identity)
+    view = _entity_view(families, entity.identity)
+    keyed = _managed_comparison(op="eq", member=_declared_attribute(view, key), value=key_value)
+    selections: list[ResolvedTemporalSelection] = []
+    for axis in root.declared_as_of_axes:
+        if axis.dimension is TemporalDimension.TRANSACTION_TIME:
+            selections.append(ResolvedLatestSelection(axis))
+            continue
+        assert valid_from is not None  # a Bitemporal target states its start
+        selections.append(ResolvedAsOfSelection(axis, valid_from))
+    return PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        position=view,
+        predicate=resolve_temporal_visibility(
+            keyed, target=entity, model=model, resolution=RootSelections(tuple(selections))
+        ),
+        projection=_resolve_projection(
+            view,
+            ReadProjectionRequest("all", True)
+            if retain_predecessor
+            else ReadProjectionRequest("none", False),
+        ),
+    )
+
+
+def _declared_attribute(view: InheritanceEntityView, name: str) -> AttributeMetadata:
+    attribute = view.applicable_attribute(name)
+    if attribute is None:  # pragma: no cover - the accepted family declares its key and axes
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED, f"{view.root.name}: {name!r} is no applicable attribute"
+        )
+    return attribute
+
+
+_ROOT_ID = -1
+
+
+def _new_steps() -> list[FetchStep]:
+    return []
+
+
+def _new_positions() -> list[PositionSeed]:
+    return []
+
+
+class _TrieKey(NamedTuple):
+    """One level's dedup identity, with each narrow position's own rule named.
+
+    ``parent`` is the trie node this level hangs from (``_ROOT_ID`` at a path's
+    first segment). ``root_source`` is the path's resolved root source set, carried
+    at that first segment alone and ``None`` deeper, where ``parent`` already
+    separates branches. ``narrowed`` and ``position`` are the SEGMENT's own rule and
+    are deliberately the opposite of the root's: the authored flag joins the key
+    because a narrowed hop owns a distinct view key even when it resolves to the
+    target's whole set, while the root carries no flag at all because a guard owns
+    no view and a guard admitting every root object simply IS the broad path.
+    """
+
+    parent: int
+    root_source: tuple[EntityIdentity, ...] | None
+    rel: str
+    narrowed: bool
+    position: tuple[EntityIdentity, ...]
+
+
+def _new_children() -> dict[_TrieKey, int]:
+    return {}
+
+
+def _new_arrivals() -> dict[int, RelationshipMetadata]:
+    return {}
+
+
+def _new_owners() -> dict[int, CompiledEntity]:
+    return {}
+
+
+@dataclass(slots=True)
+class _PlanBuilder:
+    model: Metamodel
+    families: InheritanceFacet
+    # Every level's visibility propagates from the original root's selections.
+    root_selections: tuple[ResolvedTemporalSelection, ...]
+    defer_execution_values: bool = False
+    steps: list[FetchStep] = field(default_factory=_new_steps)
+    positions: list[PositionSeed] = field(default_factory=_new_positions)
+    _children: dict[_TrieKey, int] = field(default_factory=_new_children)
+    # The relationship direction each trie node was REACHED by, absent for the root:
+    # a segment is a back-reference only against its parent's own arrival edge.
+    _arrivals: dict[int, RelationshipMetadata] = field(default_factory=_new_arrivals)
+    # Each trie node's own Entity: the position a segment beneath it writes its
+    # ``Class.relationship`` reference against.
+    _owners: dict[int, CompiledEntity] = field(default_factory=_new_owners)
+    # The queried position's own effective concrete set, against which a path's
+    # resolved root source set is measured for properness.
+    _root_position: tuple[EntityIdentity, ...] = ()
+
+    def seed_root(self, root_entity: CompiledEntity) -> None:
+        self._owners[_ROOT_ID] = root_entity
+        self._root_position = _resolve_root_source(self.model, self.families, root_entity)
+
+    def root_admission(
+        self, narrowed: tuple[EntityIdentity, ...] | None
+    ) -> tuple[EntityIdentity, ...]:
+        return self._root_position if narrowed is None else narrowed
+
+    def add_path(self, path: ResolvedIncludePath) -> None:
+        source = path.source_position
+        parent_id = _ROOT_ID
+        for segment in path.segments:
+            parent_id = self._add_segment(parent_id, segment, source)
+
+    def _add_segment(
+        self,
+        parent_id: int,
+        segment: ResolvedIncludeSegment,
+        root_source: tuple[EntityIdentity, ...],
+    ) -> int:
+        owner = self._owners[parent_id]
+        direction = relationship.relationship_facet_of(self.model).relationship(
+            segment.relationship
+        )
+        if direction is None:
+            raise InternalError(
+                DEEP_FETCH_PLANNING_FAILED,
+                f"resolved relationship {segment.relationship!r} is absent",
+            )
+        related_entity = segment.target
+        position = segment.position
+        narrowed = segment.authored_narrow
+        source = root_source if parent_id == _ROOT_ID else None
+        key = _TrieKey(
+            parent=parent_id,
+            root_source=source,
+            rel=f"{direction.identity.source_entity.canonical}.{direction.identity.name}",
+            narrowed=narrowed,
+            position=position,
+        )
+        existing = self._children.get(key)
+        if existing is not None:
+            return existing
+
+        to_many = direction.cardinality is Cardinality.ONE_TO_MANY
+        back_reference = is_back_reference(direction, self._arrivals.get(parent_id))
+
+        rel_local = direction.identity.name
+        attach_key = _attach_key(rel_local, narrowed, position, self.families)
+        view = RelationshipViewKey(
+            direction.identity, None if attach_key == rel_local else attach_key
+        )
+        owner = CorrelationMember(
+            identity=direction.join.source,
+            column=_attribute_column(self.families, direction.join.source),
+        )
+        parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
+        # Only a PROPER guard restricts anything; one admitting the whole queried
+        # position has already collapsed onto the broad path in the key above.
+        source_position = (
+            (self._root_position if source is None else source)
+            if parent_id == _ROOT_ID
+            else self.positions[parent_id].target
+        )
+        position_id = len(self.steps) + 1
+        parent_position = 0 if parent_id == _ROOT_ID else parent_id + 1
+
+        if back_reference:
+            target_view = _entity_view(self.families, related_entity.identity)
+            step: FetchStep = BackReferenceFetchStep(
+                position=position_id,
+                parent=parent_ref,
+                owner=owner,
+                family=target_view.root,
+            )
+        else:
+            child_target = (
+                position[0] if narrowed and len(position) == 1 else direction.join.target.entity
+            )
+            child = _entity(self.model, child_target)
+            related = QueryCorrelationMember(
+                identity=direction.join.target,
+                column=_attribute_column(self.families, direction.join.target),
+                member=_attribute_metadata(self.families, direction.join.target),
+            )
+            child_narrow = position if len(position) > 1 and narrowed else None
+            child_position = _effective_position(self.families, child, child_narrow)
+            predicate, sources = self._child_predicate(child, related.member)
+            step = QueryFetchStep(
+                position=position_id,
+                parent=parent_ref,
+                owner=owner,
+                related=related,
+                query=PlannedEntityQuery(
+                    target=child.identity,
+                    entity=child,
+                    position=child_position,
+                    predicate=predicate,
+                    narrow_to=child_narrow,
+                    order_by=_resolved_order_terms(direction, child, self.families),
+                    projection=_resolve_projection(
+                        child_position, ReadProjectionRequest("all", True)
+                    ),
+                    execution_value_sources=sources,
+                ),
+            )
+
+        index = len(self.steps)
+        self.steps.append(step)
+        self.positions.append(
+            PositionSeed(
+                parent=parent_position,
+                view=view,
+                source=source_position,
+                target=position,
+                to_many=to_many,
+            )
+        )
+        self._children[key] = index
+        self._arrivals[index] = direction
+        self._owners[index] = related_entity
+        return index
+
+    def _child_predicate(
+        self, child: CompiledEntity, member: AttributeMetadata
+    ) -> tuple[TemporallyResolvedPredicate, ExecutionValueSources | None]:
+        """A child read of the gathered keys of ``member``, restricted to the
+        selections the root's propagate to ``child``; a deferring plan sources
+        each propagated coordinate from the root selection it came from."""
+        keyed = _deferred_membership(member=member)
+        resolution = PropagatedRootSelections(self.root_selections)
+        if not self.defer_execution_values:
+            return (
+                resolve_temporal_visibility(
+                    keyed, target=child, model=self.model, resolution=resolution
+                ),
+                None,
+            )
+        return resolve_sourced_temporal_visibility(
+            keyed,
+            NO_EXECUTION_VALUE_SOURCES,
+            target=child,
+            model=self.model,
+            resolution=resolution,
+        )
+
+
+def _effective_position(
+    families: InheritanceFacet,
+    entity: CompiledEntity,
+    narrow_to: tuple[EntityIdentity, ...] | None,
+) -> InheritancePositionView:
+    """The concrete types a read of ``entity`` narrowed to ``narrow_to`` can return."""
+    if narrow_to is None:
+        return _entity_view(families, entity.identity)
+    position = families.position(narrow_to)
+    if position is None:  # pragma: no cover - validation keeps a narrowing inside one family
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED,
+            f"narrow to {[identity.canonical for identity in narrow_to]} spans more than one "
+            "inheritance family",
+        )
+    return position
+
+
+def _resolve_projection(
+    position: InheritancePositionView, request: ReadProjectionRequest
+) -> ResolvedReadProjection:
+    available = tuple(position.superset_value_objects)
+    if request.value_objects == "all":
+        selected = available
+    elif request.value_objects == "none":
+        selected = ()
+    else:
+        selected = tuple(
+            occurrence
+            for occurrence in available
+            if occurrence.identity.path[-1] in request.value_objects
+        )
+    return ResolvedReadProjection(selected, request.observe_structured_document)
+
+
+def _resolved_order_terms(
+    direction: RelationshipMetadata,
+    child: CompiledEntity,
+    families: InheritanceFacet,
+) -> tuple[ResolvedOrderTerm, ...]:
+    view = _entity_view(families, child.identity)
+    terms: list[ResolvedOrderTerm] = []
+    for order in direction.order_by:
+        member = view.applicable_attribute(order.attribute.name)
+        if member is None:
+            raise InternalError(
+                DEEP_FETCH_PLANNING_FAILED,
+                f"resolved relationship order member {order.attribute} is absent",
+            )
+        terms.append(
+            resolved_order_term(
+                member,
+                direction=_SORT_DIRECTIONS[order.direction],
+                nulls=_NULL_PLACEMENTS[order.nulls],
+            )
+        )
+    return tuple(terms)
+
+
+def _entity(model: Metamodel, identity: EntityIdentity) -> CompiledEntity:
+    entity = model.entity(identity)
+    if entity is None:  # pragma: no cover - a resolved reference names a declared Entity
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED, f"{identity.canonical}: the model declares no such entity"
+        )
+    return entity
+
+
+def _entity_view(facet: InheritanceFacet, identity: EntityIdentity) -> InheritanceEntityView:
+    view = facet.entity(identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED, f"{identity.canonical}: the model declares no such entity"
+        )
+    return view
+
+
+def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> str:
+    """The PHYSICAL column ``attribute`` names on the position it is addressed at.
+
+    A join reaches an Attribute through a position, which may be an inheritance
+    participant that inherits the declaration, so the lookup runs over that
+    position's own ancestry chain — the members applicable there — rather than
+    over the family-wide projection superset. Disjoint sibling branches may reuse
+    a member name (`m-inheritance` "Members do not shadow across ancestry"), so
+    the superset can hold two same-named Attributes over different Columns and
+    only the chain says which one the join addresses.
+    """
+    declared = _entity_view(facet, attribute.entity).applicable_attribute(attribute.name)
+    if declared is None:  # pragma: no cover - guards an unvalidated relationship
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED,
+            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute",
+        )
+    return declared.storage.name
+
+
+def _attribute_metadata(facet: InheritanceFacet, attribute: AttributeIdentity) -> AttributeMetadata:
+    declared = _entity_view(facet, attribute.entity).applicable_attribute(attribute.name)
+    if declared is None:  # pragma: no cover - accepted joins name applicable attributes
+        raise InternalError(
+            DEEP_FETCH_PLANNING_FAILED,
+            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute",
+        )
+    return declared
+
+
+def _resolve_root_source(
+    model: Metamodel,
+    facet: InheritanceFacet,
+    root: CompiledEntity,
+) -> tuple[EntityIdentity, ...]:
+    """The concrete source set ONE path starts from (m-read-planning's root hop identity).
+
+    Absent a root guard the path starts from every queried object, so the source set
+    is the queried position's own effective concrete set; a guard resolves its
+    shared Subtype Selection inside that position.
+
+    The result is the position's canonical effective set either way, so two guards
+    resolving to the same concretes yield the SAME tuple — which is what makes a
+    full-set guard indistinguishable from an unguarded path.
+    """
+    if root.inheritance is None:
+        return (root.identity,)
+    return tuple(_entity_view(facet, root.identity).concrete_subtypes)
+
+
+def _attach_key(
+    rel_local: str,
+    narrowed: bool,
+    position: tuple[EntityIdentity, ...],
+    facet: InheritanceFacet,
+) -> str:
+    """The graph attach key (m-read-planning "Polymorphic and narrowed deep fetch"):
+    the ordinary relationship name for a broad hop, else the derived
+    ``<rel>[<Concrete>,<Concrete>]`` view key — keyed on whether a narrow was
+    AUTHORED, independent of the resolved position's own cardinality (a
+    single-concrete narrow still derives a bracketed view key)."""
+    if not narrowed:
+        return rel_local
+    return narrowed_view_key(
+        rel_local, [inheritance.family_variant_name(facet, identity) for identity in position]
+    )
+
+
+def narrowed_view_key(relationship: str, variants: Sequence[str]) -> str:
+    """The derived view key of ``relationship`` narrowed to ``variants``: a
+    position's family variant spellings, in that position's own order."""
+    return f"{relationship}[{','.join(variants)}]"
+
+
+class NarrowedViewKeys:
+    """The narrowed view keys of one model, for a caller holding a Subtype
+    Selection rather than a plan.
+
+    Holds strings alone, so whatever retains it pins no model.
+    """
+
+    __slots__ = ("_effective", "_variants")
+
+    def __init__(
+        self, effective: Mapping[str, tuple[str, ...]], variants: Mapping[str, str]
+    ) -> None:
+        self._effective = effective
+        self._variants = variants
+
+    def for_selection(self, relationship: str, narrow_to: SubtypeSelection) -> str | None:
+        """The key the planner derives for ``relationship`` narrowed to
+        ``narrow_to``, or ``None`` when an alternative names no Entity of the
+        model."""
+        selected: set[str] = set()
+        for spelling in narrow_to:
+            concretes = self._effective.get(spelling)
+            if concretes is None:
+                return None
+            selected.update(concretes)
+        return narrowed_view_key(
+            relationship,
+            [variant for concrete, variant in self._variants.items() if concrete in selected],
+        )
+
+
+def narrowed_view_keys(model: Metamodel) -> NarrowedViewKeys:
+    """``model``'s narrowed view keys, its variants in ``model.entities`` order as
+    a resolved position's are.
+
+    An alternative resolves as an Entity reference does: by its canonical
+    spelling, or by a local name exactly one Entity carries.
+    """
+    families = inheritance.inheritance_facet_of(model)
+    local_names = Counter(entity.identity.name for entity in model.entities)
+    effective: dict[str, tuple[str, ...]] = {}
+    variants: dict[str, str] = {}
+    for entity in model.entities:
+        identity = entity.identity
+        concretes = tuple(
+            concrete.canonical for concrete in _entity_view(families, identity).concrete_subtypes
+        )
+        effective[identity.canonical] = concretes
+        if local_names[identity.name] == 1:
+            effective[identity.name] = concretes
+        variants[identity.canonical] = inheritance.family_variant_name(families, identity)
+    return NarrowedViewKeys(effective, variants)
+
+
+_SORT_DIRECTIONS: Final[Mapping[SortDirection, Literal["asc", "desc"]]] = {
+    SortDirection.ASCENDING: "asc",
+    SortDirection.DESCENDING: "desc",
+}
+
+_NULL_PLACEMENTS: Final[Mapping[NullPlacement, Literal["first", "last"]]] = {
+    NullPlacement.NULLS_FIRST: "first",
+    NullPlacement.NULLS_LAST: "last",
+}

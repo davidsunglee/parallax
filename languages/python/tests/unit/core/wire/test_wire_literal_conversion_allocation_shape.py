@@ -10,15 +10,15 @@ from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Final
 
-from parallax.core import inheritance, predicate, storage_layout
-from parallax.core.base import FLOAT64, STRING, Numeric, UsageError
-from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen._context import (
+from parallax.core.internal import inheritance, predicate, storage_layout
+from parallax.core.internal.base import FLOAT64, STRING, Numeric, UsageError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.sql_gen._context import (
     LoweredStatement,
     StatementBuilder,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.wire import decode_canonical_wire, loads
+from parallax.core.internal.wire import decode_canonical_wire, loads
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target

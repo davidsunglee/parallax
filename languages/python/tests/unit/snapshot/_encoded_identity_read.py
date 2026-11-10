@@ -14,16 +14,16 @@ from uuid import UUID
 
 from parallax.conformance.vo_models import Address
 from parallax.core import Attr, DomainModel, Entity, attr
-from parallax.core import predicate as oa
-from parallax.core.base import NeutralType, Uuid
-from parallax.core.db_port import Row
-from parallax.core.dialect import POSTGRES, Dialect, RenderedScalarCell, ScalarResult
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import entity_by_name
-from parallax.core.read_delivery._page import ROOT_LEVEL, Page, PageBuilder, ViewSchema
-from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
-from parallax.core.temporal_read import Pin
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import NeutralType, Uuid
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.dialect import POSTGRES, Dialect, RenderedScalarCell, ScalarResult
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import entity_by_name
+from parallax.core.internal.read_delivery._page import ROOT_LEVEL, Page, PageBuilder, ViewSchema
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.internal.temporal_read import Pin
 from tests._support.sql import compile_read
 
 

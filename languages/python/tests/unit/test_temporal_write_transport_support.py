@@ -7,9 +7,9 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.base import INFINITY, INT64
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.base import INFINITY, INT64
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support import temporal_write_transport as transport
 from tests._support.temporal_write_transport import (
     AMENDED_AT,

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Final, Literal
 
 import psycopg_pool
 
-from parallax.core.base import INFINITY
-from parallax.core.db_port import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_port import (
     CredentialSource,
     DatabaseStartupError,
     DriverManaged,
@@ -273,7 +273,7 @@ def _build_pool(
     Where a credential source is configured, those keywords become a CALLABLE
     the pool resolves on every connection attempt, which is what makes the
     secret late rather than frozen into configuration. Under
-    :data:`~parallax.core.db_port.DRIVER_MANAGED` the static dictionary is
+    :data:`~parallax.core.internal.db_port.DRIVER_MANAGED` the static dictionary is
     passed exactly as it would be otherwise and carries no ``password`` at all,
     leaving authentication to the driver and the server.
 

@@ -6,7 +6,7 @@ from typing import cast
 
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
-from parallax.core.base import BOOLEAN, FLOAT32, FLOAT64, INT64, STRING, TIMESTAMP
+from parallax.core.internal.base import BOOLEAN, FLOAT32, FLOAT64, INT64, STRING, TIMESTAMP
 
 
 def test_a_case_literal_encodes_only_a_managed_value_without_a_json_scalar_carrier() -> None:

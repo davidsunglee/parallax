@@ -23,11 +23,15 @@ from pydantic import TypeAdapter
 
 from parallax.conformance import read_models as rm
 from parallax.core import Attr, Entity, InternalError, UsageError, ValueObject, attr
-from parallax.core.entity import DomainModel
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
-from parallax.core.entity._errors import EntityRowCode
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import MemberDefinition, MemberShape, UnresolvedEntityDeclaration
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
+from parallax.core.internal.entity._errors import EntityRowCode
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
+    MemberDefinition,
+    MemberShape,
+    UnresolvedEntityDeclaration,
+)
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm

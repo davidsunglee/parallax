@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Final, cast
 
-from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr, temporal_read
+from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.instructions import (
@@ -29,12 +29,13 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     target_write,
 )
-from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._model import model_of
-from parallax.core.inheritance import inheritance_facet_of
-from parallax.core.unit_work import (
+from parallax.core.internal import temporal_read
+from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.inheritance import inheritance_facet_of
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
     RetainedObservation,
@@ -43,9 +44,14 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     admitted_write,
 )
-from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation, WritePlan
-from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.plan import SettledWrite
+from parallax.core.internal.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    WritePlan,
+)
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.plan import SettledWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests._support.write_preparation import write_preparation_of

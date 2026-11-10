@@ -22,7 +22,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     PoolAvailable,
     PoolDetached,
     PoolMeasurements,

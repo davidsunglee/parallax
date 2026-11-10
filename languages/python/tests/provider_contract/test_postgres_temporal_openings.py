@@ -39,10 +39,6 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._unit_work import write_settlement
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ArrayBind
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallFailed,
@@ -51,7 +47,11 @@ from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     TransactionAttemptFinished,
 )
-from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT, TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root

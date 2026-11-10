@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core import inheritance
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.preparation import WritePreparation
+from parallax.core.internal import inheritance
 from tests._support.mirrored_models import ACCOUNT_MODEL
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of

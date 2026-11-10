@@ -9,9 +9,9 @@ from typing import cast
 
 import pytest
 
-from parallax.core import inheritance, read_planning, storage_layout
-from parallax.core import predicate as oa
-from parallax.core.base import (
+from parallax.core.internal import inheritance, read_planning, storage_layout
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import (
     DATE,
     FLOAT32,
     INFINITY,
@@ -25,16 +25,20 @@ from parallax.core.base import (
     ManagedValue,
     Numeric,
 )
-from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.predicate._execution_values import ExecutionValueSource
-from parallax.core.predicate._resolved import ResolvedAnd, ResolvedConstant, ResolvedMembership
-from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
-from parallax.core.sql_gen._context import (
+from parallax.core.internal.db_port import JSON_NULL, ArrayBind, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.predicate._execution_values import ExecutionValueSource
+from parallax.core.internal.predicate._resolved import (
+    ResolvedAnd,
+    ResolvedConstant,
+    ResolvedMembership,
+)
+from parallax.core.internal.read_planning import PlannedEntityQuery, ResolvedReadProjection
+from parallax.core.internal.sql_gen import _compile as sql_compile
+from parallax.core.internal.sql_gen._compile import CompiledTemplate, compile_read
+from parallax.core.internal.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,
     SQL_GENERATION_FAILED,
@@ -52,17 +56,17 @@ from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _WireBindOverride,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.sql_gen._inheritance import TpcsUnionReadPlan, plan_read_shape
-from parallax.core.sql_gen._planning import (
+from parallax.core.internal.sql_gen._inheritance import TpcsUnionReadPlan, plan_read_shape
+from parallax.core.internal.sql_gen._planning import (
     EvaluationContext,
     OwnerResultsRef,
     SharedSourceRef,
     StatementPlan,
     plan_statement,
 )
-from parallax.core.sql_gen._predicate import EntityRowScope, render_shared_sources
-from parallax.core.unit_work import KeyedWriteInstruction
-from parallax.core.wire import loads
+from parallax.core.internal.sql_gen._predicate import EntityRowScope, render_shared_sources
+from parallax.core.internal.unit_work import KeyedWriteInstruction
+from parallax.core.internal.wire import loads
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.sql import read_position, resolved_as_stated

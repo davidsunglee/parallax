@@ -6,7 +6,6 @@ from dataclasses import replace
 from enum import Enum
 from typing import Final
 
-from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._errors import (
     WRITE_EVIDENCE_ALREADY_CLAIMED,
     WRITE_EVIDENCE_INSERTED,
@@ -56,13 +55,14 @@ from parallax.core._execution._unit_work.write_items import (
     compose_temporal_write,
     temporal_intent,
 )
-from parallax.core.base import UsageError
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
-from parallax.core.temporal_write.coverage import NO_TRANSFORM
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
+from parallax.core.internal.temporal_write.coverage import NO_TRANSFORM
+from parallax.core.internal.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.observe import PredecessorRow, TemporalObservation
 
 __all__ = [
     "BufferOutcome",

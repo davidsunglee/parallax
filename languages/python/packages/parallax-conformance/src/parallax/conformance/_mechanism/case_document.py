@@ -6,7 +6,7 @@ from typing import cast
 
 from parallax.conformance import case_format
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.concurrency import ConcurrencyPreference
+from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.snapshot import SharingScope
 
 __all__ = [

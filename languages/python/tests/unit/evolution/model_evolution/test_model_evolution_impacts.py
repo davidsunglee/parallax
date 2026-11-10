@@ -20,8 +20,8 @@ import dataclasses
 import pytest
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AsOfAxisMetadata,
@@ -40,7 +40,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     TemporalDimension,
 )
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     LOCKING_FALLBACK,
     WRITES_DISABLED,
     AsOfAxisAdded,

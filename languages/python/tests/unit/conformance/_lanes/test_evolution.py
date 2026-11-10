@@ -9,9 +9,9 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import evolution
-from parallax.core.metamodel import EntityIdentity, Table
-from parallax.evolution.model_evolution import EntityAdded
-from parallax.evolution.schema_delta import (
+from parallax.core.internal.metamodel import EntityIdentity, Table
+from parallax.evolution.internal.model_evolution import EntityAdded
+from parallax.evolution.internal.schema_delta import (
     PhysicalLocation,
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,

@@ -4,7 +4,7 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from parallax.core.base import normalize_instant
+from parallax.core.internal.base import normalize_instant
 
 __all__ = ["Clock", "SystemClock", "TransactionInstant"]
 

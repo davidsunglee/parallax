@@ -43,7 +43,7 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.entity._errors import MetamodelLookupCode
+from parallax.core.internal.entity._errors import MetamodelLookupCode
 from parallax.core.introspection import EntityIdentity, PrimaryKey, Table, TemporalDimension
 from tests._support.errors import raises_code
 

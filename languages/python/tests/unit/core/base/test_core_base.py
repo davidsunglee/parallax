@@ -1,4 +1,4 @@
-"""m-core (`parallax.core.base`) neutral-type and instant-normalization tests."""
+"""m-core (`parallax.core.internal.base`) neutral-type and instant-normalization tests."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import base
-from parallax.core.base._neutral import (
+from parallax.core.internal import base
+from parallax.core.internal.base._neutral import (
     ManagedValueExclusion,
     host_float_binary32,
     host_float_number,

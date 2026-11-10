@@ -26,10 +26,10 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.base import INFINITY, InvalidValueError, UsageError
-from parallax.core.entity._model import model_of
-from parallax.core.read_delivery._page import ABSENT
-from parallax.core.write_plan.managed_row import ManagedRow
+from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.read_delivery._page import ABSENT
+from parallax.core.internal.write_plan.managed_row import ManagedRow
 from parallax.snapshot import TxnContext
 from parallax.snapshot._publication._wire import WireEntity
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall

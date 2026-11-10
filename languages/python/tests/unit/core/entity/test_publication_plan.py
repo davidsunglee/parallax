@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.entity import (
+from parallax.core.internal.entity import (
     MANY_TO_ONE,
     ONE_TO_MANY,
     UNLOADED,
@@ -24,15 +24,15 @@ from parallax.core.entity import (
     attr,
     rel,
 )
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._instance_state import (
     allocate,
     install,
     is_present,
     plan_of,
 )
-from parallax.core.entity._model import DomainModel
-from parallax.core.metamodel import TablePerHierarchy
+from parallax.core.internal.entity._model import DomainModel
+from parallax.core.internal.metamodel import TablePerHierarchy
 from tests.unit._indexed_graph_support import published_nodes
 from tests.unit.core.entity._compact_support import published, raw_row
 

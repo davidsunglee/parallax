@@ -21,12 +21,12 @@ import pickle
 
 import pytest
 
-from parallax.core.base import SQL_NULL
-from parallax.core.document_codec import MISSING, NULL, UNAVAILABLE
-from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.execution_lifecycle._activity import INERT
-from parallax.core.object_query import LATEST
-from parallax.core.read_delivery import MISSING_STORED_VALUE
+from parallax.core.internal.base import SQL_NULL
+from parallax.core.internal.document_codec import MISSING, NULL, UNAVAILABLE
+from parallax.core.internal.entity._construction_input import ABSENT, UNLOADED
+from parallax.core.internal.object_query import LATEST
+from parallax.core.internal.read_delivery import MISSING_STORED_VALUE
 
 _SENTINELS: list[tuple[str, object]] = [
     ("LATEST", LATEST),

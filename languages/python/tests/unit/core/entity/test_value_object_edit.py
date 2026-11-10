@@ -30,15 +30,15 @@ import pytest
 from pydantic import PrivateAttr
 
 from parallax.core import Attr, Rel, UsageError, ValueObject, attr
-from parallax.core.entity import EditError
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT
-from parallax.core.entity._errors import EDIT_CODES
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity import EditError
+from parallax.core.internal.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.internal.entity._errors import EDIT_CODES
+from parallax.core.internal.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,
     BackedModel,
 )
-from parallax.core.metamodel import MODEL_ROOT
+from parallax.core.internal.metamodel import MODEL_ROOT
 from tests._support import value_object_models as vm
 from tests._support.errors import raises_code
 from tests.unit.core.entity._compact_support import layout_slots

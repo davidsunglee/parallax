@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     BeginFailed,
     CallbackRaised,
     Committed,

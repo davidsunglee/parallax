@@ -59,8 +59,8 @@ def _on_authority_host(provenance: Provenance, contract: BudgetContract) -> Prov
 
 _ORIGINS: Final = (
     (
-        "parallax.core.entity._row_fill",
-        "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
+        "parallax.core.internal.entity._row_fill",
+        "packages/parallax-core/src/parallax/core/internal/entity/_row_fill.py",
     ),
 )
 
@@ -172,7 +172,9 @@ def test_preflight_refuses_a_stale_extension_beside_a_production_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _preflight(monkeypatch)
-    stale = Path("packages/parallax-core/src/parallax/core/entity/_row_fill.cpython-314-darwin.so")
+    stale = Path(
+        "packages/parallax-core/src/parallax/core/internal/entity/_row_fill.cpython-314-darwin.so"
+    )
     monkeypatch.setattr(cost_report, "stale_extensions", lambda: (stale,))
     with pytest.raises(ValueError, match=re.escape(f"stale extension: {stale}")):
         cost_report.preflight()

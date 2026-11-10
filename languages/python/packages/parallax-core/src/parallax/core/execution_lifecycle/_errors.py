@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Final
 from uuid import UUID
 
-from parallax.core.diagnostics import FailureDiagnostic
+from parallax.core.internal.diagnostics import FailureDiagnostic
 
 LIFECYCLE_PROVIDER_FAILED: Final = "lifecycle-provider-failed"
 """A Provider's ``open`` failed ordinarily, so the operation is refused.

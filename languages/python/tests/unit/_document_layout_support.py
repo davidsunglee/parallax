@@ -16,8 +16,8 @@ carried by this MODULE's underscore. Never imported by production code.
 from __future__ import annotations
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import DATE, INT64, STRING, NeutralType
-from parallax.core.metamodel import (
+from parallax.core.internal.base import DATE, INT64, STRING, NeutralType
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,

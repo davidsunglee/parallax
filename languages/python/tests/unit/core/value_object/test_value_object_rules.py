@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     Column,
     IssueCode,
     MetamodelIssue,
@@ -22,9 +22,9 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.value_object import RULE_SET
-from parallax.core.value_object._rules import CONTAINMENT_CYCLE, EMPTY, MANY_NULLABLE
+from parallax.core.internal.model_formation import MetamodelValidationError
+from parallax.core.internal.value_object import RULE_SET
+from parallax.core.internal.value_object._rules import CONTAINMENT_CYCLE, EMPTY, MANY_NULLABLE
 from tests.unit._metamodel_support import Declaration, accepted, identity, key, source
 
 _OWNER = identity("Customer")

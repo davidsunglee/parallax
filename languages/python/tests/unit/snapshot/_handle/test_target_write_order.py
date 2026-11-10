@@ -30,8 +30,8 @@ from typing import Final
 
 import pytest
 
-from parallax.core.base import InvalidValueError, UsageError
-from parallax.core.unit_work import (
+from parallax.core.internal.base import InvalidValueError, UsageError
+from parallax.core.internal.unit_work import (
     WritePreconditionError,
 )
 from tests._support.db_port import (

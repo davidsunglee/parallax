@@ -4,7 +4,6 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Final, Literal, overload
 
-from parallax.core import inheritance
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.claims import (
     SettledEvidence,
@@ -28,13 +27,22 @@ from parallax.core._execution._unit_work.instructions import (
     keyed_instruction_from_target,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
-from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.metamodel import CompiledEntity
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.managed_row import ManagedRow, RowSelection
-from parallax.core.write_plan.observe import StateObservation
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import INFINITY, TemporalBound
+from parallax.core.internal.metamodel import CompiledEntity
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.coverage import (
+    NO_TRANSFORM,
+    CoverageTransform,
+    Successor,
+)
+from parallax.core.internal.write_plan.keys import (
+    ObjectKey,
+    ObjectStateKey,
+    VersionedObjectStateKey,
+)
+from parallax.core.internal.write_plan.managed_row import ManagedRow, RowSelection
+from parallax.core.internal.write_plan.observe import StateObservation
 
 __all__ = [
     "AdmittedWrite",

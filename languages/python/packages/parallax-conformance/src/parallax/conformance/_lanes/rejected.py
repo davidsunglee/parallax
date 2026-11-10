@@ -15,11 +15,11 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
 )
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import ParallaxError
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.core.internal.base import ParallaxError
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.model_formation import MetamodelValidationError
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.descriptor import domain_model_from_document, validate_inheritance_families
 
 __all__ = ["rejected_rule", "run_rejected_case"]

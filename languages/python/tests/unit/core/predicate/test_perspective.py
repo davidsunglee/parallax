@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     EntityIdentity,
     TemporalDimension,
 )
-from parallax.core.predicate._perspective import (
+from parallax.core.internal.predicate._perspective import (
     AtPerspective,
     LatestPerspective,
     TemporalPerspective,

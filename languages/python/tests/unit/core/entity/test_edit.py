@@ -31,8 +31,8 @@ from parallax.core import (
     UsageError,
     attr,
 )
-from parallax.core.base import INFINITY
-from parallax.core.entity import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity import (
     UNLOADED,
     EditError,
     EditViolation,
@@ -40,25 +40,25 @@ from parallax.core.entity import (
     lifecycle_state_of,
     relationship_value_of,
 )
-from parallax.core.entity import _instance_state as instance_state
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._declaration import (
+from parallax.core.internal.entity import _instance_state as instance_state
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._declaration import (
     FRAMEWORK_MINT,
     FRAMEWORK_NAME_PREFIX,
     LIFECYCLE_STATE_SLOT,
     WireNames,
     wire_names_of,
 )
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, lifecycle_state
-from parallax.core.entity._errors import EDIT_CODES
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity._entity import CHANGE_RECORD_SLOT, lifecycle_state
+from parallax.core.internal.entity._errors import EDIT_CODES
+from parallax.core.internal.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     CARRIED_LAYOUT_ATTRIBUTE,
     COMPACT_STATE_SLOT,
     OPAQUE_SLOTS_ATTRIBUTE,
     BackedModel,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeLocation,
     EntityIdentity,

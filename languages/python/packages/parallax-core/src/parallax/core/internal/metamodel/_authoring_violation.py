@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+from parallax.core.internal.base import NeutralType
+
+__all__ = ["AuthoringViolation"]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoringViolation:
+    """A shared authoring traversal's first structural violation.
+
+    ``path`` locates the offending member relative to the walked member's own
+    root: ``""`` for a violation at that root — a ``many`` member bound to a
+    non-sequence, a ``one`` occurrence bound to a non-document, or a scalar
+    member's own value — a nested member joined with ``"."``, and a ``many``
+    element attached as ``"[index]"`` with no separating dot.
+
+    ``reason`` names which of the five ways a walk can fail:
+
+    - ``"not-a-list"`` — a ``many`` member's own value is not a sequence
+      (``str`` and ``bytes`` excluded), whether its elements are scalars or
+      documents.
+    - ``"not-a-document"`` — a to-one occurrence's value, or a to-many
+      occurrence's element, is not a mapping.
+    - ``"attribute-missing"`` — a non-nullable scalar leaf is absent or null,
+      or a ``many`` scalar leaf is present as an explicit null.
+    - ``"value-object-missing"`` — a non-nullable nested ``one`` occurrence is
+      absent or null, or a nested ``many`` occurrence is present as an explicit
+      null. A nested ``one`` is required-if-declared the moment its parent
+      document is present: a document binds atomically, so there is no sparse
+      write below its boundary. An **absent** ``many`` is not a violation —
+      absence and the empty array are one logical zero state, so an unnamed
+      ``many`` member is the empty collection rather than a missing member.
+    - ``"type-mismatch"`` — a scalar value, or one element of a scalar
+      collection, is neither a member of its declared value space nor one of
+      the adjacent forms the developer input policy widens
+      (`~parallax.core.internal.base.coerce_neutral_input`). A null element is one.
+
+    ``value`` carries the offending runtime value for the three reasons that have
+    one, and ``declared_type`` the scalar's declared type for ``"type-mismatch"``
+    alone — together enough for a caller to render its own wording without this
+    module producing any text.
+    """
+
+    path: str
+    reason: Literal[
+        "not-a-list",
+        "not-a-document",
+        "attribute-missing",
+        "value-object-missing",
+        "type-mismatch",
+    ]
+    value: object = None
+    declared_type: NeutralType | None = None

@@ -25,12 +25,18 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import InvalidValueError, UsageError
-from parallax.core.entity import model_of
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._expressions import AuthoredQuantifier
-from parallax.core.predicate import Comparison, FieldSubject, Presence, Quantifier, serialize
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.base import InvalidValueError, UsageError
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._expressions import AuthoredQuantifier
+from parallax.core.internal.predicate import (
+    Comparison,
+    FieldSubject,
+    Presence,
+    Quantifier,
+    serialize,
+)
+from parallax.core.internal.predicate._resolved import (
     CURRENT,
     RelatedObject,
     ResolvedComparison,

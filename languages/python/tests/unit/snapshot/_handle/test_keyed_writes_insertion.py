@@ -31,12 +31,12 @@ from parallax.conformance.vo_models import (
     ContactPoint,
 )
 from parallax.core import ConflictError
-from parallax.core.base import DocumentValue, StructuredDocument, UsageError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow
-from parallax.core.entity import DomainModel
-from parallax.core.execution import RetryPolicy
-from parallax.core.read_delivery import InvalidData
+from parallax.core.internal.base import DocumentValue, StructuredDocument, UsageError
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import Database, TxnContext
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from tests._support import mirrored_models as mm

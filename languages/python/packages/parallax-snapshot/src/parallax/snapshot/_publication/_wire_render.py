@@ -3,15 +3,20 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Final, cast
 
-from parallax.core import concurrency, temporal_read
-from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
-from parallax.core.inheritance import WIRE_TYPE_KEY
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.read_delivery._page import ABSENT, InvalidData
-from parallax.core.read_planning import IncludeTree, PositionId, RelationshipViewKey, RenderToken
-from parallax.core.wire import WireValue
-from parallax.core.wire._codec import encode_managed_wire
-from parallax.core.wire._facts import (
+from parallax.core.internal import concurrency, temporal_read
+from parallax.core.internal.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
+from parallax.core.internal.inheritance import WIRE_TYPE_KEY
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.read_delivery._page import ABSENT, InvalidData
+from parallax.core.internal.read_planning import (
+    IncludeTree,
+    PositionId,
+    RelationshipViewKey,
+    RenderToken,
+)
+from parallax.core.internal.wire import WireValue
+from parallax.core.internal.wire._codec import encode_managed_wire
+from parallax.core.internal.wire._facts import (
     ENCODE,
     OCCURRENCE,
     PASS,

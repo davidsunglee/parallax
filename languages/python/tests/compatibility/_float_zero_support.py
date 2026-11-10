@@ -22,9 +22,9 @@ from typing import Any
 
 import pytest
 
-import parallax.core.document_codec._leaf as document_leaf
-import parallax.core.wire._codec as wire_codec
-from parallax.core.base import (
+import parallax.core.internal.document_codec._leaf as document_leaf
+import parallax.core.internal.wire._codec as wire_codec
+from parallax.core.internal.base import (
     FLOAT32,
     FLOAT64,
     Float32,
@@ -33,7 +33,7 @@ from parallax.core.base import (
     NeutralType,
     ScalarConverter,
 )
-from parallax.core.wire import WireValue
+from parallax.core.internal.wire import WireValue
 
 __all__ = ["project_float_zero_negative", "spell_float_zero_negative"]
 

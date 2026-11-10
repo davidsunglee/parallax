@@ -6,7 +6,6 @@ from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Literal, Protocol, cast
 
-from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
@@ -46,26 +45,27 @@ from parallax.core._execution._unit_work.write_runner import (
     ExecuteWriteSteps,
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
 )
-from parallax.core.base import InternalError, normalize_instant
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.temporal_read import (
+from parallax.core.internal import concurrency, inheritance, temporal_read
+from parallax.core.internal.base import InternalError, normalize_instant
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.inheritance import InheritanceEntityView
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     Edge,
     TransactionTimeOnly,
     milestone_edge,
 )
-from parallax.core.write_plan.keys import ObjectKey, TemporalObjectStateKey
-from parallax.core.write_plan.observe import PredecessorRow
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.keys import ObjectKey, TemporalObjectStateKey
+from parallax.core.internal.write_plan.observe import PredecessorRow
+from parallax.core.internal.write_plan.plan import (
     CurrentRowOutput,
     TemporalWriteOwnership,
     WriteEffects,
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.steps import KeyTarget
+from parallax.core.internal.write_plan.steps import KeyTarget
 
 __all__ = [
     "AttemptLifetime",
@@ -217,7 +217,7 @@ class UnitOfWork:
         self.flush_opening = flush_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
         # authority) — constructed once per accepted Metamodel by the
-        # execution's model preparation (`parallax.core.execution.prepare_model`),
+        # execution's model preparation (`parallax.core.internal.execution.prepare_model`),
         # which alone wires the batching and audit policies the planner reaches
         # only through its strategy ports. Production and the conformance
         # engine both drive writes through this SAME shell.

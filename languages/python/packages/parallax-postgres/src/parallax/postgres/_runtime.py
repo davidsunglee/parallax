@@ -7,8 +7,8 @@ from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
-from parallax.core.base import UsageError
-from parallax.core.db_port import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import (
     AUTHORIZATION_INVALID,
     CleanupIssue,
     ConnectionAcquisitionError,
@@ -21,8 +21,8 @@ from parallax.core.db_port import (
     RoutePolicy,
     report_resource_issues,
 )
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres._authorization import PostgresRole
 from parallax.postgres._context import PostgresConnectionContext, Step
 from parallax.postgres._route_plan import RoutePlan

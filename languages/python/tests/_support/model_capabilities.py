@@ -12,13 +12,13 @@ from __future__ import annotations
 from parallax.core._execution._planning import prepare_model, wire_model_facts
 from parallax.core._execution._publication import read_projection
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core.entity import DomainModel, EntityGraphConstruction
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import class_index, model_of
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_planning import NarrowedViewKeys
-from parallax.core.wire._facts import WireModelFacts
+from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import class_index, model_of
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_planning import NarrowedViewKeys
+from parallax.core.internal.wire._facts import WireModelFacts
 
 __all__ = [
     "cataloged_for",

@@ -36,8 +36,8 @@ from parallax.conformance.snapshot_recipes import (
 )
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
 from parallax.core import TX_TIME
-from parallax.core.base import INFINITY, UsageError
-from parallax.core.db_port import (
+from parallax.core.internal.base import INFINITY, UsageError
+from parallax.core.internal.db_port import (
     Bind,
     Committed,
     DatabaseConnection,
@@ -45,10 +45,10 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.entity._model import model_of
-from parallax.core.unit_work import WritePreconditionError
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity import UnloadedRelationshipError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.unit_work import WritePreconditionError
 from parallax.snapshot import Database, ScopedDatabase, connect, edge_of, is_view_loaded
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.errors import raises_code

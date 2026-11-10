@@ -4,8 +4,8 @@ Pins what a corpus golden cannot see of a temporal mutation (`m-temporal-write`)
 the mode-independent Milestone Target (the key plus one exclusive upper bound
 per As-Of Axis) against the observed-``in_z`` gate the concurrency mode decides,
 each successor's Row Origin, each close's Close Cause, the two zero-row-close
-shortfall tags (:class:`~parallax.core.unit_work.OptimisticConflict` for a gated
-mismatch, :class:`~parallax.core.unit_work.StaleWrite` for an ungated one), and
+shortfall tags (:class:`~parallax.core.internal.unit_work.OptimisticConflict` for a gated
+mismatch, :class:`~parallax.core.internal.unit_work.StaleWrite` for an ungated one), and
 the geometries of rows the attempt opened that no case states. The statements a
 corpus case states are that case's golden.
 
@@ -23,37 +23,29 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import (
-    MAX,
-    Attr,
-    ConflictError,
-    DomainModel,
-    TxTemporal,
-    attr,
-    storage_layout,
-    temporal_read,
-)
+from parallax.core import MAX, Attr, ConflictError, DomainModel, TxTemporal, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import InternalError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, EntityIdentity
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.temporal_read import Edge, TransactionTimeOnly
-from parallax.core.unit_work import (
+from parallax.core.internal import storage_layout, temporal_read
+from parallax.core.internal.base import INFINITY as OPEN_BOUND
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.temporal_read import Edge, TransactionTimeOnly
+from parallax.core.internal.unit_work import (
     TEMPORAL_CONFLICT,
     KeyedMutation,
     KeyedWriteInstruction,
     TransactionSettings,
     UnitOfWork,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import (
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import (
     SUPERSEDED,
     TERMINATED,
     ObjectKey,
@@ -63,10 +55,10 @@ from parallax.core.write_plan import (
     StateObservation,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.plan import TemporalRowCoordinates
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.plan import TemporalRowCoordinates
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,

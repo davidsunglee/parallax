@@ -6,8 +6,8 @@ from decimal import Decimal
 
 from parallax.conformance.story_models import Account, Wallet
 from parallax.core import DomainModel
-from parallax.core.db_port import DatabaseAdapter
-from parallax.core.unit_work import WritePreconditionError
+from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.core.internal.unit_work import WritePreconditionError
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [

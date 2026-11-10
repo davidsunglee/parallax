@@ -1,0 +1,591 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Final, Literal, Protocol, cast, overload
+
+from parallax.core.internal.base import NeutralType, ScalarConverter, UsageError
+from parallax.core.internal.metamodel import (
+    AuthoringViolation,
+    MemberDefinition,
+    MemberShape,
+    Multiplicity,
+    OccurrenceDefinition,
+    ScalarDefinition,
+)
+
+__all__ = [
+    "BORROWED_DOCUMENTS",
+    "MAPPING_DOCUMENTS",
+    "AuthoringCatalog",
+    "AuthoringLane",
+    "AuthoringPlan",
+    "AuthoringRefusal",
+    "DocumentAccess",
+    "MemberCheck",
+    "PreparedAuthoringRow",
+    "RootPolicy",
+]
+
+
+class DocumentAccess(Protocol):
+    """How one lane reads the nested documents and collections it authors.
+
+    ``document`` answers a document's member values in ``shape`` order, with
+    ``absent`` where the source states none, or ``None`` for a source that is no
+    document. ``elements`` and ``scalar_elements`` answer a collection's members,
+    or ``None`` for a carrier the lane does not accept as that collection.
+    """
+
+    def document(
+        self, source: object, shape: MemberShape, absent: object, /
+    ) -> tuple[object, ...] | None: ...
+
+    def elements(self, source: object, /) -> Sequence[object] | None: ...
+
+    def scalar_elements(self, source: object, /) -> Sequence[object] | None: ...
+
+
+def _mapping_document(
+    source: object, shape: MemberShape, absent: object
+) -> tuple[object, ...] | None:
+    if not isinstance(source, Mapping):
+        return None
+    mapping = cast("Mapping[str, object]", source)
+    return tuple(mapping.get(member.name, absent) for member in shape.members)
+
+
+def _sequence_elements(source: object) -> Sequence[object] | None:
+    if not isinstance(source, Sequence) or isinstance(source, str | bytes | bytearray | memoryview):
+        return None
+    return cast("Sequence[object]", source)
+
+
+@dataclass(frozen=True, slots=True)
+class _MappingDocuments:
+    def document(
+        self, source: object, shape: MemberShape, absent: object, /
+    ) -> tuple[object, ...] | None:
+        return _mapping_document(source, shape, absent)
+
+    def elements(self, source: object, /) -> Sequence[object] | None:
+        return _sequence_elements(source)
+
+    def scalar_elements(self, source: object, /) -> Sequence[object] | None:
+        return _sequence_elements(source)
+
+
+@dataclass(frozen=True, slots=True)
+class _BorrowedDocuments:
+    """Typed authoring: a live Value Object answers through its authoring hooks,
+    and a scalar collection is exactly a ``tuple``."""
+
+    def document(
+        self, source: object, shape: MemberShape, absent: object, /
+    ) -> tuple[object, ...] | None:
+        if isinstance(source, Mapping):
+            return _mapping_document(cast("Mapping[str, object]", source), shape, absent)
+        names_of = getattr(type(source), "__parallax_authoring_names__", None)
+        member_of = getattr(type(source), "__parallax_authoring_member__", None)
+        if names_of is None or member_of is None:
+            return None
+        authored = frozenset(cast("Iterable[str]", names_of(source)))
+        return tuple(
+            member_of(source, member.name) if member.name in authored else absent
+            for member in shape.members
+        )
+
+    def elements(self, source: object, /) -> Sequence[object] | None:
+        return _sequence_elements(source)
+
+    def scalar_elements(self, source: object, /) -> Sequence[object] | None:
+        if type(source) is not tuple:
+            return None
+        return cast("tuple[object, ...]", source)
+
+
+MAPPING_DOCUMENTS: Final[DocumentAccess] = _MappingDocuments()
+BORROWED_DOCUMENTS: Final[DocumentAccess] = _BorrowedDocuments()
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedAuthoringRow:
+    """One authored row's stated members: their owned cells packed in member
+    order, and a mask with one bit per stated member, an explicit null
+    included."""
+
+    cells: tuple[object, ...]
+    presence: int
+
+
+class AuthoringRefusal(Exception):
+    """The first member a row's authoring refuses, in member order.
+
+    ``position`` is the refused top-level member, ``violation`` the finding
+    relative to it, and ``cause`` the lane's own conversion failure where one
+    raised it. The finding owns no wording; its caller renders one.
+    """
+
+    def __init__(
+        self, position: int, violation: AuthoringViolation, cause: Exception | None
+    ) -> None:
+        super().__init__(violation)
+        self.position = position
+        self.violation = violation
+        self.cause = cause
+
+
+type RootPolicy = Callable[[int, Mapping[str, object]], object]
+"""What a top-level scalar position's marker-shaped document authors: the
+planned value it stands for, or the caller's own refusal."""
+
+type MemberCheck = Callable[[int, object], None]
+"""The caller's own judgment of a stated top-level member, made at that
+member's judgment point before its value is converted; it refuses by raising."""
+
+
+class _Refused(Exception):
+    def __init__(self, violation: AuthoringViolation, cause: Exception | None) -> None:
+        super().__init__(violation)
+        self.violation = violation
+        self.cause = cause
+
+
+_UNSTATED: Final = object()
+_MARKER_KEYS: Final = frozenset({"computed", "increment"})
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoringLane:
+    """One producer's scalar conversion and document reading.
+
+    ``definition_converter`` answers a converter for one exact scalar
+    definition where the lane converts it apart from its Neutral Type, and
+    ``None`` for every other definition.
+    """
+
+    converter_for: Callable[[NeutralType], ScalarConverter]
+    access: DocumentAccess
+    definition_converter: Callable[[ScalarDefinition], ScalarConverter | None] | None = None
+
+
+class AuthoringCatalog:
+    """A model's authoring plans for its lanes: one converter per lane and
+    distinct Neutral Type, and one plan per shape object serving every lane,
+    compiled on first request.
+
+    A lane is named by its index in ``lanes``. ``absent`` is the marker a
+    nested occurrence's omitted member keeps, the same one accepted Entity
+    State spells absence with.
+    """
+
+    __slots__ = ("_converters", "_plans", "absent", "lanes")
+
+    def __init__(self, lanes: tuple[AuthoringLane, ...], *, absent: object) -> None:
+        self.lanes = lanes
+        self.absent = absent
+        self._converters: dict[tuple[int, NeutralType], ScalarConverter] = {}
+        self._plans: dict[int, AuthoringPlan] = {}
+
+    def plan(self, shape: MemberShape) -> AuthoringPlan:
+        """The plan authoring documents of ``shape``."""
+        held = self._plans.get(id(shape))
+        if held is not None and held.shape is shape:
+            return held
+        plan = self._plans[id(shape)] = AuthoringPlan(shape, self)
+        return plan
+
+    def converter(self, lane: int, member: ScalarDefinition) -> ScalarConverter:
+        """``member``'s converter on ``lane``: the lane's own for that exact
+        definition, else the one shared by its Neutral Type."""
+        overriding = self.lanes[lane].definition_converter
+        if overriding is not None:
+            converter = overriding(member)
+            if converter is not None:
+                return converter
+        key = (lane, member.type)
+        converter = self._converters.get(key)
+        if converter is None:
+            converter = self._converters[key] = self.lanes[lane].converter_for(member.type)
+        return converter
+
+    def violation(
+        self, member: MemberDefinition, raw: object, *, lane: int
+    ) -> AuthoringViolation | None:
+        """What authoring ``raw`` as ``member``'s non-null value on ``lane``
+        refuses first, or ``None``, constructing no cell.
+
+        The validation-only mode of the same traversal a row is authored by.
+        """
+        try:
+            if isinstance(member, OccurrenceDefinition):
+                plan = self.plan(member.shape)
+                if member.multiplicity is Multiplicity.MANY:
+                    plan.documents(raw, lane, produce=False)
+                else:
+                    plan.document(raw, lane, produce=False)
+            elif member.multiplicity is Multiplicity.MANY:
+                _scalar_collection(
+                    self.converter(lane, member), member.type, self.lanes[lane].access, raw, False
+                )
+            else:
+                self.converter(lane, member)(raw)
+        except _Refused as refused:
+            return refused.violation
+        except UsageError:
+            return _mismatch("", member, raw)
+        return None
+
+
+class AuthoringPlan:
+    """One shape walked against each lane's converters.
+
+    A complete row is judged in member order, so a missing required member
+    and an inadmissible value are refused in the one pass, the first one met
+    first. A nested occurrence's cells keep the read side's full-width
+    positional form, its omitted members holding the catalog's ``absent``.
+
+    Each lane's position holds its scalar's converter or its occurrence's
+    plan, shared with every other plan of the catalog, so a plan owns nothing
+    per member beyond those references.
+    """
+
+    __slots__ = ("_absent", "_lanes", "_many", "_scalar", "_steps", "shape")
+
+    def __init__(self, shape: MemberShape, catalog: AuthoringCatalog) -> None:
+        self.shape = shape
+        self._absent = catalog.absent
+        self._lanes = catalog.lanes
+        members = shape.members
+        self._steps: tuple[ScalarConverter | AuthoringPlan, ...] = tuple(
+            catalog.converter(lane, member)
+            if isinstance(member, ScalarDefinition)
+            else catalog.plan(member.shape)
+            for lane in range(len(catalog.lanes))
+            for member in members
+        )
+        self._many = _mask(member.multiplicity is Multiplicity.MANY for member in members)
+        self._scalar = _mask(
+            isinstance(member, ScalarDefinition) and member.multiplicity is Multiplicity.ONE
+            for member in members
+        )
+
+    @classmethod
+    def compile(
+        cls,
+        shape: MemberShape,
+        converter_for: Callable[[NeutralType], ScalarConverter],
+        *,
+        absent: object,
+        definition_converter: Callable[[ScalarDefinition], ScalarConverter | None] | None = None,
+    ) -> AuthoringPlan:
+        """The plan authoring ``shape``'s documents on one lane of mapping and
+        sequence documents, its lane index ``0``."""
+        lane = AuthoringLane(converter_for, MAPPING_DOCUMENTS, definition_converter)
+        return AuthoringCatalog((lane,), absent=absent).plan(shape)
+
+    def scalar_converter(self, lane: int, position: int) -> ScalarConverter:
+        """The converter ``lane`` admits the single scalar at ``position`` with."""
+        if not self._scalar >> position & 1:
+            raise ValueError(f"{self.shape.members[position].name!r} is no single scalar")
+        return cast("ScalarConverter", self._steps[lane * len(self.shape.members) + position])
+
+    def authored_values(self, payload: Mapping[str, object]) -> tuple[object, ...]:
+        """``payload``'s members in this plan's order, ``absent`` where it names
+        none."""
+        absent = self._absent
+        return tuple(payload.get(member.name, absent) for member in self.shape.members)
+
+    def complete_row(
+        self,
+        raws: Iterable[object],
+        *,
+        lane: int,
+        required: int,
+        omitted: int = 0,
+        nulled: int = 0,
+        excluded: int = 0,
+        root: RootPolicy | None = None,
+        addressing: int = 0,
+        check: MemberCheck | None = None,
+    ) -> PreparedAuthoringRow:
+        """The owned cells ``lane`` authors for a row stating every member it
+        carries.
+
+        ``raws`` holds one value per member, ``absent`` where the row states
+        none. A member in ``omitted`` is read as unstated. An unstated member
+        in ``excluded`` stays unstated; any other unstated ``many`` member is
+        its empty collection, an unstated member in ``nulled`` is stated as
+        null, and an unstated or null member in ``required`` is refused.
+        ``check`` judges each stated member first, and ``root`` authors a
+        marker-shaped document at a top-level scalar outside ``addressing``,
+        where it is the ordinary value it spells.
+
+        Raises :class:`AuthoringRefusal` for the first refused member.
+        """
+        absent = self._absent
+        many = self._many
+        scalar = self._scalar
+        width = len(self.shape.members)
+        base = lane * width
+        cells: list[object] = []
+        presence = 0
+        position = -1
+        for position, raw in enumerate(raws):
+            bit = 1 << position
+            if raw is absent or omitted & bit:
+                completed = self._completed(position, bit, required, nulled, excluded)
+                if completed is not _UNSTATED:
+                    cells.append(completed)
+                    presence |= bit
+                continue
+            if check is not None:
+                check(position, raw)
+            if raw is None:
+                if (required | many) & bit:
+                    raise self._missing(position)
+                cells.append(None)
+            elif scalar & bit:
+                cells.append(self._top_level_scalar(base, position, raw, root, addressing))
+            else:
+                try:
+                    cells.append(self._structured(lane, position, raw))
+                except _Refused as refused:
+                    raise AuthoringRefusal(position, refused.violation, refused.cause) from None
+            presence |= bit
+        if position + 1 != width:
+            raise ValueError("a complete row states one value per member of its shape")
+        return PreparedAuthoringRow(tuple(cells), presence)
+
+    def partial_row(
+        self,
+        pairs: Iterable[tuple[int, object]],
+        *,
+        lane: int,
+        root: RootPolicy | None = None,
+        addressing: int = 0,
+        check: MemberCheck | None = None,
+    ) -> PreparedAuthoringRow:
+        """The owned cells ``lane`` authors for a row stating only the members
+        ``pairs`` positions, judged in the order ``pairs`` states them.
+
+        Each stated member is judged by ``check`` first. An explicit null is a
+        null cell, except at a ``many`` member, which is never null; whether
+        any other member may be null is the caller's to judge. ``root`` and
+        ``addressing`` follow :meth:`complete_row`. The cells are packed in
+        member order whatever order they were judged in.
+
+        Raises :class:`AuthoringRefusal` for the first refused member.
+        """
+        scalar = self._scalar
+        base = lane * len(self.shape.members)
+        stated: dict[int, object] = {}
+        for position, raw in pairs:
+            if check is not None:
+                check(position, raw)
+            if raw is None:
+                if self._many >> position & 1:
+                    raise self._missing(position)
+                cell = None
+            elif scalar >> position & 1:
+                cell = self._top_level_scalar(base, position, raw, root, addressing)
+            else:
+                try:
+                    cell = self._structured(lane, position, raw)
+                except _Refused as refused:
+                    raise AuthoringRefusal(position, refused.violation, refused.cause) from None
+            stated[position] = cell
+        presence = 0
+        for position in stated:
+            presence |= 1 << position
+        if len(stated) < 2:
+            return PreparedAuthoringRow(tuple(stated.values()), presence)
+        return PreparedAuthoringRow(
+            tuple(stated[position] for position in sorted(stated)), presence
+        )
+
+    @overload
+    def document(self, source: object, lane: int) -> tuple[object, ...]: ...
+    @overload
+    def document(
+        self, source: object, lane: int, *, produce: bool
+    ) -> tuple[object, ...] | None: ...
+    def document(
+        self, source: object, lane: int, *, produce: bool = True
+    ) -> tuple[object, ...] | None:
+        """One nested document's full-width cells as ``lane`` authors them,
+        raising the internal refusal its enclosing member reports; only judged,
+        and nothing built, unless ``produce``."""
+        absent = self._absent
+        values = self._lanes[lane].access.document(source, self.shape, absent)
+        if values is None:
+            raise _Refused(AuthoringViolation("", "not-a-document", source), None)
+        members = self.shape.members
+        cells: list[object] | None = None
+        for position, raw in enumerate(values):
+            if raw is absent or raw is None:
+                cell = self._unstated(position, raw)
+            else:
+                try:
+                    cell = self._converted(lane, position, raw, produce)
+                except _Refused as refused:
+                    raise _Refused(
+                        _prefixed(members[position].name, refused.violation), refused.cause
+                    ) from None
+            if produce and cell is not raw:
+                cells = cells if cells is not None else list(values)
+                cells[position] = cell
+        if not produce:
+            return None
+        return values if cells is None else tuple(cells)
+
+    @overload
+    def documents(self, source: object, lane: int) -> tuple[object, ...]: ...
+    @overload
+    def documents(
+        self, source: object, lane: int, *, produce: bool
+    ) -> tuple[object, ...] | None: ...
+    def documents(
+        self, source: object, lane: int, *, produce: bool = True
+    ) -> tuple[object, ...] | None:
+        """A ``many`` occurrence's documents' full-width cells as ``lane``
+        authors them, raising the internal refusal its enclosing member
+        reports; only judged, and nothing built, unless ``produce``."""
+        elements = self._lanes[lane].access.elements(source)
+        if elements is None:
+            raise _Refused(AuthoringViolation("", "not-a-list", source), None)
+        converted: list[object] | None = [] if produce else None
+        for index, element in enumerate(elements):
+            try:
+                cells = self.document(element, lane, produce=produce)
+            except _Refused as refused:
+                raise _Refused(_prefixed(f"[{index}]", refused.violation), refused.cause) from None
+            if converted is not None:
+                converted.append(cells)
+        return None if converted is None else tuple(converted)
+
+    def _top_level_scalar(
+        self, base: int, position: int, raw: object, root: RootPolicy | None, addressing: int
+    ) -> object:
+        if root is not None and _is_marker(raw) and not addressing >> position & 1:
+            return root(position, cast("Mapping[str, object]", raw))
+        try:
+            return cast("ScalarConverter", self._steps[base + position])(raw)
+        except UsageError as failure:
+            raise AuthoringRefusal(
+                position, _mismatch("", self.shape.members[position], raw), failure
+            ) from None
+
+    def _completed(
+        self, position: int, bit: int, required: int, nulled: int, excluded: int
+    ) -> object:
+        """An unstated top-level member's completed cell, or ``_UNSTATED``."""
+        if excluded & bit:
+            return _UNSTATED
+        if self._many & bit:
+            return ()
+        if required & bit:
+            raise self._missing(position)
+        if nulled & bit:
+            return None
+        return _UNSTATED
+
+    def _missing(self, position: int) -> AuthoringRefusal:
+        member = self.shape.members[position]
+        return AuthoringRefusal(position, AuthoringViolation("", _missing_reason(member)), None)
+
+    def _converted(self, lane: int, position: int, raw: object, produce: bool = True) -> object:
+        if not self._scalar >> position & 1:
+            return self._structured(lane, position, raw, produce)
+        step = self._steps[lane * len(self.shape.members) + position]
+        try:
+            return cast("ScalarConverter", step)(raw)
+        except UsageError as failure:
+            raise _Refused(_mismatch("", self.shape.members[position], raw), failure) from None
+
+    def _structured(self, lane: int, position: int, raw: object, produce: bool = True) -> object:
+        """A collection or occurrence member's owned cell, or only its
+        judgment unless ``produce``."""
+        step = self._steps[lane * len(self.shape.members) + position]
+        many = self._many >> position & 1
+        if isinstance(step, AuthoringPlan):
+            if many:
+                return step.documents(raw, lane, produce=produce)
+            return step.document(raw, lane, produce=produce)
+        member = cast("ScalarDefinition", self.shape.members[position])
+        return _scalar_collection(step, member.type, self._lanes[lane].access, raw, produce)
+
+    def _unstated(self, position: int, raw: object) -> object:
+        """A nested member's cell when its document states it as null or not
+        at all."""
+        member = self.shape.members[position]
+        if raw is not None:
+            if self._many >> position & 1:
+                return ()
+            if member.nullable:
+                return raw
+        elif member.nullable:
+            return None
+        raise _Refused(AuthoringViolation(member.name, _missing_reason(member)), None)
+
+
+def _scalar_collection(
+    convert: ScalarConverter,
+    declared: NeutralType,
+    access: DocumentAccess,
+    source: object,
+    produce: bool = True,
+) -> tuple[object, ...] | None:
+    elements = access.scalar_elements(source)
+    if elements is None:
+        raise _Refused(AuthoringViolation("", "not-a-list", source), None)
+    converted: list[object] = []
+    for index, element in enumerate(elements):
+        if element is None:
+            raise _Refused(AuthoringViolation(f"[{index}]", "type-mismatch", None, declared), None)
+        try:
+            cell = convert(element)
+        except UsageError as failure:
+            raise _Refused(
+                AuthoringViolation(f"[{index}]", "type-mismatch", element, declared),
+                failure,
+            ) from None
+        if produce:
+            converted.append(cell)
+    return tuple(converted) if produce else None
+
+
+def _mismatch(path: str, member: MemberDefinition, raw: object) -> AuthoringViolation:
+    declared = member.type if isinstance(member, ScalarDefinition) else None
+    return AuthoringViolation(path, "type-mismatch", raw, declared)
+
+
+def _missing_reason(
+    member: MemberDefinition,
+) -> Literal["attribute-missing", "value-object-missing"]:
+    return "attribute-missing" if isinstance(member, ScalarDefinition) else "value-object-missing"
+
+
+def _prefixed(prefix: str, violation: AuthoringViolation) -> AuthoringViolation:
+    if not violation.path:
+        path = prefix
+    elif violation.path.startswith("["):
+        path = f"{prefix}{violation.path}"
+    else:
+        path = f"{prefix}.{violation.path}"
+    return AuthoringViolation(path, violation.reason, violation.value, violation.declared_type)
+
+
+def _mask(flags: Iterable[bool]) -> int:
+    mask = 0
+    for position, flag in enumerate(flags):
+        if flag:
+            mask |= 1 << position
+    return mask
+
+
+def _is_marker(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    document = cast("Mapping[object, object]", value)
+    return len(document) == 1 and next(iter(document)) in _MARKER_KEYS

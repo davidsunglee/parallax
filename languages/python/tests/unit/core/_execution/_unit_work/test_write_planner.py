@@ -25,7 +25,6 @@ from typing import cast
 
 import pytest
 
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import keys as keys_module
@@ -44,9 +43,10 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
 )
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, InternalError, UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.metamodel import (
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import INFINITY, InternalError, UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     AttributeReference,
@@ -58,8 +58,8 @@ from parallax.core.metamodel import (
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
 )
-from parallax.core.relationship import _compile as relationship_compile
-from parallax.core.unit_work import (
+from parallax.core.internal.relationship import _compile as relationship_compile
+from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     PredicateSelection,
@@ -71,7 +71,7 @@ from parallax.core.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PlannedClose,
     PlannedInsert,
@@ -81,10 +81,10 @@ from parallax.core.write_plan import (
     VersionObservation,
     WritePlan,
 )
-from parallax.core.write_plan.keys import VersionedObjectStateKey
-from parallax.core.write_plan.managed_row import ManagedRow, projected_row
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow, projected_row
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
     MISSING_TARGET,

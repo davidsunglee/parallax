@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr, inheritance
+from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import write_settlement as settlement
 from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
@@ -21,11 +21,12 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     target_write,
 )
-from parallax.core.base import INFINITY
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     TargetWriteInstruction,
     TransactionInstant,
@@ -33,7 +34,7 @@ from parallax.core.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     StateObservation,
@@ -41,8 +42,8 @@ from parallax.core.write_plan import (
     VersionObservation,
     WritePlan,
 )
-from parallax.core.write_plan.plan import AcquisitionSpan, SettledWrite, WriteGroup
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.plan import AcquisitionSpan, SettledWrite, WriteGroup
+from parallax.core.internal.write_plan.steps import (
     KeyTarget,
     MilestoneTarget,
     PlannedClose,

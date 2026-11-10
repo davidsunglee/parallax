@@ -18,12 +18,13 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import Edge, Pin, read_planning
-from parallax.core import object_query as oq
-from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, UsageError
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import (
+from parallax.core import Edge, Pin
+from parallax.core.internal import object_query as oq
+from parallax.core.internal import predicate as oa
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import INFINITY, UsageError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
@@ -32,9 +33,9 @@ from parallax.core.metamodel import (
     Metamodel,
     TemporalDimension,
 )
-from parallax.core.object_query import LATEST
-from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
-from parallax.core.object_query._resolved import (
+from parallax.core.internal.object_query import LATEST
+from parallax.core.internal.object_query._nodes import TemporalDimension as QueryTemporalDimension
+from parallax.core.internal.object_query._resolved import (
     ResolvedAsOfSelection,
     ResolvedHistorySelection,
     ResolvedLatestSelection,
@@ -42,21 +43,24 @@ from parallax.core.object_query._resolved import (
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
 )
-from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
-from parallax.core.predicate._perspective import (
+from parallax.core.internal.predicate._execution_values import (
+    ExecutionValueSource,
+    ExecutionValueSources,
+)
+from parallax.core.internal.predicate._perspective import (
     AtPerspective,
     AxisPerspective,
     LatestPerspective,
     TemporalPerspective,
 )
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate._resolved import (
     ResolvedAnd,
     ResolvedComparison,
     ResolvedConstant,
     ResolvedGroup,
 )
-from parallax.core.sql_gen._compile import compile_read
-from parallax.core.temporal_read import (
+from parallax.core.internal.sql_gen._compile import compile_read
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     TemporalShape,
     TimeInterval,
@@ -73,7 +77,7 @@ from parallax.core.temporal_read import (
     temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.write_plan import PredecessorRow
+from parallax.core.internal.write_plan import PredecessorRow
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target

@@ -42,8 +42,8 @@ import pytest
 from pydantic import BaseModel
 
 import instance_state_overhead as report
-from parallax.core.entity import _row_fill as row_fill
-from parallax.core.entity import lifecycle_state_of
+from parallax.core.internal.entity import _row_fill as row_fill
+from parallax.core.internal.entity import lifecycle_state_of
 from production_origins import ORIGINS_FIELD
 from tests.unit import _instance_state_support as support
 from tests.unit._instance_state_support import (

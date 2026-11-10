@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 import yaml
 
-from parallax.core.base import FLOAT64, matches_neutral_type
-from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
-from parallax.core.db_port import AccessMode, IsolationLevel
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
-from parallax.core.wire._json import authored_number
+from parallax.core.internal.base import FLOAT64, matches_neutral_type
+from parallax.core.internal.concurrency import ConcurrencyPreference, concurrency_preference
+from parallax.core.internal.db_port import AccessMode, IsolationLevel
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
+from parallax.core.internal.wire._json import authored_number
 
 __all__ = [
     "CASE_SHAPES",

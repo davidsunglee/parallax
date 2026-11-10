@@ -31,10 +31,10 @@ from parallax.core import (
     UsageError,
     attr,
 )
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._entity import build_object_query
-from parallax.core.entity._expressions import ScalarExpr
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._entity import build_object_query
+from parallax.core.internal.entity._expressions import ScalarExpr
+from parallax.core.internal.metamodel import EntityIdentity
 from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_document, predicate_document, predicate_node
 
@@ -57,7 +57,7 @@ _WIDGETS = DomainModel(Widget)
 
 
 def _op(pred: Predicate[Any]) -> dict[str, object]:
-    from parallax.core.predicate import serialize
+    from parallax.core.internal.predicate import serialize
 
     return serialize(predicate_node(Widget.where(pred), _WIDGETS))
 

@@ -20,11 +20,11 @@ from parallax.conformance._wire_submission import (
     read_submissions,
 )
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import INFINITY, UsageError
-from parallax.core.db_port import ArrayBind, MappingRow
-from parallax.core.execution import RetryPolicy, ServingModel, prepare_model
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.core.internal.base import INFINITY, UsageError
+from parallax.core.internal.db_port import ArrayBind, MappingRow
+from parallax.core.internal.execution import RetryPolicy, ServingModel, prepare_model
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.snapshot import Database, TxnContext
 from tests._support.retry import fast_retry
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort

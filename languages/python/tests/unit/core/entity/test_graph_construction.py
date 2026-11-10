@@ -1,5 +1,5 @@
 """The advanced Entity Graph Construction collaboration
-(``parallax.core.entity._graph_construction``): the node-indexed graph that
+(``parallax.core.internal.entity._graph_construction``): the node-indexed graph that
 crosses its door, the allocate-before-fill order that closes cycles, the node
 index every refusal reads back, and the lifecycle states attached all or none —
 which is the whole of that atomicity, since a callback that keeps the instances
@@ -27,18 +27,18 @@ from typing import Any, cast, get_args
 import pytest
 
 from parallax.core import Attr, Bitemporal, Entity, InternalError, attr
-from parallax.core.base import INFINITY
-from parallax.core.entity import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity import (
     UNLOADED,
     EntityGraphConstruction,
     lifecycle_state_of,
     relationship_value_of,
 )
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._errors import GraphConstructionCode
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import DomainModel, class_index, model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._errors import GraphConstructionCode
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import DomainModel, class_index, model_of
+from parallax.core.internal.metamodel import (
     EntityIdentity,
     RelationshipIdentity,
 )
@@ -446,7 +446,7 @@ def test_a_refusal_at_any_value_object_depth_names_the_node_whose_row_holds_it()
 def test_publication_resolves_no_class_facts_per_record(monkeypatch: pytest.MonkeyPatch) -> None:
     # Correspondence proves each occurrence path's class and plan once per
     # model, so publishing a record at any depth looks neither up again.
-    from parallax.core.entity import _graph_construction
+    from parallax.core.internal.entity import _graph_construction
 
     construction = graph_construction_for(_ORDERS)
 

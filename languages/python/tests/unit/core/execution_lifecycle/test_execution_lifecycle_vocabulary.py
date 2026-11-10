@@ -19,7 +19,6 @@ from uuid import uuid4
 from parallax.conformance._lifecycle_observation import execution_lifecycle_observation
 from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.core import RootExecution
-from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
     AttemptFailure,
     AttemptRolledBack,
@@ -36,7 +35,8 @@ from parallax.core.execution_lifecycle._events import (
     RootExecutionKind,
 )
 from parallax.core.execution_lifecycle._logging import LifecycleLogDetail
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.diagnostics import FailureDiagnostic
+from parallax.core.internal.sql_gen import LoweredStatement
 
 _RUNTIME_SPELLING: Final = re.compile(r"[a-z]+(?:_[a-z]+)*\Z")
 

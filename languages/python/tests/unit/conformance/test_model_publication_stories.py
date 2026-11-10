@@ -18,7 +18,7 @@ import pytest
 from parallax.conformance import model_publication_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL, NICKNAMED_ACCOUNT_MODEL
 from parallax.core import DomainModel
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     BeginFailed,
     Bind,
     CallbackRaised,
@@ -28,12 +28,12 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
-from parallax.core.execution import (
+from parallax.core.internal.dialect import POSTGRES, Dialect, PhysicalIndexName
+from parallax.core.internal.execution import (
     ModelSelection,
     ServingModel,
 )
-from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
+from parallax.core.internal.metamodel import EntityIdentity, IndexIdentity, Table
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
 from parallax.snapshot import Database, connect
 from tests._support.db_port import ConnectsAsItself, body_outcome

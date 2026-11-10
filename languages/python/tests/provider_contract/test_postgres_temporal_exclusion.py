@@ -20,12 +20,13 @@ import pytest
 
 from parallax.conformance import models, provision
 from parallax.conformance.models import default_models_dir
-from parallax.core import Attr, Bitemporal, DomainModel, Int32, TxTemporal, attr, storage_layout
-from parallax.core.base import INFINITY
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel, Table
-from parallax.core.storage_layout import TemporalHistoryConstraints
+from parallax.core import Attr, Bitemporal, DomainModel, Int32, TxTemporal, attr
+from parallax.core.internal import storage_layout
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import Metamodel, Table
+from parallax.core.internal.storage_layout import TemporalHistoryConstraints
 
 _JAN, _FEB, _MAR, _APR, _JUN, _SEP = (
     datetime(2024, month, 1, tzinfo=UTC) for month in (1, 2, 3, 4, 6, 9)

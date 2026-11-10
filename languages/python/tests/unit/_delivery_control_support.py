@@ -36,9 +36,9 @@ from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.read_models import Animal, Cat, Dog, WildBoar
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.conformance.workloads import catalog
-from parallax.core.db_port import ArrayBind, DocumentReadOrdinals, PipelineStatement, Row
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.object_query._fluent import ObjectQuery
+from parallax.core.internal.db_port import ArrayBind, DocumentReadOrdinals, PipelineStatement, Row
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.object_query._fluent import ObjectQuery
 from tests._support.db_port import ConnectsAsItself, projected_rows
 from tests.unit._workload_spelling_support import CONTROL_PREFIX, GUARDED_PREFIX
 

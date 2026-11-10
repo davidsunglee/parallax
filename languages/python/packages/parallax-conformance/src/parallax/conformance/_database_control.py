@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from parallax.core.db_port import DatabaseAdapter, DatabaseConnection
+from parallax.core.internal.db_port import DatabaseAdapter, DatabaseConnection
 
 if TYPE_CHECKING:
     from parallax.conformance._lifecycle_observation import LifecycleObservation
-    from parallax.core.dialect import Dialect
-    from parallax.core.entity import DomainModel
-    from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.unit_work import Clock
+    from parallax.core.internal.dialect import Dialect
+    from parallax.core.internal.entity import DomainModel
+    from parallax.core.internal.execution import ServingModel, TxnOptions
+    from parallax.core.internal.unit_work import Clock
     from parallax.snapshot import ScopedDatabase
 
 __all__ = [

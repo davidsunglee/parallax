@@ -9,11 +9,11 @@ import pytest
 
 from parallax.core import DomainModel
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.object_query import deserialize
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlan
 from tests.unit import _feature_boundary_support as support
 from tests.unit._workload_digest_support import feature_digest
 

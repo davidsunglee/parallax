@@ -19,7 +19,6 @@ from typing import Final
 import pytest
 
 from parallax.conformance import adapter, case_format
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution import _write_lowering
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
@@ -32,25 +31,26 @@ from parallax.core._execution._write_lowering import (
     lowered_within,
     ordered_parameter_ceiling,
 )
-from parallax.core.base import INFINITY as OPEN
-from parallax.core.base import InternalError
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.sql_gen._write import (
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import INFINITY as OPEN
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import (
     StepPayload,
     compile_write_step,
     non_insert_parameter_ceiling,
 )
-from parallax.core.unit_work import (
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
     WritePlanningRequest,
 )
-from parallax.core.write_plan import SUPERSEDED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan import SUPERSEDED
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,

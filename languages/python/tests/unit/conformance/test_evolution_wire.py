@@ -20,9 +20,9 @@ from parallax.conformance.evolution_wire import (
     schema_cell,
     unsupported_cell,
 )
-from parallax.core.base import STRING, Numeric
-from parallax.core.dialect import PhysicalIndexName
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING, Numeric
+from parallax.core.internal.dialect import PhysicalIndexName
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     NOT_PRIMARY_KEY,
@@ -53,7 +53,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     LOCKING_FALLBACK,
     WRITES_DISABLED,
     AsOfAxisAdded,
@@ -115,7 +115,7 @@ from parallax.evolution.model_evolution import (
     VersionGated,
     WritesEnabled,
 )
-from parallax.evolution.schema_delta import (
+from parallax.evolution.internal.schema_delta import (
     CreatedIndex,
     PhysicalLocation,
     SchemaDelta,

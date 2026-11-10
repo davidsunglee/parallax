@@ -34,17 +34,17 @@ from parallax.core._execution._publication import (
     write_projection,
 )
 from parallax.core._execution._unit_work import preparation as preparation_module
-from parallax.core.entity import DomainModel
-from parallax.core.entity import _graph_construction as graph_construction_module
-from parallax.core.entity import _layout as layout_module
-from parallax.core.entity._model import model_of
-from parallax.core.execution import (
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity import _graph_construction as graph_construction_module
+from parallax.core.internal.entity import _layout as layout_module
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import (
     ModelSelection,
     PublicationConflictError,
     ServingModel,
     prepare_model,
 )
-from parallax.core.metamodel import UnresolvedEntityDeclaration
+from parallax.core.internal.metamodel import UnresolvedEntityDeclaration
 from parallax.snapshot import connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

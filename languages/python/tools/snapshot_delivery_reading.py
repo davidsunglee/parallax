@@ -40,7 +40,7 @@ from parallax.conformance.workloads import (
 from parallax.core import ObjectQuery
 from parallax.core._execution._publication import read_projection
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DRIVER_MANAGED,
     ArrayBind,
     CleanupResult,
@@ -57,12 +57,12 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import DomainModel
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.execution import prepare_model
-from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._read_plan import (
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.execution import prepare_model
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     ReadPlan,
     ReadPlanCache,

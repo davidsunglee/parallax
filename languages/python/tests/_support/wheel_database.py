@@ -18,7 +18,7 @@ from parallax.conformance.provision import (
     install_authority_fixtures,
     reset_database,
 )
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.metamodel import Metamodel
 from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint
 
 

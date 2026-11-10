@@ -36,25 +36,25 @@ import pytest
 from parallax.core import ConflictError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.effects import shortfall
-from parallax.core.auto_retry import (
+from parallax.core.internal.auto_retry import (
     RetryPolicy,
     RetryTiming,
     _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - handed to the loop as the runner does
     retry_eligible,
     run_with_retry,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     KeyedWriteInstruction,
     WritePlanningRequest,
     enforce_affected_rows,
     object_key,
 )
-from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
-from parallax.core.write_plan import VersionObservation
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
+from parallax.core.internal.write_plan import VersionObservation
+from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
     STALE_WRITE,
     AffectedRows,

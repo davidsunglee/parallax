@@ -24,9 +24,9 @@ from parallax.core import (
     RootExecution,
     attr,
 )
-from parallax.core.base import UsageError
-from parallax.core.entity import model_of
 from parallax.core.execution_lifecycle import DatabaseCallStarted, ExecutionEvent
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
 from tests._support.errors import raises_code
 

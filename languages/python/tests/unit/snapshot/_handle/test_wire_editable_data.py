@@ -16,9 +16,9 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.base import StructuredDocument, UsageError
-from parallax.core.db_port import MappingRow
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.base import StructuredDocument, UsageError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import (
     BeginCall,

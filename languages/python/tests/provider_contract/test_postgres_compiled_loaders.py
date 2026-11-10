@@ -29,7 +29,7 @@ from psycopg.pq import Format
 from psycopg.rows import TupleRow
 
 from parallax.conformance._postgres_control import PostgresControl
-from parallax.core.base import INFINITY
+from parallax.core.internal.base import INFINITY
 from parallax.postgres._compiled_loaders import compiled_loaders
 from tests._support.binary32 import narrowed, rounded_once, rounding_witnesses
 

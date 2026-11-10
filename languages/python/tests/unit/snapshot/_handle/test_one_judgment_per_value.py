@@ -23,7 +23,7 @@ from typing import Any, Final
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     INT64,
     STRING,
@@ -35,12 +35,12 @@ from parallax.core.base import (
     retain_document_value,
     typed_converter,
 )
-from parallax.core.base._neutral import _general_typed_converter  # pyright: ignore[reportPrivateUsage]
-from parallax.core.entity import Document
-from parallax.core.unit_work import UnitOfWork
-from parallax.core.wire import decode_wire, encode_wire
-from parallax.core.wire._codec import wire_converter
-from parallax.core.write_plan import PredecessorRow
+from parallax.core.internal.base._neutral import _general_typed_converter  # pyright: ignore[reportPrivateUsage]
+from parallax.core.internal.entity import Document
+from parallax.core.internal.unit_work import UnitOfWork
+from parallax.core.internal.wire import decode_wire, encode_wire
+from parallax.core.internal.wire._codec import wire_converter
+from parallax.core.internal.write_plan import PredecessorRow
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for

@@ -41,11 +41,11 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel, TablePerConcreteSubtype
-from parallax.core.predicate import PredicateNode
-from parallax.core.predicate import deserialize as deserialize_predicate
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import Metamodel, TablePerConcreteSubtype
+from parallax.core.internal.predicate import PredicateNode
+from parallax.core.internal.predicate import deserialize as deserialize_predicate
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read

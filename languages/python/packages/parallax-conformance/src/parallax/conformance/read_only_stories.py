@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from parallax.conformance.story_models import Account
 from parallax.core import DomainModel, ReadOnlyTxnOptions, UsageError
-from parallax.core.db_port import DatabaseAdapter
+from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.snapshot import ReadOnlyTxnContext, connect
 
 __all__ = [

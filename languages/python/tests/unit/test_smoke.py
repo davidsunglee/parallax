@@ -21,8 +21,8 @@ def test_every_scope_submodule_imports() -> None:
             importlib.import_module(module)
             imported.append(module)
     # Sanity: the core spine skeleton alone contributes many scopes.
-    assert "parallax.core.base" in imported
-    assert "parallax.core.predicate" in imported
+    assert "parallax.core.internal.base" in imported
+    assert "parallax.core.internal.predicate" in imported
     assert "parallax.descriptor._ingest" in imported
     assert "parallax.snapshot._publication" in imported
     assert "parallax.postgres._adapter" in imported
@@ -38,10 +38,10 @@ def test_every_scope_submodule_imports() -> None:
         "parallax.snapshot._publication",
         "parallax.snapshot._publication._wire",
         "parallax.snapshot._publication._wire_render",
-        "parallax.core.read_delivery",
-        "parallax.core.read_delivery._page",
-        "parallax.core.execution",
-        "parallax.core.unit_work",
+        "parallax.core.internal.read_delivery",
+        "parallax.core.internal.read_delivery._page",
+        "parallax.core.internal.execution",
+        "parallax.core.internal.unit_work",
         "parallax.core._execution._retention",
         "parallax.core._execution._transaction._runner",
         "parallax.core._execution._unit_work.uow",

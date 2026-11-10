@@ -10,7 +10,7 @@ import jsonschema
 import yaml
 from jsonschema.protocols import Validator
 
-from parallax.core.metamodel import UnresolvedMetamodel, derive_temporal_structure
+from parallax.core.internal.metamodel import UnresolvedMetamodel, derive_temporal_structure
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._errors import (
     DESCRIPTOR_INVALID_SYNTAX,

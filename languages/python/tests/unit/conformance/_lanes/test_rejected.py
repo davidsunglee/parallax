@@ -16,7 +16,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance._lanes import rejected
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.base import UsageError
+from parallax.core.internal.base import UsageError
 
 
 def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:

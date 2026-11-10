@@ -1316,7 +1316,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "(`m-pk-gen-014`'s own case-scoped entry below names the same blocker)"
     ),
     "m-auto-retry": (
-        "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
+        "the bounded retry loop is implemented (parallax.core.internal.auto_retry) and proven "
         "by fake-port unit tests of db.transact (test_database_transact), including the "
         "recoverable-conflict classification; the boundary-shape cases (transient retry, "
         "a `maxRetries` of 0 disabling the loop, and bound exhaustion) are graded end-to-end "

@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY_LITERAL,
     TIMESTAMP,
     ManagedValue,
@@ -13,40 +13,40 @@ from parallax.core.base import (
     TemporalBound,
     UsageError,
 )
-from parallax.core.document_codec import (
+from parallax.core.internal.document_codec import (
     MemberShape,
     OccurrenceCarrier,
     encode_occurrence,
     occurrence_shape,
 )
-from parallax.core.entity import UNLOADED, Entity, EntityGraphConstruction
-from parallax.core.entity._declaration import wire_names_of
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
-from parallax.core.entity._graph_construction import require_correspondence
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity import UNLOADED, Entity, EntityGraphConstruction
+from parallax.core.internal.entity._declaration import wire_names_of
+from parallax.core.internal.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
+from parallax.core.internal.entity._graph_construction import require_correspondence
+from parallax.core.internal.entity._instance_state import (
     declared_values,
     is_published,
     named_state_value,
     plan_of,
 )
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity._instance_state import (
     relationship as relationship_state,
 )
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.inheritance import WIRE_TYPE_KEY
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.inheritance import WIRE_TYPE_KEY
+from parallax.core.internal.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     Multiplicity,
     OccurrenceMetadata,
     TemporalDimension,
 )
-from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
-from parallax.core.read_delivery._page import ABSENT
-from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.temporal_read import Edge, TemporalFacet
-from parallax.core.wire import WireValue, decode_canonical_wire
-from parallax.core.wire._codec import encode_managed_wire
+from parallax.core.internal.metamodel._temporal_structure import TEMPORAL_MEMBERS
+from parallax.core.internal.read_delivery._page import ABSENT
+from parallax.core.internal.read_planning import RelationshipViewKey
+from parallax.core.internal.temporal_read import Edge, TemporalFacet
+from parallax.core.internal.wire import WireValue, decode_canonical_wire
+from parallax.core.internal.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
     SNAPSHOT_EDGE_UNAVAILABLE,
     SNAPSHOT_NODE_REQUIRED,
@@ -352,7 +352,7 @@ _VALID_START: Final = TEMPORAL_MEMBERS[TemporalDimension.VALID_TIME][0].name
 
 
 def wire_edge_of(node: object) -> Edge:
-    """The milestone :class:`~parallax.core.temporal_read.Edge` of a node a
+    """The milestone :class:`~parallax.core.internal.temporal_read.Edge` of a node a
     Wire read published, conforming or diagnostic, decoded from its own
     published milestone starts on every call.
 

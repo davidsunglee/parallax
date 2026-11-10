@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from parallax.conformance._replication import LazyReplication, ReplicationPair
 from parallax.conformance.provision import Provisioner
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     AccessMode,
     DatabaseConnection,
     DeclaresDialect,
@@ -18,11 +18,11 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DatabaseRuntime as _DatabaseRuntime,
 )
-from parallax.core.dialect import Dialect
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.metamodel import Metamodel
 
 if TYPE_CHECKING:
     from parallax.conformance._database_control import (
@@ -31,10 +31,10 @@ if TYPE_CHECKING:
         InterleavedExecution,
     )
     from parallax.conformance._lifecycle_observation import LifecycleObservation
-    from parallax.core.db_port import DatabaseAdapter
-    from parallax.core.entity import DomainModel
-    from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.unit_work import Clock
+    from parallax.core.internal.db_port import DatabaseAdapter
+    from parallax.core.internal.entity import DomainModel
+    from parallax.core.internal.execution import ServingModel, TxnOptions
+    from parallax.core.internal.unit_work import Clock
 
 __all__ = [
     "PROFILES",

@@ -101,23 +101,23 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import (
+from parallax.core.internal.entity import (
     UNLOADED,
     EntityGraphConstruction,
 )
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._declaration import shape_of
-from parallax.core.entity._entity import attach_lifecycle_state
-from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
-from parallax.core.entity._layout import EntityLayout
-from parallax.core.entity._model import DomainModel as ModelType
-from parallax.core.entity._pydantic_storage import attach_instance_state, instance_state
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._declaration import shape_of
+from parallax.core.internal.entity._entity import attach_lifecycle_state
+from parallax.core.internal.entity._instance_state import COMPACT_STATE_SLOT
+from parallax.core.internal.entity._layout import EntityLayout
+from parallax.core.internal.entity._model import DomainModel as ModelType
+from parallax.core.internal.entity._pydantic_storage import attach_instance_state, instance_state
+from parallax.core.internal.metamodel import (
     EntityIdentity,
     Multiplicity,
     OccurrenceMetadata,
 )
-from parallax.core.wire._facts import WireModelFacts
+from parallax.core.internal.wire._facts import WireModelFacts
 from parallax.snapshot._inspection import NodeProvenance, RootConformance, SnapshotNodeState
 from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 

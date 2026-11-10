@@ -22,7 +22,7 @@ from parallax.core import (
     RootExecution,
     ServingModel,
 )
-from parallax.core.db_port import DatabaseAdapter
+from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import ScopedDatabase, connect
 

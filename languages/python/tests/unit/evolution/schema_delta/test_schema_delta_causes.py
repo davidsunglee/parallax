@@ -15,8 +15,8 @@ nowhere else.
 
 from __future__ import annotations
 
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -26,21 +26,21 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     ConcreteSubtypeAdded,
     EntityAdded,
     EntityAltered,
     UnilateralEvolution,
     evolve_metamodels,
 )
-from parallax.evolution.schema_delta._physical import (
+from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateIndex,
     CreateTable,
     PhysicalOperation,
     RestateColumnDomain,
 )
-from parallax.evolution.schema_delta._plan import plan
+from parallax.evolution.internal.schema_delta._plan import plan
 from tests.unit._corpus_model_support import formed
 
 

@@ -5,22 +5,27 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
-from parallax.core import read_planning
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.base import InternalError, NoResultFound, TooManyResultsFound, UsageError
-from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
-from parallax.core.entity._authored_resolver import include_path_node
-from parallax.core.entity._expressions import authored_include_path
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._events import ResultRepresentation
-from parallax.core.object_query.validate import validate_include_path
-from parallax.core.predicate import root_position
-from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import Page, invalid_result_refusal
-from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
-from parallax.core.read_delivery._publication import RootsOf
-from parallax.core.temporal_read import Pin, TemporalShape
-from parallax.core.wire._facts import WireModelFacts
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import (
+    InternalError,
+    NoResultFound,
+    TooManyResultsFound,
+    UsageError,
+)
+from parallax.core.internal.entity import Entity, EntityGraphConstruction, IncludePath
+from parallax.core.internal.entity._authored_resolver import include_path_node
+from parallax.core.internal.entity._expressions import authored_include_path
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.object_query.validate import validate_include_path
+from parallax.core.internal.predicate import root_position
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.read_delivery._page import Page, invalid_result_refusal
+from parallax.core.internal.read_delivery._page_reader import EagerPageResult, HistoryPageResult
+from parallax.core.internal.read_delivery._publication import RootsOf
+from parallax.core.internal.temporal_read import Pin, TemporalShape
+from parallax.core.internal.wire._facts import WireModelFacts
 
 if TYPE_CHECKING:
     from parallax.snapshot._publication._wire import InstanceReader
@@ -119,9 +124,9 @@ class Snapshot[T]:
     scope, Page, Root View, connection, authority, or other lifecycle of the read.
 
     A root whose stored state contradicted the model is held as its
-    :class:`~parallax.core.read_delivery.InvalidData` record. The accessors
+    :class:`~parallax.core.internal.read_delivery.InvalidData` record. The accessors
     here are the DEFAULT view: they check arity first and then refuse the read
-    with :class:`~parallax.core.read_delivery.InvalidDataError`, so a caller
+    with :class:`~parallax.core.internal.read_delivery.InvalidDataError`, so a caller
     who never asks about stored-data validity can never silently receive a
     record in place of an Entity. :meth:`checked` is the same storage read in
     band instead. There is no ignore posture and no partition API: a finite

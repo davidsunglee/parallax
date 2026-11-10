@@ -7,13 +7,13 @@ from typing import Any, cast
 from parallax.conformance import case_format
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError, driver_binds
 from parallax.conformance._mechanism.model_facts import case_entity
-from parallax.core import inheritance, storage_layout
-from parallax.core.base import DocumentValue
-from parallax.core.db_port import DatabaseConnection, StructuredDocument
-from parallax.core.metamodel import CompiledEntity, PrimaryKey
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
-from parallax.core.wire import WireValue, decode_wire
+from parallax.core.internal import inheritance, storage_layout
+from parallax.core.internal.base import DocumentValue
+from parallax.core.internal.db_port import DatabaseConnection, StructuredDocument
+from parallax.core.internal.metamodel import CompiledEntity, PrimaryKey
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.storage_layout import ColumnTier, DirectColumn, DocumentPath
+from parallax.core.internal.wire import WireValue, decode_wire
 
 __all__ = ["apply_given_apply", "apply_given_corrupt"]
 

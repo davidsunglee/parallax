@@ -11,14 +11,19 @@ from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._routing import check_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core.auto_retry import RetryPolicy
-from parallax.core.base import UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
-from parallax.core.entity import DomainModel
 from parallax.core.execution_lifecycle._activity import ExecutionLifecycleProvider
-from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
-from parallax.core.read_delivery._read_plan import (
+from parallax.core.internal.auto_retry import RetryPolicy
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import (
+    DatabaseAdapter,
+    DatabaseRuntime,
+    IsolationLevel,
+    RoutePolicy,
+)
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     check_read_plan_cache_capacity,
 )

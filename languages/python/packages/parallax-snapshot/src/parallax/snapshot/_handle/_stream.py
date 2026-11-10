@@ -4,15 +4,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any, Final, Protocol, cast, overload
 
-from parallax.core import read_planning
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_pipeline import ReadQuery
-from parallax.core.base import ManagedValue, NeutralType, UsageError
-from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
-from parallax.core.read_delivery import STREAM_STATE_INVALID, InvalidData
-from parallax.core.read_delivery._stream import StreamDelivery
-from parallax.core.temporal_read import Pin
-from parallax.core.wire._facts import WireModelFacts
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import ManagedValue, NeutralType, UsageError
+from parallax.core.internal.entity import Entity, EntityGraphConstruction, IncludePath
+from parallax.core.internal.read_delivery import STREAM_STATE_INVALID, InvalidData
+from parallax.core.internal.read_delivery._stream import StreamDelivery
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.wire._facts import WireModelFacts
 from parallax.snapshot._handle._read import SnapshotPublication, wire_position
 from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication._wire import InstanceReader, WireEntity

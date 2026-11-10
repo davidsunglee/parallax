@@ -4,12 +4,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.concurrency import next_version
-from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity, CompiledEntity
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.planned_rows import key_target
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.concurrency import next_version
+from parallax.core.internal.inheritance import InheritanceEntityView
+from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.planned_rows import key_target
+from parallax.core.internal.write_plan.steps import (
     UNGATED,
     UNVERSIONED,
     AffectedRows,

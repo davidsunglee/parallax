@@ -11,7 +11,7 @@ from pathlib import Path
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import error
-from parallax.core.db_error import DatabaseError
+from parallax.core.internal.db_error import DatabaseError
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 

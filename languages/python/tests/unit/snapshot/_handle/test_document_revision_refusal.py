@@ -13,9 +13,9 @@ import pytest
 
 from parallax.core import Attr, Document, DomainModel, TxTemporal, UsageError, attr
 from parallax.core._execution._write_lowering import STORED_DOCUMENT_NOT_OBJECT
-from parallax.core.base import SQL_NULL, StructuredDocument
-from parallax.core.read_delivery import InvalidDataError
-from parallax.core.unit_work import TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.base import SQL_NULL, StructuredDocument
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.unit_work import TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import TxnContext
 from tests._support.db_port import (
     BeginCall,

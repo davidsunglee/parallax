@@ -25,7 +25,7 @@ from functools import cache
 
 from parallax.conformance import models
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._ingest import ingest_document
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel

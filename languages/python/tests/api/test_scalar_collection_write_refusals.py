@@ -19,9 +19,9 @@ from typing import Any
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, InvalidValueError, attr
-from parallax.core.base import UsageError
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity._expressions import AttributeRef
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import AttributeAssignment
+from parallax.core.internal.entity._expressions import AttributeRef
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root

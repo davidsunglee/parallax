@@ -12,7 +12,7 @@ from parallax.conformance import case_format, models
 from parallax.conformance._lanes import scenario
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core import ConflictError, UsageError
-from parallax.core.unit_work import (
+from parallax.core.internal.unit_work import (
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,

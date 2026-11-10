@@ -22,9 +22,9 @@ from typing import Any, cast
 import psycopg_pool
 import pytest
 
-from parallax.core.base import INFINITY
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     DRIVER_MANAGED,
     Committed,
     ConnectionAcquisitionError,

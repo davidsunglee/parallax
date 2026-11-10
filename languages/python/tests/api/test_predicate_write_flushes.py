@@ -19,8 +19,8 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import UsageError
-from parallax.core.entity._model import model_of
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root

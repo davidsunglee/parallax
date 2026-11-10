@@ -6,9 +6,9 @@ from typing import cast
 from parallax.conformance import case_format
 from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.envelope import Emission, UnclassifiedEngineError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseConnection
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import DatabaseConnection
+from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = ["run_error_case"]
 

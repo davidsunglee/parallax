@@ -6,9 +6,13 @@ from __future__ import annotations
 import datetime as dt
 
 from parallax.core._execution._unit_work.write_settlement import require_observed_version
-from parallax.core.base import UsageError
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.write_plan import PredecessorRow, TemporalObservation, VersionObservation
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.write_plan import (
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
 from tests._support.errors import raises_code
 
 _ACCOUNT = EntityIdentity("parallax.compatibility", "Account")

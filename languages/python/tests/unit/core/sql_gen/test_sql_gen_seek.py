@@ -17,33 +17,34 @@ from typing import Final
 
 import pytest
 
-from parallax.core import UnsupportedError, continuation, read_planning
-from parallax.core.base import (
+from parallax.core import UnsupportedError
+from parallax.core.internal import continuation, read_planning
+from parallax.core.internal.base import (
     INFINITY,
     INFINITY_LITERAL,
     InternalError,
     StructuredDocument,
     UsageError,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import Metamodel
-from parallax.core.metamodel import TemporalDimension as AxisKind
-from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
-from parallax.core.object_query._resolved import (
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.metamodel import TemporalDimension as AxisKind
+from parallax.core.internal.object_query import AsOf, OrderKey, object_query, validate_object_query
+from parallax.core.internal.object_query._resolved import (
     ContinuationCoordinate,
     ResolvedObjectQuery,
 )
-from parallax.core.predicate import Comparison, FieldSubject, Or, PredicateNode, TrueNode
-from parallax.core.read_delivery._row_decoding import row_coordinates
-from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.sql_gen._compile import compile_template
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED, LoweredStatement
-from parallax.core.sql_gen._inheritance import (
+from parallax.core.internal.predicate import Comparison, FieldSubject, Or, PredicateNode, TrueNode
+from parallax.core.internal.read_delivery._row_decoding import row_coordinates
+from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal.sql_gen._compile import compile_template
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED, LoweredStatement
+from parallax.core.internal.sql_gen._inheritance import (
     INHERITANCE_LOCKING_READ_UNSUPPORTED,
     SingleTableReadPlan,
     TpcsUnionReadPlan,
 )
-from parallax.core.sql_gen._planning import SharedSourceRef
+from parallax.core.internal.sql_gen._planning import SharedSourceRef
 from parallax.descriptor import _records
 from tests._support.errors import raises_code
 from tests.unit import _read_projection_support as projection_support

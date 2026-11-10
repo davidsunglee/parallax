@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import dataclasses
 
-from parallax.core.base import STRING
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
-from parallax.evolution.schema_delta._naming import physical_index_name, readable_prefix
-from parallax.evolution.schema_delta._physical import IndexDefinition, PhysicalColumn
+from parallax.core.internal.base import STRING
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    Column,
+    EntityIdentity,
+    IndexIdentity,
+    Table,
+)
+from parallax.evolution.internal.schema_delta._naming import physical_index_name, readable_prefix
+from parallax.evolution.internal.schema_delta._physical import IndexDefinition, PhysicalColumn
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
 

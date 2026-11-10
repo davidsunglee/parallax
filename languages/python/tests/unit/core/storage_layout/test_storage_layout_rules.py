@@ -6,9 +6,9 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.core import inheritance, storage_layout
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, storage_layout
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     AbstractRoot,
     AbstractSubtype,
@@ -43,7 +43,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     sort_issues,
 )
-from parallax.core.storage_layout._rules import (
+from parallax.core.internal.storage_layout._rules import (
     COLUMN_COLLISION,
     DOCUMENT_MEMBER_COLUMN_OVERRIDE,
     INDEX_OVER_DOCUMENT_MEMBER,

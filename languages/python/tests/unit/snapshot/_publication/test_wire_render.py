@@ -7,15 +7,15 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.core._execution import _planning as planning_module
-from parallax.core.base import DATE, STRING
-from parallax.core.document_codec import _occurrence as occurrence_codec
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.read_delivery._page import ABSENT
-from parallax.core.read_planning import IncludeTree
-from parallax.core.temporal_read import Pin
-from parallax.core.wire import _facts as facts_module
-from parallax.core.wire._codec import encode_managed_wire
-from parallax.core.wire._facts import (
+from parallax.core.internal.base import DATE, STRING
+from parallax.core.internal.document_codec import _occurrence as occurrence_codec
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.read_delivery._page import ABSENT
+from parallax.core.internal.read_planning import IncludeTree
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.wire import _facts as facts_module
+from parallax.core.internal.wire._codec import encode_managed_wire
+from parallax.core.internal.wire._facts import (
     ENCODE_MANY,
     OCCURRENCE,
     PASS,

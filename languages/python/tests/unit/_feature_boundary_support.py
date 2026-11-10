@@ -23,20 +23,26 @@ from parallax.core import (
 from parallax.core._execution._publication import SelectedReadModel, read_projection
 from parallax.core._execution._read_pipeline import interpreted
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, StructuredDocument
-from parallax.core.base import Numeric as DecimalType
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import (
+from parallax.core.internal.base import (
+    INT64,
+    STRING,
+    DocumentValue,
+    NeutralType,
+    StructuredDocument,
+)
+from parallax.core.internal.base import Numeric as DecimalType
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import (
     MemberDecodePlan,
     ScalarDefinition,
     encode_scalar_many,
 )
-from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.execution import prepare_model
-from parallax.core.metamodel import Multiplicity, TablePerConcreteSubtype
-from parallax.core.object_query._fluent import typed_read_query
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._read_plan import ReadPlanCache
+from parallax.core.internal.entity._expressions import AuthoredQuery
+from parallax.core.internal.execution import prepare_model
+from parallax.core.internal.metamodel import Multiplicity, TablePerConcreteSubtype
+from parallax.core.internal.object_query._fluent import typed_read_query
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
 
 __all__ = ["CASES", "WINDOW_DESCRIPTIONS", "Case", "Driver", "driver_for", "workload_digest"]
 

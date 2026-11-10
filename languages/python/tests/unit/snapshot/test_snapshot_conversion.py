@@ -31,8 +31,8 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import vo_models
-from parallax.core import predicate as oa
-from parallax.core.base import (
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -48,11 +48,11 @@ from parallax.core.base import (
     NeutralType,
     Numeric,
 )
-from parallax.core.db_port import Row
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import encode_leaf
-from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.metamodel import (
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import encode_leaf
+from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
@@ -60,9 +60,9 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.read_delivery import MISSING_STORED_VALUE
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.model_formation import MetamodelValidationError
+from parallax.core.internal.read_delivery import MISSING_STORED_VALUE
+from parallax.core.internal.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
     ChildSlot,
@@ -72,10 +72,10 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_rows,
 )
-from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
+from parallax.core.internal.read_planning import RelationshipViewKey
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.temporal_read import Pin
 from parallax.descriptor._records import (
     Attribute,
     DocumentLayout,

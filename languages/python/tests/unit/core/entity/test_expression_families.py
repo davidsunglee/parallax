@@ -25,7 +25,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity._expressions import (
+from parallax.core.internal.entity._expressions import (
     AssignableManyScalarExpr,
     AssignableManyValueObjectExpr,
     AssignableScalarExpr,
@@ -38,7 +38,7 @@ from parallax.core.entity._expressions import (
     ScalarExpr,
     UnfinishedExpr,
 )
-from parallax.core.predicate import Comparison, FieldSubject, Quantifier
+from parallax.core.internal.predicate import Comparison, FieldSubject, Quantifier
 from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node
 

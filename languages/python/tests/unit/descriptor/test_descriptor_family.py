@@ -10,7 +10,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core.base import UsageError
+from parallax.core.internal.base import UsageError
 from parallax.descriptor import validate_inheritance_families
 from parallax.descriptor._family import validate_families
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel

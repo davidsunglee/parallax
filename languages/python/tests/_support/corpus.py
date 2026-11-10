@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
 if TYPE_CHECKING:
-    from parallax.core.entity import Entity
-    from parallax.core.inheritance import InheritanceEntityView
-    from parallax.core.metamodel import (
+    from parallax.core.internal.entity import Entity
+    from parallax.core.internal.inheritance import InheritanceEntityView
+    from parallax.core.internal.metamodel import (
         EntityIdentity,
         Metamodel,
         OccurrenceMetadata,
@@ -139,7 +139,7 @@ def compare_binds(
     At each of ``positions`` the bind additionally carries the golden's float
     zero sign (`tests._support.bind_positions`).
     """
-    from parallax.core.db_port import ArrayBind
+    from parallax.core.internal.db_port import ArrayBind
 
     obs = [_wire_value(_array_elements(value)) for value in observed]
     exp = [_wire_value(value) for value in expected]
@@ -160,7 +160,7 @@ def compare_binds(
 
 
 def _array_elements(bind: object) -> object:
-    from parallax.core.db_port import JSON_NULL, ArrayBind
+    from parallax.core.internal.db_port import JSON_NULL, ArrayBind
 
     if not isinstance(bind, ArrayBind):
         return bind
@@ -172,8 +172,8 @@ def _wire_value(value: object) -> object:
     import decimal
     import uuid
 
-    from parallax.core.base import TemporalBound
-    from parallax.core.db_port import StructuredDocument
+    from parallax.core.internal.base import TemporalBound
+    from parallax.core.internal.db_port import StructuredDocument
 
     if isinstance(value, StructuredDocument):
         return wire_value_deep(value.document)
@@ -240,7 +240,7 @@ def instance_row(instance: Entity, *, wire_type: str | None = None) -> dict[str,
     entity class, so the corpus's `_type` is observable as `type(node)`"), needed only
     when grading a case whose rows state that key.
     """
-    from parallax.core.entity._declaration import wire_names_of
+    from parallax.core.internal.entity._declaration import wire_names_of
 
     names = wire_names_of(type(instance))
     column_by_py = {py_name: column for column, py_name in names.column_to_py.items()}
@@ -339,7 +339,7 @@ class _Node:
 
     def _collection(self, name: str) -> bool:
         """Whether ``name`` denotes a scalar collection Attribute, family-wide."""
-        from parallax.core.metamodel import Multiplicity
+        from parallax.core.internal.metamodel import Multiplicity
 
         attribute = self.view.applicable_attribute(name) or next(
             (member for member in self.view.superset_attributes if member.identity.name == name),
@@ -365,7 +365,7 @@ class _Node:
 
     def _related(self, name: str) -> _Node | None:
         """The node level one relationship view key reaches, broad or narrowed."""
-        from parallax.core.relationship import relationship_facet_of
+        from parallax.core.internal.relationship import relationship_facet_of
 
         local = name.split("[", 1)[0]
         declared = next(
@@ -390,7 +390,7 @@ class _Occurrence:
     declared: OccurrenceMetadata
 
     def key(self, name: str) -> _Key:
-        from parallax.core.metamodel import Multiplicity
+        from parallax.core.internal.metamodel import Multiplicity
 
         nested = self.declared.value_object(name)
         if nested is not None:
@@ -404,7 +404,7 @@ class _Occurrence:
 def _occurrence_key(model: Metamodel, declared: OccurrenceMetadata) -> _Key:
     """One occurrence key: a `many` holds the ordered element documents the stored
     order is, a `one` a single document and never a collection."""
-    from parallax.core.metamodel import Multiplicity
+    from parallax.core.internal.metamodel import Multiplicity
 
     ordered = True if declared.multiplicity is Multiplicity.MANY else None
     return _Key(ordered, _Occurrence(model, declared))
@@ -413,7 +413,7 @@ def _occurrence_key(model: Metamodel, declared: OccurrenceMetadata) -> _Key:
 def _entity_level(model: Metamodel, name: str) -> _Node | None:
     """The node level a graph key's Entity spelling denotes, absent for a name the
     model declares no Entity under."""
-    from parallax.core.metamodel import entity_by_name
+    from parallax.core.internal.metamodel import entity_by_name
 
     entity = entity_by_name(model, name)
     return None if entity is None else _node_level(model, entity.identity)
@@ -421,7 +421,7 @@ def _entity_level(model: Metamodel, name: str) -> _Node | None:
 
 def _node_level(model: Metamodel, identity: EntityIdentity) -> _Node | None:
     """One Entity's node level, absent only for an Identity the model lacks."""
-    from parallax.core.inheritance import inheritance_facet_of
+    from parallax.core.internal.inheritance import inheritance_facet_of
 
     view = inheritance_facet_of(model).entity(identity)
     return None if view is None else _Node(model, view)

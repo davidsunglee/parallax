@@ -67,14 +67,15 @@ from time import perf_counter_ns
 from types import CodeType, TracebackType
 from typing import Any, Final, Literal, cast
 
-from parallax.core import Entity, document_codec
-from parallax.core.base import detach_json_container
-from parallax.core.document_codec._document import (
+from parallax.core import Entity
+from parallax.core.internal import document_codec
+from parallax.core.internal.base import detach_json_container
+from parallax.core.internal.document_codec._document import (
     encode_managed_document,
     encode_managed_many,
 )
-from parallax.core.entity import DomainModel
-from parallax.core.execution import prepare_model
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.execution import prepare_model
 from parallax.snapshot import ScopedDatabase
 from production_origins import ORIGINS_FIELD, loaded_origins, require_source_origins
 

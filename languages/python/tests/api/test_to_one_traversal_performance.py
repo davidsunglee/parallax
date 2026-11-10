@@ -54,13 +54,17 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import TablePerConcreteSubtype
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import PredicateSelection, PredicateWriteInstruction, WriteAssignment
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import TablePerConcreteSubtype
+from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import (
+    PredicateSelection,
+    PredicateWriteInstruction,
+    WriteAssignment,
+)
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support.lowering_probes import lower_instruction
 from tests._support.query_probes import canonical_document, predicate_node, typed_resolved

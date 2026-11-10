@@ -21,8 +21,8 @@ import pytest
 
 from parallax.conformance import adapter, case_format, engine
 from parallax.conformance.profile import profile_for
-from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.db_port import DatabaseConnection, Row, TransactionOutcome
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support.case_corpus import reachable_cases
 from tests._support.corpus import case_document
 from tests._support.db_port import ConnectsAsItself

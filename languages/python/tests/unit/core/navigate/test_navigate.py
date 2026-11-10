@@ -1,6 +1,6 @@
 """Temporal resolution of relationship hops (m-navigate).
 
-Exercises `parallax.core.navigate.resolve_temporal_visibility` independently of
+Exercises `parallax.core.internal.navigate.resolve_temporal_visibility` independently of
 the Docker-gated compile/run sweeps. The typed half asserts the perspective each
 reached relationship carries across every predicate position, the root
 treatment each resolution mode finishes with, and the static lifecycle the
@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, Never, assert_type, cast
 import pytest
 
 from parallax.conformance import models
-from parallax.core import predicate as oa
-from parallax.core.base import INFINITY
-from parallax.core.dialect import POSTGRES
-from parallax.core.inheritance import InheritancePositionView
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
-from parallax.core.navigate import (
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.inheritance import InheritancePositionView
+from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
+from parallax.core.internal.navigate import (
     NoRootSelections,
     PropagatedRootSelections,
     RootSelections,
@@ -35,17 +35,25 @@ from parallax.core.navigate import (
     resolve_sourced_temporal_visibility,
     resolve_temporal_visibility,
 )
-from parallax.core.object_query import AsOf, History, TemporalSelection, validate_object_query
-from parallax.core.object_query import object_query as authored_query
-from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
-from parallax.core.object_query._resolved import ResolvedObjectQuery, ResolvedTemporalSelection
-from parallax.core.predicate._execution_values import ExecutionValueSources
-from parallax.core.predicate._perspective import (
+from parallax.core.internal.object_query import (
+    AsOf,
+    History,
+    TemporalSelection,
+    validate_object_query,
+)
+from parallax.core.internal.object_query import object_query as authored_query
+from parallax.core.internal.object_query._nodes import TemporalDimension as QueryTemporalDimension
+from parallax.core.internal.object_query._resolved import (
+    ResolvedObjectQuery,
+    ResolvedTemporalSelection,
+)
+from parallax.core.internal.predicate._execution_values import ExecutionValueSources
+from parallax.core.internal.predicate._perspective import (
     AtPerspective,
     LatestPerspective,
     TemporalPerspective,
 )
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate._resolved import (
     OccurrencePath,
     RelatedObject,
     ResolvedAnd,
@@ -65,9 +73,9 @@ from parallax.core.predicate._resolved import (
     ResolvedStringMatch,
     SubjectPosition,
 )
-from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
-from parallax.core.sql_gen._compile import compile_write_predicate
-from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
+from parallax.core.internal.read_planning import PlannedEntityQuery, ResolvedReadProjection
+from parallax.core.internal.sql_gen._compile import compile_write_predicate
+from parallax.core.internal.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target

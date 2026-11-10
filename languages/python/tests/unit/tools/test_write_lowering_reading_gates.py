@@ -43,8 +43,8 @@ from parallax.conformance.budget import MemoryGates
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_lowering import LoweringCursor
-from parallax.core.base import detach_json_container
-from parallax.core.db_port import StructuredDocument
+from parallax.core.internal.base import detach_json_container
+from parallax.core.internal.db_port import StructuredDocument
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement

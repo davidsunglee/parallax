@@ -9,13 +9,13 @@ import pytest
 from parallax.conformance import concurrency_runner, models, provision
 from parallax.conformance.concurrency_runner import ConcurrencyStep
 from parallax.conformance.profile import ProvisionedRun
-from parallax.core import continuation, read_planning
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.object_query import OrderKey, object_query, validate_object_query
-from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.predicate import TrueNode
-from parallax.core.sql_gen._compile import compile_read, compile_template
+from parallax.core.internal import continuation, read_planning
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.object_query import OrderKey, object_query, validate_object_query
+from parallax.core.internal.object_query._resolved import ContinuationCoordinate
+from parallax.core.internal.predicate import TrueNode
+from parallax.core.internal.sql_gen._compile import compile_read, compile_template
 
 
 def _model(stem: str) -> Metamodel:

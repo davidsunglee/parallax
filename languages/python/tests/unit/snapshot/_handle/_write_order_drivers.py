@@ -45,14 +45,19 @@ from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
-from parallax.core import DomainModel, ParallaxError, Predicate, object_query
-from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument
-from parallax.core.db_port import MappingRow
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._expressions import AttributeRef, AuthoredMemberPath, UnfinishedOperation
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.predicate._interpretation import COMPARE
+from parallax.core import DomainModel, ParallaxError, Predicate
+from parallax.core.internal import object_query
+from parallax.core.internal.base import SQL_NULL, DocumentValue, StructuredDocument
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity import AttributeAssignment
+from parallax.core.internal.entity import Entity as EntityBase
+from parallax.core.internal.entity._expressions import (
+    AttributeRef,
+    AuthoredMemberPath,
+    UnfinishedOperation,
+)
+from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.predicate._interpretation import COMPARE
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
 from parallax.snapshot._handle._wire_writes import WirePredicateTarget
 from tests._support import inheritance_models as im

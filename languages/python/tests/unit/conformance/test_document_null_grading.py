@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from parallax.conformance import case_format, engine
-from parallax.core.base import INT64, JSON, STRING
-from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
+from parallax.core.internal.base import INT64, JSON, STRING
+from parallax.core.internal.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from tests._support.bind_positions import assert_document_nulls, whole_document_binds
 from tests._support.case_corpus import case as corpus_case
 from tests._support.sweep_goldens import write_golden_statements

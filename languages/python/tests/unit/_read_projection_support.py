@@ -48,15 +48,15 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     CompiledEntity,
     Metamodel,
     TablePerConcreteSubtype,
     entity_by_name,
 )
-from parallax.core.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 
 __all__ = [
     "LAYOUTS",

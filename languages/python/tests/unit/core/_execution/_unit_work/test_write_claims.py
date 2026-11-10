@@ -19,7 +19,6 @@ import pytest
 
 from parallax.conformance import models
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
-from parallax.core import concurrency
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.claims import (
     admits,
@@ -36,18 +35,19 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     admitted_write,
 )
-from parallax.core.base import INFINITY
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import (
+from parallax.core.internal import concurrency
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     RetainedObservation,
     WriteIntent,
     keyed_intent,
 )
-from parallax.core.write_plan import ObjectKey, VersionObservation
-from parallax.core.write_plan.keys import VersionedObjectStateKey
+from parallax.core.internal.write_plan import ObjectKey, VersionObservation
+from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import object_source
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._where_position_model import (

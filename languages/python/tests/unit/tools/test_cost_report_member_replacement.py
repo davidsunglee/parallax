@@ -441,7 +441,7 @@ def test_a_checkout_that_cannot_complete_the_capture_is_refused(
 @pytest.mark.parametrize(
     "path",
     [
-        "languages/python/packages/parallax-core/src/parallax/core/sql_gen/_write.py",
+        "languages/python/packages/parallax-core/src/parallax/core/internal/sql_gen/_write.py",
         "languages/python/uv.lock",
         "languages/python/tools/interpreter_matrix.py",
         "languages/python/tools/snapshot_delivery_overhead.py",

@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from testcontainers.core.container import DockerContainer
 
     from parallax.conformance._database_control import DriverControl
-    from parallax.core.db_port import Password
-    from parallax.core.metamodel import Metamodel
+    from parallax.core.internal.db_port import Password
+    from parallax.core.internal.metamodel import Metamodel
     from parallax.postgres import PostgresEndpoint, PostgresRole
 
 __all__ = ["LazyReplication", "Pacing", "ReplicationLaunch", "ReplicationPair", "Server"]

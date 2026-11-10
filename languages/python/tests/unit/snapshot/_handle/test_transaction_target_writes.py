@@ -22,9 +22,9 @@ import pytest
 
 from parallax.core import Attr, Entity, UsageError, attr
 from parallax.core._execution._options import OMITTED
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity import DomainModel
-from parallax.core.unit_work import (
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     WritePreconditionError,
 )

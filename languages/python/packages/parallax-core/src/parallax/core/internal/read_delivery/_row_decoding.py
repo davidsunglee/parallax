@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import cast
+
+from parallax.core.internal.base import (
+    InternalError,
+    SqlNull,
+    StructuredDocument,
+    UnknownFamilyTag,
+    inert_scalar,
+    unwrap_document_read,
+)
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.document_codec import (
+    DocumentFinding,
+    MemberDecodePlan,
+    MemberShape,
+    entity_member_plan,
+)
+from parallax.core.internal.metamodel import AttributeMetadata, EntityIdentity, ValueObjectMetadata
+from parallax.core.internal.object_query._resolved import ContinuationCoordinate
+from parallax.core.internal.read_delivery._convert import POSITIONAL_OUTPUT, MemberClassifier
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._inheritance import (
+    FixedRowIdentity,
+    LiteralRowIdentity,
+    ReadResultContract,
+    TaggedRowIdentity,
+)
+
+__all__ = [
+    "fixed_entity",
+    "member_classifiers",
+    "require_arity",
+    "row_coordinates",
+    "row_identity",
+]
+
+
+def row_identity(
+    contract: ReadResultContract, row: Row
+) -> tuple[EntityIdentity, UnknownFamilyTag | None, object | None]:
+    """The Entity ``row`` names, the stored tag no composed concrete claimed, and
+    the row's shared document."""
+    require_arity(contract, row)
+    source = contract.row_identity
+    shared = contract.shared_document_ordinal
+    # An isinstance chain rather than a class-pattern match: this runs per row,
+    # and the match costs several times as much.
+    if isinstance(source, FixedRowIdentity):
+        if shared is None:
+            return source.entity, None, None
+        return source.entity, None, unwrap_document_read(_document_read(row[shared]))
+    raw = row[cast("int", contract.identity_ordinal)]
+    if isinstance(source, TaggedRowIdentity):
+        answer = source.by_tag.get(raw)
+        entity, unknown = (source.root, UnknownFamilyTag(raw)) if answer is None else answer
+    else:
+        literal: LiteralRowIdentity = source
+        entity, unknown = literal.by_spelling[raw]
+    if shared is None:
+        return entity, unknown, None
+    return entity, unknown, unwrap_document_read(_document_read(row[shared]))
+
+
+def fixed_entity(contract: ReadResultContract) -> EntityIdentity | None:
+    """The one Entity every row of ``contract`` names without consulting the row,
+    or ``None`` where a row's own cells name it or carry a shared document."""
+    source = contract.row_identity
+    if isinstance(source, FixedRowIdentity) and contract.shared_document_ordinal is None:
+        return source.entity
+    return None
+
+
+def member_classifiers(
+    contract: ReadResultContract,
+    resolved: EntityIdentity,
+    members: Sequence[AttributeMetadata | ValueObjectMetadata],
+    document_member_names: Sequence[str | None],
+) -> tuple[MemberClassifier | None, ...]:
+    """The prepared, row-independent decoding walk of each of ``members`` a row
+    resolving to ``resolved`` carries in a document, building positional
+    output, and absence for every other member.
+
+    A member located in the shared document is decoded by its DECLARED Neutral
+    Type through the codec, not by the JSON value's own shape; one absent or
+    explicitly null in the document reads as `None`, the same one logical
+    answer a NULL Column gives. A scalar collection or occurrence stored in a
+    document Column of its own is read against its declared definition.
+    """
+    shared = contract.shared_document
+    entry = None if shared is None else shared.by_entity.get(resolved)
+    direct = contract.direct_documents
+    own_documents = frozenset(
+        member.identity for member in (() if direct is None else direct.by_entity.get(resolved, ()))
+    )
+    return tuple(
+        _shared_document_classifier(None if entry is None else entry.shape, name)
+        if name is not None
+        else _own_document_classifier(member)
+        if member.identity in own_documents
+        else None
+        for member, name in zip(members, document_member_names, strict=True)
+    )
+
+
+def _own_document_classifier(member: AttributeMetadata | ValueObjectMetadata) -> MemberClassifier:
+    name = (
+        member.identity.name if isinstance(member, AttributeMetadata) else member.identity.path[-1]
+    )
+    plan = MemberDecodePlan(member.definition, POSITIONAL_OUTPUT, path=(name,))
+
+    def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
+        return plan.value(_document_read(document_read))
+
+    return classify
+
+
+def _shared_document_classifier(shape: MemberShape | None, member_name: str) -> MemberClassifier:
+    if shape is None:  # pragma: no cover - a located resident belongs to its owner's shape
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"the shared document member {member_name!r} has no shape"
+        )
+    return cast("MemberClassifier", entity_member_plan(shape, member_name, POSITIONAL_OUTPUT).value)
+
+
+def row_coordinates(
+    contract: ReadResultContract, rows: Sequence[Row]
+) -> tuple[ContinuationCoordinate | None, ...]:
+    """Each row's Continuation Order coordinate; absence for every row of a read
+    that pages through nothing."""
+    ordinals = contract.coordinate_ordinals
+    if not ordinals:
+        return (None,) * len(rows)
+    return tuple(_coordinate(contract, row, ordinals) for row in rows)
+
+
+def _coordinate(
+    contract: ReadResultContract, row: Row, ordinals: tuple[int, ...]
+) -> ContinuationCoordinate:
+    require_arity(contract, row)
+    return ContinuationCoordinate(tuple(inert_scalar(row[ordinal]) for ordinal in ordinals))
+
+
+def require_arity(contract: ReadResultContract, row: Row) -> None:
+    """Refuse a provider row whose cell count is not the read's."""
+    if len(row) != len(contract.slots):
+        raise ValueError(
+            f"result cell count {len(contract.slots)} does not match row arity {len(row)}"
+        )
+
+
+def _document_read(document_read: object) -> SqlNull | StructuredDocument:
+    if not isinstance(document_read, (SqlNull, StructuredDocument)):
+        raise _not_a_document_read(document_read)
+    return document_read
+
+
+def _not_a_document_read(value: object) -> InternalError:
+    return InternalError(
+        SQL_GENERATION_FAILED,
+        f"the database port returned {type(value).__name__}, not a DocumentRead",
+    )

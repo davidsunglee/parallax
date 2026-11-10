@@ -7,10 +7,10 @@ import hashlib
 
 import pytest
 
-from parallax.core import storage_layout
-from parallax.core.metamodel import Column, Metamodel, Table, TemporalDimension
-from parallax.core.storage_layout import PhysicalTemporalAxis, TableLayout
-from parallax.core.storage_layout._temporal import constraint_name
+from parallax.core.internal import storage_layout
+from parallax.core.internal.metamodel import Column, Metamodel, Table, TemporalDimension
+from parallax.core.internal.storage_layout import PhysicalTemporalAxis, TableLayout
+from parallax.core.internal.storage_layout._temporal import constraint_name
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 
 _INTERVAL = (("lt", (Column("in_z"), Column("out_z"))),)

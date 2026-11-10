@@ -8,13 +8,13 @@ from typing import Any, cast
 from parallax.core import ObjectQuery
 from parallax.core._execution._publication import read_projection
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity import lifecycle_state_of
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.execution import ModelSelection
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_delivery._delivery import find as execute_read
-from parallax.core.read_delivery._page import Page
+from parallax.core.internal.db_port import DatabaseConnection
+from parallax.core.internal.entity import lifecycle_state_of
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.execution import ModelSelection
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.read_delivery._delivery import find as execute_read
+from parallax.core.internal.read_delivery._page import Page
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots, require_publishable
 

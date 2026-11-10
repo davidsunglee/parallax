@@ -58,10 +58,10 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core import DomainModel, Entity, ObjectQuery, Predicate
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import InvalidValueError, UsageError
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._model import model_of
-from parallax.core.object_query import LATEST, deserialize
+from parallax.core.internal.base import InvalidValueError, UsageError
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.object_query import LATEST, deserialize
 from tests._support import inheritance_models as im
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm

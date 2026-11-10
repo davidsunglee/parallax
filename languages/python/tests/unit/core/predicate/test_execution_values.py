@@ -7,9 +7,9 @@ from typing import Final
 import pytest
 
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.metamodel import Metamodel, TemporalDimension
-from parallax.core.object_query import deserialize
-from parallax.core.predicate._execution_values import (
+from parallax.core.internal.metamodel import Metamodel, TemporalDimension
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.predicate._execution_values import (
     NO_EXECUTION_VALUE_SOURCES,
     ExecutionValueSource,
     ExecutionValueSources,
@@ -17,7 +17,7 @@ from parallax.core.predicate._execution_values import (
     source_order,
     sourced_conjunction,
 )
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate._resolved import (
     ResolvedAnd,
     ResolvedConstant,
     ResolvedGroup,

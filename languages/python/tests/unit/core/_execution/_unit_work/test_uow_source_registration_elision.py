@@ -32,11 +32,11 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
-from parallax.core.base import UsageError
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
-from parallax.core.unit_work import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     ReadEvidence,
     TransactionSettings,
@@ -44,8 +44,8 @@ from parallax.core.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.write_plan import ObjectKey
-from parallax.core.write_plan.keys import VersionedObjectStateKey
+from parallax.core.internal.write_plan import ObjectKey
+from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key

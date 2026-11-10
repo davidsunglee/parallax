@@ -39,7 +39,7 @@ from parallax.conformance._postgres_control import (
     initialized_session,
 )
 from parallax.core import UsageError
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     ConnectionAcquisitionError,
     DatabaseConnection,
     Invalidated,
@@ -47,8 +47,8 @@ from parallax.core.db_port import (
     PipelineStatement,
     ReleaseUnconfirmed,
 )
-from parallax.core.dialect import POSTGRES
-from parallax.core.execution import RetryPolicy, TxnOptions
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.execution import RetryPolicy, TxnOptions
 from parallax.postgres import PostgresRole
 from tests._support.errors import raises_code
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL

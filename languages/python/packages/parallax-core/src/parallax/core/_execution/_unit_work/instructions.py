@@ -7,15 +7,15 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Final, Literal, cast, overload
 
-from parallax.core import inheritance, temporal_read
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work.preparation import (
     TYPED_LANE,
     WIRE_LANE,
     EntityPreparation,
     WritePreparation,
 )
-from parallax.core.base import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import (
     INFINITY,
     INSTANT_INVALID,
     TIMESTAMP,
@@ -25,8 +25,8 @@ from parallax.core.base import (
     coerce_neutral_input,
     normalize_instant,
 )
-from parallax.core.document_codec._plan import AuthoringRefusal, RootPolicy
-from parallax.core.metamodel import (
+from parallax.core.internal.document_codec._plan import AuthoringRefusal, RootPolicy
+from parallax.core.internal.metamodel import (
     WRITE_ASSIGNMENT_CODES,
     WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
     AttributeMetadata,
@@ -43,24 +43,24 @@ from parallax.core.metamodel import (
     entity_by_name,
     judge_assignment,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.predicate import (
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.metamodel._states import ambiguous_entity_spellings
+from parallax.core.internal.predicate import (
     REFERENCE_AMBIGUOUS_ENTITY_NAME,
     PredicateInterpretation,
     PredicateNode,
 )
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.wire import (
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.wire import (
     WireValue,
     decode_wire,
     encode_wire,
     is_decoding_refusal,
     located_refusal,
 )
-from parallax.core.write_plan.columns import freeze_retained_value
-from parallax.core.write_plan.managed_row import ManagedRow, empty_row, managed_row
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.columns import freeze_retained_value
+from parallax.core.internal.write_plan.managed_row import ManagedRow, empty_row, managed_row
+from parallax.core.internal.write_plan.steps import (
     MAX_PLUS_ONE,
     PlannedValue,
     ResolvedMutationSelection,
@@ -212,7 +212,7 @@ type WriteRejectionCode = Literal[
     "write-assignment-value-type-mismatch",
 ]
 """Why a write instruction is refused before any SQL, as a
-:class:`~parallax.core.base.UsageError`.
+:class:`~parallax.core.internal.base.UsageError`.
 
 ``write-instruction-invalid`` is this binding's own: the instruction is not a
 well-formed canonical instruction its target can mean.
@@ -220,7 +220,7 @@ well-formed canonical instruction its target can mean.
 value assigned beside the key does not fit its member. Every other code is the
 core ``rejectedRule`` spelling of a model-aware rule the instruction breaks.
 The two value-type mismatches and the two required-member codes are raised as
-:class:`~parallax.core.base.InvalidValueError`.
+:class:`~parallax.core.internal.base.InvalidValueError`.
 """
 
 WRITE_INSTRUCTION_INVALID: Final = "write-instruction-invalid"
@@ -298,7 +298,7 @@ class PredicateSelection:
 
     This is the instruction-level carrier an authored :class:`PredicateWriteInstruction`
     holds, distinct from the prepared product buffering retains and from the
-    finalized :class:`~parallax.core.unit_work.
+    finalized :class:`~parallax.core.internal.unit_work.
     planned.WriteTarget` a Planned Step settles into. Preparation resolves
     either form once and retains only the resolved predicate.
     """
@@ -1918,7 +1918,7 @@ def _judge_window(
     until: object,
 ) -> TimeInterval | None:
     """One write's Valid-Time window, judged once per call: ``[valid_from,
-    until)``, through :data:`~parallax.core.base.INFINITY` where ``until`` is
+    until)``, through :data:`~parallax.core.internal.base.INFINITY` where ``until`` is
     omitted, or ``None`` for a target without Valid Time.
 
     Four questions in a fixed order, because each presupposes the one before
@@ -2547,7 +2547,7 @@ def _decoded_wire(neutral_type: NeutralType, value: object, path: str) -> object
 
 def resolve_target(model: AcceptedMetamodel, name: str) -> CompiledEntity:
     """The accepted Metadata a write's bare-or-canonical target names, by
-    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule.
+    :func:`~parallax.core.internal.metamodel.entity_by_name`'s ambiguity-rejecting rule.
 
     That rule answers a miss for two different mistakes, and this is the boundary
     every externally produced instruction crosses, so the two are classified

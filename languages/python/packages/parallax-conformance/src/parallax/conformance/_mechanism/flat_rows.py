@@ -6,10 +6,10 @@ from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import case_entity
-from parallax.core import inheritance, storage_layout
-from parallax.core.db_port import MappingRow
-from parallax.core.dialect import scalar_result
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, storage_layout
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.dialect import scalar_result
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeMetadata,
@@ -19,8 +19,8 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.object_query import ObjectQueryNode
 
 __all__ = ["flat_rows", "omitted_value_objects"]
 

@@ -25,8 +25,8 @@ from parallax.conformance.stale_web_edit import (
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import LATEST, UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity._model import model_of
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 

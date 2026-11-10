@@ -13,9 +13,9 @@ from __future__ import annotations
 import pytest
 
 from parallax.conformance import models
-from parallax.core.base import UsageError
-from parallax.core.metamodel import CompiledEntity, entity_by_name
-from parallax.core.predicate import deserialize, validate_predicate
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import CompiledEntity, entity_by_name
+from parallax.core.internal.predicate import deserialize, validate_predicate
 
 _MODEL = models.load_model(
     models.default_models_dir() / "scalar-collection-layout-twin-columns.yaml"

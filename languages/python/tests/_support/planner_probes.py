@@ -8,7 +8,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core import concurrency, temporal_read
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work._write_ownership import NoInsertionAuthority
 from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
@@ -35,9 +34,10 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
 )
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work import (
+from parallax.core.internal import concurrency, temporal_read
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     SubjectActor,
@@ -45,10 +45,10 @@ from parallax.core.unit_work import (
     object_key,
     settled_evidence,
 )
-from parallax.core.write_plan import ObjectKey, StateObservation, WritePlan
-from parallax.core.write_plan.keys import object_state_key_from_observation
-from parallax.core.write_plan.plan import SettledWrite, WriteGroup
-from parallax.core.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
+from parallax.core.internal.write_plan import ObjectKey, StateObservation, WritePlan
+from parallax.core.internal.write_plan.keys import object_state_key_from_observation
+from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup
+from parallax.core.internal.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
 from tests._support.write_preparation import write_preparation_of
 
 __all__ = [
@@ -128,7 +128,7 @@ def observed_buffer(
     resolving is not in play. This turns that statement into what a verb
     buffers — the instruction travelling with the one retained observation its
     attempt holds for that object — through the same
-    :func:`~parallax.core.unit_work.admitted_write` a verb uses, so a suite
+    :func:`~parallax.core.internal.unit_work.admitted_write` a verb uses, so a suite
     that names an object an insert also writes is refused here exactly as a verb
     would refuse it. An instruction of an object ``observations`` does not
     name is licensed by the buffer's standing insertion of that object, as a

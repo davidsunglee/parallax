@@ -1,5 +1,5 @@
-from parallax.core.temporal_read import Edge, Pin
-from parallax.core.wire import WireValue
+from parallax.core.internal.temporal_read import Edge, Pin
+from parallax.core.internal.wire import WireValue
 from parallax.snapshot._handle._database import Database, ScopedDatabase, connect
 from parallax.snapshot._handle._read import (
     CheckedSnapshot,
@@ -52,7 +52,7 @@ __all__ = [
 
 
 def edge_of(node: object) -> Edge:
-    """``node``'s own milestone :class:`~parallax.core.temporal_read.Edge` — the
+    """``node``'s own milestone :class:`~parallax.core.internal.temporal_read.Edge` — the
     finite from-instant on every axis its family declares.
 
     A Typed node a Snapshot read materialized and every edit of it answer equal
@@ -71,12 +71,12 @@ def edge_of(node: object) -> Edge:
 
 
 def pin_of(node: object) -> Pin:
-    """The :class:`~parallax.core.temporal_read.Pin` retained for the read that
+    """The :class:`~parallax.core.internal.temporal_read.Pin` retained for the read that
     published ``node`` — where the read stood, not where ``node`` itself starts,
     which is :func:`edge_of`'s answer.
 
     A read-published Typed or Wire temporal node answers, a diagnostic node
-    inside :class:`~parallax.core.read_delivery.InvalidData` included. An included
+    inside :class:`~parallax.core.internal.read_delivery.InvalidData` included. An included
     node shares its root's Pin, and each milestone-set root holds its own
     milestone's instants, or the empty ``Pin()`` where a start did not decode.
     Inspection performs no I/O and grants no write authority.

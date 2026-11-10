@@ -15,13 +15,13 @@ from typing import Any, Final, Literal, cast
 
 import pytest
 
-from parallax.core.base import InternalError, NeutralType, StructuredDocument
-from parallax.core.entity import UNLOADED
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.read_delivery._page import Page, judged_entity_state, page_rows
-from parallax.core.read_planning import IncludeTree
-from parallax.core.wire._codec import encode_managed_wire
+from parallax.core.internal.base import InternalError, NeutralType, StructuredDocument
+from parallax.core.internal.entity import UNLOADED
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.read_delivery import InvalidData, InvalidDataError
+from parallax.core.internal.read_delivery._page import Page, judged_entity_state, page_rows
+from parallax.core.internal.read_planning import IncludeTree
+from parallax.core.internal.wire._codec import encode_managed_wire
 from parallax.snapshot import (
     is_view_loaded,
 )

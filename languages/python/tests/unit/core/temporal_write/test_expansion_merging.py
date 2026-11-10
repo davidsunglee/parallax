@@ -13,30 +13,30 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.strategy import NO_AUDIT, AuditDecoration
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY, TemporalBound
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
 )
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform
-from parallax.core.temporal_write.expansion import (
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.coverage import NO_TRANSFORM, CoverageTransform
+from parallax.core.internal.temporal_write.expansion import (
     PredecessorExpander,
     RowAudit,
     TemporalFacts,
 )
-from parallax.core.wire._json import loads
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import ObjectKey, PredecessorRow
-from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.managed_row import ManagedRow, projected_row
-from parallax.core.write_plan.payload import EffectSlots, RowPayload, RowSlots
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.wire._json import loads
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import ObjectKey, PredecessorRow
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow, projected_row
+from parallax.core.internal.write_plan.payload import EffectSlots, RowPayload, RowSlots
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
@@ -44,8 +44,8 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import (
     ChangedFrom,
     Finite,
     PlannedAssignments,

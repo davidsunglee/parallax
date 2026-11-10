@@ -21,8 +21,8 @@ import pytest
 from parallax.conformance import case_format, models
 from parallax.core import InternalError
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     AbstractSubtype,
     AsOfAxisMetadata,
     AttributeIdentity,

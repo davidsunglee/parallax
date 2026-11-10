@@ -17,7 +17,7 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import InternalError, inheritance
+from parallax.core import InternalError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import acquisition as acquisition_module
@@ -35,17 +35,18 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.uow import FlushScope
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.dialect import POSTGRES
-from parallax.core.inheritance import EntityMemberSelection
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.inheritance import EntityMemberSelection
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.unit_work import (
     FlushTrigger,
     TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
 )
-from parallax.core.write_plan import ObjectKey, PredecessorRow
+from parallax.core.internal.write_plan import ObjectKey, PredecessorRow
 from tests._support.errors import raises_code
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of

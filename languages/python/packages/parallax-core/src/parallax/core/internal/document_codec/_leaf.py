@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import cast
+
+from parallax.core.internal.base import (
+    Bytes,
+    Date,
+    ManagedValue,
+    NeutralType,
+    String,
+    Time,
+    Timestamp,
+    UsageError,
+    Uuid,
+)
+from parallax.core.internal.wire import (
+    WireValue,
+    decode_canonical_wire,
+    encode_wire,
+)
+from parallax.core.internal.wire._codec import encode_managed_wire
+
+__all__ = [
+    "LeafEncodingError",
+    "decode_leaf",
+    "encode_leaf",
+    "encode_managed_leaf",
+    "encode_managed_scalar_many",
+    "encode_scalar_many",
+    "is_text_compared",
+]
+
+# The declared types whose document form is a JSON string AND whose SQL comparison is
+# of the extracted text rather than of a cast (`m-dialect`). `decimal(p, s)` is a JSON
+# string too and is deliberately absent: it casts with the numeric family, because its
+# integer part has no fixed width, so `10.00` sorts below `9.00` as text.
+_TEXT_COMPARED: tuple[type, ...] = (String, Bytes, Date, Time, Timestamp, Uuid)
+
+
+class LeafEncodingError(Exception):
+    """A stored leaf and the Neutral Type its member declares do not pair.
+
+    The document-positioned reading of `m-wire`'s refusal: a value outside the
+    declared value space has no spelling, and a stored leaf that is not the one
+    canonical spelling of some value of that space is the encoding of nothing. The
+    table is total over the type algebra and says nothing about either, and
+    inventing an answer for one is exactly what the codec exists to prevent.
+
+    ``path`` names the failing member as a SEQUENCE of declared names relative to
+    whatever the caller reduced, so a consumer resolves the member by name at each
+    step. A member name is any nonempty string (`m-metamodel` "Canonical
+    identities and order"), so the rendered ``.``-joined spelling is ambiguous —
+    a leaf named ``a.b`` and a leaf ``b`` inside an occurrence ``a`` render alike
+    — and only the sequence distinguishes them. Empty for a failure at the
+    reduced value itself.
+    """
+
+    def __init__(self, detail: str, *, path: tuple[str, ...] = ()) -> None:
+        super().__init__(f"{'.'.join(path)}: {detail}" if path else detail)
+        self.detail = detail
+        self.path = path
+
+    def under(self, name: str) -> LeafEncodingError:
+        """The same failure reported one containment step out, under ``name``."""
+        return LeafEncodingError(self.detail, path=(name, *self.path))
+
+
+def is_text_compared(neutral_type: NeutralType) -> bool:
+    """Whether a document-resident member of ``neutral_type`` compares as extracted
+    text rather than through a dialect cast (`m-dialect`)."""
+    return isinstance(neutral_type, _TEXT_COMPARED)
+
+
+def encode_leaf(neutral_type: NeutralType, value: object) -> object:
+    """``value``'s one document spelling under ``neutral_type``.
+
+    The canonical Wire Value (`m-wire`), reported at this document position: every
+    Neutral Type has exactly one spelling, so two writers of one value produce one
+    document, and the result is a portable JSON value — never a driver value, a
+    rendered text, or a provider-native document handle.
+    """
+    try:
+        return encode_wire(neutral_type, cast("ManagedValue", value))
+    except UsageError as exc:
+        raise LeafEncodingError(exc.args[1]) from exc
+
+
+def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> tuple[object, ...]:
+    """A scalar collection's one document spelling: the ordered array of each
+    element's canonical Wire Value, ``()`` for the empty collection.
+
+    Each element crosses the public encoder's own value-space check; a failure is
+    reported at its position and no partial array is answered.
+    """
+    encoded: list[object] = []
+    for index, value in enumerate(values):
+        try:
+            encoded.append(encode_wire(element_type, cast("ManagedValue", value)))
+        except UsageError as exc:
+            raise LeafEncodingError(f"element {index}: {exc.args[1]}") from exc
+    return tuple(encoded)
+
+
+def encode_managed_leaf(neutral_type: NeutralType, value: object) -> object:
+    """:func:`encode_leaf`'s spelling of a value already admitted under exactly
+    ``neutral_type``.
+
+    Nothing here checks membership, so a value outside that space has no
+    defined result rather than a refusal.
+    """
+    return encode_managed_wire(neutral_type, cast("ManagedValue", value))
+
+
+def encode_managed_scalar_many(
+    element_type: NeutralType, values: Iterable[ManagedValue]
+) -> tuple[object, ...]:
+    """:func:`encode_scalar_many`'s array for elements already admitted.
+
+    Every element must already be admitted under exactly ``element_type``: a
+    final write preparation or a stored-value judgement established it. Nothing
+    here checks membership, so an element outside that space has no defined
+    result rather than an indexed refusal.
+    """
+    return tuple(encode_managed_wire(element_type, value) for value in values)
+
+
+def decode_leaf(neutral_type: NeutralType, value: object) -> object:
+    """The neutral value ``value`` is the document encoding of.
+
+    :func:`encode_leaf`'s inverse, over the canonical Wire Value table's own
+    codomain: a stored leaf must both name a member of the declared value space and
+    be the ONE spelling that table gives that member. The second condition is what a
+    parse alone does not ask, and enforcing it here is the storage-read seam's
+    canonicality obligation (`m-document-codec` "Portable leaf encodings").
+    """
+    try:
+        return decode_canonical_wire(neutral_type, cast("WireValue", value))
+    except UsageError as exc:
+        raise LeafEncodingError(str(exc)) from exc

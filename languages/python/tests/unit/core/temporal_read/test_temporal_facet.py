@@ -8,12 +8,13 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import InternalError, inheritance, temporal_read
+from parallax.core import InternalError
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
-from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import INHERITANCE_MODULE
-from parallax.core.inheritance import _compile as inheritance_compile
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
+from parallax.core.internal.inheritance import INHERITANCE_MODULE
+from parallax.core.internal.inheritance import _compile as inheritance_compile
+from parallax.core.internal.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,
     AsOfAxisMetadata,
@@ -26,23 +27,23 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     TemporalDimension,
 )
-from parallax.core.model_formation import (
+from parallax.core.internal.model_formation import (
     MODEL_FORMATION_MODULE,
     ModelCompilerRequirement,
 )
-from parallax.core.model_formation._errors import (
+from parallax.core.internal.model_formation._errors import (
     FORMATION_COMPILER_FAILED,
 )
-from parallax.core.temporal_read import (
+from parallax.core.internal.temporal_read import (
     FACET_KEY,
     TEMPORAL_READ_MODULE,
     Bitemporal,
     TemporalFacet,
     TransactionTimeOnly,
 )
-from parallax.core.temporal_read import _compile as temporal_read_compile
-from parallax.core.temporal_read._compile import compile_facet
-from parallax.core.temporal_read._facet import NON_TEMPORAL
+from parallax.core.internal.temporal_read import _compile as temporal_read_compile
+from parallax.core.internal.temporal_read._compile import compile_facet
+from parallax.core.internal.temporal_read._facet import NON_TEMPORAL
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metadata as fake

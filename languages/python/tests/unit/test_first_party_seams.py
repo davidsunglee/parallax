@@ -25,18 +25,18 @@ from parallax.core import LATEST, TX_TIME, UnsupportedError
 from parallax.core._execution._unit_work.instructions import (
     SET_BASED_WRITE_TARGET_UNSUPPORTED,
 )
-from parallax.core.base import UsageError
-from parallax.core.db_port import DatabaseAdapter, MappingRow
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, entity_by_name
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.unit_work import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import DatabaseAdapter, MappingRow
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import EntityIdentity, entity_by_name
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.unit_work import (
     RetainedObservation,
 )
-from parallax.core.write_plan import ObjectKey, ObjectStateKey, VersionObservation
-from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.core.internal.write_plan import ObjectKey, ObjectStateKey, VersionObservation
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

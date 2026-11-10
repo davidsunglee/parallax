@@ -13,7 +13,7 @@ from typing import cast, get_args
 import pytest
 
 from parallax.core import UsageError
-from parallax.core.entity._errors import EntityDefinitionCode
+from parallax.core.internal.entity._errors import EntityDefinitionCode
 from tests._support import frontend_probes, frontend_probes_stringized
 from tests._support.errors import raises_code
 

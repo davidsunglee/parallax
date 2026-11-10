@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from parallax.core.base import InternalError
-from parallax.core.metamodel import (
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     ApplicationAssigned,

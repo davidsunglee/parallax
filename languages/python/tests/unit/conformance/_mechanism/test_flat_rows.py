@@ -18,15 +18,15 @@ from parallax.conformance._mechanism import flat_rows as flat_rows_module
 from parallax.conformance._mechanism import model_facts
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.flat_rows import flat_rows, omitted_value_objects
-from parallax.core.base import UsageError
-from parallax.core.db_port import MappingRow
-from parallax.core.metamodel import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.metamodel import (
     EntityIdentity,
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query import deserialize as deserialize_query
 from tests._support.case_corpus import case as corpus_case
 
 

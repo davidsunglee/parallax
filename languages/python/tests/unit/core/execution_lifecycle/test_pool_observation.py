@@ -27,13 +27,13 @@ from parallax.core import (
     FanoutLifecycleProvider,
     RootExecution,
 )
-from parallax.core.db_port import RESOURCE_LOGGER_NAME, RouteCapabilities
 from parallax.core.execution_lifecycle import ExecutionEvent
 from parallax.core.execution_lifecycle._pool_observation import (
     PoolObservation,
     register_pool_observation,
     register_pool_observations,
 )
+from parallax.core.internal.db_port import RESOURCE_LOGGER_NAME, RouteCapabilities
 from parallax.snapshot import Database, connect
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._contention_support import observing

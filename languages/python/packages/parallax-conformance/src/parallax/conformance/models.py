@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import cast
 
 from parallax.conformance import case_format
-from parallax.core.entity import DomainModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor import domain_model_from_document
 
 __all__ = [
@@ -50,7 +50,7 @@ def domain_model(document: Mapping[str, object]) -> DomainModel:
     ``descriptor-schema-invalid`` for a canonical-schema violation and
     ``descriptor-value-invalid`` for a schema-valid but unconstructible value,
     then
-    :class:`~parallax.core.model_formation.MetamodelValidationError` for every
+    :class:`~parallax.core.internal.model_formation.MetamodelValidationError` for every
     semantic model rule — all before this returns.
 
     A Snapshot connection takes the Domain Model rather than the accepted
@@ -90,7 +90,7 @@ def declared_entity_spellings(document: Mapping[str, object]) -> tuple[str, ...]
     enumerates canonically, which is why the ORDER cannot be taken from there.
 
     Each spelling is ``<namespace>.<name>``, exactly as
-    :attr:`~parallax.core.metamodel.EntityIdentity.canonical` composes one, and
+    :attr:`~parallax.core.internal.metamodel.EntityIdentity.canonical` composes one, and
     bare only for an Entity the document declares ownerless. A selection this
     module makes is not an authored reference, so it must not be handed on as a
     bare local name: a bare spelling two namespaces share names both Entities

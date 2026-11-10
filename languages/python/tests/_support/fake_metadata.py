@@ -24,9 +24,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
-from parallax.core import concurrency, inheritance, relationship, storage_layout, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST
-from parallax.core.base import (
+from parallax.core.internal import (
+    concurrency,
+    inheritance,
+    relationship,
+    storage_layout,
+    temporal_read,
+)
+from parallax.core.internal.base import (
     DATE,
     INT64,
     STRING,
@@ -34,7 +40,7 @@ from parallax.core.base import (
     NeutralType,
     Numeric,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     NOT_PRIMARY_KEY,
@@ -76,8 +82,8 @@ from parallax.core.metamodel import (
     accept_metamodel,
     default_column_name,
 )
-from parallax.core.metamodel._accepted import FacetKey
-from parallax.core.model_formation import ModelCompilerRequirement
+from parallax.core.internal.metamodel._accepted import FacetKey
+from parallax.core.internal.model_formation import ModelCompilerRequirement
 
 
 class FakeValueObjectAttributeMetadata:

@@ -29,16 +29,16 @@ from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.write_items import AdmittedWrite
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_error import DatabaseError
-from parallax.core.unit_work import (
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     admitted_write,
 )
-from parallax.core.write_plan import PredecessorRow, PredecessorRows
-from parallax.core.write_plan import plan as plan_module
-from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan import PredecessorRow, PredecessorRows
+from parallax.core.internal.write_plan import plan as plan_module
+from parallax.core.internal.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AcquisitionSpan,
     BoundRange,
@@ -47,7 +47,7 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
+from parallax.core.internal.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY

@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from parallax.core.base import TemporalBound
+from parallax.core.internal.base import TemporalBound
 
 __all__ = ["wire_value"]
 

@@ -32,17 +32,17 @@ from parallax.conformance.boundary_runner import (
 from parallax.conformance.class_models import MODELS
 from parallax.core import ConflictError, Entity
 from parallax.core._execution._unit_work.effects import shortfall
-from parallax.core.base import UsageError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import AcquisitionReason, ConnectionAcquisitionError
-from parallax.core.execution import (
+from parallax.core.execution_lifecycle import TransactionAttemptStarted
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import AcquisitionReason, ConnectionAcquisitionError
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.execution_lifecycle import TransactionAttemptStarted
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
-from parallax.core.write_plan.steps import KeyTarget
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
+from parallax.core.internal.write_plan.steps import KeyTarget
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.corpus import case_document, case_fixtures
 from tests._support.errors import raises_code

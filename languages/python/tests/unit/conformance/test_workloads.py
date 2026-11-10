@@ -28,11 +28,11 @@ from parallax.conformance.workloads import (
     structural_digest,
     workload_digest,
 )
-from parallax.core import inheritance, read_planning
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.sql_gen._compile import compile_read, compile_template
+from parallax.core.internal import inheritance, read_planning
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.sql_gen._compile import compile_read, compile_template
 
 
 def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> None:

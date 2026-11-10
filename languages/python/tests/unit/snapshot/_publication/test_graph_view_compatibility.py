@@ -16,8 +16,8 @@ import pytest
 
 from parallax.core import ONE_TO_MANY, Attr, Bitemporal, DomainModel, Entity, Int32, Rel, attr, rel
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.base import SQL_NULL
-from parallax.core.read_delivery._page import PageSchedule, page_rows
+from parallax.core.internal.base import SQL_NULL
+from parallax.core.internal.read_delivery._page import PageSchedule, page_rows
 from parallax.snapshot._publication._graph_view import GraphView
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_read

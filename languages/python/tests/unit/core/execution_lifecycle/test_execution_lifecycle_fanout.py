@@ -27,10 +27,10 @@ from parallax.core import (
     FanoutLifecycleProvider,
     RootExecution,
 )
-from parallax.core.base import UsageError
-from parallax.core.db_port import DatabaseAdapter
-from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import ExecutionEvent, ReadStarted
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.core.internal.diagnostics import diagnostic_for
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

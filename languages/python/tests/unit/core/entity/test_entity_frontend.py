@@ -35,22 +35,22 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.base import Float32, Int32, Int64, Numeric, String, Timestamp
-from parallax.core.entity import (
+from parallax.core.internal.base import Float32, Int32, Int64, Numeric, String, Timestamp
+from parallax.core.internal.entity import (
     IncludePath,
     Predicate,
     UnloadedRelationshipError,
 )
-from parallax.core.entity import _declaration as engine
-from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._declaration import wire_names_of
-from parallax.core.entity._errors import EditError
-from parallax.core.entity._expressions import (
+from parallax.core.internal.entity import _declaration as engine
+from parallax.core.internal.entity import _entity as entity_module
+from parallax.core.internal.entity._declaration import wire_names_of
+from parallax.core.internal.entity._errors import EditError
+from parallax.core.internal.entity._expressions import (
     AssignableScalarExpr,
     PreparedOperation,
     authored_include_path,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     Columns,
@@ -68,8 +68,8 @@ from parallax.core.metamodel import (
     UnresolvedReverseRelationshipDeclaration,
     derive_temporal_structure,
 )
-from parallax.core.object_query._fluent import typed_read_query
-from parallax.core.predicate import Comparison, serialize
+from parallax.core.internal.object_query._fluent import typed_read_query
+from parallax.core.internal.predicate import Comparison, serialize
 from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node
 

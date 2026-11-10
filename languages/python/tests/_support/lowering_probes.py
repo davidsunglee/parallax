@@ -25,20 +25,23 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import (
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import StateObservation
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import StateObservation
+from parallax.core.internal.write_plan.payload import WritePayloadPreparer
+from parallax.core.internal.write_plan.plan import (
+    NO_TEMPORAL_WRITE_OWNERSHIP,
+    TemporalWriteOwnership,
+)
+from parallax.core.internal.write_plan.steps import PlannedStep
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,

@@ -13,24 +13,24 @@ from typing import Any, Final, cast
 
 from parallax.conformance import _case_ingress, case_format, engine
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import Date as DateType
-from parallax.core.base import Float32 as Float32Type
-from parallax.core.base import Int32 as Int32Type
-from parallax.core.base import Int64 as Int64Type
-from parallax.core.base import ManagedValue, NeutralType, Numeric, matches_neutral_type
-from parallax.core.base import String as StringType
-from parallax.core.base import Timestamp as TimestampType
-from parallax.core.base import Uuid as UuidType
-from parallax.core.db_port import ArrayBind
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import deserialize
-from parallax.core.object_query._resolved import (
+from parallax.core.internal.base import Date as DateType
+from parallax.core.internal.base import Float32 as Float32Type
+from parallax.core.internal.base import Int32 as Int32Type
+from parallax.core.internal.base import Int64 as Int64Type
+from parallax.core.internal.base import ManagedValue, NeutralType, Numeric, matches_neutral_type
+from parallax.core.internal.base import String as StringType
+from parallax.core.internal.base import Timestamp as TimestampType
+from parallax.core.internal.base import Uuid as UuidType
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.object_query._resolved import (
     ResolvedAsOfSelection,
     ResolvedObjectQuery,
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
 )
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate._resolved import (
     ResolvedAnd,
     ResolvedComparison,
     ResolvedGroup,
@@ -44,8 +44,8 @@ from parallax.core.predicate._resolved import (
     ResolvedRange,
     ResolvedStringMatch,
 )
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import scans_resolved_axis
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.temporal_read import scans_resolved_axis
 from tests._support.binary32 import narrowed
 from tests._support.sweep_goldens import COMPILE_EXERCISED, read_golden_statements
 

@@ -19,7 +19,7 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core.db_port import Route, RouteCapabilities, RoutePolicy, RouteSelection
+from parallax.core.internal.db_port import Route, RouteCapabilities, RoutePolicy, RouteSelection
 from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root

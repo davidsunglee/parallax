@@ -25,16 +25,6 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import ExecutionLifecycleHandlerError, LoggingLifecycleProvider, RootExecution
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
-    CleanupIssue,
-    DatabaseAdapter,
-    Invalidated,
-    ReleaseUnconfirmed,
-    Returned,
-)
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -88,7 +78,17 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.execution_lifecycle._logging import LifecycleLogDetail
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
+    CleanupIssue,
+    DatabaseAdapter,
+    Invalidated,
+    ReleaseUnconfirmed,
+    Returned,
+)
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy
+from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.db_port import (
     ScriptedAdapter,

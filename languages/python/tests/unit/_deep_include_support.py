@@ -38,9 +38,9 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.base import INFINITY
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.temporal_read import Edge, Pin
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.temporal_read import Edge, Pin
 from tests._support.db_port import Read
 
 __all__ = [

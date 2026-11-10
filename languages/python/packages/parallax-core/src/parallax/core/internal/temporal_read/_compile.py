@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, Final, cast
+
+from parallax.core.internal.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
+from parallax.core.internal.inheritance import InheritanceFacet, root_metadata
+from parallax.core.internal.metamodel import (
+    CompiledEntity,
+    CompiledMetadata,
+    EntityIdentity,
+    TemporalDimension,
+)
+from parallax.core.internal.metamodel._accepted import FacetKey
+from parallax.core.internal.model_formation import ModuleIdentity
+from parallax.core.internal.temporal_read._facet import (
+    FACET_KEY,
+    NON_TEMPORAL,
+    TEMPORAL_READ_MODULE,
+    Bitemporal,
+    TemporalFacet,
+    TemporalShape,
+    TransactionTimeOnly,
+    temporal_facet,
+)
+
+__all__ = ["MODEL_COMPILER"]
+
+
+def compile_facet(metadata: CompiledMetadata, inheritance: InheritanceFacet) -> TemporalFacet:
+    """Compile every accepted Entity's effective temporal shape.
+
+    Each family's shape is derived once, from its root, and every descendant's
+    entry is that same object.
+    """
+    families = [
+        (entity.identity, root_metadata(inheritance, metadata, entity.identity))
+        for entity in metadata.entities
+    ]
+    shapes: dict[EntityIdentity, TemporalShape] = {}
+    for entity, root in families:
+        if root.identity == entity:
+            shapes[entity] = _shape(root)
+    for entity, root in families:
+        if root.identity != entity:
+            shapes[entity] = shapes[root.identity]
+    return temporal_facet(shapes)
+
+
+def _shape(root: CompiledEntity) -> TemporalShape:
+    """The temporal shape ``root``'s declared axes describe.
+
+    A family declaring Valid Time without Transaction Time is the unsupported
+    Valid-Time-Only formation; frontends reject it before formation and the shape
+    algebra cannot represent it, so meeting one here is an impossible state.
+    """
+    valid_time = root.as_of_axis(TemporalDimension.VALID_TIME)
+    transaction_time = root.as_of_axis(TemporalDimension.TRANSACTION_TIME)
+    if transaction_time is None:
+        if valid_time is None:
+            return NON_TEMPORAL
+        raise RuntimeError(
+            f"Entity {root.identity.canonical!r} declares Valid Time without Transaction "
+            "Time, which is the unsupported Valid-Time-Only formation"
+        )
+    if valid_time is None:
+        return TransactionTimeOnly(transaction_time)
+    return Bitemporal(valid_time, transaction_time)
+
+
+def _required_inheritance(required_facets: Mapping[FacetKey[Any], object]) -> InheritanceFacet:
+    """The Inheritance Facet this compiler declared it requires, which the
+    runner supplies under the manifest's own key."""
+    return cast(InheritanceFacet, required_facets[INHERITANCE_FACET_KEY])
+
+
+class TemporalReadModelCompiler:
+    """This module's Model Compiler: one facet, the Inheritance Facet, no issues."""
+
+    __slots__ = ()
+
+    @property
+    def owner(self) -> ModuleIdentity:
+        """The catalog identity that owns this compiler."""
+        return TEMPORAL_READ_MODULE
+
+    @property
+    def facet_key(self) -> FacetKey[TemporalFacet]:
+        """The key the compiled facet is installed under."""
+        return FACET_KEY
+
+    @property
+    def requires(self) -> frozenset[FacetKey[Any]]:
+        """The facets this compiler reads: a family's root supplies its axes."""
+        return frozenset({INHERITANCE_FACET_KEY})
+
+    def compile(
+        self, metadata: CompiledMetadata, required_facets: Mapping[FacetKey[Any], object]
+    ) -> TemporalFacet:
+        """Compile ``metadata``'s effective temporal shapes into the per-Entity facet."""
+        return compile_facet(metadata, _required_inheritance(required_facets))
+
+
+MODEL_COMPILER: Final[TemporalReadModelCompiler] = TemporalReadModelCompiler()
+"""The single Model Compiler instance a composition root supplies.
+
+It is stateless, so one instance serves every formation; the constant exists so
+a profile names the compiler rather than constructing a second one."""

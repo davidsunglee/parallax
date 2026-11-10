@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisRemoved,
     AttributeAdded,

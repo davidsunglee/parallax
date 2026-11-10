@@ -6,7 +6,6 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     prepare_wire_write,
@@ -16,21 +15,22 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     target_write,
 )
-from parallax.core.base import INFINITY
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
     TargetWriteInstruction,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 

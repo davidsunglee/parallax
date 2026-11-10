@@ -15,7 +15,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
-from parallax.core import UsageError, inheritance, temporal_read
+from parallax.core import UsageError
 from parallax.core._execution._unit_work._write_ownership import (
     INSERTION_AUTHORITY_INVALID,
     NO_INSERTION_AUTHORITY,
@@ -51,11 +51,12 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
     target_write,
 )
-from parallax.core.base import INFINITY
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
@@ -63,25 +64,25 @@ from parallax.core.unit_work import (
     TargetWriteInstruction,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import (
+from parallax.core.internal.write_plan.keys import (
     TemporalObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.managed_row import named_members
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.managed_row import named_members
+from parallax.core.internal.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     Openings,
     TemporalRowCoordinates,
     WriteEffects,
 )
-from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.write_plan.steps import Finite
+from parallax.core.internal.write_plan.steps import INFINITY as PLANNED_INFINITY
+from parallax.core.internal.write_plan.steps import Finite
 from tests._support.errors import raises_code
 from tests._support.planner_probes import admit, object_source, source_authority
 from tests._support.write_preparation import write_preparation_of

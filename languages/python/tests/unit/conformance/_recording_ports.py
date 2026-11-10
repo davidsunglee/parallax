@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     AccessMode,
     Committed,
     DatabaseConnection,
@@ -28,7 +28,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.document_reads import fold_mapping_rows
 

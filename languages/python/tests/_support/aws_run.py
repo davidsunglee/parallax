@@ -47,7 +47,7 @@ from tests._support.aws_environment import AwsTestEnvironment, PublishedEnvironm
 
 if TYPE_CHECKING:
     from parallax.conformance._database_control import DriverControl
-    from parallax.core.metamodel import Metamodel
+    from parallax.core.internal.metamodel import Metamodel
     from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint, PostgresRole
 
 __all__ = [

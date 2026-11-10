@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from parallax.conformance.story_models import ACCOUNT_MODEL, NicknamedAccount
 from parallax.core import DomainModel, ServingModel, prepare_model
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     BeginFailed,
     Committed,
     DatabaseAdapter,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Final, Protocol
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     PoolAvailable,
     PoolDetached,
     PoolMeasurements,
@@ -12,7 +12,7 @@ from parallax.core.db_port import (
     Route,
     RouteReadiness,
 )
-from parallax.core.diagnostics import diagnostic_for
+from parallax.core.internal.diagnostics import diagnostic_for
 
 __all__ = ["PostgresPoolMetrics"]
 

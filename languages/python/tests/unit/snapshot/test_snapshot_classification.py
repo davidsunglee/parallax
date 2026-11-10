@@ -30,30 +30,35 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
-from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument, UsageError
-from parallax.core.concurrency import ConcurrencyFacet, concurrency_facet_of
-from parallax.core.db_port import MappingRow
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.base import INFINITY, SQL_NULL, StructuredDocument, UsageError
+from parallax.core.internal.concurrency import ConcurrencyFacet, concurrency_facet_of
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery import (
+from parallax.core.internal.read_delivery import (
     MISSING_STORED_VALUE,
     InvalidData,
     StoredDataIssue,
 )
-from parallax.core.read_delivery._page import Page, PageRows, invalid_result_refusal, page_rows
-from parallax.core.temporal_read import (
+from parallax.core.internal.read_delivery._page import (
+    Page,
+    PageRows,
+    invalid_result_refusal,
+    page_rows,
+)
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     Edge,
     temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.write_plan import ObjectKey
 from parallax.snapshot import connect
 from parallax.snapshot._publication._classify import (
     CONFORMING_ROOT,

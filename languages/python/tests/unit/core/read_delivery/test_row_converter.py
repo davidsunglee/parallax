@@ -7,11 +7,17 @@ from typing import Final
 
 import pytest
 
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema, page_rows
-from parallax.core.read_delivery._row_converter import bind
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.read_delivery._page import (
+    ABSENT,
+    ROOT_LEVEL,
+    PageBuilder,
+    ViewSchema,
+    page_rows,
+)
+from parallax.core.internal.read_delivery._row_converter import bind
+from parallax.core.internal.temporal_read import Pin
 from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 

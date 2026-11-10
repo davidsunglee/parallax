@@ -4,8 +4,6 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from parallax.core.db_port import PoolMetricsSource
-from parallax.core.diagnostics import diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._activity import (
     CompletingHandler,
     ExecutionLifecycleHandler,
@@ -19,6 +17,8 @@ from parallax.core.execution_lifecycle._pool_observation import (
     close_pool_observations,
     register_pool_observation,
 )
+from parallax.core.internal.db_port import PoolMetricsSource
+from parallax.core.internal.diagnostics import diagnostic_for, qualified_type
 
 __all__ = ["FanoutLifecycleProvider"]
 

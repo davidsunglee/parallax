@@ -15,7 +15,7 @@ import pytest
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.turnstile import Turnstile, await_workers
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.snapshot import ScopedDatabase
 
 

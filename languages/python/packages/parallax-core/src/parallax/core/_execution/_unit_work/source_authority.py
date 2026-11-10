@@ -7,7 +7,6 @@ from enum import Enum
 from typing import cast, final
 from weakref import WeakValueDictionary
 
-from parallax.core import concurrency
 from parallax.core._execution._unit_work._errors import (
     WRITE_EVIDENCE_CONSUMED,
     WRITE_EVIDENCE_UNAVAILABLE,
@@ -34,18 +33,19 @@ from parallax.core._execution._unit_work.write_items import (
     KeyedInsert,
     ReadAuthorizedWrite,
 )
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.coverage import CoverageTransform
-from parallax.core.write_plan.keys import (
+from parallax.core.internal import concurrency
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.coverage import CoverageTransform
+from parallax.core.internal.write_plan.keys import (
     ObjectKey,
     ObjectStateKey,
     TemporalObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.observe import PredecessorRow
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.observe import PredecessorRow
+from parallax.core.internal.write_plan.plan import (
     AllocatedOpening,
     CurrentRowOutput,
     Openings,
@@ -296,7 +296,7 @@ class SourceAuthority:
     ) -> SettledEvidence | None:
         """What a keyed write of ``target`` against existing state settles
         against, read off its source's ``read_evidence``, or
-        a :class:`~parallax.core.base.UsageError` with a
+        a :class:`~parallax.core.internal.base.UsageError` with a
         :data:`~parallax.core._execution._unit_work._errors.WriteEvidenceCode`
         where this attempt cannot use it.
 

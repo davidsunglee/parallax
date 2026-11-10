@@ -17,10 +17,10 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import Attr, Entity, InvalidValueError, UsageError, ValueObject, attr
-from parallax.core.base import Float64, NeutralType, Numeric, String
-from parallax.core.entity import Predicate
-from parallax.core.entity._declaration import shape_of
-from parallax.core.entity._expressions import (
+from parallax.core.internal.base import Float64, NeutralType, Numeric, String
+from parallax.core.internal.entity import Predicate
+from parallax.core.internal.entity._declaration import shape_of
+from parallax.core.internal.entity._expressions import (
     AssignableScalarExpr,
     AuthoredMemberPath,
     AuthoredPresence,
@@ -29,7 +29,7 @@ from parallax.core.entity._expressions import (
     ScalarExpr,
     ValueObjectExpr,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     Column,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -38,7 +38,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
 )
-from parallax.core.predicate._interpretation import COMPARE
+from parallax.core.internal.predicate._interpretation import COMPARE
 from tests._support import value_object_models as vm
 from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_document

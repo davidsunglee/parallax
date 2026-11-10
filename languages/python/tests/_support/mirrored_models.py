@@ -95,7 +95,7 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.metamodel import TablePerConcreteSubtype
+from parallax.core.internal.metamodel import TablePerConcreteSubtype
 
 _NS = "parallax.compatibility"
 

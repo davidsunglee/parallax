@@ -26,7 +26,7 @@ from parallax.conformance._replication import (
     Server,
 )
 from parallax.conformance.provision import CONFORMANCE_LOGIN, conformance_credentials
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     AccessMode,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -36,7 +36,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter, PostgresRole
 from tests.unit._corpus_model_support import corpus
 

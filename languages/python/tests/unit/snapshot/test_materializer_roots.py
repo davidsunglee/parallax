@@ -8,12 +8,12 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
-from parallax.core.base import SQL_NULL
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import RelationshipIdentity
-from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.base import SQL_NULL
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import RelationshipIdentity
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
     EntityState,
@@ -24,8 +24,8 @@ from parallax.core.read_delivery._page import (
     reach_into,
     release_finished_rows,
 )
-from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_planning import RelationshipViewKey
+from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model

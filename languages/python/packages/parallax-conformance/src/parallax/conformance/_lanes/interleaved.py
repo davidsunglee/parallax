@@ -38,8 +38,8 @@ from parallax.conformance._mechanism.model_facts import case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
 from parallax.conformance._wire_submission import WireSubmitter
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import ConflictError, normalize_instant
-from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
+from parallax.core.internal.base import ConflictError, normalize_instant
+from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import TxnContext
 
 __all__ = ["run_interleaved_scenario_case"]
@@ -96,13 +96,13 @@ def _run_interleaved_group(
 
     The group's own boundary flushes what its last step buffered, and that
     flush may itself raise an ``optimistic-lock-conflict``
-    :class:`~parallax.core.base.ConflictError` (the SAME
+    :class:`~parallax.core.internal.base.ConflictError` (the SAME
     signal a caller-driven retry catches, the keyed unit-of-work lane's own
     conflict-write precedent) — caught HERE, recorded as the group's flush
     failure where the flush ran, and the transaction aborts. It is never
     replayed: a case grading a conflict's abort under a positive bound is
     refused before either worker starts (:func:`_refuse_a_replayed_abort`), so
-    :func:`~parallax.core.auto_retry.run_with_retry` surfaces the conflict after
+    :func:`~parallax.core.internal.auto_retry.run_with_retry` surfaces the conflict after
     exactly one attempt, and a replay the case never described — the callback
     entered a second time — fails the group rather than re-running its steps
     against a turnstile that has already passed them. Unlike

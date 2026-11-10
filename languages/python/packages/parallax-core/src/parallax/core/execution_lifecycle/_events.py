@@ -5,9 +5,13 @@ from typing import Literal
 from uuid import UUID
 
 from parallax.core._execution._unit_work.uow import FlushTrigger
-from parallax.core.auto_retry import RetryPolicy
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import (
+from parallax.core.execution_lifecycle._diagnostics import (
+    ActivityFailure,
+    DatabaseFailureDiagnostic,
+)
+from parallax.core.internal.auto_retry import RetryPolicy
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import (
     AccessMode,
     AcquisitionReason,
     CleanupResult,
@@ -16,12 +20,8 @@ from parallax.core.db_port import (
     Route,
     RoutePolicy,
 )
-from parallax.core.diagnostics import FailureDiagnostic
-from parallax.core.execution_lifecycle._diagnostics import (
-    ActivityFailure,
-    DatabaseFailureDiagnostic,
-)
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.diagnostics import FailureDiagnostic
+from parallax.core.internal.sql_gen import LoweredStatement
 
 type RootExecutionKind = Literal["read", "transaction_invocation", "stream"]
 """Which outermost Handle operation a Root Execution describes."""

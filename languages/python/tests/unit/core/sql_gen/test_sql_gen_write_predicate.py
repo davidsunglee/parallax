@@ -22,21 +22,26 @@ from decimal import Decimal
 
 import pytest
 
-from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, INT64, TIMESTAMP
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.navigate import (
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import INFINITY, INT64, TIMESTAMP
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.navigate import (
     PropagatedRootSelections,
     RootSelections,
     TemporalResolution,
     resolve_temporal_visibility,
 )
-from parallax.core.object_query import AsOf, TemporalSelection, object_query, validate_object_query
-from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.sql_gen._compile import CompiledPredicate
-from parallax.core.sql_gen._compile import (
+from parallax.core.internal.object_query import (
+    AsOf,
+    TemporalSelection,
+    object_query,
+    validate_object_query,
+)
+from parallax.core.internal.object_query._nodes import TemporalDimension
+from parallax.core.internal.sql_gen._compile import CompiledPredicate
+from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
 from tests._support.sql import compile_read, compile_write_predicate

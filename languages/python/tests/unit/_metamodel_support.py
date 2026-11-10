@@ -16,8 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import INT64, TIMESTAMP, NeutralType
-from parallax.core.metamodel import (
+from parallax.core.internal.base import INT64, TIMESTAMP, NeutralType
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     NOT_PRIMARY_KEY,
     AsOfAxisMetadata,

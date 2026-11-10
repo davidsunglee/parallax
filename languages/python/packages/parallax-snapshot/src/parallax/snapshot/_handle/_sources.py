@@ -9,9 +9,9 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedWriteSource,
 )
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import lifecycle_state_of
-from parallax.core.metamodel import CompiledEntity
+from parallax.core.internal.entity import Entity as EntityBase
+from parallax.core.internal.entity import lifecycle_state_of
+from parallax.core.internal.metamodel import CompiledEntity
 from parallax.snapshot._inspection import (
     RootConformance,
     SnapshotNodeState,

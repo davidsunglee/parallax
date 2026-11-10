@@ -17,7 +17,7 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -39,7 +39,7 @@ from parallax.core.base import (
     StructuredDocument,
     typed_converter,
 )
-from parallax.core.document_codec import (
+from parallax.core.internal.document_codec import (
     MISSING,
     NULL,
     UNAVAILABLE,
@@ -61,8 +61,11 @@ from parallax.core.document_codec import (
     prepare_patches,
     reduce_declared_members,
 )
-from parallax.core.document_codec._leaf import LeafEncodingError, encode_managed_scalar_many
-from parallax.core.document_codec._plan import (
+from parallax.core.internal.document_codec._leaf import (
+    LeafEncodingError,
+    encode_managed_scalar_many,
+)
+from parallax.core.internal.document_codec._plan import (
     BORROWED_DOCUMENTS,
     MAPPING_DOCUMENTS,
     AuthoringCatalog,
@@ -70,7 +73,7 @@ from parallax.core.document_codec._plan import (
     AuthoringRefusal,
     DocumentAccess,
 )
-from parallax.core.metamodel import AuthoringViolation, Multiplicity
+from parallax.core.internal.metamodel import AuthoringViolation, Multiplicity
 from tests._support.managed_documents import encoded_document
 
 _MANY = Multiplicity.MANY

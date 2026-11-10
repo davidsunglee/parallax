@@ -11,7 +11,7 @@ import psycopg_pool
 from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     CleanupCode,
     CleanupIssue,
     CleanupPhase,
@@ -24,8 +24,8 @@ from parallax.core.db_port import (
     Returned,
     RouteSelection,
 )
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.dialect import POSTGRES
 from parallax.postgres._authorization import (
     PostgresRole,
     _install_role,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send

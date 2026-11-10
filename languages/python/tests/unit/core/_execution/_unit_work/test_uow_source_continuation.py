@@ -26,7 +26,6 @@ from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import UsageError
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import uow as uow_module
@@ -41,11 +40,12 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_items import StateObservedWrite
-from parallax.core.base import INFINITY
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
-from parallax.core.unit_work import (
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
+from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     AdmittedWrite,
     KeyedWriteInstruction,
@@ -55,13 +55,13 @@ from parallax.core.unit_work import (
     UnitOfWork,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import VersionedObjectStateKey
+from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,

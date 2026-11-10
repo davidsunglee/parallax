@@ -35,9 +35,14 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, KeyedInsert
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel, entity_by_name
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
+    CompiledEntity,
+    EntityIdentity,
+    Metamodel,
+    entity_by_name,
+)
+from parallax.core.internal.write_plan import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of

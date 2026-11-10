@@ -4,18 +4,18 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Final, cast
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.base import InternalError
-from parallax.core.entity import UNLOADED
-from parallax.core.entity._errors import ENTITY_GRAPH_INVALID_MEMBER
-from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import (
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.entity import UNLOADED
+from parallax.core.internal.entity._errors import ENTITY_GRAPH_INVALID_MEMBER
+from parallax.core.internal.entity._layout import EntityLayout
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     MemberIdentity,
     RelationshipIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.read_delivery._page import (
     ABSENT,
     EntityState,
     InvalidDataError,
@@ -33,8 +33,8 @@ from parallax.core.read_delivery._page import (
     same_stored_values,
     stored_order_key,
 )
-from parallax.core.temporal_read import Pin
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.write_plan import ObjectKey
 
 __all__ = ["SNAPSHOT_FETCHED_ROW_CONFLICT", "GraphView", "fetched_row_refusal"]
 

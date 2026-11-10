@@ -34,8 +34,8 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.entity import model_of
-from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.descriptor import (
     DescriptorError,
     domain_model_from_document,

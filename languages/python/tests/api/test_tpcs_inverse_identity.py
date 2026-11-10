@@ -5,8 +5,8 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
-from parallax.core.entity import model_of
-from parallax.core.read_delivery import InvalidDataError
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.snapshot import connect
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.errors import raises_code

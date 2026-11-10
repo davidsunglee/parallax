@@ -4,22 +4,22 @@ from collections.abc import Callable, Iterator
 from typing import Final, NamedTuple, cast
 
 from parallax.core._stored_data import InvalidDataError
-from parallax.core.base import InternalError
-from parallax.core.dialect import Dialect
-from parallax.core.metamodel import (
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.metamodel import (
     EntityIdentity,
     Metamodel,
 )
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.sql_gen._write import (
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import (
     GroupedEffectBuilder,
     InsertStatementBuilder,
     StepPayload,
     compile_write_step,
     non_insert_parameter_ceiling,
 )
-from parallax.core.write_plan.payload import (
+from parallax.core.internal.write_plan.payload import (
     AssignmentPayload,
     EffectSlots,
     InsertPayload,
@@ -27,8 +27,8 @@ from parallax.core.write_plan.payload import (
     RowSlots,
     WritePayloadPreparer,
 )
-from parallax.core.write_plan.plan import EffectSpan
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.plan import EffectSpan
+from parallax.core.internal.write_plan.steps import (
     ExactCount,
     KeyTarget,
     MaxPlusOne,

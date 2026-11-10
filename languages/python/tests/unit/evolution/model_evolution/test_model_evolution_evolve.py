@@ -20,8 +20,8 @@ from collections.abc import Callable, Iterator
 import pytest
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     ConcreteSubtype,
     Document,
@@ -33,7 +33,7 @@ from parallax.core.metamodel import (
     TablePerConcreteSubtype,
     TablePerHierarchy,
 )
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     ABSENT,
     ConcreteSubtypeAdded,
     ConcreteSubtypeRemoved,
@@ -45,7 +45,7 @@ from parallax.evolution.model_evolution import (
     UnilateralEvolution,
     evolve_metamodels,
 )
-from parallax.evolution.model_evolution._matching import Matching
+from parallax.evolution.internal.model_evolution._matching import Matching
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _WIDGET = identity("Widget")

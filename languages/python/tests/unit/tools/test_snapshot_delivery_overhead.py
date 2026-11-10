@@ -18,8 +18,8 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
 from parallax.conformance.cost_envelope import validate as validate_envelope
 from parallax.conformance.provision import Provisioner
-from parallax.core.db_port import Password
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.db_port import Password
+from parallax.core.internal.metamodel import Metamodel
 from production_origins import ORIGINS_FIELD
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,

@@ -1,4 +1,4 @@
-"""``parallax.core.db_error`` unit tests (m-db-error, Docker-free).
+"""``parallax.core.internal.db_error`` unit tests (m-db-error, Docker-free).
 
 Covers the closed neutral category set, the classification seam over the pure
 Postgres dialect code table, and the call-site **predicate partition** (each
@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 import pytest
 
-from parallax.core.db_error import (
+from parallax.core.internal.db_error import (
     CATEGORIES,
     CONNECTION_DEAD,
     CONSTRAINT_VIOLATION,
@@ -32,7 +32,7 @@ from parallax.core.db_error import (
     is_timed_out,
     violates_unique_index,
 )
-from parallax.core.dialect import POSTGRES, PhysicalIndexName
+from parallax.core.internal.dialect import POSTGRES, PhysicalIndexName
 
 _PREDICATES: dict[str, Callable[[Category | None], bool]] = {
     "is_retriable": is_retriable,

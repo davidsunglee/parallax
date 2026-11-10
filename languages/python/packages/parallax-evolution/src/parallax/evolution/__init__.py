@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from parallax.evolution._domain_models import evolve
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     ABSENT,
     Absent,
     CoordinatedEvolution,
@@ -10,7 +10,7 @@ from parallax.evolution.model_evolution import (
     Evolution,
     UnilateralEvolution,
 )
-from parallax.evolution.schema_delta import (
+from parallax.evolution.internal.schema_delta import (
     CreatedIndex,
     PhysicalLocation,
     SchemaDelta,

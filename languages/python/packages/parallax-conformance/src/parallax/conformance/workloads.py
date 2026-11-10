@@ -12,20 +12,20 @@ from typing import Any, Final, Protocol, cast, overload
 
 from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance.budget import BudgetContract
-from parallax.core import (
-    ObjectQuery,
+from parallax.core import ObjectQuery
+from parallax.core.internal import (
     concurrency,
     inheritance,
     relationship,
     storage_layout,
     temporal_read,
 )
-from parallax.core.entity import DomainModel
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.wire._json import dump_document
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.wire._json import dump_document
 
 __all__ = [
     "ANCESTOR_LEVEL_IDS",

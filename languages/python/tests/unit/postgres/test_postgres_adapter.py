@@ -36,7 +36,7 @@ from psycopg.types.array import BaseListDumper
 from psycopg.types.json import Jsonb, JsonbLoader
 
 import parallax.postgres._connection as connection_module
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -58,8 +58,8 @@ from parallax.core.base import (
     Numeric,
     StructuredDocument,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     ISOLATION_LEVELS,
     JSON_NULL,
     WRITE_RESULT_INTEGRITY_VIOLATED,
@@ -80,8 +80,8 @@ from parallax.core.db_port import (
     StatementNotExecuted,
     isolation_level,
 )
-from parallax.core.dialect import PhysicalIndexName
-from parallax.core.wire._json import authored_token
+from parallax.core.internal.dialect import PhysicalIndexName
+from parallax.core.internal.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres._connection import (
     ConnectionEstablishment,

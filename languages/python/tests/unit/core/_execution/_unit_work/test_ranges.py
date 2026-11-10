@@ -16,7 +16,6 @@ from types import FrameType
 import pytest
 
 import parallax.core._execution._planning as planning_composition
-from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import (
@@ -36,9 +35,10 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     target_write,
 )
-from parallax.core.base import INFINITY, InternalError
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY, InternalError
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
@@ -48,14 +48,14 @@ from parallax.core.unit_work import (
     WritePreconditionError,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
     Openings,
@@ -65,9 +65,9 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import (
     TERMINATED,
     Finite,
     PlannedClose,

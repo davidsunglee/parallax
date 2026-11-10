@@ -19,20 +19,20 @@ from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
 )
-from parallax.core.base import INFINITY
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.unit_work import (
     TransactionInstant,
     WritePlanningRequest,
     WritePreconditionError,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
     WritePlan,
 )
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
@@ -40,14 +40,14 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
     Finite,
     PlannedTemporalGuard,
 )
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (

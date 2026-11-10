@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, Literal
 
-from parallax.core.metamodel import TemporalDimension as CanonicalTemporalDimension
-from parallax.core.metamodel import default_column_name
+from parallax.core.internal.metamodel import TemporalDimension as CanonicalTemporalDimension
+from parallax.core.internal.metamodel import default_column_name
 
 __all__ = [
     "TEMPORAL_DIMENSIONS",

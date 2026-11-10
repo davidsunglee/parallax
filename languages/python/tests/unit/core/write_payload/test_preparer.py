@@ -17,20 +17,20 @@ from typing import cast
 
 import pytest
 
-from parallax.core.base import INFINITY, FrozenMap, InternalError, NeutralType
-from parallax.core.document_codec import PreparedPatch
-from parallax.core.metamodel import (
+from parallax.core.internal.base import INFINITY, FrozenMap, InternalError, NeutralType
+from parallax.core.internal.document_codec import PreparedPatch
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.storage_layout import RelationalDocument
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import PredecessorRow
-from parallax.core.write_plan.payload import PatchedDocument, RowPayload
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.storage_layout import RelationalDocument
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import PredecessorRow
+from parallax.core.internal.write_plan.payload import PatchedDocument, RowPayload
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     MAX_PLUS_ONE,
     NEW_LINEAGE,
     CarriedFrom,

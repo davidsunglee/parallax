@@ -40,19 +40,16 @@ from parallax.conformance._mechanism.model_facts import (
     case_serving_model,
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
-from parallax.core import (
-    inheritance,
-    relationship,
-)
 from parallax.core._execution._keyed_writes import validate_source_pin
-from parallax.core.base import UsageError
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, relationship
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import (
     EntityIdentity,
     Multiplicity,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot import Snapshot, WireEntity
 
 __all__ = ["compile_scenario", "run_scenario"]

@@ -107,7 +107,7 @@ closed vocabularies are declared by the exported record and types.
 resolves and validates them.
 
 `retry` takes a `RetryPolicy`, exported with `AdaptiveBackoff` from
-`parallax.core.execution`; together their fields map one for one to the portable
+`parallax.core`; together their fields map one for one to the portable
 Retry Policy (`m-auto-retry`). Each validates on construction and refuses with plain
 `ValueError` naming the field: `max_retries` is an exact built-in `int`, so `bool`
 and `int` subclasses are refused; a delay is an `int` or `float`, not `bool`, that
@@ -118,7 +118,7 @@ re-entry refusal, ahead of any join comparison.
 
 ## The database port
 
-`parallax.core.db_port` spells the `m-db-port` behaviors for Python, and its
+`parallax.core.internal.db_port` spells the `m-db-port` behaviors for Python, and its
 protocols own the signatures. `DatabaseConnection.execute` takes SQL, binds, and
 the read's document cells as adjacent ordinal pairs, which an adapter folds into
 one `DocumentRead` each. A bind is `object`: a structured-document bind is a
@@ -192,7 +192,7 @@ failure leaving nested executions carries one note from each, innermost first.
 Failures rejected before model adoption carry no note. Interpreter control-flow
 exceptions keep their ordinary behavior.
 
-A failed statement raises a `parallax.core.db_error.DatabaseError`. Its
+A failed statement raises a `parallax.core.DatabaseError`. Its
 `category` is a `Category`, the closed set
 [Database Error Classification](../../../core/spec/m-db-error.md) owns, or
 `None` when the failure is uncategorized. Its `constraint_name` is the name the
@@ -314,7 +314,7 @@ Bitemporal one states `valid_from`, and `until` bounds it exactly as it bounds
 milestone start the caller's query returned, an aware `datetime`, never this
 transaction's own instant, and describes the coverage at `valid_from` alone. A
 retried callback states the same revision again. A missing or revised target
-raises `parallax.core.unit_work.WritePreconditionError` — at the call under
+raises `parallax.core.WritePreconditionError` — at the call under
 Locking, at the flush under Optimistic — a deletion or termination included,
 which never succeeds by removing nothing; it is never retried, and its
 `expected` is the stated revision. An object the attempt inserted is refused

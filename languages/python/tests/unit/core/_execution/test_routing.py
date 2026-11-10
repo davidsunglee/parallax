@@ -20,16 +20,16 @@ from parallax.core._execution._routing import (
     resolved_read_policy,
 )
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.execution_lifecycle._activity import ActivityTarget
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     ConnectionAcquisitionError,
     Route,
     RouteCapabilities,
     RoutePolicy,
     RouteSelection,
 )
-from parallax.core.execution import RetryPolicy, TxnOptions
-from parallax.core.execution_lifecycle._activity import ActivityTarget
+from parallax.core.internal.execution import RetryPolicy, TxnOptions
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, root
 

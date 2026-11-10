@@ -3,12 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from parallax.core._execution._write_lowering import stream_physical
-from parallax.core.dialect import Dialect
-from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
-from parallax.core.write_plan.plan import EffectSpan
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.internal.write_plan.plan import EffectSpan
+from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
     PlannedTemporalRevision,

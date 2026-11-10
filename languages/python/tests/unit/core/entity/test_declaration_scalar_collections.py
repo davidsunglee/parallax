@@ -21,12 +21,12 @@ import pytest
 from pydantic import ValidationError
 
 from parallax.core import MANY_TO_ONE, Attr, DomainModel, Entity, Rel, ValueObject, attr, rel
-from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32, Numeric, UsageError
-from parallax.core.entity._declaration import declaration_of, shape_of
-from parallax.core.entity._errors import EditError
-from parallax.core.metamodel import Multiplicity, ScalarDefinition
-from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.predicate import serialize
+from parallax.core.internal.base import FLOAT32, INT32, STRING, Float32, Int32, Numeric, UsageError
+from parallax.core.internal.entity._declaration import declaration_of, shape_of
+from parallax.core.internal.entity._errors import EditError
+from parallax.core.internal.metamodel import Multiplicity, ScalarDefinition
+from parallax.core.internal.model_formation import MetamodelValidationError
+from parallax.core.internal.predicate import serialize
 from parallax.snapshot import TxnContext, connect
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.errors import raises_code

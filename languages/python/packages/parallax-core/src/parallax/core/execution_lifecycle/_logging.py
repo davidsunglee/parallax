@@ -4,8 +4,6 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final, Literal, NamedTuple, assert_never, cast
 
-from parallax.core.db_port import CleanupResult, Invalidated, ReleaseUnconfirmed, Returned
-from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._activity import ExecutionLifecycleHandler
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
@@ -66,6 +64,8 @@ from parallax.core.execution_lifecycle._events import (
     TransactionInvocationFinished,
     TransactionInvocationStarted,
 )
+from parallax.core.internal.db_port import CleanupResult, Invalidated, ReleaseUnconfirmed, Returned
+from parallax.core.internal.diagnostics import FailureDiagnostic
 
 __all__ = ["LifecycleLogDetail", "LoggingLifecycleProvider"]
 

@@ -28,9 +28,9 @@ import pytest
 import parallax.postgres._connection as connection_module
 from parallax.conformance import engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
-from parallax.core.base import INFINITY
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     CallbackRaised,
     CanonicalWriteStatement,
     Committed,

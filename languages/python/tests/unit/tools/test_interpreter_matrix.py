@@ -79,7 +79,7 @@ def test_the_identity_probe_is_routed_through_the_reading_childs_own_resolution(
 
 
 def test_the_probe_answers_where_the_read_construction_modules_resolve() -> None:
-    origins = {"parallax.core.entity._row_fill": "packages/a.py", "parallax.x": NOT_LOADED}
+    origins = {"parallax.core.internal.entity._row_fill": "packages/a.py", "parallax.x": NOT_LOADED}
     identity = {"implementation": "CPython", "version": "9.99.1", "executable": "/p"}
     run, _asked = _probe((0, json.dumps({**identity, "productionOrigins": origins}), ""))
     status = matrix.probe_runtime("9.99", "probe", run)
@@ -99,7 +99,7 @@ def test_the_probe_answers_where_the_read_construction_modules_resolve() -> None
 
 def test_a_measured_identity_records_what_its_children_loaded_rather_than_resolution() -> None:
     row_recording, wire_render = (
-        "parallax.core.read_delivery._row_recording",
+        "parallax.core.internal.read_delivery._row_recording",
         "parallax.snapshot._publication._wire_render",
     )
     probed = matrix.RuntimeIdentity("CPython", "9.99.1", "/p", ((row_recording, "packages/p.py"),))

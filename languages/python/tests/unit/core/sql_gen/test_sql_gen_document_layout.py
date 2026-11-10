@@ -20,28 +20,28 @@ from collections.abc import Callable
 
 import pytest
 
-from parallax.core import object_query as oq
-from parallax.core import predicate as oa
-from parallax.core import read_planning
-from parallax.core.base import (
+from parallax.core.internal import object_query as oq
+from parallax.core.internal import predicate as oa
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import (
     INT64,
     STRING,
     TIMESTAMP,
     DocumentValue,
 )
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import CompiledEntity
-from parallax.core.navigate import (
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import CompiledEntity
+from parallax.core.internal.navigate import (
     PropagatedRootSelections,
     RootSelections,
     resolve_temporal_visibility,
 )
-from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._compile import CompiledRead, compile_template
-from parallax.core.sql_gen._compile import compile_read as production_compile_read
-from parallax.core.sql_gen._compile import (
+from parallax.core.internal.object_query._nodes import IncludePathNode, TemporalDimension
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._compile import CompiledRead, compile_template
+from parallax.core.internal.sql_gen._compile import compile_read as production_compile_read
+from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
 from parallax.descriptor._ingest import ingest_document

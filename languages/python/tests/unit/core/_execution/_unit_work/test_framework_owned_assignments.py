@@ -8,8 +8,8 @@ import pytest
 
 from parallax.core._execution._unit_work import instructions as wi
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT32, STRING, TIMESTAMP, UsageError
-from parallax.core.metamodel import (
+from parallax.core.internal.base import INT32, STRING, TIMESTAMP, UsageError
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -22,7 +22,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     TemporalDimension,
 )
-from parallax.core.write_plan.managed_row import named_members
+from parallax.core.internal.write_plan.managed_row import named_members
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source

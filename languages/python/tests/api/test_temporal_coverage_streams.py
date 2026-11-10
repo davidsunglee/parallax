@@ -35,8 +35,8 @@ import pytest
 from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
-from parallax.core.base import INFINITY
-from parallax.core.entity._model import model_of
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
 from tests._support.flush_calls import Call, FlushCalls, PageRead, call_runs
 from tests._support.root_ownership import own_root

@@ -8,7 +8,7 @@ underscore; privacy is this module's.
 
 from __future__ import annotations
 
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.metamodel import Metamodel
 from parallax.descriptor._ingest import ingest_document
 from parallax.descriptor._records import (
     Attribute,

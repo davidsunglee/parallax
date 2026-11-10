@@ -28,25 +28,25 @@ from pydantic import BaseModel
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, UsageError, ValueObject, attr
-from parallax.core.base import StructuredDocument
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
-from parallax.core.entity._entity import lifecycle_state
-from parallax.core.entity._model import DomainModel
-from parallax.core.read_delivery import InvalidData
-from parallax.core.temporal_read import Edge, Pin
-from parallax.core.unit_work import (
+from parallax.core.internal.base import StructuredDocument
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.entity._declaration import LIFECYCLE_STATE_SLOT
+from parallax.core.internal.entity._entity import lifecycle_state
+from parallax.core.internal.entity._model import DomainModel
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.temporal_read import Edge, Pin
+from parallax.core.internal.unit_work import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import VersionedObjectStateKey
+from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from parallax.snapshot import (
     TxnContext,
     WireEntity,

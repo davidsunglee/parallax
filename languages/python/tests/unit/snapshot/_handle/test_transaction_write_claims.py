@@ -12,9 +12,9 @@ import pytest
 
 from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import INT64, UsageError
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.base import INT64, UsageError
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import Database, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

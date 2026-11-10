@@ -16,8 +16,8 @@ import pytest
 
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import LATEST, Attr, Bitemporal, Document, DomainModel, Entity, attr
-from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.entity._model import model_of
+from parallax.core.internal.base import INFINITY, TemporalBound
+from parallax.core.internal.entity._model import model_of
 from parallax.postgres import PoolOptions
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.root_ownership import own_root

@@ -7,14 +7,15 @@ from typing import Final
 import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
-from parallax.core import DomainModel, read_planning
+from parallax.core import DomainModel
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import deserialize
-from parallax.core.read_delivery._page import (
+from parallax.core.internal import read_planning
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.read_delivery._page import (
     INERT_OBSERVER,
     ROOT_LEVEL,
     MaterializationObserver,
@@ -23,9 +24,9 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_cadence,
 )
-from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_delivery._page_reader import FlatPageRequest, PageReader
+from parallax.core.internal.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row

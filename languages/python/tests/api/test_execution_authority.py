@@ -13,9 +13,9 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.base import UsageError
-from parallax.core.execution import RetryPolicy, TxnOptions
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.execution import RetryPolicy, TxnOptions
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures

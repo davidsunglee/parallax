@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from parallax.core import inheritance, storage_layout, temporal_read
-from parallax.core.document_codec import MemberShape
-from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.temporal_read import TemporalShape
+from parallax.core.internal import inheritance, storage_layout, temporal_read
+from parallax.core.internal.document_codec import MemberShape
+from parallax.core.internal.inheritance import InheritanceEntityView
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.storage_layout import EntityLayoutView
+from parallax.core.internal.temporal_read import TemporalShape
 
 __all__ = [
     "comparison_shape",

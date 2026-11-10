@@ -24,7 +24,7 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
     load_case_setup_metamodel,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DatabaseConnection,
     OrderedWriteTransport,
     PipelineStatement,
@@ -32,7 +32,7 @@ from parallax.core.db_port import (
     StructuredDocument,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import body_outcome
 

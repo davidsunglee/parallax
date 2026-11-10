@@ -4,12 +4,15 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol, cast
 
-from parallax.core.base import ManagedValue
-from parallax.core.inheritance import EntityMemberSelection
-from parallax.core.metamodel import AttributeIdentity, CompiledEntity
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, TemporalObjectStateKey
-from parallax.core.write_plan.predecessor_rows import PredecessorRows, PredecessorRowsBuilder
+from parallax.core.internal.base import ManagedValue
+from parallax.core.internal.inheritance import EntityMemberSelection
+from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.write_plan.keys import ObjectKey, TemporalObjectStateKey
+from parallax.core.internal.write_plan.predecessor_rows import (
+    PredecessorRows,
+    PredecessorRowsBuilder,
+)
 
 __all__ = [
     "AcquireRows",

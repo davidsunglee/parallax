@@ -17,11 +17,11 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.base import UsageError
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.steps import MAX_PLUS_ONE, SelfIncrement
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.steps import MAX_PLUS_ONE, SelfIncrement
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 

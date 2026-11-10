@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from parallax.conformance.story_models import Account
 from parallax.core import DomainModel
-from parallax.core.db_port import DatabaseAdapter
+from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 
 __all__ = [

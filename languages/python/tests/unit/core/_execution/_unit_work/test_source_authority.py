@@ -32,12 +32,12 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite
-from parallax.core.base import INFINITY
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
-from parallax.core.temporal_read import Pin, TimeInterval
-from parallax.core.unit_work import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
+from parallax.core.internal.temporal_read import Pin, TimeInterval
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     ReadEvidence,
     RetainedObservation,
@@ -45,9 +45,9 @@ from parallax.core.unit_work import (
     UnitOfWork,
     admitted_write,
 )
-from parallax.core.write_plan import ObjectKey, VersionObservation
-from parallax.core.write_plan.keys import VersionedObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan import ObjectKey, VersionObservation
+from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     AllocatedOpening,
     Derivation,
@@ -56,8 +56,8 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
     WriteEffects,
 )
-from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.write_plan.steps import Finite
+from parallax.core.internal.write_plan.steps import INFINITY as PLANNED_INFINITY
+from parallax.core.internal.write_plan.steps import Finite
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of

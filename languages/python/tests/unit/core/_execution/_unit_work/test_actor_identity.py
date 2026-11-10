@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.unit_work import DatabaseLoginActor, SubjectActor
+from parallax.core.internal.unit_work import DatabaseLoginActor, SubjectActor
 
 
 @pytest.mark.parametrize("value", ["", None, 7])

@@ -11,9 +11,9 @@ from typing import cast
 
 import pytest
 
-from parallax.core.base import FrozenMap, retain_document_value
-from parallax.core.base._neutral import host_float_number
-from parallax.core.wire._json import (
+from parallax.core.internal.base import FrozenMap, retain_document_value
+from parallax.core.internal.base._neutral import host_float_number
+from parallax.core.internal.wire._json import (
     _MAX_UNAMBIGUOUS_TOKEN_LENGTH,  # pyright: ignore[reportPrivateUsage]
     authored_number,
     authored_token,

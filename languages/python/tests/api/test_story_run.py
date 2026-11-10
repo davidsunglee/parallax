@@ -52,15 +52,15 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
-from parallax.core.base import UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import IsolationLevel
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution import RetryPolicy
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_delivery import InvalidData, InvalidDataError
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import IsolationLevel
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity import UnloadedRelationshipError
+from parallax.core.internal.entity._model import class_index, model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
     Database,
     ScopedDatabase,

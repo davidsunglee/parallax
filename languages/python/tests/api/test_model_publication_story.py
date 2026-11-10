@@ -18,8 +18,8 @@ from parallax.conformance.story_models import (
     Account,
     NicknamedAccount,
 )
-from parallax.core.entity import model_of
-from parallax.core.execution import (
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.execution import (
     PublicationConflictError,
     ServingModel,
     prepare_model,

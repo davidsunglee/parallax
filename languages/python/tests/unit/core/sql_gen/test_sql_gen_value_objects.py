@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core import predicate as oa
-from parallax.core.base import STRING, UsageError
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.object_query import History
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import STRING, UsageError
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.object_query import History
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed, model, target

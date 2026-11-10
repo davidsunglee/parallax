@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
-from parallax.core.base import InternalError
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedUpdate,

@@ -13,12 +13,12 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import object_query as oq
-from parallax.core.base import UsageError
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.object_query.serde import serialize
-from parallax.core.predicate import TrueNode
+from parallax.core.internal import object_query as oq
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.object_query._nodes import IncludePathNode
+from parallax.core.internal.object_query.serde import serialize
+from parallax.core.internal.predicate import TrueNode
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
 from tests._support.errors import raises_code

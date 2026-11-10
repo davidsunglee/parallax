@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from parallax.core.entity import DomainModel, Entity
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._model import model_of
+from parallax.core.internal.entity import DomainModel, Entity
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._model import model_of
 from tests._support.write_preparation import write_preparation_of
 
 __all__ = ["TypedWriteSource"]

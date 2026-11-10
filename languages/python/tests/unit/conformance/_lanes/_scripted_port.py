@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 
 __all__ = ["ScriptedPort"]

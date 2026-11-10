@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Final, assert_never, cast
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     Boolean,
     Bytes,
     Date,
@@ -18,7 +18,7 @@ from parallax.core.base import (
     Timestamp,
     Uuid,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     ApplicationAssigned,
@@ -53,7 +53,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.descriptor._type_spelling import format_type_spelling
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisRemoved,
     AttributeAdded,
@@ -104,7 +104,7 @@ from parallax.evolution.model_evolution import (
     WritesDisabled,
     WritesEnabled,
 )
-from parallax.evolution.schema_delta import (
+from parallax.evolution.internal.schema_delta import (
     PhysicalLocation,
     SchemaDelta,
     UnsupportedSchemaEvolutionError,

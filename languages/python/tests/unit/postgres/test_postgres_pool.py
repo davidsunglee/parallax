@@ -31,9 +31,9 @@ from psycopg.adapt import AdaptersMap
 from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
 
-from parallax.core.base import INFINITY
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     DRIVER_MANAGED,
     RESOURCE_LOGGER_NAME,
     BeginFailed,

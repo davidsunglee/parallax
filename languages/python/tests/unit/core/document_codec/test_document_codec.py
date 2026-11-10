@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -40,7 +40,7 @@ from parallax.core.base import (
     StructuredDocument,
     UsageError,
 )
-from parallax.core.document_codec import (
+from parallax.core.internal.document_codec import (
     MISSING,
     NULL,
     UNAVAILABLE,
@@ -68,17 +68,17 @@ from parallax.core.document_codec import (
     prepare_patches,
     reduce_declared_members,
 )
-from parallax.core.document_codec._document import encode_managed_many
-from parallax.core.document_codec._leaf import LeafEncodingError
-from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.metamodel import (
+from parallax.core.internal.document_codec._document import encode_managed_many
+from parallax.core.internal.document_codec._leaf import LeafEncodingError
+from parallax.core.internal.entity import Attr, DomainModel, Entity, ValueObject, attr
+from parallax.core.internal.metamodel import (
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     ValueObjectAttributeDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.wire import WireValue, decode_wire, loads
+from parallax.core.internal.wire import WireValue, decode_wire, loads
 from tests._support.managed_documents import OMITTED, encoded_document
 
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)

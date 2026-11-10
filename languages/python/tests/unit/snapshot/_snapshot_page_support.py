@@ -28,7 +28,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import DomainModel
-from parallax.core.base import (
+from parallax.core.internal.base import (
     SQL_NULL,
     DocumentValue,
     NeutralType,
@@ -37,11 +37,11 @@ from parallax.core.base import (
     StructuredDocument,
     check_stored_scalar,
 )
-from parallax.core.dialect import decode_bytes_cell
-from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
-from parallax.core.entity._model import class_index, model_of
-from parallax.core.inheritance import inheritance_facet_of
-from parallax.core.metamodel import (
+from parallax.core.internal.dialect import decode_bytes_cell
+from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
+from parallax.core.internal.entity._model import class_index, model_of
+from parallax.core.internal.inheritance import inheritance_facet_of
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
@@ -51,8 +51,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.read_delivery import InvalidData, _convert
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.read_delivery import InvalidData, _convert
+from parallax.core.internal.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
     ChildSlot,
@@ -60,12 +60,12 @@ from parallax.core.read_delivery._page import (
     PageBuilder,
     ViewSchema,
 )
-from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
-from parallax.core.read_planning import IncludeTree, RelationshipViewKey
-from parallax.core.read_planning._include_tree import PositionSeed, build_include_tree
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin
-from parallax.core.wire import WireValue, decode_canonical_wire
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.internal.read_planning import IncludeTree, RelationshipViewKey
+from parallax.core.internal.read_planning._include_tree import PositionSeed, build_include_tree
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication, wire_publication
 from tests._support.model_capabilities import (
     graph_construction_for,

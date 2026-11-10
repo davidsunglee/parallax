@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from parallax.conformance.vo_models import Customer
-from parallax.core.base import StructuredDocument
-from parallax.core.entity import DomainModel, Entity
-from parallax.core.read_delivery import InvalidData
+from parallax.core.internal.base import StructuredDocument
+from parallax.core.internal.entity import DomainModel, Entity
+from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import connect
 
 from .db_port import Read, ScriptedAdapter

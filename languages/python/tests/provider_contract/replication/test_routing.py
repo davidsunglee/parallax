@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import BeginFailed, Committed, DatabaseConnection, RoutePolicy
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import BeginFailed, Committed, DatabaseConnection, RoutePolicy
 from parallax.postgres import PostgresRole
 from parallax.snapshot import ReadOnlyTxnContext, connect
 from tests._support.root_ownership import own_root

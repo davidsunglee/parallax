@@ -3,11 +3,15 @@ from __future__ import annotations
 from typing import Literal
 
 from parallax.core._execution._routing import OperationRouting
-from parallax.core.db_port import ConnectionContext, DatabaseConnection, report_resource_issues
 from parallax.core.execution_lifecycle._activity import (
     ConnectionAcquisitionActivity,
     ConnectionOwnerActivity,
     ConnectionReleaseActivity,
+)
+from parallax.core.internal.db_port import (
+    ConnectionContext,
+    DatabaseConnection,
+    report_resource_issues,
 )
 
 __all__ = ["TransactionPreparation", "enter_connection", "exit_connection"]

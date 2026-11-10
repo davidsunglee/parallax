@@ -15,7 +15,6 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import read_planning
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -23,21 +22,22 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
 )
 from parallax.core.execution_lifecycle._events import ResultRepresentation
-from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.object_query import ObjectQueryNode, deserialize, validate_object_query
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
-from parallax.core.read_delivery._page import Page, PageBuilder, ViewSchema
-from parallax.core.read_delivery._page_reader import (
+from parallax.core.internal import read_planning
+from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
+from parallax.core.internal.object_query import ObjectQueryNode, deserialize, validate_object_query
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
+from parallax.core.internal.read_delivery._page import Page, PageBuilder, ViewSchema
+from parallax.core.internal.read_delivery._page_reader import (
     EagerPageResult,
     HistoryPageResult,
     StreamPageResult,
 )
-from parallax.core.read_delivery._paging import At, PagingPlan
-from parallax.core.read_delivery._publication import RootsOf
-from parallax.core.read_delivery._stream import StreamDelivery
-from parallax.core.temporal_read import Pin, TemporalShape
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.read_delivery._paging import At, PagingPlan
+from parallax.core.internal.read_delivery._publication import RootsOf
+from parallax.core.internal.read_delivery._stream import StreamDelivery
+from parallax.core.internal.temporal_read import Pin, TemporalShape
+from parallax.core.internal.write_plan import ObjectKey
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 

@@ -25,13 +25,13 @@ from parallax.core._execution._unit_work.instructions import (
     WriteAssignment,
 )
 from parallax.core._execution._unit_work.preparation import EntityPreparation, WritePreparation
-from parallax.core.base import UsageError
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._authored_resolver import typed_predicate_interpretation
-from parallax.core.entity._declaration import declaration_of
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import AttributeAssignment
+from parallax.core.internal.entity import Entity as EntityBase
+from parallax.core.internal.entity._authored_resolver import typed_predicate_interpretation
+from parallax.core.internal.entity._declaration import declaration_of
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.object_query._fluent import ObjectQuery, mutation_selection
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -282,9 +282,9 @@ class TypedKeyedInsertSource:
 
 class TypedPredicateWriteAdapter:
     """The Typed predicate-selected write: a mutation-compatible
-    :class:`~parallax.core.object_query.ObjectQuery` plus ``Attr.set(...)``
+    :class:`~parallax.core.internal.object_query.ObjectQuery` plus ``Attr.set(...)``
     assignments, or the instance whose writable state a replacement states,
-    stated as the :class:`~parallax.core.unit_work.PredicateWriteInstruction`
+    stated as the :class:`~parallax.core.internal.unit_work.PredicateWriteInstruction`
     every ingress prepares.
 
     Inert when constructed and private to one verb call. The query's own form is
@@ -343,7 +343,7 @@ def _replacement_row(
 
 class TypedInstanceTargetWriteAdapter:
     """The Typed caller-conditioned replacement: ``instance``'s every populated
-    writable member as the row a :class:`~parallax.core.unit_work.TargetWriteInstruction`
+    writable member as the row a :class:`~parallax.core.internal.unit_work.TargetWriteInstruction`
     states, beside the caller's own revision.
 
     Inert when constructed and private to one verb call. What produced the

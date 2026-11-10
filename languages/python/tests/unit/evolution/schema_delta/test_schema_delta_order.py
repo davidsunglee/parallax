@@ -12,10 +12,16 @@ from collections.abc import Sequence
 
 import pytest
 
-from parallax.core.base import INT32, STRING
-from parallax.core.dialect import POSTGRES, PhysicalIndexName
-from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.base import INT32, STRING
+from parallax.core.internal.dialect import POSTGRES, PhysicalIndexName
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    Column,
+    EntityIdentity,
+    IndexIdentity,
+    Table,
+)
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
@@ -24,14 +30,14 @@ from parallax.descriptor._records import (
     Inheritance,
     Metamodel,
 )
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     ABSENT,
     EntityAdded,
     UnilateralEvolution,
     evolve_metamodels,
 )
-from parallax.evolution.schema_delta._order import order, order_key
-from parallax.evolution.schema_delta._physical import (
+from parallax.evolution.internal.schema_delta._order import order, order_key
+from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateIndex,
@@ -44,7 +50,7 @@ from parallax.evolution.schema_delta._physical import (
     member_key,
     table_of,
 )
-from parallax.evolution.schema_delta._plan import plan
+from parallax.evolution.internal.schema_delta._plan import plan
 from tests.unit._corpus_model_support import corpus, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 

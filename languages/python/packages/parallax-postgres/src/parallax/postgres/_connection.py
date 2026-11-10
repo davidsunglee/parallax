@@ -20,7 +20,7 @@ from psycopg.pq.abc import PGresult
 from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     Boolean,
     Bytes,
@@ -39,8 +39,8 @@ from parallax.core.base import (
     Timestamp,
     Uuid,
 )
-from parallax.core.db_error import DatabaseError, classify_error
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError, classify_error
+from parallax.core.internal.db_port import (
     JSON_NULL,
     WRITE_RESULT_INTEGRITY_VIOLATED,
     AccessMode,
@@ -70,8 +70,8 @@ from parallax.core.db_port import (
     StructuredDocument,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.wire._json import dump_document, prepared_loads
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.wire._json import dump_document, prepared_loads
 from parallax.postgres._compiled_loaders import compiled_loaders
 
 if TYPE_CHECKING:
@@ -197,7 +197,7 @@ def reported_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
 def translating_driver_errors(dialect: Dialect) -> Generator[None]:
     """Re-raise any psycopg exception inside the block as a neutral ``DatabaseError``.
 
-    A :class:`~parallax.core.db_error.DatabaseError` raised by an inner port call
+    A :class:`~parallax.core.internal.db_error.DatabaseError` raised by an inner port call
     is **not** a ``psycopg.Error``, so a nested transaction never re-wraps an
     already-translated error, and a non-driver exception (a rollback signal, a
     callback's own error) propagates unchanged.
@@ -358,9 +358,9 @@ class _ArrayBindDumper(RecursiveDumper):
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
-    A :class:`~parallax.core.db_port.StructuredDocument` becomes a psycopg
+    A :class:`~parallax.core.internal.db_port.StructuredDocument` becomes a psycopg
     ``Jsonb``. An
-    :class:`~parallax.core.db_port.ArrayBind` passes through unchanged to the
+    :class:`~parallax.core.internal.db_port.ArrayBind` passes through unchanged to the
     dumper :func:`initialize_connection` registers for it, as does every other
     bind. This keeps the psycopg bind mechanics internal to the adapter — no
     driver type is exported to the developer surface (m-db-port).
@@ -815,7 +815,7 @@ class ConnectionEstablishment:
         would inherit.
 
         Anything the source raises that is not already a
-        :class:`~parallax.core.db_port.CredentialResolutionError` is wrapped in
+        :class:`~parallax.core.internal.db_port.CredentialResolutionError` is wrapped in
         one with fixed text and the original chained, so classification does not
         depend on a provider's discipline and the pool's own warning line — which
         prints the exception's text — carries nothing a source put in a message.
@@ -1303,7 +1303,7 @@ class PostgresConnection:
         work may be retried and whether this connection is still trustworthy.
 
         An exception ``body`` itself raises is the CALLER's failure rather than
-        one this made, so :class:`~parallax.core.db_port.CallbackRaised` carries
+        one this made, so :class:`~parallax.core.internal.db_port.CallbackRaised` carries
         the identical object (``m-db-port``). Translating it would substitute a
         port error for the caller's own — and a body-authored deadlock-class
         exception would then read as retriable to ``m-auto-retry``, which would
@@ -1323,7 +1323,7 @@ class PostgresConnection:
         from, assigned while the session is idle, so the request governs this
         transaction alone and costs no request of its own. A request the
         database refuses ends the boundary
-        :class:`~parallax.core.db_port.BeginFailed`: no work of the caller's was
+        :class:`~parallax.core.internal.db_port.BeginFailed`: no work of the caller's was
         attempted, and a request silently downgraded to one the caller did not
         make is worse than one refused. Once the outer boundary ends, both
         attributes are cleared so the session's own defaults govern the next one.
@@ -1336,7 +1336,7 @@ class PostgresConnection:
         twice. An outer boundary that is the first submission after entry is
         still the acquisition's setup: one that opens past the acquisition's
         deadline, or after the runtime closed, raises that acquisition's
-        :class:`~parallax.core.db_port.ConnectionAcquisitionError` before the
+        :class:`~parallax.core.internal.db_port.ConnectionAcquisitionError` before the
         callback runs.
 
         A call made while this session's transaction is already open joins it

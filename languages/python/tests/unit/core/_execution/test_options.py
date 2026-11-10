@@ -14,7 +14,7 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 
 
 def test_the_built_in_record_is_ten_optimistic_and_read_committed() -> None:

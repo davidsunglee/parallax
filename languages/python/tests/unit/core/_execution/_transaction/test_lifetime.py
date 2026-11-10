@@ -13,8 +13,8 @@ import pytest
 
 from parallax.core import ConflictError, DatabaseError, UsageError, WritePreconditionError
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.unit_work import TRANSACTION_ROLLBACK_ONLY
 from tests._support.errors import raises_code
 
 

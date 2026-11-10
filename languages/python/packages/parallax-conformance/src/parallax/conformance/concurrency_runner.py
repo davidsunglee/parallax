@@ -8,15 +8,15 @@ from dataclasses import dataclass, field, replace
 from typing import Protocol, cast
 
 from parallax.conformance import case_format
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     Bind,
     DocumentReadOrdinals,
     IsolationLevel,
     MappingRow,
     Row,
 )
-from parallax.core.dialect import Dialect
+from parallax.core.internal.dialect import Dialect
 from parallax.postgres import isolation_spelling
 
 __all__ = [

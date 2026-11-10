@@ -26,22 +26,6 @@ from parallax.conformance._lifecycle_observation import (
 from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core import RootExecution
-from parallax.core.base import UsageError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
-    AcquisitionReason,
-    CleanupCode,
-    CleanupIssue,
-    CleanupPhase,
-    ConnectionAcquisitionError,
-    FallbackReason,
-    Invalidated,
-    ReleaseUnconfirmed,
-    Returned,
-    RoutePolicy,
-)
-from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -95,7 +79,23 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._diagnostics import DatabaseFailureDiagnostic
 from parallax.core.execution_lifecycle._events import DatabaseCallKind
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
+    AcquisitionReason,
+    CleanupCode,
+    CleanupIssue,
+    CleanupPhase,
+    ConnectionAcquisitionError,
+    FallbackReason,
+    Invalidated,
+    ReleaseUnconfirmed,
+    Returned,
+    RoutePolicy,
+)
+from parallax.core.internal.diagnostics import FailureDiagnostic, diagnostic_for
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy
+from parallax.core.internal.sql_gen import LoweredStatement
 
 _EXECUTION = uuid4()
 _STATEMENT = LoweredStatement("select 1 from account", ())

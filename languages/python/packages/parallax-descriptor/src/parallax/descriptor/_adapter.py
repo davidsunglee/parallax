@@ -4,8 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import NeutralType, UsageError
-from parallax.core.metamodel import (
+from parallax.core.internal.base import NeutralType, UsageError
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     NOT_PRIMARY_KEY,
@@ -57,7 +57,7 @@ from parallax.core.metamodel import (
     derive_primary_key_index,
     designate_framework_owned,
 )
-from parallax.core.metamodel import Sequence as SequenceGeneration
+from parallax.core.internal.metamodel import Sequence as SequenceGeneration
 from parallax.descriptor import _records
 from parallax.descriptor._errors import DESCRIPTOR_VALUE_INVALID, DescriptorError
 from parallax.descriptor._type_spelling import parse_type_spelling

@@ -12,9 +12,10 @@ from typing import Any, Final, TypeGuard, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import InternalError, concurrency, inheritance, relationship
+from parallax.core import InternalError
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
-from parallax.core.metamodel import (
+from parallax.core.internal import concurrency, inheritance, relationship
+from parallax.core.internal.metamodel import (
     METADATA_COMPILER,
     METAMODEL_MODULE,
     RESOLVER_ISSUE_CODES,
@@ -37,10 +38,10 @@ from parallax.core.metamodel import (
     UnresolvedMetamodel,
     resolve,
 )
-from parallax.core.metamodel import _resolve as resolver
-from parallax.core.metamodel._accepted import FacetKey
-from parallax.core.metamodel._resolve import PRIMARY_KEY_MISSING, PRIMARY_KEY_MULTIPLE
-from parallax.core.model_formation import (
+from parallax.core.internal.metamodel import _resolve as resolver
+from parallax.core.internal.metamodel._accepted import FacetKey
+from parallax.core.internal.metamodel._resolve import PRIMARY_KEY_MISSING, PRIMARY_KEY_MULTIPLE
+from parallax.core.internal.model_formation import (
     FIXED_RESOLVER,
     METADATA_COMPILER_REQUIRED,
     REQUIRED_RULE_SET,
@@ -54,8 +55,8 @@ from parallax.core.model_formation import (
     ModuleIdentity,
     form,
 )
-from parallax.core.model_formation import _runner as runner
-from parallax.core.model_formation._errors import (
+from parallax.core.internal.model_formation import _runner as runner
+from parallax.core.internal.model_formation._errors import (
     FORMATION_COMPILER_FAILED,
     FORMATION_CONTRACT_CODES,
     FORMATION_FACET_DUPLICATE,
@@ -69,7 +70,7 @@ from parallax.core.model_formation._errors import (
     FORMATION_RULE_SET_FAILED,
     FORMATION_RULE_SET_RESULT_INVALID,
 )
-from parallax.core.model_formation._manifest import CompilerRequirement
+from parallax.core.internal.model_formation._manifest import CompilerRequirement
 from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 

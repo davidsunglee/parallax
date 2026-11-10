@@ -14,16 +14,16 @@ from typing import Final
 
 import pytest
 
-from parallax.core import storage_layout
 from parallax.core._execution._write_step_executor import recoverable_conflict
-from parallax.core.db_error import Category, DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal import storage_layout
+from parallax.core.internal.db_error import Category, DatabaseError
+from parallax.core.internal.db_port import (
     OrderedWriteResultComplete,
     StatementFailed,
     StatementNotExecuted,
 )
-from parallax.core.dialect import POSTGRES
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.write_plan.steps import PlannedStep
 from tests._support.db_port import Ordered, ScriptedAdapter, Write
 from tests.unit.core._execution._write_step_support import (
     POSITION,

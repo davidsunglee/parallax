@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from parallax.core.base import INT64
-from parallax.core.metamodel import (
+from parallax.core.internal.base import INT64
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     Column,
     IndexIdentity,
@@ -25,7 +25,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisRemoved,
     AttributeAdded,

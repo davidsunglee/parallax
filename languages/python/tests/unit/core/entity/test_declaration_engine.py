@@ -38,15 +38,15 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.entity._declaration import (
+from parallax.core.internal.entity._declaration import (
     DeclarationKind,
     declaration_of,
     is_declared_class,
     members_of,
     shape_of,
 )
-from parallax.core.entity._expressions import snake_to_camel
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._expressions import snake_to_camel
+from parallax.core.internal.metamodel import (
     NOT_PRIMARY_KEY,
     AttributeIdentity,
     Column,
@@ -68,8 +68,8 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipDeclaration,
     UnresolvedReverseRelationshipDeclaration,
 )
-from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
-from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
+from parallax.core.internal.metamodel import AbstractSubtype as AcceptedAbstractSubtype
+from parallax.core.internal.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 from tests._support import frontend_probes, frontend_probes_stringized
 from tests._support.errors import raises_code
 

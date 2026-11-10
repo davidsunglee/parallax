@@ -18,8 +18,8 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import UsageError
-from parallax.core.execution import ReadOnlyTxnOptions, RetryPolicy, TxnOptions
-from parallax.core.unit_work import TRANSACTION_ESCAPED, TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.execution import ReadOnlyTxnOptions, RetryPolicy, TxnOptions
+from parallax.core.internal.unit_work import TRANSACTION_ESCAPED, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import (
     ReadOnlyTxnContext,
     ScopedDatabase,

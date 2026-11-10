@@ -3,14 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
     OccurrenceDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.write_plan.managed_row import (
+from parallax.core.internal.write_plan.managed_row import (
     ManagedRow,
     RowSelection,
     adopted_row,

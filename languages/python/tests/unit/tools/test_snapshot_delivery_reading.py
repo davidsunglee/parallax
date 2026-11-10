@@ -19,9 +19,9 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.vo_models import CUSTOMER_MODEL
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
-from parallax.core.base import INT64
-from parallax.core.db_port import ArrayBind
-from parallax.core.entity._authored_resolver import object_query_node
+from parallax.core.internal.base import INT64
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.entity._authored_resolver import object_query_node
 from parallax.snapshot import Database
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,

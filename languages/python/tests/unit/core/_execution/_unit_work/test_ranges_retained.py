@@ -11,7 +11,6 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from parallax.core import inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import (
@@ -26,13 +25,14 @@ from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,
 )
-from parallax.core.base import INFINITY
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import WritePlanningRequest
-from parallax.core.write_plan import PlannedClose, PredecessorRow
-from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.plan import BoundRange, SettledWrite
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.unit_work import WritePlanningRequest
+from parallax.core.internal.write_plan import PlannedClose, PredecessorRow
+from parallax.core.internal.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
+from parallax.core.internal.write_plan.plan import BoundRange, SettledWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
 from tests.unit._positional_row_support import positional_row

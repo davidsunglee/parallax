@@ -24,9 +24,7 @@ from parallax.core import (
     InternalError,
     ValueObject,
     attr,
-    inheritance,
 )
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._transaction import _attempt as attempt_module
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.acquisition import (
@@ -43,12 +41,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ArrayBind, MappingRow
-from parallax.core.document_codec import _document as document_module
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     ExecutionEvent,
@@ -59,22 +51,30 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     TransactionAttemptStarted,
 )
-from parallax.core.inheritance import EntityMemberSelection
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import ArrayBind, MappingRow
+from parallax.core.internal.document_codec import _document as document_module
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.inheritance import EntityMemberSelection
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     entity_by_name,
 )
-from parallax.core.read_delivery import InvalidDataError
-from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import (
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     PredicateSelection,
     PredicateWriteInstruction,
     TargetWriteInstruction,
     WriteAssignment,
 )
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.write_plan import ObjectKey
 from parallax.descriptor import domain_model_from_document
 from tests._support.db_port import (
     BeginCall,

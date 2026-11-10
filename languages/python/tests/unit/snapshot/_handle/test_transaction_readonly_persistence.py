@@ -22,7 +22,7 @@ from parallax.core import (
     TemporalBound,
     attr,
 )
-from parallax.core.base import StructuredDocument, UsageError
+from parallax.core.internal.base import StructuredDocument, UsageError
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import (
     BeginCall,

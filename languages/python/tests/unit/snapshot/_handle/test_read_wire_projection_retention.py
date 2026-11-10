@@ -9,8 +9,8 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Any, cast
 
-from parallax.core.read_planning._include_tree import build_include_tree
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_planning._include_tree import build_include_tree
+from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot import Snapshot, WireEntity
 from parallax.snapshot._publication import _wire_render
 from tests.unit._gc_reachability import reachable_objects

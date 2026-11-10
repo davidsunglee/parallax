@@ -6,10 +6,10 @@ import datetime as dt
 from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, field
 
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
-from parallax.core.write_plan.observe import PredecessorRow
-from parallax.core.write_plan.plan import TemporalRowCoordinates
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.internal.write_plan.observe import PredecessorRow
+from parallax.core.internal.write_plan.plan import TemporalRowCoordinates
 
 
 @dataclass(frozen=True)

@@ -40,7 +40,8 @@ from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
     KeyedInsert,
 )
-from parallax.core.base import (
+from parallax.core.execution_lifecycle import DatabaseCallStarted
+from parallax.core.internal.base import (
     INFINITY,
     INT64,
     InternalError,
@@ -49,21 +50,20 @@ from parallax.core.base import (
     TemporalBound,
     UsageError,
 )
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     ArrayBind,
     MappingRow,
     StructuredDocument,
 )
-from parallax.core.execution import (
+from parallax.core.internal.execution import (
     RetryPolicy,
     TxnOptions,
 )
-from parallax.core.execution_lifecycle import DatabaseCallStarted
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.unit_work import (
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,
@@ -73,8 +73,8 @@ from parallax.core.unit_work import (
     UnitOfWork,
     WriteEffectCode,
 )
-from parallax.core.write_plan.managed_row import named_members
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.managed_row import named_members
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
@@ -1739,7 +1739,7 @@ def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
 
 
 def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> None:
-    from parallax.core import storage_layout
+    from parallax.core.internal import storage_layout
 
     meta = models.load_models()["document-layout"]
     layout = next(
@@ -1767,7 +1767,7 @@ def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> N
 
 
 def test_table_state_preserves_non_document_relational_payloads() -> None:
-    from parallax.core import storage_layout
+    from parallax.core.internal import storage_layout
 
     meta = models.load_models()["document-layout"]
     layout = next(
@@ -1790,7 +1790,7 @@ def test_table_state_preserves_non_document_relational_payloads() -> None:
 
 
 def test_table_state_requires_a_known_variant_for_ambiguous_document_members() -> None:
-    from parallax.core import storage_layout
+    from parallax.core.internal import storage_layout
 
     meta = models.load_models()["document-layout"]
     layout = next(
@@ -1813,7 +1813,7 @@ def test_table_state_requires_a_known_variant_for_ambiguous_document_members() -
 
 
 def test_table_state_preserves_malformed_declared_relational_document_leaves() -> None:
-    from parallax.core import storage_layout
+    from parallax.core.internal import storage_layout
 
     meta = models.load_models()["document-layout"]
     layout = next(
@@ -1835,7 +1835,7 @@ def test_table_state_preserves_malformed_declared_relational_document_leaves() -
 
 
 def test_table_state_validates_direct_value_objects_as_stored_wire_documents() -> None:
-    from parallax.core import storage_layout
+    from parallax.core.internal import storage_layout
 
     meta = models.load_models()["document-codec"]
     (layout,) = storage_layout.storage_layout_facet_of(meta).tables
@@ -1853,7 +1853,7 @@ def test_table_state_validates_direct_value_objects_as_stored_wire_documents() -
 
 
 def test_table_state_preserves_malformed_direct_value_object_leaves() -> None:
-    from parallax.core import storage_layout
+    from parallax.core.internal import storage_layout
 
     meta = models.load_models()["document-codec"]
     (layout,) = storage_layout.storage_layout_facet_of(meta).tables

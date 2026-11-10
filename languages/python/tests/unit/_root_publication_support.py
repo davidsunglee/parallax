@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
-from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.entity._layout import EntityLayout
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.read_delivery._page import (
     InvalidRootInput,
     Page,
     PageSchedule,
@@ -29,7 +29,7 @@ from parallax.core.read_delivery._page import (
     _rows,
     page_rows,
 )
-from parallax.core.temporal_read import Pin, TemporalShape
+from parallax.core.internal.temporal_read import Pin, TemporalShape
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 

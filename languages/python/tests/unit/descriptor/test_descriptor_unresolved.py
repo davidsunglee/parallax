@@ -12,8 +12,8 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import DATE, INT64, STRING, TIMESTAMP, Numeric
-from parallax.core.metamodel import (
+from parallax.core.internal.base import DATE, INT64, STRING, TIMESTAMP, Numeric
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     NOT_PRIMARY_KEY,
@@ -44,7 +44,7 @@ from parallax.core.metamodel import (
     UnresolvedMetamodel,
     UnresolvedReverseRelationshipDeclaration,
 )
-from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.descriptor import _records as records
 from parallax.descriptor import validate_inheritance_families
 from parallax.descriptor._adapter import unresolved_metamodel

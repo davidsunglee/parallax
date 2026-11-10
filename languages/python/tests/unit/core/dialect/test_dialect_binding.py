@@ -17,15 +17,15 @@ import pytest
 
 from parallax.conformance._mechanism.transaction_control import write_connection
 from parallax.conformance.boundary_runner import FaultInjectingPort
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DatabaseConnection,
     DeclaresDialect,
     DocumentReadOrdinals,
     MappingRow,
     Row,
 )
-from parallax.core.db_port import TransactionOutcome as Outcome
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.db_port import TransactionOutcome as Outcome
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import connect
 from tests._support import mirrored_models as mm

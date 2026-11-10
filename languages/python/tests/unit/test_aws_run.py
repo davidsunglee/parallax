@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from parallax.conformance._replication import Pacing
-from parallax.core.db_port import Password
+from parallax.core.internal.db_port import Password
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint
 from tests._support.aws_environment import AwsInstance, AwsTestEnvironment
 from tests._support.aws_run import (
@@ -130,7 +130,7 @@ class _Session:
 
     @property
     def dialect(self) -> Any:
-        from parallax.core.dialect import POSTGRES
+        from parallax.core.internal.dialect import POSTGRES
 
         return POSTGRES
 

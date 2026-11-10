@@ -12,13 +12,13 @@ from __future__ import annotations
 from types import MemberDescriptorType
 from typing import TYPE_CHECKING, Any, cast
 
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity._instance_state import (
     COMPACT_STATE_SLOT,
     allocate,
     attach_row,
     plan_of,
 )
-from parallax.core.entity._pydantic_storage import instance_state
+from parallax.core.internal.entity._pydantic_storage import instance_state
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

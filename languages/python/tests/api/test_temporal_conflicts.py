@@ -32,10 +32,10 @@ from parallax.core import (
     UsageError,
     attr,
 )
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import TEMPORAL_CONFLICT, TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.unit_work import TEMPORAL_CONFLICT, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import raises_code, retry_notes
 from tests._support.retry import fast_retry

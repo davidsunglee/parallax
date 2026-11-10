@@ -11,11 +11,11 @@ from typing import Any, Final, Literal, cast, overload
 
 import pytest
 
-from parallax.core import inheritance, relationship, storage_layout
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
-from parallax.core.base import STRING
-from parallax.core.inheritance import _compile as inheritance_compile
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, relationship, storage_layout
+from parallax.core.internal.base import STRING
+from parallax.core.internal.inheritance import _compile as inheritance_compile
+from parallax.core.internal.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,
     AsOfAxisMetadata,
@@ -47,10 +47,10 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.metamodel._compile import compile_metadata
-from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
-from parallax.core.relationship import _compile as relationship_compile
-from parallax.core.storage_layout import _compile as storage_layout_compile
+from parallax.core.internal.metamodel._compile import compile_metadata
+from parallax.core.internal.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
+from parallax.core.internal.relationship import _compile as relationship_compile
+from parallax.core.internal.storage_layout import _compile as storage_layout_compile
 from parallax.descriptor._records import Attribute, Entity, Index
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests.unit._corpus_model_support import corpus, formed

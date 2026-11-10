@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from operator import itemgetter
 from typing import Never, final
 
-from parallax.core import concurrency, inheritance, relationship, temporal_read
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
@@ -36,19 +35,25 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
-from parallax.core.concurrency import ConcurrencyFacet, ConcurrencyPreference
-from parallax.core.metamodel import AttributeIdentity, CompiledEntity, Metamodel
-from parallax.core.temporal_write.coverage import CoverageTransform
-from parallax.core.write_plan.keys import ObjectKey
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import (
+from parallax.core.internal import concurrency, inheritance, relationship, temporal_read
+from parallax.core.internal.concurrency import ConcurrencyFacet, ConcurrencyPreference
+from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity, Metamodel
+from parallax.core.internal.temporal_write.coverage import CoverageTransform
+from parallax.core.internal.write_plan.keys import ObjectKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.payload import WritePayloadPreparer
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     TemporalWriteOwnership,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import planned_assignments
-from parallax.core.write_plan.steps import ANY_COUNT, UNVERSIONED, PlannedDelete, PlannedUpdate
+from parallax.core.internal.write_plan.planned_rows import planned_assignments
+from parallax.core.internal.write_plan.steps import (
+    ANY_COUNT,
+    UNVERSIONED,
+    PlannedDelete,
+    PlannedUpdate,
+)
 
 __all__ = [
     "WritePlanner",

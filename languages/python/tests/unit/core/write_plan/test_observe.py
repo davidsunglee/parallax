@@ -1,4 +1,4 @@
-"""Entity State row views and Predecessor Rows (`parallax.core.write_plan.observe`).
+"""Entity State row views and Predecessor Rows (`parallax.core.internal.write_plan.observe`).
 
 The Mapping contract of the positional view over one decoded Entity State, keyed
 by declared member name, and of the nested Value Object views it exposes, driven
@@ -15,16 +15,17 @@ from typing import cast
 
 import pytest
 
-from parallax.core import Entity, inheritance, temporal_read
-from parallax.core.base import INFINITY
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import EntityLayout, LayoutCatalog
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
-from parallax.core.write_plan import EntityStateRow, PredecessorRow
-from parallax.core.write_plan.managed_row import RowSelection, predecessor_state
-from parallax.core.write_plan.observe import AssignedComparison
+from parallax.core import Entity
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
+from parallax.core.internal.write_plan import EntityStateRow, PredecessorRow
+from parallax.core.internal.write_plan.managed_row import RowSelection, predecessor_state
+from parallax.core.internal.write_plan.observe import AssignedComparison
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model

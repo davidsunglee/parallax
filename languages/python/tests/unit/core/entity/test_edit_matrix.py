@@ -10,8 +10,8 @@ import pytest
 
 from parallax.conformance.edit_models import LEDGER, Note, NoteTag
 from parallax.core import AbstractRoot, Attr, ConcreteSubtype, Entity, TablePerHierarchy, attr
-from parallax.core.entity._instance_state import is_published
-from parallax.core.entity._pydantic_storage import attach_instance_state
+from parallax.core.internal.entity._instance_state import is_published
+from parallax.core.internal.entity._pydantic_storage import attach_instance_state
 from tests._support import mirrored_models as mm
 from tests.unit.core.entity._compact_support import published, raw_row
 

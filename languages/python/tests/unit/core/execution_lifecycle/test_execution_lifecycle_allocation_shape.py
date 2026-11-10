@@ -10,7 +10,7 @@ These name only *that* a cost exists, over the whole sequence a read drives the
 seam through, so a cost no site test names still fails here.
 
 The seam is driven with the values a real read hands it: a namespaced
-:class:`~parallax.core.metamodel.EntityIdentity` whose canonical spelling has to
+:class:`~parallax.core.internal.metamodel.EntityIdentity` whose canonical spelling has to
 be BUILT, a real Lowered Statement, and a row list far longer than the
 interpreter's small-integer cache. A seam that spells that target or sizes those
 rows allocates, and allocating is the whole assertion.
@@ -36,7 +36,6 @@ from uuid import uuid4
 
 import parallax.core.execution_lifecycle._activity as _activity
 from parallax.core import ExecutionLifecycleHandler, RootExecution
-from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     DeliveryState,
@@ -46,6 +45,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_read_root,
     open_transaction_root,
 )
+from parallax.core.internal.execution import RetryPolicy
 from tests._support.repo import PY_ROOT
 from tests.unit.core.execution_lifecycle._lifecycle_cost_support import (
     AFFECTED,

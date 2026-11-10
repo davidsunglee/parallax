@@ -35,25 +35,25 @@ from parallax.core import (
     UsageError,
     ValueObject,
     attr,
-    inheritance,
     rel,
 )
 from parallax.core import AbstractSubtype as AbstractSubtypeRole
-from parallax.core.entity._expressions import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.entity._expressions import (
     AssignableManyValueObjectExpr,
     AssignableScalarExpr,
     RelationshipExpr,
 )
-from parallax.core.entity._model import model_of
-from parallax.core.inheritance._rules import (
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.inheritance._rules import (
     CONCRETE_SUBTYPE_WITH_CHILDREN,
     OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
     PERSISTENCE_NOT_ROOT_OWNED,
     TPCS_ABSTRACT_TABLE_FORBIDDEN,
     TPH_DESCENDANT_TABLE_FORBIDDEN,
 )
-from parallax.core.metamodel import EntityIdentity, EntityLocation, PersistenceMode
-from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.internal.metamodel import EntityIdentity, EntityLocation, PersistenceMode
+from parallax.core.internal.model_formation import MetamodelValidationError
 from tests._support import inheritance_models as im
 from tests._support.errors import raises_code
 

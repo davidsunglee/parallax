@@ -7,7 +7,7 @@ from typing import Any
 from parallax.conformance.read_models import Balance
 from parallax.conformance.vo_models import Branch
 from parallax.core import LATEST, Edge
-from parallax.core.concurrency import ConcurrencyPreference
+from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.snapshot import ScopedDatabase, TxnContext, edge_of
 
 __all__ = [

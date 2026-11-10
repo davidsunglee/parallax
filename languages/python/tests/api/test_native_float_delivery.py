@@ -38,10 +38,10 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core import wire as wire_codec
-from parallax.core.base import ManagedValue, UsageError
-from parallax.core.entity._model import model_of
-from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
+from parallax.core.internal import wire as wire_codec
+from parallax.core.internal.base import ManagedValue, UsageError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import ScopedDatabase, SnapshotStream, TxnContext, connect
 from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
 from tests._support.root_ownership import own_root

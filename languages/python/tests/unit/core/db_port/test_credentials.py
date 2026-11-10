@@ -12,7 +12,7 @@ from typing import get_args
 
 import pytest
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DRIVER_MANAGED,
     Credential,
     CredentialSource,

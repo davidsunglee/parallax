@@ -20,11 +20,11 @@ import pytest
 
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, DomainModel, TxTemporal, attr, index
-from parallax.core.db_error import DatabaseError
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
 from parallax.evolution import SchemaDelta, schema_delta
-from parallax.evolution.model_evolution import ABSENT, evolve_metamodels
+from parallax.evolution.internal.model_evolution import ABSENT, evolve_metamodels
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 

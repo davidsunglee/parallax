@@ -13,7 +13,7 @@ import yaml
 
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
-from parallax.core.base import (
+from parallax.core.internal.base import (
     FLOAT32,
     FLOAT64,
     INT32,
@@ -22,8 +22,8 @@ from parallax.core.base import (
     UsageError,
     matches_neutral_type,
 )
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
-from parallax.core.wire import (
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
+from parallax.core.internal.wire import (
     WireValue,
     decode_canonical_wire,
     decode_wire,

@@ -26,22 +26,22 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import class_models, models
-from parallax.core.base import SQL_NULL
-from parallax.core.entity._layout import (
+from parallax.core.internal.base import SQL_NULL
+from parallax.core.internal.entity._layout import (
     CatalogedModel,
     EntityLayout,
     LayoutCatalog,
 )
-from parallax.core.entity._model import model_of
-from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import (
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
+from parallax.core.internal.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
     family_variant_name,
     inheritance_facet_of,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     MemberShape,
@@ -52,10 +52,15 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema, page_rows
-from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.relationship import relationship_facet_of
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_delivery._page import (
+    ROOT_LEVEL,
+    PageBuilder,
+    ViewSchema,
+    page_rows,
+)
+from parallax.core.internal.read_planning import RelationshipViewKey
+from parallax.core.internal.relationship import relationship_facet_of
+from parallax.core.internal.temporal_read import Pin
 from tests._support.document_reads import folded_names
 from tests._support.fake_metadata import with_facet
 from tests.unit._corpus_model_support import corpus, formed, target

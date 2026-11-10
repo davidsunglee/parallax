@@ -12,7 +12,6 @@ from decimal import Decimal
 
 import pytest
 
-from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import (
@@ -29,10 +28,11 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     target_write,
 )
-from parallax.core.base import INFINITY
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
@@ -42,7 +42,7 @@ from parallax.core.unit_work import (
     WritePreconditionError,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     SUPERSEDED,
     TERMINATED,
     ObjectKey,
@@ -52,21 +52,21 @@ from parallax.core.write_plan import (
     TemporalObservation,
     WritePlan,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     SettledWrite,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     FAILED_PRECONDITION,
     Finite,
     PlannedStep,
     TemporalGate,
 )
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,

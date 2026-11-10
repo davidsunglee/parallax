@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, TypeVar
 from weakref import ReferenceType, ref
 
-from parallax.core.read_planning import RenderToken
+from parallax.core.internal.read_planning import RenderToken
 
 if TYPE_CHECKING:
     from parallax.snapshot._publication._wire import WireEntity

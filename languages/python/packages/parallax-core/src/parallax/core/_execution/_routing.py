@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final, cast, get_args
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     ConnectionContext,
     ConnectionContextSource,
     IsolationLevel,
