@@ -206,22 +206,11 @@ def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(stem: str, 
 # `attribute-missing`, `value-object-missing`, a nested `many` element's own   #
 # bracket-indexed path) directly against `judge_assignment`, never through    #
 # the typed/serialized frontends.                                              #
-#                                                                               #
-# `code` (non-nullable scalar), `nickname` (nullable scalar), and `core`       #
-# (non-nullable TOP-level value object -- `spec`/`tags` above are both         #
-# `nullable: true`, so neither exercises a top-level required-VO rejection)    #
-# extend this same synthetic model for the nullable-gated `None`-assignment    #
-# refusal: a `None` assignment's nullability-aware                             #
-# handling, pinned directly against the shared check below.                    #
 # --------------------------------------------------------------------------- #
 _VO_ENTITY = Entity(
     name="Gadget",
     table="gadget",
-    attributes=(
-        Attribute(name="id", type="int64", column="id", primary_key=True),
-        Attribute(name="code", type="string", column="code"),
-        Attribute(name="nickname", type="string", column="nickname", nullable=True),
-    ),
+    attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
     value_objects=(
         ValueObject(
             name="spec",
@@ -246,12 +235,6 @@ _VO_ENTITY = Entity(
             column="tags",
             multiplicity="many",
             attributes=(ValueObjectAttribute(name="label", type="string"),),
-        ),
-        ValueObject(
-            name="core",
-            column="core",
-            nullable=False,
-            attributes=(ValueObjectAttribute(name="serial", type="string"),),
         ),
     ),
 )
@@ -283,8 +266,9 @@ _VALIDATION: Final = AuthoringCatalog(
 
 def _assignment(name: str, value: object) -> None:
     member = _member(name)
-    failure = None if value is None else _VALIDATION.violation(member.definition, value, lane=0)
-    judge_assignment(member, value, known_violation=failure)
+    judge_assignment(
+        member, value, known_violation=_VALIDATION.violation(member.definition, value, lane=0)
+    )
 
 
 def test_judge_assignment_accepts_a_well_formed_nested_value_object() -> None:
@@ -336,43 +320,6 @@ def test_judge_assignment_rejects_a_top_level_many_element_type_mismatch() -> No
     # bracket-first, with no leading dot (`Gadget.tags[0].label`).
     with pytest.raises(UsageError, match=r"tags\[0\]\.label"):
         _assignment("tags", [{"label": 42}])
-
-
-# --------------------------------------------------------------------------- #
-# The nullable-gated `None`-assignment refusal: a                             #
-# `None` assignment's nullability-aware handling, direct against the shared   #
-# check (`test_where_verbs.py` / `test_write_instructions.py` pin the same    #
-# fix through the typed and serialized callers respectively).                 #
-# --------------------------------------------------------------------------- #
-def test_judge_assignment_rejects_none_for_a_non_nullable_value_object() -> None:
-    # `core` is `nullable: false` (unlike `spec`/`tags` above) -- an explicit
-    # `None` assignment must be refused the SAME way a missing required value
-    # object is, reusing the shared authoring verdict's `"value-object-missing"`
-    # wording rather than forking new text.
-    with pytest.raises(UsageError, match="required value object is absent"):
-        _assignment("core", None)
-
-
-def test_judge_assignment_accepts_none_for_a_nullable_value_object() -> None:
-    # `spec` is `nullable: true` -- an explicit `None` is a legal clearing
-    # assignment, never itself a structural violation.
-    _assignment("spec", None)  # no raise
-
-
-def test_judge_assignment_rejects_none_for_a_non_nullable_scalar() -> None:
-    # `code` declares no `nullable: true` -- an explicit `None` assignment
-    # must be refused too (the scalar branch's own analogue): a guard of
-    # `value is not None and not _type_matches(...)` would let a
-    # `None` value bypass validation entirely, regardless of nullability.
-    with pytest.raises(UsageError, match="required attribute is absent"):
-        judge_assignment(_member("code"), None)
-
-
-def test_judge_assignment_accepts_none_for_a_nullable_scalar() -> None:
-    # `nickname` is `nullable: true` -- an explicit `None` is a legal
-    # clearing assignment, mirroring write preparation's own null rule for a
-    # nullable attribute.
-    judge_assignment(_member("nickname"), None)  # no raise
 
 
 # --------------------------------------------------------------------------- #

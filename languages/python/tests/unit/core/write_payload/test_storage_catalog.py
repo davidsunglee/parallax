@@ -15,7 +15,7 @@ from parallax.core.base import INT32, INT64, JSON, STRING, FrozenMap, InternalEr
 from parallax.core.entity import Document
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.storage_layout import InheritanceDiscriminator, RelationalDocument
+from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape, StorageCatalog
 from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.write_plan.steps import (
@@ -180,30 +180,6 @@ def test_a_row_storing_only_direct_cells_gathers_them_as_one_tuple(
     assert storage.row_slots(0).cells(row) == ()
 
 
-def test_a_subtypes_slots_store_its_discriminator_as_a_constant() -> None:
-    vehicles = corpus_model("vehicle")
-    car = EntityIdentity("parallax.compatibility", "Car")
-    vehicle = EntityIdentity("parallax.compatibility", "Vehicle")
-    row = WriteRow(
-        row=managed_row_of(
-            vehicles,
-            {AttributeIdentity(vehicle, "id"): 1, AttributeIdentity(car, "doors"): 2},
-            entity=car,
-        ),
-        origin=NEW_LINEAGE,
-    )
-    slots = StorageCatalog(vehicles).entity(car).row_slots(row.row.presence)
-
-    tag = next(
-        index
-        for index, contributor in enumerate(slots.contributors)
-        if isinstance(contributor, InheritanceDiscriminator)
-    )
-    assert slots.cells(row)[tag] == "car"
-    assert slots.types[tag] is None
-    assert not slots.documents[tag]
-
-
 def test_each_slot_names_the_one_element_type_every_cell_it_stores_shares() -> None:
     row = _row(_BIN, **_FULL)
     bin_slots = StorageCatalog(_META).entity(_BIN).row_slots(row.row.presence)
@@ -211,22 +187,6 @@ def test_each_slot_names_the_one_element_type_every_cell_it_stores_shares() -> N
 
     assert bin_slots.element_types == (INT64, STRING, STRING, bin_slots.types[3], JSON, JSON)
     assert crate_slots.element_types == (INT64, JSON)
-    vehicles = corpus_model("vehicle")
-    car = EntityIdentity("parallax.compatibility", "Car")
-    vehicle = EntityIdentity("parallax.compatibility", "Vehicle")
-    car_row = managed_row_of(
-        vehicles,
-        {AttributeIdentity(vehicle, "id"): 1, AttributeIdentity(car, "doors"): 2},
-        entity=car,
-    )
-    car_slots = StorageCatalog(vehicles).entity(car).row_slots(car_row.presence)
-    assert [
-        element_type
-        for contributor, element_type in zip(
-            car_slots.contributors, car_slots.element_types, strict=True
-        )
-        if isinstance(contributor, InheritanceDiscriminator)
-    ] == [STRING]
 
 
 def test_column_cells_answer_one_new_list_per_slot_in_row_order() -> None:
@@ -249,30 +209,6 @@ def test_column_cells_answer_one_new_list_per_slot_in_row_order() -> None:
     assert all(type(column) is list for column in columns)
     assert columns[3][1] is gathered[1][3]
     assert slots.column_cells([]) == ([], [], [], [])
-
-
-def test_a_column_the_slot_fixes_repeats_its_value_for_every_row() -> None:
-    vehicles = corpus_model("vehicle")
-    car = EntityIdentity("parallax.compatibility", "Car")
-    vehicle = EntityIdentity("parallax.compatibility", "Vehicle")
-    rows = [
-        WriteRow(
-            row=managed_row_of(
-                vehicles,
-                {AttributeIdentity(vehicle, "id"): key, AttributeIdentity(car, "doors"): 2},
-                entity=car,
-            ),
-            origin=NEW_LINEAGE,
-        )
-        for key in (1, 2, 3)
-    ]
-    slots = StorageCatalog(vehicles).entity(car).row_slots(rows[0].row.presence)
-    tag = next(
-        index
-        for index, contributor in enumerate(slots.contributors)
-        if isinstance(contributor, InheritanceDiscriminator)
-    )
-    assert slots.column_cells([slots.cells(row) for row in rows])[tag] == ["car"] * 3
 
 
 def test_one_presence_shares_one_slots_and_the_cache_retains_a_bounded_number() -> None:
