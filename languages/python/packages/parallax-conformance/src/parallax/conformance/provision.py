@@ -447,12 +447,13 @@ def reset_database(
 
 
 class RuntimeLedger:
-    """The runtimes opened through one configuration that may still be open.
+    """The runtimes opened through the configurations that share it and may still be open.
 
-    A Database that is closed retires its own; what stays on the ledger is the
-    backstop for a case that composed one and did not, because a session that
-    accumulated a pool per case would run the server out of connections long
-    before the corpus ran out of cases.
+    A Database that is closed retires its own; what stays on the ledger is what a
+    case composed and did not close. Releasing it closes those, because a session
+    that accumulated a pool per case would run the server out of connections long
+    before the corpus ran out of cases, and counts them, so the case can be failed
+    for leaving them.
     """
 
     def __init__(self) -> None:
@@ -464,14 +465,16 @@ class RuntimeLedger:
         self._opened.append(tracked)
         return tracked
 
-    def release(self) -> None:
-        """Close every runtime still open, containing ordinary failures.
+    def release(self) -> int:
+        """Close every runtime still open, containing ordinary failures, and
+        answer how many there were.
 
         Every close is attempted whatever the ones before it did; the first
         interrupt propagates only once all of them have been.
         """
         interrupted: BaseException | None = None
-        for runtime in tuple(self._opened):
+        left_open = tuple(self._opened)
+        for runtime in left_open:
             try:
                 with suppress(Exception):
                     runtime.close()
@@ -481,6 +484,7 @@ class RuntimeLedger:
         self._opened.clear()
         if interrupted is not None:
             raise interrupted
+        return len(left_open)
 
 
 class TrackedAdapter:
@@ -493,6 +497,10 @@ class TrackedAdapter:
     @property
     def dialect(self) -> Dialect:
         return self._adapter.dialect
+
+    @property
+    def writer(self) -> PostgresEndpoint:
+        return self._adapter.writer
 
     def open(self) -> DatabaseRuntime[PostgresRole]:
         return self._ledger.track(self._adapter.open())
@@ -507,12 +515,12 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
     session, so the DDL, the fixtures, a verbatim ``given.apply`` and a golden
     read of stored state run outside anything under test.
 
-    It also keeps the runtimes it handed out on a :class:`RuntimeLedger`.
+    The runtimes it hands out are kept on ``adapter``'s ledger, which its owner
+    releases.
     """
 
-    def __init__(self, adapter: PostgresAdapter, session: DriverControl) -> None:
-        self._ledger = RuntimeLedger()
-        self._adapter = TrackedAdapter(adapter, self._ledger)
+    def __init__(self, adapter: TrackedAdapter, session: DriverControl) -> None:
+        self._adapter = adapter
         self._session = session
 
     @property
@@ -553,17 +561,13 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
     ) -> TransactionOutcome[T]:
         return self._session.transaction(body, isolation=isolation, access_mode=access_mode)
 
-    def release_runtimes(self) -> None:
-        """Close every runtime a composed Database left open."""
-        self._ledger.release()
-
 
 class _TrackedRuntime:
     """A runtime that tells its ledger when its Database closes it.
 
-    Closing is idempotent underneath, so the backstop may close one this already
-    reported; what the report buys is that the backstop closes only what a case
-    actually left behind.
+    Closing is idempotent underneath, so the ledger may close one this already
+    reported; what the report buys is that the ledger closes and counts only what
+    a case actually left behind.
     """
 
     def __init__(
@@ -673,6 +677,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             dbname=self._container.dbname,
             user=CONFORMANCE_LOGIN,
         )
+        # Every runtime any configuration of this container opens, the case
+        # port's and a tuned proof's alike.
+        self._ledger = RuntimeLedger()
         self._database = ContainerDatabase(self._configuration(), self._session)
         # Every scoped session that may still be alive. One removes itself as
         # soon as its session is gone — which is its close, or, for a close that
@@ -681,7 +688,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         # `close` below is the backstop that ends both.
         self._open: set[PostgresControl | PostgresInterleavedExecution] = set()
 
-    def _configuration(self, **conninfo_options: str) -> PostgresAdapter:
+    def _configuration(self, **conninfo_options: str) -> TrackedAdapter:
         """The shipped adapter's configuration for this container.
 
         Retention is deliberately lean rather than default: a case composes its
@@ -711,8 +718,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         startup_timeout: float | None = None,
         reader: PostgresEndpoint | None = None,
         reader_startup: str | None = None,
-    ) -> PostgresAdapter:
-        """The shipped configuration for this container, under ``conninfo_options``.
+    ) -> TrackedAdapter:
+        """The shipped configuration for this container, under ``conninfo_options``,
+        its every runtime kept on this run's ledger.
 
         An omitted budget or reader startup takes the adapter's own default.
         """
@@ -730,7 +738,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             reader=reader,
             prepare_threshold=prepare_threshold,
         )
-        return dataclasses.replace(configured, **chosen) if chosen else configured
+        return TrackedAdapter(
+            dataclasses.replace(configured, **chosen) if chosen else configured, self._ledger
+        )
 
     def _endpoint(
         self,
@@ -849,7 +859,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         credentials: CredentialSource | DriverManaged | None = None,
         reader: PostgresEndpoint | None = None,
         reader_startup: str | None = None,
-    ) -> PostgresAdapter:
+    ) -> TrackedAdapter:
         """This container's configuration, tuned as a pool proof needs it.
 
         The proofs that grade capacity, queueing, retention and timeouts need
@@ -871,6 +881,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         ``reader`` adds a reader route — usually one of this container's own
         :meth:`endpoint` values — and ``reader_startup`` says what opening does
         when it cannot be reached.
+
+        A runtime it opens and a proof leaves open is closed and counted with the
+        case's own.
         """
         from parallax.postgres import PoolOptions
 
@@ -926,9 +939,10 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         """
         return self._configuration(options=_SESSION_DEFAULTS[level])
 
-    def release_case_runtimes(self) -> None:
-        """Close every runtime a case composed a Database over and left open."""
-        self._database.release_runtimes()
+    def release_case_runtimes(self) -> int:
+        """Close every runtime a case opened over this container and left open,
+        and answer how many there were."""
+        return self._ledger.release()
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
         """Reset the schema, apply the model-derived DDL, and load the fixtures."""
@@ -936,7 +950,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
     def close(self) -> None:
         """Close this provisioning, and anything a caller left open behind it."""
-        self._database.release_runtimes()
+        self._ledger.release()
         for session in tuple(self._open):
             with suppress(Exception):
                 session.close()

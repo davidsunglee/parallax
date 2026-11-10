@@ -398,13 +398,14 @@ def committed_cost_evidence() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
-    """Close, after each test, every runtime a Database composed here left open.
+    """Close, after each test, the roots it registered and every runtime it left
+    open, and fail the test if it left any.
 
     A connected handle owns a pool, so one composed per case and never closed
     would hold connections and maintenance threads for the whole session — and a
     corpus of hundreds of cases would run the server out of connections long
-    before it ran out of cases. Each handle that closes itself retires its own;
-    this is the backstop for the ones that do not.
+    before it ran out of cases. What leaked is closed before the test is failed,
+    so one leak never reaches a later test.
 
     It reads ``request.fixturenames`` rather than requesting a resource fixture,
     because requesting one would put it in every item's fixture closure and
@@ -412,8 +413,15 @@ def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
     """
     with close_owned_roots():
         yield
-    for fixture in sorted(_RESOURCE_FIXTURES.keys() & set(request.fixturenames)):
+    leaked = sum(
         request.getfixturevalue(fixture).release_case_runtimes()
+        for fixture in sorted(_RESOURCE_FIXTURES.keys() & set(request.fixturenames))
+    )
+    if leaked:
+        pytest.fail(
+            f"the test left {leaked} database runtime(s) open; close each root or runtime "
+            "it opens, or register the root with tests._support.root_ownership.own_root"
+        )
 
 
 def pytest_terminal_summary(terminalreporter: Any) -> None:

@@ -284,7 +284,7 @@ def test_releasing_runtimes_leaves_the_servers_running(monkeypatch: pytest.Monke
     pair.adapter().open()
     launch.log.clear()
 
-    pair.release_runtimes()
+    assert pair.release_runtimes() == 1
 
     assert launch.log == ["close runtime"]
     pair.close()
@@ -406,8 +406,9 @@ class _Owned:
         self._log = log
         self.closed = False
 
-    def release_runtimes(self) -> None:
+    def release_runtimes(self) -> int:
         self._log.append("release runtimes")
+        return 2
 
     def close(self) -> None:
         self._log.append("close")
@@ -422,12 +423,12 @@ def test_a_lazy_pair_opens_once_on_first_use() -> None:
         return opened[-1]
 
     lazy = LazyReplication(open_pair)
-    lazy.release_runtimes()
+    assert lazy.release_runtimes() == 0
     assert opened == []
 
     first = lazy.pair()
     assert lazy.pair() is first
-    lazy.release_runtimes()
+    assert lazy.release_runtimes() == 2
     lazy.close()
     lazy.close()
 

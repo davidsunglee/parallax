@@ -19,6 +19,7 @@ import time
 import uuid
 from typing import Any, cast
 
+import psycopg_pool
 import pytest
 
 from parallax.core.base import INFINITY
@@ -1203,12 +1204,12 @@ def test_a_sample_is_unavailable_rather_than_raising_when_the_pool_will_not_answ
         (source,) = runtime.pool_metrics
         assert source.route == "writer"
 
-        def refuse() -> dict[str, int]:
+        def refuse(pool: object) -> dict[str, int]:
             raise RuntimeError("the pool refuses to be measured")
 
-        # The native pool is the runtime's own and its statistics call is the
-        # one seam this failure can come from.
-        monkeypatch.setattr(runtime._writer.pool, "get_stats", refuse)
+        # The native pool's statistics call is the one seam this failure can
+        # come from, and the runtime's pool is the only one sampled meanwhile.
+        monkeypatch.setattr(psycopg_pool.ConnectionPool, "get_stats", refuse)
         unavailable = source.sample()
         monkeypatch.undo()
 

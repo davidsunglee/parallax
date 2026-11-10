@@ -511,7 +511,7 @@ def test_resetting_before_the_run_started_is_refused() -> None:
 
 def test_case_runtimes_are_released_through_the_runs_ledger() -> None:
     run, _ = _started(_Cluster(owned=[]))
-    run.release_case_runtimes()
+    assert run.release_case_runtimes() == 0
     assert run.authorization("role-a").name == "parallax_conformance_role_a"
 
 

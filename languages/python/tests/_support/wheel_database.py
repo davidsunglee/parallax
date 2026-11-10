@@ -40,7 +40,7 @@ class WheelDatabase:
             options.pop("password", None)
             options["user"] = CONFORMANCE_LOGIN
             self._conninfo = make_conninfo("", **options)
-            self.port = ContainerDatabase(self._adapter(), self._session)
+            self.port = ContainerDatabase(self.configured(), self._session)
         except BaseException:
             self._session.close()
             raise
@@ -67,11 +67,8 @@ class WheelDatabase:
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
         reset_database(self._session, model, fixtures)
 
-    def release_case_runtimes(self) -> None:
-        try:
-            self.port.release_runtimes()
-        finally:
-            self._ledger.release()
+    def release_case_runtimes(self) -> int:
+        return self._ledger.release()
 
     def close(self) -> None:
         try:

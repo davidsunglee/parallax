@@ -170,9 +170,9 @@ class _Teardown:
     """Cleanup steps, run newest first, every one attempted."""
 
     def __init__(self) -> None:
-        self._steps: list[tuple[str, Callable[[], None]]] = []
+        self._steps: list[tuple[str, Callable[[], object]]] = []
 
-    def push(self, what: str, step: Callable[[], None]) -> None:
+    def push(self, what: str, step: Callable[[], object]) -> None:
         self._steps.append((what, step))
 
     def run(self) -> list[BaseException]:
@@ -413,9 +413,10 @@ class AwsRun:
         """Wait, within the visibility bound, for *condition* to hold."""
         self._pacing.visible.wait_until(condition, what)
 
-    def release_case_runtimes(self) -> None:
-        """Close every runtime a test composed and left open."""
-        self._ledger.release()
+    def release_case_runtimes(self) -> int:
+        """Close every runtime a test composed and left open, and answer how many
+        there were."""
+        return self._ledger.release()
 
     def close(self) -> None:
         """Release everything the run owns, in ownership order."""
