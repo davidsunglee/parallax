@@ -1,5 +1,3 @@
-# Negative (m-metamodel): two Attributes of one Entity share a name. Each keeps a
-# Column of its own, so the collision is in the member namespace alone.
 model: models/person.yaml
 tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
 shape: rejected

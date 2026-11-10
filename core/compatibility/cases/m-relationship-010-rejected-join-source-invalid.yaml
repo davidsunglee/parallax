@@ -1,5 +1,3 @@
-# Negative (m-relationship): a defining join's source names no Attribute of the
-# declaring Entity.
 model: models/identifier-types.yaml
 tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
 shape: rejected

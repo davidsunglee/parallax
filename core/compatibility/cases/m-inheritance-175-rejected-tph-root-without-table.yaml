@@ -1,5 +1,3 @@
-# Negative (m-inheritance family invariants): a table-per-hierarchy root declares
-# no shared table.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1]
 shape: rejected

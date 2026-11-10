@@ -1,4 +1,3 @@
-# Negative (m-metamodel): a standalone Entity declares two primary-key Attributes.
 model: models/person.yaml
 tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
 shape: rejected

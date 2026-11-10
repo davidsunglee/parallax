@@ -1,5 +1,3 @@
-# Negative (m-relationship): an ordering term names a scalar collection of the
-# target Entity, which has no whole-collection ordering.
 model: models/identifier-types.yaml
 tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
 shape: rejected

@@ -1,6 +1,3 @@
-# Negative (m-inheritance family invariants): a concrete subtype redeclares an
-# Attribute name its root declares. The redeclaration keeps a Column of its own,
-# so only the member name is shared.
 model: models/payment.yaml
 tags: [m-inheritance, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
 shape: rejected

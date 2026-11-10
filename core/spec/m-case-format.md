@@ -2630,8 +2630,8 @@ against any row's contents):
 
 **Model** rules (accepted-model formation — foundational, Inheritance, Storage Layout, and Relationship invariants that per-entity schema validation cannot express,
 carried inline under `when.model`):
-`relationship-join-source-invalid`, `relationship-join-type-mismatch`: a defining
-join's resolved endpoints have unequal declared neutral types,
+`relationship-join-type-mismatch`: a defining join's resolved endpoints have
+unequal declared neutral types, `relationship-join-source-invalid`,
 `relationship-cardinality-join-mismatch`,
 `relationship-reverse-inconsistent`, `relationship-defining-duplicate`,
 `relationship-order-on-to-one`, `relationship-order-attribute-invalid`

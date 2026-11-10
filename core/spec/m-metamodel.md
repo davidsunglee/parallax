@@ -674,7 +674,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-invalid-entity-identity` | Namespace/name violates the canonical Entity Identity grammar. |
 | `metamodel-duplicate-entity-identity` | Two Unresolved declarations resolve to the same Entity Identity. |
 | `metamodel-unresolved-entity-reference` | An Entity Reference does not resolve under the exact/relative namespace rule. |
-| `metamodel-unresolved-attribute-reference` | An Attribute Reference does not resolve to a declared local Attribute. |
+| `metamodel-unresolved-attribute-reference` | An Attribute Reference does not resolve to an Attribute declared on or inherited by the referenced Entity. |
 | `metamodel-unresolved-relationship-reference` | A Relationship Reference does not resolve to a declared local Relationship. |
 | `metamodel-local-member-collision` | Attribute, Relationship, or top-level Value Object names collide in one Entity, or scalar/nested names collide in one Value Object. |
 | `metamodel-temporal-member-reserved` | A top-level member other than an As-Of Axis endpoint bears a reserved temporal endpoint name, whatever the Entity's declared dimensions. |
