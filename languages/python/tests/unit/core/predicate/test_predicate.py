@@ -180,6 +180,13 @@ def test_string_match_explicit_case_insensitive_round_trips() -> None:
         assert predicate.serialize(node) == doc
 
 
+def test_a_constructed_string_match_omits_an_unset_case_insensitive_flag() -> None:
+    node = predicate.StringMatch(
+        op="like", subject=predicate.FieldSubject("Order.name"), value="ada"
+    )
+    assert predicate.serialize(node) == {"like": {"path": "Order.name", "value": "ada"}}
+
+
 def test_an_operation_without_a_path_reads_the_bound_scalar_element() -> None:
     # Every scalar operation but a null check omits `path` to read the element a
     # scalar-collection quantifier binds.
