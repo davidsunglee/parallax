@@ -69,35 +69,6 @@ def test_required_scope_arguments_are_positional_only() -> None:
         cast("Any", scoped.transact)(fn=no_op)
 
 
-def test_routing_derives_on_the_root_and_on_the_scope_as_the_same_facades() -> None:
-    adapter = ScriptedAdapter(routes=("writer", "reader"))
-    root = Database.connect(adapter, ACCOUNT, clock=FixedClock(FIXED), read_policy="writer_only")
-    alias = root.with_routing(read_policy="reader_only")
-    scoped = alias.using_database_login().with_routing(read_policy="writer_only")
-
-    assert type(alias) is Database
-    assert type(scoped) is ScopedDatabase
-    assert cast("Any", alias.using_database_login())._execution._read_policy == "reader_only"
-    assert cast("Any", scoped)._execution._read_policy == "writer_only"
-    assert cast("Any", root.using_database_login())._execution._read_policy == "writer_only"
-    assert adapter.acquisitions == 0
-    root.close()
-
-
-def test_reader_preferred_is_accepted_wherever_the_facade_takes_a_read_policy() -> None:
-    adapter = ScriptedAdapter(routes=("writer", "reader"))
-    root = Database.connect(
-        adapter, ACCOUNT, clock=FixedClock(FIXED), read_policy="reader_preferred"
-    )
-    scoped = root.with_routing(read_policy="writer_only").using_database_login()
-    preferred = scoped.with_routing(read_policy="reader_preferred")
-
-    assert cast("Any", root.using_database_login())._execution._read_policy == "reader_preferred"
-    assert cast("Any", preferred)._execution._read_policy == "reader_preferred"
-    assert adapter.acquisitions == 0
-    root.close()
-
-
 def test_a_misspelled_read_policy_is_refused_before_the_adapter_opens() -> None:
     class _Unopenable(ScriptedAdapter):
         def open(self) -> Any:

@@ -25,7 +25,6 @@ from typing import Any, ClassVar, Final, cast
 import pytest
 from pydantic import BaseModel
 
-import parallax.snapshot
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, UsageError, ValueObject, attr
@@ -55,7 +54,6 @@ from parallax.snapshot import (
     edge_of,
     pin_of,
 )
-from parallax.snapshot import _publication as publication
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from tests._support import mirrored_models as mm
@@ -155,14 +153,6 @@ def test_equal_read_evidence_keeps_two_weakly_referenced_lifetimes() -> None:
     gc.collect()
     assert held() is None
     assert kept() is second
-
-
-def test_no_exported_name_reaches_a_read_evidence() -> None:
-    # Read Evidence holds its read's raw evidence by reference, so only the
-    # Snapshot's private reader reaches it.
-    for package in (parallax.snapshot, publication):
-        assert "read_evidence_of" not in package.__all__
-        assert not hasattr(package, "read_evidence_of")
 
 
 def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() -> None:

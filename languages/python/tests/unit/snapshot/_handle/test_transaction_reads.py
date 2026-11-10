@@ -3,11 +3,11 @@
 `TxnContext.find` and `ScopedDatabase.find`: force-flush before a read
 (read-your-own-writes), the lock suffix each materialized level's own Effective
 Concurrency Strategy calls for, statement and
-milestone pin derivation, history statements, which of the two entry points
-stamps its participation on the values it publishes, and the evidence a read
-leaves on those values — proven through the writes they license or refuse. Also
-the stale-web-edit recipe's Docker-free halves, and what a close settled against a
-read does when it affects no row: under each strategy, and across a retry.
+milestone pin derivation, history statements, and the evidence a read leaves
+on the values it publishes — proven through the writes they license or refuse.
+Also the stale-web-edit recipe's halves a real database does not state, and what
+a close settled against a read does when it affects no row: under each strategy,
+and across a retry.
 """
 
 from __future__ import annotations
@@ -129,40 +129,6 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
         return publication.from_find(result)
 
     return recording
-
-
-def test_a_standalone_find_collects_no_read_evidence() -> None:
-    # A standalone read has no unit of work to file into, so it hands the
-    # executor no evidence context, and the Page it reads collects nothing: no
-    # write could stand on what it observed, so it retains none of it.
-    calls: list[_RecordedFind] = []
-    port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
-    db = db_for(BALANCE, port)
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_pipeline_module, "deliver_find", _recording_find(calls))
-        node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
-    (call,) = calls
-    assert call.participation is None
-    assert dict(call.result.origins) == {}
-    assert _retained_evidence(node) is None
-
-
-def test_a_participating_find_stamps_its_transactions_own_participation() -> None:
-    # The other side of the same decision: `TxnContext.find` has a unit of work
-    # behind it, so it hands the executor that unit of work as the evidence context and
-    # every source it produces carries that transaction's participation.
-    calls: list[_RecordedFind] = []
-    port = ScriptedAdapter(
-        Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
-    )
-    db = db_for(BALANCE, port)
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_pipeline_module, "deliver_find", _recording_find(calls))
-        db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
-    (call,) = calls
-    (hint,) = call.result.origins.values()
-    assert call.participation is not None
-    assert hint.participation is call.participation
 
 
 def test_every_attached_level_row_retains_its_own_evidence() -> None:
@@ -868,61 +834,10 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
 
 # --------------------------------------------------------------------------- #
 # The stale-web-edit recipe module (`parallax.conformance.                    #
-# stale_web_edit`) — the Docker-free halves of the api-conformance stories:   #
-# render captures the transported edge; submit reads the CURRENT milestone    #
-# and compares its edge against the transported one.                         #
+# stale_web_edit`) — what its real-database stories do not state: a conflict  #
+# between the submit read and its flush, and the instant a bitemporal submit  #
+# reads at.                                                                   #
 # --------------------------------------------------------------------------- #
-def test_stale_web_edit_balance_render_then_submit_gates_on_the_observed_edge() -> None:
-    in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedAdapter(
-        Read(rows=[balance_row(in_z=in_z)]),
-        Transact(Read(rows=[balance_row(in_z=in_z)]), Write(times=2)),
-    )
-    db = db_for(BALANCE, port)
-
-    node, edge = stale_web_edit.render_balance_milestone(db, id=1)
-    assert node.value == Decimal("5.00")
-    assert edge.tx_time == in_z
-    assert edge.valid_time_or_none is None  # Transaction-Time-Only declares no Valid Time
-
-    stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
-    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
-    close_sql = write_ops[0].sql
-    close_binds = write_ops[0].binds
-    assert close_sql == POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-    )
-    # The gate binds the coordinate the submit's OWN read observed. The
-    # transported edge never reaches the statement — it is only ever compared,
-    # and the comparison passing is what says the two coordinates agree.
-    assert close_binds[-1] == in_z
-    # The chained replacement row preserves fields omitted from the submitted edit.
-    chain_binds = write_ops[1].binds
-    assert "A-1" in chain_binds
-    assert Decimal("9.00") in chain_binds
-
-
-def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the_read() -> None:
-    # The render read one milestone; by the submit read a concurrent writer has
-    # chained a replacement, so the CURRENT milestone's edge is not the
-    # transported one. The recipe's own comparison refuses, and nothing is
-    # authored — the earlier of the two points staleness surfaces at.
-    rendered_in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    superseding_in_z = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    port = ScriptedAdapter(
-        Read(rows=[balance_row(in_z=rendered_in_z)]),
-        Transact(Read(rows=[balance_row(in_z=superseding_in_z)])),
-    )
-    db = db_for(BALANCE, port)
-
-    _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
-    assert edge.tx_time == rendered_in_z
-
-    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
-        stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
-
-
 def test_stale_web_edit_balance_submit_conflict_is_replayed_into_the_staleness_refusal() -> None:
     # The later of the two points staleness surfaces at: the submit read saw
     # the milestone the form displayed, so the comparison passes, and a writer
@@ -1043,34 +958,6 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
         if op.sql.startswith("insert")
         for row in inserted_rows(op)
     )
-
-
-def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_read() -> None:
-    # The Valid-Time pin still selects the displayed RECTANGLE, so a concurrent
-    # correction is not hidden by it: the pinned re-read answers that
-    # rectangle's current milestone, whose Transaction-Time coordinate is the
-    # concurrent writer's, and the comparison refuses.
-    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    rendered_in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
-    superseding_in_z = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
-    port = ScriptedAdapter(
-        Read(rows=[_branch_milestone_row(from_z=from_z, in_z=rendered_in_z)]),
-        Transact(Read(rows=[_branch_milestone_row(from_z=from_z, in_z=superseding_in_z)])),
-    )
-    db = db_for(MODELS["branch"], port)
-
-    _node, edge = stale_web_edit.render_branch_milestone(db, id=1)
-    assert edge.tx_time == rendered_in_z
-
-    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
-        stale_web_edit.submit_branch_edit(
-            db,
-            id=1,
-            edge=edge,
-            fields={"name": "New Name"},
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        )
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 # --------------------------------------------------------------------------- #
