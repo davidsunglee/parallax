@@ -17,8 +17,9 @@ twice.
 The primary key contributes exactly one term wherever it is graded, because
 formation refuses a second primary-key Attribute by either route it could arrive
 — locally (`m-metamodel`) or through an inheritance family's ancestry chain
-(`m-inheritance`). Both routes are asserted against formation itself rather than
-against what the corpus happens to declare.
+(`m-inheritance`, whose one-key rule owns that route). The local route is
+asserted against formation itself rather than against what the corpus happens
+to declare.
 """
 
 from __future__ import annotations
@@ -1162,26 +1163,6 @@ _TWO_LOCAL_KEYS = _records.Metamodel(
     )
 )
 
-_TWO_FAMILY_KEYS = _records.Metamodel(
-    entities=(
-        _records.Entity(
-            name="Ledger",
-            inheritance=_records.Inheritance(role="root", strategy="table-per-concrete-subtype"),
-            attributes=(
-                _records.Attribute(name="bookId", type="int64", column="book_id", primary_key=True),
-            ),
-        ),
-        _records.Entity(
-            name="LedgerLine",
-            table="ledger_line",
-            inheritance=_records.Inheritance(role="concrete-subtype", parent="Ledger"),
-            attributes=(
-                _records.Attribute(name="lineNo", type="int64", column="line_no", primary_key=True),
-            ),
-        ),
-    )
-)
-
 
 def test_a_composite_primary_key_does_not_form() -> None:
     # The premise the appended term rests on, asserted where it is decided: a
@@ -1190,16 +1171,6 @@ def test_a_composite_primary_key_does_not_form() -> None:
     # last branch of every seek is one comparison.
     with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
         formed(_TWO_LOCAL_KEYS)
-
-
-def test_a_family_whose_ancestry_chain_declares_a_second_key_does_not_form() -> None:
-    # The other route to a composite key, and the one a stream reaches through:
-    # `_family_view` resolves a subtype's order through its family root, so a
-    # subtype adding a key of its own would widen the order without touching the
-    # root. The applicable ancestry chain admits exactly one primary-key
-    # Attribute (`m-inheritance`), so that model does not form either.
-    with pytest.raises(MetamodelValidationError, match="inheritance-primary-key-multiple"):
-        formed(_TWO_FAMILY_KEYS)
 
 
 def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:

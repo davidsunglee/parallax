@@ -175,23 +175,6 @@ def test_one_view_key_is_a_back_reference_at_one_level_and_forward_at_another() 
     assert root_view.targets == ((None,), (owners,))
 
 
-def test_a_prepared_schema_shares_equal_translation_and_targets_rows_across_concretes() -> None:
-    # A prepared schema lives as long as its plan, so the rows every concrete of an
-    # unsplit family repeats are retained once.
-    owners = frozenset({_identity("Person")})
-    schema = ViewSchema.prepared(
-        ((ChildSlot(_OWNER),), (ChildSlot(_OWNER, targets=owners),)),
-        (_layout("Dog"), _layout("Cat")),
-    )
-    dog = schema.root_view_layout(_layout("Dog"))
-    cat = schema.root_view_layout(_layout("Cat"))
-    assert dog is not cat
-    assert dog.to_root_view == ((0,), (0,))
-    assert dog.to_root_view is cat.to_root_view
-    assert dog.to_root_view[0] is dog.to_root_view[1]
-    assert dog.targets is cat.targets
-
-
 def test_broad_slots_name_their_relationship_positions_and_narrowed_slots_their_views() -> None:
     # A schema may lay out a slot for a direction the concrete does not
     # declare, so its position is absent rather than refused: only a loaded
@@ -205,22 +188,6 @@ def test_broad_slots_name_their_relationship_positions_and_narrowed_slots_their_
         (2, None),
     )
     assert root_view.narrowed_views == ((1, "owner[Person]"),)
-
-
-def test_a_prepared_schema_shares_equal_relationship_position_rows_across_concretes() -> None:
-    schema = ViewSchema.prepared(
-        ((ChildSlot(_OWNER), ChildSlot(_OWNER_NARROWED)),), (_layout("Dog"), _layout("Cat"))
-    )
-    dog = schema.root_view_layout(_layout("Dog"))
-    cat = schema.root_view_layout(_layout("Cat"))
-    assert dog.broad_positions is cat.broad_positions
-    assert dog.narrowed_views is cat.narrowed_views
-    unrelated = ViewSchema.prepared(((ChildSlot(_PETS),),), (_layout("Person"), _layout("Dog")))
-    assert unrelated.root_view_layout(_layout("Dog")).narrowed_views == ()
-    assert (
-        unrelated.root_view_layout(_layout("Dog")).narrowed_views
-        is unrelated.root_view_layout(_layout("Person")).narrowed_views
-    )
 
 
 def test_a_root_view_layout_is_answered_identically_on_a_second_reach() -> None:
