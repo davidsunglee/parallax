@@ -1744,7 +1744,7 @@ def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> N
     meta = models.load_models()["document-layout"]
     layout = next(
         candidate
-        for candidate in storage_layout.view(meta).tables
+        for candidate in storage_layout.storage_layout_facet_of(meta).tables
         if candidate.table.name == "payment_document"
     )
     projection = ActualWireProjection(meta)
@@ -1772,7 +1772,7 @@ def test_table_state_preserves_non_document_relational_payloads() -> None:
     meta = models.load_models()["document-layout"]
     layout = next(
         candidate
-        for candidate in storage_layout.view(meta).tables
+        for candidate in storage_layout.storage_layout_facet_of(meta).tables
         if candidate.table.name == "payment_document"
     )
 
@@ -1795,7 +1795,7 @@ def test_table_state_requires_a_known_variant_for_ambiguous_document_members() -
     meta = models.load_models()["document-layout"]
     layout = next(
         candidate
-        for candidate in storage_layout.view(meta).tables
+        for candidate in storage_layout.storage_layout_facet_of(meta).tables
         if candidate.table.name == "payment_document"
     )
 
@@ -1818,7 +1818,7 @@ def test_table_state_preserves_malformed_declared_relational_document_leaves() -
     meta = models.load_models()["document-layout"]
     layout = next(
         candidate
-        for candidate in storage_layout.view(meta).tables
+        for candidate in storage_layout.storage_layout_facet_of(meta).tables
         if candidate.table.name == "payment_document"
     )
 
@@ -1838,7 +1838,7 @@ def test_table_state_validates_direct_value_objects_as_stored_wire_documents() -
     from parallax.core import storage_layout
 
     meta = models.load_models()["document-codec"]
-    (layout,) = storage_layout.view(meta).tables
+    (layout,) = storage_layout.storage_layout_facet_of(meta).tables
 
     projected = ActualWireProjection(meta).table_row(
         layout,
@@ -1856,7 +1856,7 @@ def test_table_state_preserves_malformed_direct_value_object_leaves() -> None:
     from parallax.core import storage_layout
 
     meta = models.load_models()["document-codec"]
-    (layout,) = storage_layout.view(meta).tables
+    (layout,) = storage_layout.storage_layout_facet_of(meta).tables
 
     projected = ActualWireProjection(meta).table_row(
         layout,

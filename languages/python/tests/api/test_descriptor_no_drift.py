@@ -29,7 +29,7 @@ from tests._support import mirrored_models as mm
 if TYPE_CHECKING:
     from parallax.core import DomainModel
     from parallax.core.metamodel import (
-        EntityMetadata,
+        CompiledEntity,
         Metamodel,
         OccurrenceMetadata,
         ValueObjectAttributeMetadata,
@@ -61,7 +61,7 @@ def _occurrence(
         _occurrence(below, other_below)
 
 
-def _entity(left: EntityMetadata, right: EntityMetadata) -> None:
+def _entity(left: CompiledEntity, right: CompiledEntity) -> None:
     assert left.identity == right.identity
     assert left.declared_container == right.declared_container
     assert left.declared_persistence == right.declared_persistence

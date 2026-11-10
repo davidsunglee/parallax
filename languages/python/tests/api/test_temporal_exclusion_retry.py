@@ -98,7 +98,7 @@ def _member(entity: type[Any], name: str) -> str:
 
 
 def _exclusion(entity: type[Any]) -> str:
-    layout = storage_layout.view(model_of(_MODEL)).table(Table(_TABLES[entity]))
+    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(Table(_TABLES[entity]))
     assert layout is not None and layout.temporal_constraints is not None
     return layout.temporal_constraints.exclusion_name
 

@@ -430,8 +430,8 @@ class WireRootPublisher:
         self._wire = wire
         self._includes = includes
         self._encode = encode
-        self._temporal = temporal_read.view(model)
-        self._versioning = concurrency.view(model)
+        self._temporal = temporal_read.temporal_facet_of(model)
+        self._versioning = concurrency.concurrency_facet_of(model)
         self._reader: GraphViewReader | None = None
         self._renderer: WireRenderer[int] | None = None
 

@@ -1,4 +1,4 @@
-"""m-concurrency: the Rule Set, the compiled Concurrency Facet, and its typed view."""
+"""m-concurrency: the Rule Set, the compiled Concurrency Facet, and its typed accessor."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from parallax.core.model_formation import (
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
-from tests._support import fake_metamodel as fake
+from tests._support import fake_metadata as fake
 from tests.unit._metamodel_support import (
     Declaration,
     accepted,
@@ -85,7 +85,7 @@ def _corpus_entity(name: str) -> EntityIdentity:
 
 
 def _facet(stem: str) -> ConcurrencyFacet:
-    return concurrency.view(_formed(stem))
+    return concurrency.concurrency_facet_of(_formed(stem))
 
 
 def _version(entity: EntityIdentity, name: str = "version") -> AttributeMetadata:
@@ -143,7 +143,7 @@ def test_an_unversioned_non_temporal_entity_has_the_unversioned_source() -> None
 
 def test_every_accepted_entity_has_a_version_source() -> None:
     model = _formed("appliance")
-    facet = concurrency.view(model)
+    facet = concurrency.concurrency_facet_of(model)
     assert all(facet.version_source(entity.identity) is not None for entity in model.entities)
 
 
@@ -186,7 +186,7 @@ def test_an_unversioned_family_is_unversioned_at_every_position() -> None:
             ),
         )
     )
-    facet = concurrency.view(model)
+    facet = concurrency.concurrency_facet_of(model)
     assert facet.version_source(root) == UNVERSIONED
     assert facet.version_source(entry) == UNVERSIONED
 
@@ -206,8 +206,8 @@ def test_every_position_in_a_family_answers_its_roots_one_version_source_object(
     stem: str, root_name: str
 ) -> None:
     model = _formed(stem)
-    families = inheritance.view(model)
-    facet = concurrency.view(model)
+    families = inheritance.inheritance_facet_of(model)
+    facet = concurrency.concurrency_facet_of(model)
     root = _corpus_entity(root_name)
     source = facet.version_source(root)
     assert isinstance(source, ExplicitVersion | TransactionTimeVersion)
@@ -387,8 +387,8 @@ def test_an_entity_the_inheritance_facet_does_not_cover_is_a_contract_failure() 
     # The Inheritance Facet covers every accepted Entity, so one compiled over a
     # different graph is a formation seam defect: the compiler raises rather than
     # inventing a family for the Entity it cannot place.
-    metadata = fake.parity_model()
-    narrower = fake.FakeMetamodel([entity for entity in metadata.entities[:1]])
+    metadata = fake.parity_metadata()
+    narrower = fake.FakeCompiledMetadata([entity for entity in metadata.entities[:1]])
     complete = inheritance_compile.compile_facet(metadata)
     partial = inheritance_compile.compile_facet(narrower)
     with pytest.raises(RuntimeError, match="Inheritance Facet view"):
@@ -399,7 +399,7 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     # The compiler reads the metadata protocols and the two facets only, so an
     # accepted graph the descriptor path never touched compiles into the same
     # version sources.
-    metadata = fake.parity_model()
+    metadata = fake.parity_metadata()
     inheritance_facet = inheritance_compile.compile_facet(metadata)
     facet = compile_facet(
         metadata,
@@ -419,6 +419,6 @@ def test_the_facet_copies_no_attribute_metadata() -> None:
     assert root is not None
     version = root.attribute("version")
     assert version is not None
-    fridge = concurrency.view(model).version_source(_corpus_entity("Fridge"))
+    fridge = concurrency.concurrency_facet_of(model).version_source(_corpus_entity("Fridge"))
     assert isinstance(fridge, ExplicitVersion)
     assert fridge.attribute == version.identity

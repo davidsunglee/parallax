@@ -560,7 +560,7 @@ def _account_state(key: int, version: int) -> VersionedObjectStateKey:
 
 def _balance_state(key: int) -> ObjectStateKey:
     object_key = corpus_object_key("Balance", ("id", key))
-    shape = temporal_read.view(_BALANCE).shape(object_key.entity)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(object_key.entity)
     assert shape is not None
     return object_state_key_from_observation(
         object_key,
@@ -833,7 +833,9 @@ def _balance_update_from(key: int, tx_start: object) -> ReadAuthorizedWrite:
 
 
 def _balance_shape() -> temporal_read.TemporalShape:
-    shape = temporal_read.view(_BALANCE).shape(corpus_object_key("Balance", ("id", 1)).entity)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(
+        corpus_object_key("Balance", ("id", 1)).entity
+    )
     assert shape is not None
     return shape
 
@@ -1053,7 +1055,9 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
         "validEnd": _DEC,
     }
     observation = TemporalObservation(predecessor=PredecessorRow(members))
-    shape = temporal_read.view(_POSITION).shape(corpus_object_key("Position", ("id", 1)).entity)
+    shape = temporal_read.temporal_facet_of(_POSITION).shape(
+        corpus_object_key("Position", ("id", 1)).entity
+    )
     assert shape is not None
     state = object_state_key_from_observation(
         corpus_object_key("Position", ("id", 1)), observation, shape
@@ -1114,7 +1118,7 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
     }
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     key = corpus_object_key("Balance", ("id", 1))
-    shape = temporal_read.view(_BALANCE).shape(key.entity)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, observation, shape)
     simulated = _simulated(_BALANCE)
@@ -1263,7 +1267,7 @@ def test_writes_of_one_source_predicate_writes_flush_each_continue_from_what_the
 ):
     original = TemporalObservation(predecessor=_position_row(_JAN, _T0))
     key = corpus_object_key("WherePosition", ("id", 1))
-    shape = temporal_read.view(_PREDICATED).shape(key.entity)
+    shape = temporal_read.temporal_facet_of(_PREDICATED).shape(key.entity)
     assert shape is not None
     state = object_state_key_from_observation(key, original, shape)
     held = HeldRows(_PREDICATED)
@@ -1350,7 +1354,9 @@ def test_a_target_write_is_admitted_as_its_verb_admits_it(
         return outcomes, simulated.statements, held.requests
 
     outcomes, carried, carried_reads = flushed(
-        lambda uow, prepared: uow.buffer(target_write(prepared, inheritance.view(meta)))
+        lambda uow, prepared: uow.buffer(
+            target_write(prepared, inheritance.inheritance_facet_of(meta))
+        )
     )
     _admitted, admitted, admitted_reads = flushed(lambda uow, prepared: uow.buffer_target(prepared))
     assert outcomes == [BufferOutcome.BUFFERED]
@@ -1369,7 +1375,7 @@ def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> 
     def buffering(uow: UnitOfWork, version: int) -> None:
         prepared = _account_target(version)
         if route == "admitted-write":
-            uow.buffer(target_write(prepared, inheritance.view(_ACCOUNT)))
+            uow.buffer(target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT)))
         else:
             uow.buffer_target(prepared)
 

@@ -29,8 +29,8 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
 )
 from parallax.core.sql_gen import LoweredStatement
@@ -60,7 +60,7 @@ from tests.unit._corpus_model_support import formed
 _MODELS = models.load_models()
 
 
-def _target(stem: str, name: str) -> tuple[Metamodel, EntityMetadata]:
+def _target(stem: str, name: str) -> tuple[Metamodel, CompiledEntity]:
     """One corpus model and one of its Entities, both accepted."""
     model = _MODELS[stem]
     entity = model.entity(EntityIdentity("parallax.compatibility", name))
@@ -77,7 +77,7 @@ FRIDGE = _target("appliance", "Fridge")
 DEPOSIT_RATE = _target("rate", "DepositRate")
 
 
-def _generated_key_leaf() -> tuple[Metamodel, EntityMetadata]:
+def _generated_key_leaf() -> tuple[Metamodel, CompiledEntity]:
     """A concrete subtype whose family root's key the framework allocates.
 
     No corpus family generates its key, so this one is formed by hand.
@@ -250,7 +250,7 @@ def test_delete_never_collapses_for_a_temporal_entity() -> None:
 )
 def test_a_descendant_collapses_as_its_family_root_decides(
     monkeypatch: pytest.MonkeyPatch,
-    target: tuple[Metamodel, EntityMetadata],
+    target: tuple[Metamodel, CompiledEntity],
     rows: list[dict[str, object]],
     insert: bool,
     update: bool,

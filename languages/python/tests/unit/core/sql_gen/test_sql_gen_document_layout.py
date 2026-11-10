@@ -31,7 +31,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import CompiledEntity
 from parallax.core.navigate import (
     PropagatedRootSelections,
     RootSelections,
@@ -83,7 +83,7 @@ def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all(
     assert compiled.result_contract.shared_document is None
 
 
-def _target_read(target: EntityMetadata, *, retain_predecessor: bool) -> CompiledRead:
+def _target_read(target: CompiledEntity, *, retain_predecessor: bool) -> CompiledRead:
     return production_compile_read(
         read_planning.plan_target_read(
             target, model=DOCUMENT, key="id", key_value=1, retain_predecessor=retain_predecessor
@@ -113,11 +113,11 @@ def test_a_target_read_retaining_its_row_projects_the_stored_document() -> None:
     assert shared is not None and shared.column == "payload"
 
 
-def _instance_form(target: EntityMetadata) -> CompiledRead:
+def _instance_form(target: CompiledEntity) -> CompiledRead:
     return compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target, result_form="instance")
 
 
-def _widened_resolve(target: EntityMetadata) -> CompiledRead:
+def _widened_resolve(target: CompiledEntity) -> CompiledRead:
     return compile_projected_read(
         oa.TrueNode(),
         DOCUMENT,
@@ -130,7 +130,7 @@ def _widened_resolve(target: EntityMetadata) -> CompiledRead:
 
 @pytest.mark.parametrize("lane", [_instance_form, _widened_resolve], ids=["instance", "resolve"])
 def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
-    lane: Callable[[EntityMetadata], CompiledRead],
+    lane: Callable[[CompiledEntity], CompiledRead],
 ) -> None:
     # The contrasting half: an instance-form read, and the resolving read a
     # materializing predicate write widens to every declared member, both observe the

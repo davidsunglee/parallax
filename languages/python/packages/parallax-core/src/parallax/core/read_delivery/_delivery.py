@@ -5,7 +5,7 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._page import INERT_OBSERVER, MaterializationObserver
 from parallax.core.read_delivery._page_reader import (
@@ -108,7 +108,7 @@ def find_history(
     )
 
 
-def temporal_shape(meta: Metamodel, entity: EntityMetadata) -> TemporalShape:
+def temporal_shape(meta: Metamodel, entity: CompiledEntity) -> TemporalShape:
     """``entity``'s family Temporal Shape, which every milestone edge of a read
     targeting it is read against.
 
@@ -116,7 +116,7 @@ def temporal_shape(meta: Metamodel, entity: EntityMetadata) -> TemporalShape:
     family's shared Temporal Shape rather than the queried target's own,
     possibly locally empty, axes.
     """
-    shape = temporal_read.view(meta).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(meta).shape(entity.identity)
     if shape is None:  # pragma: no cover - the facet covers every accepted Entity
         raise RuntimeError(f"{entity.identity.canonical}: no Temporal Facet shape")
     return shape

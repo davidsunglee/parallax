@@ -30,7 +30,7 @@ _DOCUMENT = models.load_model(
 
 
 def _layout(model: Metamodel) -> storage_layout.TableLayout:
-    view = storage_layout.view(model).entity(_ITEM)
+    view = storage_layout.storage_layout_facet_of(model).entity(_ITEM)
     assert view is not None
     return view.layout
 

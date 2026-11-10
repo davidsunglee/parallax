@@ -9,9 +9,8 @@ from typing import Final, Protocol, TypeGuard, cast, overload
 from parallax.core.inheritance._declaration_order import declaration_order
 from parallax.core.metamodel import (
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
-    FacetKey,
     InheritanceStrategy,
     MemberIdentity,
     MemberShape,
@@ -21,6 +20,7 @@ from parallax.core.metamodel import (
     StorageContainer,
     ValueObjectMetadata,
 )
+from parallax.core.metamodel._accepted import FacetKey, facet_of
 from parallax.core.metamodel._shape import BoundShape
 
 __all__ = [
@@ -34,8 +34,8 @@ __all__ = [
     "InheritanceFamilyView",
     "InheritancePositionView",
     "inheritance_facet",
+    "inheritance_facet_of",
     "member_selection",
-    "view",
 ]
 
 INHERITANCE_MODULE: Final[str] = "m-inheritance"
@@ -174,7 +174,7 @@ class InheritanceEntityFacts:
     persistence: PersistenceMode
     member_selection: EntityMemberSelection
     applicable_relationships: tuple[RelationshipDeclaration, ...]
-    declared: EntityMetadata
+    declared: CompiledEntity
 
 
 type _EntityBinding = AttributeMetadata | ValueObjectMetadata
@@ -539,11 +539,10 @@ FACET_KEY: Final[FacetKey[InheritanceFacet]] = FacetKey(INHERITANCE_MODULE, is_i
 """The typed key this module's facet is installed and retrieved under."""
 
 
-def view(model: Metamodel) -> InheritanceFacet:
-    """``model``'s Inheritance Facet.
+def inheritance_facet_of(model: Metamodel) -> InheritanceFacet:
+    """``model``'s Inheritance Facet, the typed retrieval every consumer uses.
 
-    The typed retrieval every behavioral consumer uses, so generic facet lookup
-    stays an internal formation seam. Total for an accepted Metamodel, which by
-    construction carries the complete facet set.
+    Total for an accepted Metamodel, which by construction carries the complete
+    facet set.
     """
-    return model.facet(FACET_KEY)
+    return facet_of(model, FACET_KEY)

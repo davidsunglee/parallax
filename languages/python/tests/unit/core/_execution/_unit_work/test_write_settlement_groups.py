@@ -522,7 +522,7 @@ def test_a_transaction_time_only_deferred_write_reads_alone() -> None:
                 ),
                 write_preparation_of(_BALANCE),
             ),
-            inheritance.view(_BALANCE),
+            inheritance.inheritance_facet_of(_BALANCE),
         )
         for key in (1, 2)
     ]
@@ -570,7 +570,7 @@ def test_a_deferred_write_naming_no_complete_key_reads_alone() -> None:
     (write,) = shared_plan(frag(ShareCols, 1, 2)).entries
     assert isinstance(write, SettledWrite)
     candidate = settlement._acquisition_candidate  # pyright: ignore[reportPrivateUsage] - what a span compares
-    families = inheritance.view(SHARED_MODEL)
+    families = inheritance.inheritance_facet_of(SHARED_MODEL)
     assert candidate(write, item, families) is not None
     unkeyed = dataclasses.replace(
         item, object_key=ObjectKey(item.object_key.entity, (("id", None),))

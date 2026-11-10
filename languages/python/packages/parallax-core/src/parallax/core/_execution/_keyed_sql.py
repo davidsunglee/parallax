@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from parallax.core._execution._family import entity_layout, family_view
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.write_plan.managed_row import ManagedRow
 
 __all__ = [
@@ -10,7 +10,7 @@ __all__ = [
 
 
 def collapse_group_key(
-    meta: Metamodel, entity: EntityMetadata, mutation: str, row: ManagedRow
+    meta: Metamodel, entity: CompiledEntity, mutation: str, row: ManagedRow
 ) -> object:
     """The physical shape a buffered row must share with its neighbours before
     they may collapse into one statement — this layer's half of the planner's

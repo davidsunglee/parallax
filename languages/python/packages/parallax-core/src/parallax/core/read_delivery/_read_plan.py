@@ -430,7 +430,7 @@ def repeating_levels(
     family a second level also fetches or a back-reference names, which then
     needs every fetched row of that family merged by key.
     """
-    facet = inheritance.view(model.meta)
+    facet = inheritance.inheritance_facet_of(model.meta)
     families_by_level: list[frozenset[EntityIdentity]] = []
     repeating: set[SourceLevel] = set()
     for level, entities in enumerate(resolvable):
@@ -469,7 +469,7 @@ def _plan_uncached(
 ) -> _CachedDelivery:
     """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
     template every cached delivery renders."""
-    versioning = concurrency.view(model.meta)
+    versioning = concurrency.concurrency_facet_of(model.meta)
     empty_root = _empty_root(model, query)
     projection = read_planning.ReadProjectionRequest("all", True)
     planned = (
@@ -593,7 +593,7 @@ def _empty_root(model: CatalogedModel, query: ResolvedObjectQuery) -> bool:
     """
     if query.narrow_to is not None:
         return False
-    view = inheritance.view(model.meta).entity(query.root.identity)
+    view = inheritance.inheritance_facet_of(model.meta).entity(query.root.identity)
     return view is not None and not view.concrete_subtypes
 
 

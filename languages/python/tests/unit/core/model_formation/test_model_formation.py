@@ -12,7 +12,7 @@ from typing import Any, Final, TypeGuard, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import InternalError
+from parallax.core import InternalError, concurrency, inheritance, relationship
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.metamodel import (
     METADATA_COMPILER,
@@ -27,7 +27,6 @@ from parallax.core.metamodel import (
     CompiledMetadata,
     EntityIdentity,
     EntityLocation,
-    FacetKey,
     IssueCode,
     MetamodelIssue,
     Rejected,
@@ -39,6 +38,7 @@ from parallax.core.metamodel import (
     resolve,
 )
 from parallax.core.metamodel import _resolve as resolver
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.metamodel._resolve import PRIMARY_KEY_MISSING, PRIMARY_KEY_MULTIPLE
 from parallax.core.model_formation import (
     FIXED_RESOLVER,
@@ -1114,7 +1114,7 @@ def test_a_model_compiler_cannot_refuse_the_facet_its_own_module_accepts() -> No
     refusing: FacetKey[str] = FacetKey(_INHERITANCE, _rejects_everything)
     profile = _Profile(model_compilers=(_Compiler(_INHERITANCE, refusing),))
     model = form(source(*_valid_model()), manifest, profile)
-    assert model.facet(_INHERITANCE_FACET) == f"facet of {_INHERITANCE}"
+    assert inheritance.inheritance_facet_of(model) == f"facet of {_INHERITANCE}"
 
 
 def test_a_model_compiler_is_handed_the_manifests_key_for_every_facet_it_requires() -> None:
@@ -1263,8 +1263,8 @@ def test_model_compilers_run_in_topological_order_with_ascending_owner_tiebreak(
     assert handed[_INHERITANCE] == ()
     assert handed[_TEMPORAL] == (_INHERITANCE,)
     assert handed[_CONCURRENCY] == (_INHERITANCE, _TEMPORAL)
-    assert model.facet(_CONCURRENCY_FACET) == f"facet of {_CONCURRENCY}"
-    assert model.facet(_RELATIONSHIP_FACET) == f"facet of {_RELATIONSHIP}"
+    assert concurrency.concurrency_facet_of(model) == f"facet of {_CONCURRENCY}"
+    assert relationship.relationship_facet_of(model) == f"facet of {_RELATIONSHIP}"
 
 
 def test_a_profile_whose_requirements_move_after_drift_checking_is_drift() -> None:

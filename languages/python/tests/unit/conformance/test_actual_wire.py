@@ -59,7 +59,7 @@ def test_actual_wire_projects_only_the_managed_open_bound_at_an_axis_end() -> No
 def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_objects() -> None:
     model = models.load_models()["document-codec"]
     entity = model.entities[0]
-    position = inheritance.view(model).entity(entity.identity)
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     assert position is not None
     profile = position.applicable_value_object("profile")
     assert profile is not None
@@ -114,7 +114,7 @@ def test_actual_wire_projects_scalar_collections_element_wise_and_keeps_corrupti
     assert parts is not None
     detail = entity.value_object("detail")
     assert detail is not None
-    view = storage_layout.view(model).entity(item)
+    view = storage_layout.storage_layout_facet_of(model).entity(item)
     assert view is not None
 
     assert projection.scalar(amounts, (decimal.Decimal("1.5"),)) == ["1.50"]

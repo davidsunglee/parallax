@@ -74,8 +74,7 @@ from parallax.core.base import (
     UsageError,
     normalize_instant,
 )
-from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference
-from parallax.core.concurrency import view as concurrency_view
+from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference, concurrency_facet_of
 from parallax.core.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
@@ -257,7 +256,7 @@ def _version_attribute(model: AcceptedMetamodel, entity_name: str) -> AttributeI
     """``entity_name``'s explicit version Attribute, or ``None`` for an
     unversioned or temporal family, whose temporal observation names a
     milestone rather than a version."""
-    return concurrency_view(model).version_attribute(case_entity(model, entity_name).identity)
+    return concurrency_facet_of(model).version_attribute(case_entity(model, entity_name).identity)
 
 
 def entry_instant(entry: Mapping[str, object]) -> str:
@@ -533,7 +532,7 @@ class _SimulatedUnit:
             self._authorized(instruction, key)
         else:
             assert key is not None  # an observation is bound only to a row naming its object
-            shape = temporal_read.view(self._model).shape(instruction.target.identity)
+            shape = temporal_read.temporal_facet_of(self._model).shape(instruction.target.identity)
             assert shape is not None  # the facet covers every accepted Entity
             retained = self._retained(
                 object_state_key_from_observation(key, observation, shape), observation
@@ -575,7 +574,7 @@ class _SimulatedUnit:
         observation: RetainedObservation | None,
     ) -> None:
         evidence = settled_evidence(
-            concurrency_view(self._model),
+            concurrency_facet_of(self._model),
             instruction.target.identity,
             instruction.mutation,
             object_key=key,
@@ -622,7 +621,7 @@ def _unlicensed(instruction: PreparedKeyedInstruction, model: AcceptedMetamodel)
     reaches here, and it is refused for the key it omits."""
     entity = instruction.target.identity
     mutation = instruction.mutation
-    versioning = concurrency_view(model)
+    versioning = concurrency_facet_of(model)
     if versioning.version_attribute(entity) is not None:
         return UsageError(
             VERSION_UNOBSERVED,
@@ -630,7 +629,7 @@ def _unlicensed(instruction: PreparedKeyedInstruction, model: AcceptedMetamodel)
             "its source observed",
         )
     if versioning.settles_against(entity) == "object":
-        position = inheritance.view(model).entity(entity)
+        position = inheritance.inheritance_facet_of(model).entity(entity)
         assert position is not None  # the facet covers every accepted Entity
         return InternalError(
             WRITE_PLANNING_FAILED,
@@ -2015,7 +2014,7 @@ def read_table_state(
     """
     dialect = port.dialect
     state: dict[str, list[MappingRow]] = {}
-    for layout in storage_layout.view(model).tables:
+    for layout in storage_layout.storage_layout_facet_of(model).tables:
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
         sql = f"select {columns} from {dialect.quote(layout.table.name)}"
         rows = port.execute(dialect.to_driver_sql(sql), [])
@@ -2070,7 +2069,7 @@ def _implied_shortfall_code(
     """
     if not observation_requiring:
         return MISSING_TARGET
-    strategy = concurrency_view(model).effective_strategy(
+    strategy = concurrency_facet_of(model).effective_strategy(
         case_entity(model, target).identity, concurrency
     )
     return OPTIMISTIC_LOCK_CONFLICT if strategy == "optimistic" else STALE_WRITE
@@ -2269,7 +2268,7 @@ def _refuse_a_locking_conflict_target(
     describes interference no client can meet (`m-case-format` "Conflict cases").
     """
     entity = case_entity(model, target).identity
-    if concurrency_view(model).effective_strategy(entity, concurrency) == "locking":
+    if concurrency_facet_of(model).effective_strategy(entity, concurrency) == "locking":
         raise UnclassifiedEngineError(
             f"{target!r}: a conflict case stages a writer that commits between the attempt's "
             "source read and its write, which only the Optimistic strategy leaves room for — "

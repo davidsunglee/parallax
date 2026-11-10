@@ -984,7 +984,7 @@ def _assert_layout_shaped_table_state(
     """
     layouts = {
         layout.table.name: [slot.column.name for slot in layout.columns]
-        for layout in storage_layout.view(model).tables
+        for layout in storage_layout.storage_layout_facet_of(model).tables
     }
     assert set(observed_state) == set(layouts), (case.case_id, sorted(observed_state))
     for table, rows in observed_state.items():
@@ -1664,7 +1664,7 @@ def _state_run_envelope(
                     {slot.column.name: row[slot.column.name] for slot in layout.columns}
                     for row in stated.get(layout.table.name, [])
                 ]
-                for layout in storage_layout.view(model).tables
+                for layout in storage_layout.storage_layout_facet_of(model).tables
             },
         },
     }

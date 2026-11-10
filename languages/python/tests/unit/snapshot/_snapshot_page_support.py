@@ -40,7 +40,7 @@ from parallax.core.base import (
 from parallax.core.dialect import decode_bytes_cell
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import inheritance_facet_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -115,7 +115,7 @@ def identity_of(model: Metamodel, name: str) -> EntityIdentity:
 
 def documents_of(model: Metamodel, identity: EntityIdentity) -> tuple[ValueObjectMetadata, ...]:
     """The document contributors an instance-form read of ``identity`` projects."""
-    position = inheritance_view(model).entity(identity)
+    position = inheritance_facet_of(model).entity(identity)
     assert position is not None, identity
     return tuple(position.applicable_value_objects)
 

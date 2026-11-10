@@ -8,12 +8,12 @@ from parallax.core.metamodel import (
     Cardinality,
     CompiledMetadata,
     DefiningRelationshipDeclaration,
-    FacetKey,
     RelationshipDeclaration,
     RelationshipIdentity,
     RelationshipJoin,
     ReverseRelationshipDeclaration,
 )
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship._facet import (
     FACET_KEY,

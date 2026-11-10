@@ -57,7 +57,7 @@ def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
 
 def test_document_fan_out_references_complete_residency_while_selecting_only_attributes() -> None:
     entity = target(DOCUMENT_LAYOUT, "Voyage")
-    storage = storage_layout.view(DOCUMENT_LAYOUT)
+    storage = storage_layout.storage_layout_facet_of(DOCUMENT_LAYOUT)
     physical = storage.entity(entity.identity)
     position = storage.position((entity.identity,))
     assert physical is not None and position is not None
@@ -68,7 +68,7 @@ def test_document_fan_out_references_complete_residency_while_selecting_only_att
 
     shared, _direct = plan_document_reads(
         position,
-        inheritance.view(DOCUMENT_LAYOUT),
+        inheritance.inheritance_facet_of(DOCUMENT_LAYOUT),
         storage,
         ResolvedReadProjection((), False),
     )

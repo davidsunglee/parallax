@@ -51,7 +51,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     TransactionAttemptFinished,
 )
-from parallax.core.storage_layout import view as storage_layout_view
+from parallax.core.storage_layout import storage_layout_facet_of
 from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.retry import fast_retry
@@ -685,7 +685,7 @@ def test_an_exclusion_refusal_fails_the_whole_grouped_close_as_a_recoverable_con
     provider = RecordingLifecycleProvider()
     db = _database(profile_run, provider)
     db.transact(_seed_books)
-    view = storage_layout_view(model_of(_MODEL)).entity(Book.identity)
+    view = storage_layout_facet_of(model_of(_MODEL)).entity(Book.identity)
     assert view is not None and view.layout.temporal_constraints is not None
     name = view.layout.temporal_constraints.exclusion_name
     control = profile_run.control()

@@ -35,7 +35,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core.base import UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     ReadEvidence,
@@ -180,7 +180,7 @@ class _Production:
     def answers(self) -> dict[str, _Outcome]:
         return {label: self._resolved(source) for label, source in self.published.items()}
 
-    def _entity(self, source: ReadEvidence) -> EntityMetadata:
+    def _entity(self, source: ReadEvidence) -> CompiledEntity:
         entity = entity_by_name(self.meta, f"parallax.compatibility.{source.entity.name}")
         assert entity is not None
         return entity

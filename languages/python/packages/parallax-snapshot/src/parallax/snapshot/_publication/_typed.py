@@ -62,8 +62,8 @@ class TypedRootPublisher:
         self._model = model
         self._construction = construction
         self._view_keys = view_keys
-        self._temporal = temporal_read.view(model)
-        self._versioning = concurrency.view(model)
+        self._temporal = temporal_read.temporal_facet_of(model)
+        self._versioning = concurrency.concurrency_facet_of(model)
         self._root: GraphView | None = None
         self._conformance = RootConformance.CONFORMING
         self._provenance = PageProvenance()

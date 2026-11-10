@@ -28,7 +28,7 @@ from parallax.core.base import (
 from parallax.core.document_codec._plan import AuthoringPlan, AuthoringRefusal
 from parallax.core.metamodel import (
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     MemberDefinition,
     MemberShape,
     Multiplicity,
@@ -98,7 +98,7 @@ def prepare_case_write(
 
 
 def decode_case_row(
-    row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
+    row: Mapping[str, object], model: AcceptedMetamodel, entity: CompiledEntity
 ) -> Mapping[str, object]:
     """One case-format row of ``entity`` state as managed members, judging
     nothing.
@@ -115,7 +115,7 @@ def decode_case_row(
     write carries forward. Keys inside a Structured Column value are the
     document's own and are not judged here.
     """
-    position = inheritance.view(model).entity(entity.identity)
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     assert position is not None  # the facet covers every accepted Entity
     shape = position.member_selection.shape
     undeclared = sorted(name for name in row if shape.position(name) is None)
@@ -255,7 +255,7 @@ def _joined(base: str, path: str) -> str:
 
 
 def _temporal_ends(
-    model: AcceptedMetamodel, entity: EntityMetadata
+    model: AcceptedMetamodel, entity: CompiledEntity
 ) -> tuple[ScalarDefinition, ...]:
     """The canonical definitions of ``entity``'s declared axis ends.
 
@@ -265,7 +265,7 @@ def _temporal_ends(
     (`m-inheritance`), while a nested leaf merely named or typed like one is a
     different object.
     """
-    temporal = temporal_read.view(model)
+    temporal = temporal_read.temporal_facet_of(model)
     ends: list[ScalarDefinition] = []
     for dimension in TemporalDimension:
         axis = temporal.axis(entity.identity, dimension)
@@ -418,9 +418,9 @@ def _normalize_row(
 
 
 def _entity_members(
-    model: AcceptedMetamodel, entity: EntityMetadata
+    model: AcceptedMetamodel, entity: CompiledEntity
 ) -> dict[str, AttributeMetadata | ValueObjectMetadata]:
-    position = inheritance.view(model).entity(entity.identity)
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     assert position is not None  # the facet covers every accepted Entity
     return {
         **{member.identity.name: member for member in position.applicable_attributes},
@@ -479,7 +479,7 @@ class _Container:
 class _Related:
     """An Entity position: the queried one, or one a relationship reaches."""
 
-    entity: EntityMetadata | None
+    entity: CompiledEntity | None
 
 
 type _Reached = _Field | _Container | _Related
@@ -587,15 +587,17 @@ def _member(model: AcceptedMetamodel, owner: _Reached, name: str) -> _Reached | 
             for candidate in _family(model, entity):
                 declaration = candidate.relationship(name)
                 if declaration is not None:
-                    metadata = relationship.view(model).relationship(declaration.identity)
+                    metadata = relationship.relationship_facet_of(model).relationship(
+                        declaration.identity
+                    )
                     return _Related(
                         None if metadata is None else model.entity(metadata.join.target.entity)
                     )
             return None
 
 
-def _family(model: AcceptedMetamodel, entity: EntityMetadata) -> list[EntityMetadata]:
-    families = inheritance.view(model)
+def _family(model: AcceptedMetamodel, entity: CompiledEntity) -> list[CompiledEntity]:
+    families = inheritance.inheritance_facet_of(model)
     view = families.entity(entity.identity)
     root = entity.identity if view is None else view.root
     return [
@@ -607,7 +609,7 @@ def _family(model: AcceptedMetamodel, entity: EntityMetadata) -> list[EntityMeta
 
 
 def _family_members(
-    model: AcceptedMetamodel, entity: EntityMetadata
+    model: AcceptedMetamodel, entity: CompiledEntity
 ) -> dict[str, AttributeMetadata | ValueObjectMetadata]:
     members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
     for candidate in _family(model, entity):

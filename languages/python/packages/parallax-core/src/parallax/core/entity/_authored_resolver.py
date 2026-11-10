@@ -28,8 +28,8 @@ from parallax.core.entity._expressions import (
 from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
 from parallax.core.metamodel import (
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     RelationshipIdentity,
     entity_by_name,
@@ -127,7 +127,7 @@ def typed_predicate_interpretation(
     """
     resolver = _Resolver(model, classes)
 
-    def interpret(root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate:
+    def interpret(root: CompiledEntity, position: PositionScope, /) -> ResolvedPredicate:
         return resolver.walk(predicate, root_frame(root, position))
 
     return interpret
@@ -200,7 +200,7 @@ def _canonical_query(
     exported: list[PredicateNode] = []
     bound: list[IncludePathNode] = []
 
-    def interpret(root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate:
+    def interpret(root: CompiledEntity, position: PositionScope, /) -> ResolvedPredicate:
         exported.append(resolver.export(query.predicate, root_frame(root, position)))
         return ResolvedConstant(True)
 
@@ -415,7 +415,7 @@ class _Resolver:
 
     def _relationship_target(
         self, relationship: RelationshipIdentity, wrong_kind_rule: str
-    ) -> EntityMetadata:
+    ) -> CompiledEntity:
         return relationship_target(
             _relationship_spelling(relationship), self._model, wrong_kind_rule=wrong_kind_rule
         )

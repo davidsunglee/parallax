@@ -63,7 +63,7 @@ _RECORDS_BALANCE = corpus_records()["balance"]
 
 
 def _backing_indices(model: AcceptedMetamodel) -> tuple[TemporalBackingIndex, ...]:
-    return temporal_backing_indices(storage_layout.view(model))
+    return temporal_backing_indices(storage_layout.storage_layout_facet_of(model))
 
 
 def _entry(

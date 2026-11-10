@@ -244,7 +244,7 @@ def test_a_catalog_keeps_no_model_alive() -> None:
     model = model_of(DomainModel(Bin))
     catalog = StorageCatalog(model)
     catalog.entity(_BIN).row_slots(1)
-    layout = weakref.ref(storage_layout.view(model))
+    layout = weakref.ref(storage_layout.storage_layout_facet_of(model))
     del model, catalog
     gc.collect()
     assert layout() is None

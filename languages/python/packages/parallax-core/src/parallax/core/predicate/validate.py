@@ -8,9 +8,9 @@ from parallax.core import inheritance, relationship
 from parallax.core.base import ManagedValue, NeutralType, String, UsageError
 from parallax.core.metamodel import (
     AttributeMetadata,
+    CompiledEntity,
     DefiningRelationshipDeclaration,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     Multiplicity,
     OccurrenceMetadata,
@@ -184,7 +184,7 @@ class EntityFrame:
     """An Entity position: the queried one, which spells its paths
     Entity-qualified, or one a scope binds, which spells them relative."""
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     position: PositionScope
     bound: bool
 
@@ -208,7 +208,7 @@ type PredicateFrame = EntityFrame | ObjectElementFrame | ScalarElementFrame
 
 
 def validate_predicate(
-    root: EntityMetadata,
+    root: CompiledEntity,
     op: PredicateNode,
     model: Metamodel,
     *,
@@ -224,18 +224,18 @@ def validate_predicate(
 def canonical_interpretation(op: PredicateNode, model: Metamodel) -> PredicateInterpretation:
     """The Wire adapter: ``op`` validated against ``model`` at the position it is given."""
 
-    def interpret(root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate:
+    def interpret(root: CompiledEntity, position: PositionScope, /) -> ResolvedPredicate:
         return validate_predicate(root, op, model, position=position)
 
     return interpret
 
 
-def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:
+def root_position(model: Metamodel, root: CompiledEntity) -> PositionScope:
     """The active position a read starts from: ``root``'s effective concrete set."""
     return PositionScope(effective=effective_set(model, root))
 
 
-def root_frame(root: EntityMetadata, position: PositionScope) -> EntityFrame:
+def root_frame(root: CompiledEntity, position: PositionScope) -> EntityFrame:
     """The frame a predicate starts from: the queried ``root`` at ``position``."""
     return EntityFrame(root, position, bound=False)
 
@@ -414,7 +414,7 @@ def resolve_presence(
             )
 
 
-def _related_frame(model: Metamodel, target: EntityMetadata) -> EntityFrame:
+def _related_frame(model: Metamodel, target: CompiledEntity) -> EntityFrame:
     """The frame a scope binding one of ``target``'s related Entities opens."""
     return EntityFrame(
         target,
@@ -674,7 +674,7 @@ def _resolve_path(path: str, frame: PredicateFrame, model: Metamodel) -> _Termin
 def _walk_entity(
     path: str,
     segments: Sequence[str],
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: PositionScope | None,
     reached: ObjectPosition,
     model: Metamodel,
@@ -761,9 +761,9 @@ def _crosses_many(path: str, segment: str) -> UsageError:
 type _Member = AttributeMetadata | ValueObjectMetadata | RelationshipMetadata
 
 
-def _entity_member(model: Metamodel, entity: EntityMetadata, name: str) -> _Member | None:
+def _entity_member(model: Metamodel, entity: CompiledEntity, name: str) -> _Member | None:
     """The member ``name`` declares on ``entity`` or an ancestor."""
-    view = inheritance.view(model).entity(entity.identity)
+    view = inheritance.inheritance_facet_of(model).entity(entity.identity)
     attribute = (None if view is None else view.applicable_attribute(name)) or entity.attribute(
         name
     )
@@ -778,7 +778,7 @@ def _entity_member(model: Metamodel, entity: EntityMetadata, name: str) -> _Memb
 
 
 def _member_at(
-    model: Metamodel, entity: EntityMetadata, position: PositionScope, name: str
+    model: Metamodel, entity: CompiledEntity, position: PositionScope, name: str
 ) -> _Member | None:
     """The member ``name`` declared by the Entity of ``entity``'s family that is
     applicable at ``position``; disjoint siblings may each declare it, so a
@@ -786,7 +786,7 @@ def _member_at(
     applicable = _ancestry_member_at(model, position, name)
     if applicable is not None:
         return applicable
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     view = families.entity(entity.identity)
     root = entity.identity if view is None else view.root
     refusal: UsageError | None = None
@@ -824,7 +824,7 @@ def _ancestry_member_at(model: Metamodel, position: PositionScope, name: str) ->
     so it lies on any one of those concretes' ancestry, and an ancestry never
     declares one name twice.
     """
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     concrete = next(iter(position.effective), None)
     view = None if concrete is None else families.entity(_identity_of(concrete))
     local: AttributeMetadata | ValueObjectMetadata | RelationshipDeclaration | None = (
@@ -857,7 +857,7 @@ def _identity_of(canonical: str) -> EntityIdentity:
 def _relationship_metadata(
     model: Metamodel, identity: RelationshipIdentity
 ) -> RelationshipMetadata:
-    metadata = relationship.view(model).relationship(identity)
+    metadata = relationship.relationship_facet_of(model).relationship(identity)
     if metadata is None:  # pragma: no cover - formation compiles every accepted declaration
         raise ValueError(f"{identity!r} names no resolved relationship direction")
     return metadata
@@ -866,7 +866,7 @@ def _relationship_metadata(
 def _resolve_relationship(model: Metamodel, metadata: RelationshipMetadata) -> ResolvedRelationship:
     """``metadata`` bound to its target Entity and its join attributes as they
     apply at each side's Entity."""
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     join = metadata.join
     source_view = families.entity(join.source.entity)
     target_view = families.entity(join.target.entity)
@@ -892,7 +892,7 @@ def _position_identities(model: Metamodel, position: PositionScope) -> tuple[Ent
     )
 
 
-def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
+def _lookup_entity(model: Metamodel, name: str) -> CompiledEntity | None:
     """The accepted Metadata a bare-or-canonical Entity spelling names, or
     absence, over the authored `Class` prefix of a predicate reference —
     :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule,
@@ -952,7 +952,7 @@ def _unresolved_reference(
     )
 
 
-def effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
+def effective_set(model: Metamodel, entity: CompiledEntity) -> frozenset[str]:
     """``entity``'s effective concrete-subtype set: itself for a standalone Entity,
     else its family view's concrete descendants.
 
@@ -962,20 +962,20 @@ def effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
     is resolved to its Entity first, so the canonical form is an internal
     normalization rather than a requirement on the wire.
     """
-    view = inheritance.view(model).entity(entity.identity)
+    view = inheritance.inheritance_facet_of(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         return frozenset({entity.identity.canonical})
     return frozenset(identity.canonical for identity in view.concrete_subtypes)
 
 
-def _family_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
+def _family_set(model: Metamodel, entity: CompiledEntity) -> frozenset[str]:
     """The effective concrete-subtype set of ``entity``'s whole inheritance family
     — every position a `narrow` could bring ``entity``'s members into scope from.
 
     A standalone Entity's family is itself, so this equals its effective set and
     the two positional rules stay distinguishable for it.
     """
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     view = families.entity(entity.identity)
     family = None if view is None else families.entity(view.root)
     if family is None:  # pragma: no cover - the facet covers every accepted Entity
@@ -1081,7 +1081,7 @@ def check_attribute_reference(
             )
         raise _unresolved_reference(model, attr_ref, class_name)
     _check_attribute_position(model, entity, scope)
-    position = inheritance.view(model).entity(entity.identity)
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     attribute = (
         None if position is None else position.applicable_attribute(_attr_name)
     ) or entity.attribute(_attr_name)
@@ -1089,7 +1089,7 @@ def check_attribute_reference(
 
 
 def _check_attribute_position(
-    model: Metamodel, entity: EntityMetadata, scope: PositionScope
+    model: Metamodel, entity: CompiledEntity, scope: PositionScope
 ) -> None:
     """The positional rule: an attribute reference MUST be applicable to every
     concrete in the active position.
@@ -1118,12 +1118,12 @@ def _check_attribute_position(
 def relationship_direction(
     model: Metamodel, identity: RelationshipIdentity
 ) -> RelationshipMetadata | None:
-    return relationship.view(model).relationship(identity)
+    return relationship.relationship_facet_of(model).relationship(identity)
 
 
 def relationship_target(
     reference: str, model: Metamodel, *, wrong_kind_rule: str
-) -> EntityMetadata:
+) -> CompiledEntity:
     class_name, _, member_name = reference.rpartition(".")
     entity = _lookup_entity(model, class_name)
     if entity is None:

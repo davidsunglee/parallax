@@ -11,7 +11,7 @@ from parallax.conformance.concurrency_runner import ConcurrencyStep
 from parallax.conformance.profile import ProvisionedRun
 from parallax.core import continuation, read_planning
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query import OrderKey, object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.predicate import TrueNode
@@ -22,7 +22,7 @@ def _model(stem: str) -> Metamodel:
     return models.load_model(models.default_models_dir() / f"{stem}.yaml")
 
 
-def _target(metamodel: Metamodel, name: str) -> EntityMetadata:
+def _target(metamodel: Metamodel, name: str) -> CompiledEntity:
     return next(entity for entity in metamodel.entities if entity.identity.name == name)
 
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from parallax.core.metamodel._accepted import Metamodel, accept_metamodel
 from parallax.core.metamodel._authoring_violation import AuthoringViolation
 from parallax.core.metamodel._compile import (
     METADATA_COMPILER,
-    accept_metamodel,
     is_compiled_metadata,
     value_object_metadata,
 )
@@ -65,11 +65,9 @@ from parallax.core.metamodel._shape import (
 )
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
+    CompiledEntity,
     CompiledMetadata,
     EntityDeclaration,
-    EntityMetadata,
-    FacetKey,
-    Metamodel,
     NestedValueObjectMetadata,
     OccurrenceMetadata,
     UnresolvedEntityDeclaration,
@@ -169,6 +167,7 @@ __all__ = [
     "Cardinality",
     "Column",
     "Columns",
+    "CompiledEntity",
     "CompiledMetadata",
     "ConcreteSubtype",
     "DefiningRelationshipDeclaration",
@@ -177,10 +176,8 @@ __all__ = [
     "EntityDeclaration",
     "EntityIdentity",
     "EntityLocation",
-    "EntityMetadata",
     "EntityReference",
     "ExactEntityReference",
-    "FacetKey",
     "IndexIdentity",
     "IndexLocation",
     "IndexMetadata",

@@ -64,7 +64,7 @@ def _provision(profile_run: Any, model_file: str) -> Metamodel:
 
 
 def _constraints(model: Metamodel, table: str) -> TemporalHistoryConstraints:
-    layout = storage_layout.view(model).table(Table(table))
+    layout = storage_layout.storage_layout_facet_of(model).table(Table(table))
     assert layout is not None and layout.temporal_constraints is not None
     return layout.temporal_constraints
 

@@ -69,7 +69,7 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     refuse_reentry,
 )
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._acquired_rows import (
     admitted_member_rows,
@@ -142,7 +142,7 @@ class TargetWriteInput:
     representation: Literal["typed", "wire"]
     authored_members: Set[str] | None = None
     members: Callable[[], Mapping[str, object]] | None = None
-    target: EntityMetadata | None = None
+    target: CompiledEntity | None = None
 
 
 class TargetWriteAdapter(Protocol):

@@ -1,4 +1,4 @@
-"""m-relationship: the Rule Set, the symmetric facet, and its typed view."""
+"""m-relationship: the Rule Set, the symmetric facet, and its typed accessor."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ from parallax.core.relationship import (
     RelationshipFacet,
     RelationshipMetadata,
     project_join_endpoints,
-    view,
+    relationship_facet_of,
 )
 from parallax.core.relationship._rules import (
     CARDINALITY_JOIN_MISMATCH,
@@ -86,7 +86,7 @@ from parallax.core.relationship._rules import (
 )
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
-from tests._support import fake_metamodel as fake
+from tests._support import fake_metadata as fake
 from tests.unit._metamodel_support import Declaration, accepted, attribute, identity, key, source
 
 _ORDER = identity("Order")
@@ -192,7 +192,7 @@ def _codes(*declarations: UnresolvedEntityDeclaration) -> list[IssueCode]:
 
 def _facet(*declarations: UnresolvedEntityDeclaration) -> RelationshipFacet:
     """The facet a valid model compiles to, through the built-in composition root."""
-    return view(form_metamodel(source(*declarations)))
+    return relationship_facet_of(form_metamodel(source(*declarations)))
 
 
 def _direction(facet: RelationshipFacet, target: RelationshipIdentity) -> RelationshipMetadata:
@@ -263,9 +263,9 @@ def _candidate(*entities: EntityDeclaration) -> CandidateMetamodel:
     return _Candidate(entities)
 
 
-def _compiled(*entities: fake.FakeEntity) -> CompiledMetadata:
+def _compiled(*entities: fake.FakeCompiledEntity) -> CompiledMetadata:
     """Accepted metadata the alternate implementation states outright."""
-    return fake.FakeMetamodel(entities)
+    return fake.FakeCompiledMetadata(entities)
 
 
 def _scalar(entity: EntityIdentity, name: str, column: str, *, primary: bool) -> AttributeMetadata:
@@ -386,7 +386,7 @@ def test_enumeration_preserves_local_declaration_order() -> None:
 def _ranks(*declarations: UnresolvedEntityDeclaration) -> dict[str, int | None]:
     """Each Entity's referential rank, keyed by name in canonical Entity order."""
     model = form_metamodel(source(*declarations))
-    facet = view(model)
+    facet = relationship_facet_of(model)
     return {
         entity.identity.name: facet.referential_rank(entity.identity) for entity in model.entities
     }
@@ -738,7 +738,7 @@ entities:
 
 
 def test_a_join_source_the_ancestry_declares_is_the_entitys_own() -> None:
-    facet = view(_formed(_INHERITED_SOURCE))
+    facet = relationship_facet_of(_formed(_INHERITED_SOURCE))
     tags = _direction(facet, RelationshipIdentity(identity("Memo"), "tags"))
     assert tags.join.source == AttributeIdentity(identity("Memo"), "id")
 
@@ -1161,7 +1161,7 @@ def test_a_relationship_defect_fails_formation_before_any_facet_is_compiled() ->
 
 
 def test_compiling_a_reverse_without_its_defining_peer_is_an_impossible_state() -> None:
-    order = fake.FakeEntity(
+    order = fake.FakeCompiledEntity(
         _ORDER,
         declared_attributes=(key(_ORDER),),
         declared_relationships=(
@@ -1181,8 +1181,8 @@ def test_compiling_a_reverse_without_its_defining_peer_is_an_impossible_state() 
 
 
 def test_both_implementations_compile_identical_symmetric_metadata() -> None:
-    descriptor_backed = view(_formed(fake.PARITY_DESCRIPTOR))
-    alternate = MODEL_COMPILER.compile(fake.parity_model(), {})
+    descriptor_backed = relationship_facet_of(_formed(fake.PARITY_DESCRIPTOR))
+    alternate = MODEL_COMPILER.compile(fake.parity_metadata(), {})
     entities = (fake.ACCOUNT, fake.AUDIT, fake.ENTRY, fake.LEDGER)
     assert _directions(descriptor_backed, *entities) == _directions(alternate, *entities)
     entries = _direction(descriptor_backed, RelationshipIdentity(fake.ACCOUNT, "entries"))
@@ -1230,12 +1230,12 @@ entities:
 def _association_alternate() -> CompiledMetadata:
     student, course, enrollment = identity("Student"), identity("Course"), identity("Enrollment")
     return _compiled(
-        fake.FakeEntity(
+        fake.FakeCompiledEntity(
             course,
             declared_container=Table("course"),
             declared_attributes=(_scalar(course, "id", "id", primary=True),),
         ),
-        fake.FakeEntity(
+        fake.FakeCompiledEntity(
             enrollment,
             declared_container=Table("enrollment"),
             declared_attributes=(
@@ -1262,7 +1262,7 @@ def _association_alternate() -> CompiledMetadata:
                 ),
             ),
         ),
-        fake.FakeEntity(
+        fake.FakeCompiledEntity(
             student,
             declared_container=Table("student"),
             declared_attributes=(_scalar(student, "id", "id", primary=True),),
@@ -1278,7 +1278,7 @@ def _association_alternate() -> CompiledMetadata:
 
 def test_an_association_entity_navigates_identically_across_implementations() -> None:
     student, course, enrollment = identity("Student"), identity("Course"), identity("Enrollment")
-    descriptor_backed = view(_formed(_ASSOCIATION))
+    descriptor_backed = relationship_facet_of(_formed(_ASSOCIATION))
     alternate = MODEL_COMPILER.compile(_association_alternate(), {})
     entities = (course, enrollment, student)
     assert _directions(descriptor_backed, *entities) == _directions(alternate, *entities)
@@ -1300,7 +1300,7 @@ def test_an_association_entity_navigates_identically_across_implementations() ->
 @pytest.mark.parametrize("path", _CORPUS, ids=lambda path: path.stem)
 def test_every_corpus_relationship_compiles_into_exactly_one_direction(path: Path) -> None:
     model = _formed(path.read_text(encoding="utf-8"))
-    facet = view(model)
+    facet = relationship_facet_of(model)
     for entity in model.entities:
         directions = facet.relationships(entity.identity)
         assert directions is not None
@@ -1315,7 +1315,7 @@ def test_a_corpus_reverse_pairing_names_both_directions_of_one_association() -> 
     person = EntityIdentity("parallax.compatibility", "Person")
     passport = EntityIdentity("parallax.compatibility", "Passport")
     path = next(candidate for candidate in _CORPUS if candidate.stem == "person")
-    facet = view(_formed(path.read_text(encoding="utf-8")))
+    facet = relationship_facet_of(_formed(path.read_text(encoding="utf-8")))
 
     holder = _direction(facet, RelationshipIdentity(passport, "holder"))
     assert holder.reverse == "passport"

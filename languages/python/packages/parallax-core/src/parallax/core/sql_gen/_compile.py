@@ -13,13 +13,12 @@ from parallax.core.base import (
 )
 from parallax.core.dialect import ArrayBind, Dialect
 from parallax.core.document_codec import is_text_compared
-from parallax.core.inheritance import InheritanceFacet
-from parallax.core.inheritance import view as _inheritance_view
+from parallax.core.inheritance import InheritanceFacet, inheritance_facet_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     TemporalDimension,
 )
@@ -92,7 +91,7 @@ from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
-from parallax.core.storage_layout import view as _storage_view
+from parallax.core.storage_layout import storage_layout_facet_of
 
 __all__ = [
     "CompiledRead",
@@ -391,8 +390,8 @@ def _compile_read(
     """Lower ``query`` once; a ``deferred`` read binds its page's and its
     predicate's execution values as markers."""
     page_deferred = deferred and query.paging is not None
-    storage = _storage_view(model)
-    facet = _inheritance_view(model)
+    storage = storage_layout_facet_of(model)
+    facet = inheritance_facet_of(model)
     terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
     seek = None if query.paging is None else query.paging.seek
     two_branches = (
@@ -577,15 +576,15 @@ def _shared_lock_base_join[RowScope](
 
 
 def compile_write_predicate(
-    op: TemporallyResolvedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
+    op: TemporallyResolvedPredicate, model: Metamodel, dialect: Dialect, target: CompiledEntity
 ) -> CompiledPredicate:
     """Render an already-validated write predicate in the form its plan selects:
     unaliased, every occurrence unshared, unless an occurrence reads through a
     shared source; then the selection of the target's physical key from the
     rows it matches, rendered as a read of the target's own Table selects them.
     """
-    facet = _inheritance_view(model)
-    storage = _storage_view(model)
+    facet = inheritance_facet_of(model)
+    storage = storage_layout_facet_of(model)
     layout = _table_layout(storage, facet, target.identity)
     statement_plan = _plan_statement(
         op,
@@ -882,7 +881,7 @@ def _select_list(
 def _render_single_table_read(
     plan: _SingleTableReadPlan,
     statement_plan: _StatementPlan,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
@@ -934,7 +933,7 @@ def _render_single_table_read(
 def _render_tph_partitioned_read(
     plan: _SingleTableReadPlan,
     statement_plan: _StatementPlan,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
@@ -1076,7 +1075,7 @@ def _render_tph_partitioned_read(
 def _render_tpcs_union_read(
     plan: _TpcsUnionReadPlan,
     statement_plan: _StatementPlan,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,

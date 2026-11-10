@@ -7,8 +7,7 @@ from typing import Final
 from parallax.core import storage_layout
 from parallax.core.base import JSON, STRING, NeutralType
 from parallax.core.dialect import Dialect, PhysicalIndexName
-from parallax.core.inheritance import InheritanceFacet
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import InheritanceFacet, inheritance_facet_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -219,7 +218,9 @@ class _Endpoint:
     @staticmethod
     def of(model: Metamodel) -> _Endpoint:
         return _Endpoint(
-            model=model, facet=storage_layout.view(model), family=inheritance_view(model)
+            model=model,
+            facet=storage_layout.storage_layout_facet_of(model),
+            family=inheritance_facet_of(model),
         )
 
     def table(self, table: Table) -> TableLayout | None:

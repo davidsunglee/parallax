@@ -14,7 +14,7 @@ from parallax.core.concurrency._facet import (
     TransactionTimeVersion,
     Unversioned,
     VersionSource,
-    view,
+    concurrency_facet_of,
 )
 from parallax.core.concurrency._rules import ISSUE_CODES, RULE_SET
 
@@ -34,9 +34,9 @@ __all__ = [
     "TransactionTimeVersion",
     "Unversioned",
     "VersionSource",
+    "concurrency_facet_of",
     "concurrency_preference",
     "next_version",
-    "view",
 ]
 
 CONCURRENCY_PREFERENCES: Final[frozenset[str]] = frozenset(get_args(ConcurrencyPreference))

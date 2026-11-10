@@ -22,7 +22,7 @@ from parallax.core.base import (
 )
 from parallax.core.dialect import JSON_NULL, ArrayBind, Dialect
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeMetadata, CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.predicate import StringOp
 from parallax.core.predicate._execution_values import ExecutionValueSource, source_order
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
@@ -490,7 +490,7 @@ class CandidateRenderScope(ColumnScope, Protocol):
 
     def next_alias(self) -> str: ...
 
-    def child(self, entity: EntityMetadata, alias: str) -> CandidateRenderScope: ...
+    def child(self, entity: CompiledEntity, alias: str) -> CandidateRenderScope: ...
 
 
 @dataclass(frozen=True, slots=True)

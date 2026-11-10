@@ -25,7 +25,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import InheritancePositionView
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.navigate import (
     NoRootSelections,
     PropagatedRootSelections,
@@ -67,8 +67,7 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.sql_gen._compile import compile_write_predicate
-from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
-from parallax.core.temporal_read import view as temporal_view
+from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
@@ -157,7 +156,7 @@ def _hops(position: SubjectPosition) -> list[ResolvedRelationship]:
 
 
 def _bitemporal(model: Metamodel, name: str) -> Bitemporal:
-    shape = temporal_view(model).shape(target(model, name).identity)
+    shape = temporal_facet_of(model).shape(target(model, name).identity)
     assert isinstance(shape, Bitemporal)
     return shape
 
@@ -171,7 +170,7 @@ def _pinned(model: Metamodel, name: str) -> TemporalPerspective:
 
 
 def _latest(model: Metamodel, name: str) -> TemporalPerspective:
-    shape = temporal_view(model).shape(target(model, name).identity)
+    shape = temporal_facet_of(model).shape(target(model, name).identity)
     if isinstance(shape, TransactionTimeOnly):
         return TemporalPerspective(transaction_time=LatestPerspective(shape.transaction_time))
     assert isinstance(shape, Bitemporal)
@@ -488,7 +487,7 @@ _DESK = models.accepted_model(
 
 
 def _transaction_time_terms(model: Metamodel, name: str) -> tuple[tuple[str, str], ...]:
-    shape = temporal_view(model).shape(target(model, name).identity)
+    shape = temporal_facet_of(model).shape(target(model, name).identity)
     assert isinstance(shape, TransactionTimeOnly)
     axis = shape.transaction_time
     return (
@@ -548,7 +547,7 @@ if TYPE_CHECKING:
 
     def _static_lifecycle_probes(  # pyright: ignore[reportUnusedFunction] - static contract probe
         raw: ResolvedPredicate,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         identity: EntityIdentity,
         position: InheritancePositionView,
     ) -> None:

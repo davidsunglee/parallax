@@ -127,7 +127,7 @@ def _position_endpoint(end: dt.datetime | None) -> TemporalRowCoordinates:
 
 
 def _shape() -> temporal_read.TemporalShape:
-    shape = temporal_read.view(_POSITION).shape(_KEY.entity)
+    shape = temporal_read.temporal_facet_of(_POSITION).shape(_KEY.entity)
     assert shape is not None
     return shape
 

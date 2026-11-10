@@ -26,8 +26,8 @@ from parallax.core.document_codec import PreparedPatch
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
 )
 from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
@@ -105,7 +105,12 @@ type _Cell = tuple[str, object, NeutralType | None]
 
 
 def _ctx(meta: Metamodel, dialect: Dialect) -> StatementBuilder:
-    return StatementBuilder(meta, inheritance.view(meta), storage_layout.view(meta), dialect)
+    return StatementBuilder(
+        meta,
+        inheritance.inheritance_facet_of(meta),
+        storage_layout.storage_layout_facet_of(meta),
+        dialect,
+    )
 
 
 def _bind(ctx: StatementBuilder, value: object, neutral_type: NeutralType | None = None) -> None:
@@ -131,8 +136,8 @@ def _attribute(meta: Metamodel, identity: AttributeIdentity) -> AttributeMetadat
     return attribute
 
 
-def entity_layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:
-    return storage_layout.view(meta).entity(entity.identity)
+def entity_layout(meta: Metamodel, entity: CompiledEntity) -> EntityLayoutView | None:
+    return storage_layout.storage_layout_facet_of(meta).entity(entity.identity)
 
 
 def compile_write_step(
@@ -545,7 +550,7 @@ def _sourced_terms(
     payload: AssignmentPayload | None,
     slots: EffectSlots,
     view: EntityLayoutView,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     dialect: Dialect,
 ) -> list[tuple[str, list[object]]]:
     """Each `set` term of a grouped effect, and its path binds, in the order a
@@ -588,7 +593,7 @@ def _sourced_address(
     first: _Effect,
     slots: EffectSlots,
     view: EntityLayoutView,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     dialect: Dialect,
 ) -> list[str]:
     """A grouped effect's `where` conditions in the order a lone statement of
@@ -733,7 +738,7 @@ def _assignment_clause(
     meta: Metamodel,
     payload: AssignmentPayload,
     version: AttributeIdentity | None,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     dialect: Dialect,
 ) -> str:
     version_column = None if version is None else _column(view, version, entity)
@@ -812,7 +817,7 @@ def _target_predicate(
     ctx: StatementBuilder,
     view: EntityLayoutView,
     target: WriteTarget,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
@@ -869,7 +874,7 @@ def _axis_ends(
     ctx: StatementBuilder,
     view: EntityLayoutView,
     target: MilestoneTarget,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
@@ -888,7 +893,7 @@ def _key_predicate(
     ctx: StatementBuilder,
     view: EntityLayoutView,
     target: KeyTarget,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
@@ -966,7 +971,7 @@ def _temporal_gate(
     ctx: StatementBuilder,
     view: EntityLayoutView,
     concurrency: TemporalConcurrency,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
@@ -998,7 +1003,7 @@ def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[ob
 
 
 def _document_assignments(
-    patches: Sequence[PreparedPatch], entity: EntityMetadata
+    patches: Sequence[PreparedPatch], entity: CompiledEntity
 ) -> _DocumentAssignments:
     assignments: list[DocumentAssignment] = []
     for patch in patches:
@@ -1016,7 +1021,7 @@ def _document_assignments(
     return _DocumentAssignments(tuple(assignments), tuple(patch.leaf for patch in patches))
 
 
-def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: EntityMetadata) -> str:
+def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: CompiledEntity) -> str:
     slot = view.layout.contribution(attribute)
     if slot is None:  # pragma: no cover - a planned Attribute always occupies a Column
         raise InternalError(
@@ -1027,7 +1032,7 @@ def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: Entity
     return slot.column.name
 
 
-def _entity(meta: Metamodel, identity: EntityIdentity) -> EntityMetadata:
+def _entity(meta: Metamodel, identity: EntityIdentity) -> CompiledEntity:
     entity = meta.entity(identity)
     if entity is None:  # pragma: no cover - a planned step always names an accepted Entity
         raise InternalError(
@@ -1036,7 +1041,7 @@ def _entity(meta: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     return entity
 
 
-def _layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView:
+def _layout(meta: Metamodel, entity: CompiledEntity) -> EntityLayoutView:
     view = entity_layout(meta, entity)
     if view is None:  # pragma: no cover - write planning refuses a target with no effective table
         raise InternalError(

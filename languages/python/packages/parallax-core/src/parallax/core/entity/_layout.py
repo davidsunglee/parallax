@@ -8,8 +8,8 @@ from typing import Protocol
 from parallax.core.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
+    inheritance_facet_of,
 )
-from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -20,8 +20,7 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.relationship import RelationshipMetadata
-from parallax.core.relationship import view as relationship_view
+from parallax.core.relationship import RelationshipMetadata, relationship_facet_of
 
 __all__ = [
     "CatalogedModel",
@@ -144,7 +143,7 @@ class LayoutCatalog:
         return layout
 
     def _build(self, identity: EntityIdentity) -> EntityLayout:
-        facet = inheritance_view(self._model)
+        facet = inheritance_facet_of(self._model)
         position = facet.entity(identity)
         if (
             position is None
@@ -264,7 +263,7 @@ def _navigable_relationships(
     further fact of a direction takes it from the walk that placed the direction
     rather than by looking that direction up again.
     """
-    facet = relationship_view(model)
+    facet = relationship_facet_of(model)
     order: dict[str, RelationshipMetadata] = {}
     for ancestor in ancestry:
         for direction in facet.relationships(ancestor) or ():

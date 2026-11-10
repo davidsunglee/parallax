@@ -158,9 +158,9 @@
     "TransactionTimeVersion",
     "Unversioned",
     "VersionSource",
+    "concurrency_facet_of",
     "concurrency_preference",
-    "next_version",
-    "view"
+    "next_version"
   ],
   "parallax.core.continuation": [
     "ContinuationPlan",
@@ -484,11 +484,11 @@
     "TopLevelValueObjectTableContributor",
     "WIRE_TYPE_KEY",
     "family_variant_name",
+    "inheritance_facet_of",
     "project_table_groups",
     "reject_predicate_write",
     "root_metadata",
-    "validate_subtype_write",
-    "view"
+    "validate_subtype_write"
   ],
   "parallax.core.metamodel": [
     "APPLICATION_ASSIGNED",
@@ -507,6 +507,7 @@
     "Cardinality",
     "Column",
     "Columns",
+    "CompiledEntity",
     "CompiledMetadata",
     "ConcreteSubtype",
     "DefiningRelationshipDeclaration",
@@ -515,10 +516,8 @@
     "EntityDeclaration",
     "EntityIdentity",
     "EntityLocation",
-    "EntityMetadata",
     "EntityReference",
     "ExactEntityReference",
-    "FacetKey",
     "IndexIdentity",
     "IndexLocation",
     "IndexMetadata",
@@ -826,7 +825,7 @@
     "RelationshipFacet",
     "RelationshipMetadata",
     "project_join_endpoints",
-    "view"
+    "relationship_facet_of"
   ],
   "parallax.core.sql_gen": [
     "LoweredStatement"
@@ -853,7 +852,7 @@
     "StorageLayoutFacet",
     "TableLayout",
     "TemporalHistoryConstraints",
-    "view"
+    "storage_layout_facet_of"
   ],
   "parallax.core.temporal_read": [
     "Bitemporal",
@@ -882,8 +881,8 @@
     "resolved_query_pin",
     "scans_resolved_axis",
     "sourced_perspective_terms",
-    "valid_time_coverage",
-    "view"
+    "temporal_facet_of",
+    "valid_time_coverage"
   ],
   "parallax.core.temporal_write": [],
   "parallax.core.temporal_write.coverage": [

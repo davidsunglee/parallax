@@ -91,7 +91,7 @@ def _category_passes(
 def test_a_shared_table_group_passes_over_the_compiled_family_declaration_sequence() -> None:
     model = dormant_family("tph")
     group = _group(model, ROOT)
-    family = inheritance.view(form_metamodel(model)).family(ROOT)
+    family = inheritance.inheritance_facet_of(form_metamodel(model)).family(ROOT)
     assert family is not None
     expected: list[_Entry] = [
         ("key", ROOT, "id"),

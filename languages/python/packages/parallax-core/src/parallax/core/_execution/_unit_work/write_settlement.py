@@ -44,7 +44,7 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.base import InternalError, UsageError
 from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
     TemporalFacet,
@@ -503,7 +503,7 @@ class WritePlanCompiler:
         )
         return PlannedInsert(entity=facts.entity.identity, entries=entries)
 
-    def _non_temporal_facts(self, entity: EntityMetadata) -> NonTemporalFacts:
+    def _non_temporal_facts(self, entity: CompiledEntity) -> NonTemporalFacts:
         """What one non-temporal mutation settles about its target, before a
         row is in hand and whatever the verb does to it.
 
@@ -551,7 +551,7 @@ class WritePlanCompiler:
 
     def _settle_temporal_insert(
         self,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         shape: TransactionTimeOnly | Bitemporal,
         instruction: PreparedKeyedInstruction,
         tx_instant: TransactionInstant,
@@ -639,14 +639,14 @@ class WritePlanCompiler:
         )
         return write, ranged.steps
 
-    def _gates(self, entity: EntityMetadata, preference: ConcurrencyPreference) -> bool:
+    def _gates(self, entity: CompiledEntity, preference: ConcurrencyPreference) -> bool:
         """Whether a write of ``entity`` against existing rows gates: exactly
         when its Effective Concurrency Strategy is Optimistic."""
         return self._versioning.effective_strategy(entity.identity, preference) == "optimistic"
 
     def _observed_version(
         self,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         instruction: PreparedKeyedInstruction,
         version_attr: AttributeIdentity | None,
         observation: StateObservation | None,
@@ -773,7 +773,7 @@ def _close_group(
     held.clear()
 
 
-def _unobserved_close(entity: EntityMetadata) -> InternalError:
+def _unobserved_close(entity: CompiledEntity) -> InternalError:
     return InternalError(
         WRITE_PLANNING_FAILED,
         f"{entity.identity.name!r}: a temporal write of existing coverage closes the "
@@ -845,7 +845,7 @@ def require_observed_version(entity: EntityIdentity, observation: StateObservati
 
 
 def _require_unobserved(
-    entity: EntityMetadata, mutation: str, observation: StateObservation | None
+    entity: CompiledEntity, mutation: str, observation: StateObservation | None
 ) -> None:
     """Refuse ``observation`` when the target it arrived for is entitled to none.
 

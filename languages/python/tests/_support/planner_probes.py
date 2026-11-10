@@ -198,7 +198,7 @@ def unobserved_write(instruction: PreparedKeyedInstruction, model: Metamodel) ->
     an observation, so a suite admitting one without it is refused."""
     key = object_key(instruction, model)
     evidence = settled_evidence(
-        concurrency.view(model),
+        concurrency.concurrency_facet_of(model),
         instruction.target.identity,
         instruction.mutation,
         object_key=key,
@@ -258,7 +258,7 @@ def retained_observation(
     object it is evidence about, with no participating read."""
     key = object_key(instruction, model)
     assert key is not None  # an observation is evidence about one object
-    shape = temporal_read.view(model).shape(instruction.target.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(instruction.target.identity)
     assert shape is not None  # the facet covers every accepted Entity
     return RetainedObservation(
         object_state_key_from_observation(key, observation, shape), observation, None

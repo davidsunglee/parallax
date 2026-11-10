@@ -200,7 +200,7 @@ def _layout_columns(model: Metamodel, entity_name: str) -> tuple[str, ...]:
     """The target Entity's applicable Table Layout slots, in canonical order."""
     metadata = entity_by_name(model, entity_name)
     assert metadata is not None
-    view = storage_layout.view(model).entity(metadata.identity)
+    view = storage_layout.storage_layout_facet_of(model).entity(metadata.identity)
     assert view is not None
     return tuple(slot.column.name for slot in view.columns)
 
@@ -837,7 +837,7 @@ def _attribute(model: Metamodel, entity: str, member: str) -> AttributeIdentity:
     """The Attribute identity a write row's ``member`` spelling names — the
     family-effective one, so an inherited member resolves at its declaring
     ancestor exactly as the Table Layout slot's own contributor does."""
-    position = inheritance.view(model).entity(_identity(model, entity))
+    position = inheritance.inheritance_facet_of(model).entity(_identity(model, entity))
     assert position is not None
     attribute = position.applicable_attribute(member)
     assert attribute is not None
@@ -845,7 +845,7 @@ def _attribute(model: Metamodel, entity: str, member: str) -> AttributeIdentity:
 
 
 def _value_object(model: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
-    position = inheritance.view(model).entity(_identity(model, entity))
+    position = inheritance.inheritance_facet_of(model).entity(_identity(model, entity))
     assert position is not None
     value_object = position.applicable_value_object(member)
     assert value_object is not None
@@ -1649,7 +1649,7 @@ def test_lowering_keeps_no_model_alive() -> None:
     payloads = LayoutPayloadPreparer(model)
     lowered(_crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"}), payloads, model, POSTGRES)
     lowered(_crate_update(), payloads, model, POSTGRES)
-    layout = weakref.ref(storage_layout.view(model))
+    layout = weakref.ref(storage_layout.storage_layout_facet_of(model))
     del model, payloads
     gc.collect()
     assert layout() is None
@@ -1678,7 +1678,7 @@ _BUILDER_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 def _ledger_entry(key: int, memo: str | None = "kept") -> WriteRow:
-    shape = temporal_read.view(_BUILDER_MODEL).shape(_BUILDER_LEDGER)
+    shape = temporal_read.temporal_facet_of(_BUILDER_MODEL).shape(_BUILDER_LEDGER)
     assert isinstance(shape, TransactionTimeOnly)
     return WriteRow(
         row=managed_row_of(

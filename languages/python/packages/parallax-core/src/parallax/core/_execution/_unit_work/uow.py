@@ -49,7 +49,7 @@ from parallax.core._execution._unit_work.write_runner import (
 from parallax.core.base import InternalError, normalize_instant
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
@@ -226,7 +226,7 @@ class UnitOfWork:
         # this attempt plans. A forced flush reuses it unchanged; a retry attempt
         # receives its own new `UnitOfWork` and therefore its own copy.
         self._actor_identity = actor_identity
-        self._versioning = concurrency.view(meta)
+        self._versioning = concurrency.concurrency_facet_of(meta)
         # The attempt's one authority over what its sources and insertions
         # still authorize, which its reads, keyed ingress, buffering, and
         # completion all consult. It holds nothing of this shell.
@@ -387,7 +387,7 @@ class UnitOfWork:
         self._ensure_open()
         if prepared.mutation in AMEND_MUTATIONS and not prepared.assigns:
             return
-        item = target_write(prepared, inheritance.view(self.meta))
+        item = target_write(prepared, inheritance.inheritance_facet_of(self.meta))
         self._admission.admit(item, confirm_target=self._confirm_target)
 
     def _confirm_target(self, item: TargetWrite) -> TargetWrite:
@@ -445,7 +445,7 @@ class UnitOfWork:
             )
         assert row is not None  # a stored revision was read off this row
         selection = self._family(target).member_selection
-        shape = temporal_read.view(self.meta).shape(target.identity)
+        shape = temporal_read.temporal_facet_of(self.meta).shape(target.identity)
         assert isinstance(shape, TransactionTimeOnly | Bitemporal)  # a temporal target
         state = TemporalObjectStateKey(
             key, milestone_edge(shape, PredecessorRow.over_row(selection, row, None, None), None)
@@ -454,7 +454,7 @@ class UnitOfWork:
 
     def _stored_target(
         self,
-        target: EntityMetadata,
+        target: CompiledEntity,
         key: ObjectKey,
         valid_from: dt.datetime | None,
         *,
@@ -480,7 +480,7 @@ class UnitOfWork:
         if row is None:
             return None, None, None
         selection = view.member_selection
-        shape = temporal_read.view(self.meta).shape(target.identity)
+        shape = temporal_read.temporal_facet_of(self.meta).shape(target.identity)
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             start = row[selection.position(shape.transaction_time.start_attribute)]
             stored = StoredTarget(tx_start=normalize_instant(cast("dt.datetime", start)))
@@ -489,8 +489,8 @@ class UnitOfWork:
         assert version is not None  # preparation refuses a target with no revision
         return StoredTarget(cast("int", row[selection.position(version)])), row, document
 
-    def _family(self, entity: EntityMetadata) -> InheritanceEntityView:
-        view = inheritance.view(self.meta).entity(entity.identity)
+    def _family(self, entity: CompiledEntity) -> InheritanceEntityView:
+        view = inheritance.inheritance_facet_of(self.meta).entity(entity.identity)
         if view is None:  # pragma: no cover - the facet covers every accepted Entity
             raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
         return view

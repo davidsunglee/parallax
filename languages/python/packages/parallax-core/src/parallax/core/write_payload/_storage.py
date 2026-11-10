@@ -110,7 +110,7 @@ class StorageCatalog:
     __slots__ = ("_entities", "_layouts")
 
     def __init__(self, model: Metamodel) -> None:
-        self._layouts = storage_layout.view(model)
+        self._layouts = storage_layout.storage_layout_facet_of(model)
         self._entities: dict[EntityIdentity, EntityStorage] = {}
 
     def entity(self, identity: EntityIdentity) -> EntityStorage:

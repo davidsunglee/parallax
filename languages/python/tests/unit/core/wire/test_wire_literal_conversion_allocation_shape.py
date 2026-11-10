@@ -48,8 +48,8 @@ _DECIMAL_DIGITS: Final = (64, 128, 192)
 def _builder() -> StatementBuilder:
     return StatementBuilder(
         _MODEL,
-        inheritance.view(_MODEL),
-        storage_layout.view(_MODEL),
+        inheritance.inheritance_facet_of(_MODEL),
+        storage_layout.storage_layout_facet_of(_MODEL),
         POSTGRES,
     )
 

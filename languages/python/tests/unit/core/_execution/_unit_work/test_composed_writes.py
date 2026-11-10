@@ -106,7 +106,7 @@ def _observation(tx_start: dt.datetime, value: str) -> RetainedObservation:
             }
         )
     )
-    shape = temporal_read.view(_BALANCE).shape(_ENTITY)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(_ENTITY)
     assert shape is not None
     state = TemporalObjectStateKey(
         _OBJECT, temporal_read.milestone_edge(shape, observation.predecessor, None)
@@ -306,7 +306,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
         )
 
     position = EntityIdentity("parallax.compatibility", "Position")
-    shape = temporal_read.view(model).shape(position)
+    shape = temporal_read.temporal_facet_of(model).shape(position)
     assert shape is not None
 
     def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> AdmittedWrite:
@@ -448,7 +448,7 @@ def _balance_observation(balance_id: int) -> RetainedObservation:
             "txEnd": INFINITY,
         }
     )
-    shape = temporal_read.view(_BALANCE).shape(_ENTITY)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(_ENTITY)
     assert shape is not None
     state = TemporalObjectStateKey(
         _balance_key(balance_id), temporal_read.milestone_edge(shape, row, None)

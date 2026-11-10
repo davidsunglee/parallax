@@ -89,9 +89,9 @@ from parallax.core.temporal_read import (
     Bitemporal,
     Pin,
     TimeInterval,
+    temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.temporal_read import view as temporal_view
 from parallax.descriptor._records import (
     Attribute,
     DocumentLayout,
@@ -1211,7 +1211,7 @@ def _milestone_page(entity: str, row: Mapping[str, object]) -> tuple[Page, int, 
         builder,
         source=ROOT_LEVEL,
     )
-    shape = temporal_view(_MILESTONES).shape(target(_MILESTONES, entity).identity)
+    shape = temporal_facet_of(_MILESTONES).shape(target(_MILESTONES, entity).identity)
     assert isinstance(shape, Bitemporal)
     return builder.finish((index,), Pin()), index, shape
 

@@ -139,7 +139,7 @@ def milestones(
         }
         builder.append(positional_row(selection.shape, cells, absent=ABSENT))
     evidence = builder.seal()
-    shape = temporal_read.view(_PREPARED).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(_PREPARED).shape(entity.identity)
     assert evidence is not None
     assert isinstance(shape, temporal_read.Bitemporal)
     return evidence, shape

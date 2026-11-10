@@ -14,7 +14,7 @@ from parallax.core.base import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import UNAVAILABLE, DocumentFinding
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.metamodel import CompiledEntity, entity_by_name
 from parallax.core.read_delivery._row_decoding import member_classifiers
 from tests._support.sql import compile_read
 from tests.unit.core.sql_gen._delivery_support import deliver
@@ -24,7 +24,7 @@ _COLUMNS = models.load_model(
 )
 _FOUND = entity_by_name(_COLUMNS, "parallax.compatibility.CollectionTwinItem")
 assert _FOUND is not None
-_ITEM: EntityMetadata = _FOUND
+_ITEM: CompiledEntity = _FOUND
 
 
 def test_a_bytes_collection_decodes_each_element_it_stores_encoded() -> None:

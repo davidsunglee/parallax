@@ -96,8 +96,12 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.read_planning._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.sql_gen._compile import compile_read, compile_template
-from parallax.core.temporal_read import Bitemporal, TimeInterval, perspective_terms
-from parallax.core.temporal_read import view as temporal_view
+from parallax.core.temporal_read import (
+    Bitemporal,
+    TimeInterval,
+    perspective_terms,
+    temporal_facet_of,
+)
 from tests._support.errors import raises_code
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import model as accepted_model
@@ -148,7 +152,7 @@ def _at(
     model: Metamodel, name: str, valid: dt.datetime | None, tx: dt.datetime | None
 ) -> TemporalPerspective:
     """``name``'s family perspective: At each instant given, else Latest."""
-    shape = temporal_view(model).shape(entity_of(model, name).identity)
+    shape = temporal_facet_of(model).shape(entity_of(model, name).identity)
     assert isinstance(shape, Bitemporal)
 
     def axis(metadata: AsOfAxisMetadata, instant: dt.datetime | None) -> AxisPerspective:
@@ -257,7 +261,7 @@ def test_include_tree_requires_a_root_and_refuses_an_unadmitted_render() -> None
 def test_relationship_ordering_rejects_a_resolved_member_that_disappeared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    direction = relationship.view(ORDERS).relationship(
+    direction = relationship.relationship_facet_of(ORDERS).relationship(
         RelationshipIdentity(entity_of(ORDERS, "Order").identity, "itemsByShipDate")
     )
     assert direction is not None
@@ -278,7 +282,7 @@ def test_relationship_ordering_rejects_a_resolved_member_that_disappeared(
         InternalError, read_planning.DEEP_FETCH_PLANNING_FAILED, match=r"order member.*is absent"
     ):
         read_planning._resolved_order_terms(  # pyright: ignore[reportPrivateUsage]
-            direction, child, inheritance.view(ORDERS)
+            direction, child, inheritance.inheritance_facet_of(ORDERS)
         )
 
 
@@ -1728,7 +1732,7 @@ def _selected(query: read_planning.PlannedEntityQuery) -> list[tuple[str, str]]:
 def test_an_unnarrowed_read_carries_its_targets_own_inheritance_view(
     strategy: projection_support.Strategy,
 ) -> None:
-    facet = inheritance.view(_MATRIX)
+    facet = inheritance.inheritance_facet_of(_MATRIX)
     for name in ("Root", "Left", "Holder"):
         cls = _matrix(strategy, name)
         query = read_planning.plan_root(
@@ -1761,7 +1765,7 @@ def test_a_narrowed_read_resolves_its_effective_position_once(
     included = projection_support.resolved(
         holder.where(holder.all).include(holder.members.narrow(left, right))
     )
-    facet = inheritance.view(_MATRIX)
+    facet = inheritance.inheritance_facet_of(_MATRIX)
     resolve = type(facet).position
     requests: list[tuple[EntityIdentity, ...]] = []
 

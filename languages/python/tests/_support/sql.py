@@ -10,7 +10,7 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import InheritancePositionView
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.navigate import (
     NoRootSelections,
     TemporallyResolvedPredicate,
@@ -38,7 +38,7 @@ def compile_read(
     predicate: PredicateNode,
     model: Metamodel,
     dialect: Dialect,
-    target: EntityMetadata,
+    target: CompiledEntity,
     *,
     narrow_to: tuple[EntityIdentity, ...] | None = None,
     order_by: tuple[OrderKey, ...] = (),
@@ -68,7 +68,9 @@ def compile_read(
             dialect,
             result_form="row",
             shared_lock=preference is not None
-            and concurrency.view(model).effective_strategy(target.identity, preference)
+            and concurrency.concurrency_facet_of(model).effective_strategy(
+                target.identity, preference
+            )
             == "locking",
         )
     root = UNCACHED_READ_PLANNER.plan(
@@ -86,7 +88,7 @@ def compile_projected_read(
     predicate: PredicateNode,
     model: Metamodel,
     dialect: Dialect,
-    target: EntityMetadata,
+    target: CompiledEntity,
     *,
     value_objects: Literal["none", "all"] | frozenset[str],
     observe_structured_document: bool,
@@ -114,7 +116,7 @@ def compile_projected_read(
 def _validated(
     predicate: PredicateNode,
     model: Metamodel,
-    target: EntityMetadata,
+    target: CompiledEntity,
     *,
     narrow_to: tuple[EntityIdentity, ...] | None = None,
     order_by: tuple[OrderKey, ...] = (),
@@ -136,12 +138,12 @@ def _validated(
 
 def read_position(
     model: Metamodel,
-    target: EntityMetadata,
+    target: CompiledEntity,
     narrow_to: tuple[EntityIdentity, ...] | None = None,
 ) -> InheritancePositionView:
     """The inheritance owner's position for a hand-built read of ``target``:
     its own view, or the one ``narrow_to`` resolves to."""
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     position = facet.entity(target.identity) if narrow_to is None else facet.position(narrow_to)
     assert position is not None
     return position
@@ -151,7 +153,7 @@ def compile_write_predicate(
     predicate: PredicateNode,
     model: Metamodel,
     dialect: Dialect,
-    target: EntityMetadata,
+    target: CompiledEntity,
 ) -> CompiledPredicate:
     """Elaborate an authored test predicate and resolve its temporal visibility
     as readless write lowering does before compiling it."""
@@ -164,7 +166,7 @@ def compile_write_predicate(
 
 
 def resolved_as_stated(
-    predicate: ResolvedPredicate, model: Metamodel, target: EntityMetadata
+    predicate: ResolvedPredicate, model: Metamodel, target: CompiledEntity
 ) -> TemporallyResolvedPredicate:
     """``predicate`` temporally resolved with its own root conditions kept, as
     specialized reads and readless writes resolve theirs."""

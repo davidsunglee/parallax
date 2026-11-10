@@ -17,7 +17,7 @@ import pytest
 
 from parallax.core import inheritance
 from parallax.core.base import INFINITY, UsageError
-from parallax.core.metamodel import AttributeMetadata
+from parallax.core.metamodel import AttributeMetadata, accept_metamodel
 from parallax.core.object_query import (
     AsOf,
     History,
@@ -87,6 +87,7 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from tests._support.errors import raises_code
+from tests._support.fake_metadata import FakeCompiledMetadata
 from tests.unit._corpus_model_support import formed, records
 
 _ANIMAL = records("animal")
@@ -259,9 +260,7 @@ def test_temporal_read_accepts_complete_explicit_selections() -> None:
     _validate_query("Position", _POSITION, temporal=both)
 
 
-def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_object_query_validation_rejects_incomplete_resolved_metadata_products() -> None:
     model = formed(_POSITION)
     root = _root(model, "Position")
     axis = root.declared_as_of_axes[0]
@@ -279,15 +278,7 @@ def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
         def entity(_identity: object) -> Any:
             return type("Position", (), {"root": malformed.identity})()
 
-    class Model:
-        @staticmethod
-        def entity(_identity: object) -> Any:
-            return malformed
-
-    def family_view(_model: object) -> Family:
-        return Family()
-
-    monkeypatch.setattr(inheritance, "view", family_view)
+    metadata = FakeCompiledMetadata([malformed])
     query = object_query(
         malformed.identity,
         TrueNode(),
@@ -299,7 +290,7 @@ def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
 
     with pytest.raises(ValueError, match="no declared temporal Attribute"):
         query_validation._validate_temporal_selections(  # pyright: ignore[reportPrivateUsage]
-            malformed, query, cast("Any", Model())
+            malformed, query, accept_metamodel(metadata, {inheritance.FACET_KEY: Family()})
         )
 
     class MissingFamily:
@@ -307,13 +298,10 @@ def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
         def entity(_identity: object) -> None:
             return None
 
-    def missing_family_view(_model: object) -> MissingFamily:
-        return MissingFamily()
-
-    monkeypatch.setattr(inheritance, "view", missing_family_view)
+    unplaced = accept_metamodel(metadata, {inheritance.FACET_KEY: MissingFamily()})
     with pytest.raises(RuntimeError, match="has no Inheritance Facet view"):
         query_validation._validate_temporal_selections(  # pyright: ignore[reportPrivateUsage]
-            malformed, query, cast("Any", Model())
+            malformed, query, unplaced
         )
 
 

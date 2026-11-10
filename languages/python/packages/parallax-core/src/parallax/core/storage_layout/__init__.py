@@ -19,7 +19,7 @@ from parallax.core.storage_layout._facet import (
     StorageLayoutFacet,
     TableLayout,
     TemporalHistoryConstraints,
-    view,
+    storage_layout_facet_of,
 )
 from parallax.core.storage_layout._rules import ISSUE_CODES, RULE_SET, STORAGE_LAYOUT_MODULE
 
@@ -45,5 +45,5 @@ __all__ = [
     "StorageLayoutFacet",
     "TableLayout",
     "TemporalHistoryConstraints",
-    "view",
+    "storage_layout_facet_of",
 ]

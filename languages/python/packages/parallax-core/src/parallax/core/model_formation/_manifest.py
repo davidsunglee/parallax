@@ -4,7 +4,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Final
 
-from parallax.core.metamodel import FacetKey, IssueCode
+from parallax.core.metamodel import IssueCode
+from parallax.core.metamodel._accepted import FacetKey
 
 __all__ = [
     "FIXED_RESOLVER",

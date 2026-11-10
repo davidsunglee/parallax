@@ -33,7 +33,7 @@ from parallax.core import (
 )
 from parallax.core.entity._errors import MetamodelDefinitionCode
 from parallax.core.entity._model import model_of
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import inheritance_facet_of
 from parallax.core.model_formation import MetamodelValidationError
 from tests._support.errors import raises_code
 
@@ -360,6 +360,6 @@ def test_a_partial_family_publishes_a_narrower_effective_concrete_set() -> None:
 
 
 def _concretes(models: DomainModel, root: type) -> tuple[str, ...]:
-    position = inheritance_view(model_of(models)).entity(models.meta(root).identity)
+    position = inheritance_facet_of(model_of(models)).entity(models.meta(root).identity)
     assert position is not None
     return tuple(identity.name for identity in position.concrete_subtypes)

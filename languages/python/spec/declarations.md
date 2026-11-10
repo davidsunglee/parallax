@@ -180,4 +180,5 @@ or `EntityIdentity`. It returns local immutable metadata, not flattened inherite
 members or effective convenience aliases. Invalid spelling and unknown identity
 raise `UsageError` with `metamodel-invalid-entity-reference` and
 `metamodel-entity-not-found`, respectively. The underlying class-free lookup
-protocol continues to answer absence.
+protocol continues to answer absence. Python spells the core's local
+declaration view of Entity Metadata `CompiledEntity`, a first-party type.

@@ -13,8 +13,8 @@ from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     OccurrenceMetadata,
     TablePerHierarchy,
@@ -65,7 +65,7 @@ class RelationshipCandidateBranch:
     """One physical Table a relationship's candidates are read from, which can
     yield zero, one, or several rows; it takes no alias until it renders."""
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     table: str
     source_attribute: AttributeMetadata
     target_attribute: AttributeMetadata
@@ -77,7 +77,7 @@ class RelationshipCandidatePlan:
     branches: tuple[RelationshipCandidateBranch, ...]
 
 
-def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
+def _entity(model: Metamodel, identity: EntityIdentity) -> CompiledEntity:
     entity = model.entity(identity)
     if entity is None:  # pragma: no cover - validated positions name accepted entities
         raise InternalError(
@@ -121,7 +121,7 @@ def _plan(branch: RelationshipCandidateBranch) -> RelationshipCandidatePlan:
 
 
 def _branch(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     relationship: ResolvedRelationship,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
@@ -448,7 +448,7 @@ def plan_statement(
     predicate: TemporallyResolvedPredicate,
     *,
     evaluation_context: EvaluationContext,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     meta: Metamodel,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
@@ -495,13 +495,13 @@ class _Row:
     """The row a lexical plan evaluates at: its resolution entity, its Table,
     and the concrete Entity its physical branch fixes, if any."""
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     layout: TableLayout
     branch_concrete: EntityIdentity | None
 
 
 def _root_rows(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     read_shape: _ReadShape | None,
     tph: bool,
     partition: bool,
@@ -590,7 +590,7 @@ class _StatementPlanner:
     def partitions(
         self,
         predicate: TemporallyResolvedPredicate,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         order_terms: Sequence[ResolvedOrderTerm],
     ) -> bool:
         """Whether a table-per-hierarchy read of ``entity`` reads, at its root

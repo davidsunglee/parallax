@@ -39,12 +39,11 @@ from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
     family_variant_name,
+    inheritance_facet_of,
 )
-from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
-    FacetKey,
     MemberShape,
     Metamodel,
     Multiplicity,
@@ -55,9 +54,10 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema, page_rows
 from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.relationship import view as relationship_view
+from parallax.core.relationship import relationship_facet_of
 from parallax.core.temporal_read import Pin
 from tests._support.document_reads import folded_names
+from tests._support.fake_metadata import with_facet
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read, compiled_read
@@ -71,7 +71,7 @@ def _identity(name: str, *, namespace: str | None = _NAMESPACE) -> EntityIdentit
 
 
 def _view(model: Metamodel, identity: EntityIdentity) -> InheritanceEntityView:
-    position = inheritance_view(model).entity(identity)
+    position = inheritance_facet_of(model).entity(identity)
     assert position is not None, identity
     return position
 
@@ -129,33 +129,15 @@ class _DoctoredFacet:
         return getattr(self._real, name)
 
 
-class _DoctoredModel:
-    """One accepted model with a replaced Inheritance Facet."""
-
-    def __init__(self, real: Metamodel, *, facet: InheritanceFacet) -> None:
-        self._real = real
-        self._facet = facet
-
-    @property
-    def entities(self) -> Sequence[Any]:
-        return self._real.entities
-
-    def entity(self, identity: EntityIdentity) -> Any:
-        return self._real.entity(identity)
-
-    def facet[T](self, key: FacetKey[T]) -> T:
-        if key == INHERITANCE_FACET_KEY:
-            return cast("T", self._facet)
-        return self._real.facet(key)
-
-
 def _with_applicable_attributes(
     model: Metamodel, identity: EntityIdentity, attributes: Sequence[AttributeMetadata]
 ) -> Metamodel:
     """``model`` answering ``attributes`` as ``identity``'s applicable set."""
     doctored = cast("InheritanceEntityView", _DoctoredView(_view(model, identity), attributes))
-    facet = cast("InheritanceFacet", _DoctoredFacet(inheritance_view(model), identity, doctored))
-    return cast("Metamodel", _DoctoredModel(model, facet=facet))
+    facet = cast(
+        "InheritanceFacet", _DoctoredFacet(inheritance_facet_of(model), identity, doctored)
+    )
+    return with_facet(model, INHERITANCE_FACET_KEY, facet)
 
 
 # --------------------------------------------------------------------------- #
@@ -276,8 +258,8 @@ def test_a_family_gaining_a_concrete_of_the_same_local_name_keeps_every_nodes_ty
         LayoutCatalog(after).entity(_identity("SharedVariant", namespace="archive")).wire_type
         == "archive.SharedVariant"
     )
-    assert family_variant_name(inheritance_view(before), concrete) == "SharedVariant"
-    assert family_variant_name(inheritance_view(after), concrete) == "catalog.SharedVariant"
+    assert family_variant_name(inheritance_facet_of(before), concrete) == "SharedVariant"
+    assert family_variant_name(inheritance_facet_of(after), concrete) == "catalog.SharedVariant"
 
 
 def test_a_class_backed_model_fixes_the_type_its_descriptor_twin_fixes() -> None:
@@ -383,7 +365,7 @@ def test_an_inherited_direction_takes_the_cardinality_its_declaring_ancestor_fix
 def test_every_corpus_entitys_to_many_set_is_the_declared_cardinality_of_its_own_row() -> None:
     reached: set[bool] = set()
     for stem, model, identity, layout in _corpus_layouts():
-        facet = relationship_view(model)
+        facet = relationship_facet_of(model)
         where = (stem, identity.canonical)
         assert layout.to_many <= set(layout.relationships), where
         for direction in layout.relationships:

@@ -321,7 +321,7 @@ def _span_amend(key: int) -> ReadAuthorizedWrite:
         "txEnd": INFINITY,
     }
     observation = TemporalObservation(predecessor=PredecessorRow(members))
-    shape = temporal_read.view(_SPANS).shape(Span.identity)
+    shape = temporal_read.temporal_facet_of(_SPANS).shape(Span.identity)
     assert shape is not None
     state = object_state_key_from_observation(
         ObjectKey(Span.identity, (("id", key),)), observation, shape
@@ -438,7 +438,7 @@ def _observed_amend(key: int, claim: RetainedObservation) -> ReadAuthorizedWrite
 def _retained_row(key: int) -> RetainedObservation:
     row = {**rectangle(_JAN, INFINITY, "100.00").members, "id": key}
     observation = TemporalObservation(predecessor=PredecessorRow(row))
-    shape = temporal_read.view(TARGET_POSITION).shape(
+    shape = temporal_read.temporal_facet_of(TARGET_POSITION).shape(
         corpus_object_key("Position", ("id", key)).entity
     )
     assert shape is not None

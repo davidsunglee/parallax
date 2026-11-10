@@ -35,7 +35,7 @@ from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 
 POSITION = formed(corpus_records()["position"])
-FAMILIES = inheritance.view(POSITION)
+FAMILIES = inheritance.inheritance_facet_of(POSITION)
 ENTITY = EntityIdentity("parallax.compatibility", "Position")
 OBJECT = ObjectKey(ENTITY, (("id", 1),))
 T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
@@ -61,7 +61,7 @@ def rectangle(
 
 def retained(predecessor: PredecessorRow) -> RetainedObservation:
     observation = TemporalObservation(predecessor=predecessor)
-    shape = temporal_read.view(POSITION).shape(ENTITY)
+    shape = temporal_read.temporal_facet_of(POSITION).shape(ENTITY)
     assert shape is not None
     state = TemporalObjectStateKey(OBJECT, temporal_read.milestone_edge(shape, predecessor, None))
     return RetainedObservation(state, observation, None)

@@ -1,11 +1,14 @@
-"""An alternate accepted-Metamodel implementation and the parity model it pins.
+"""An alternate Compiled Metadata implementation and the parity model it pins.
 
 The class-free seam promises that behavior depends on the metamodel protocols
-and never on how a model was stored, so a second implementation that shares no
-code with the descriptor path is the proof. These classes hold plain dictionary
-indices over the shared metamodel value types and construct no descriptor
-record; :data:`PARITY_DESCRIPTOR` is the same model written as descriptor text,
-so a suite can ask both implementations the same question and compare answers.
+and never on how a model was stored, so a second metadata implementation that
+shares no code with the descriptor path is the proof. These classes hold plain
+dictionary indices over the shared metamodel value types and construct no
+descriptor record; :data:`PARITY_DESCRIPTOR` is the same model written as
+descriptor text, so a suite can ask both implementations the same question and
+compare answers. An accepted model is always the real one: a suite that needs a
+Metamodel passes fake metadata through ``accept_metamodel`` and reads facets
+through their owners' accessors.
 
 The parity model is small but not degenerate: an ownerless Entity enumerates
 ahead of namespaced ones, document order differs from canonical order, a
@@ -18,9 +21,11 @@ and never imported by production code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Final, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Final
 
+from parallax.core import concurrency, inheritance, relationship, storage_layout, temporal_read
+from parallax.core._formation_profile import BUILTIN_MANIFEST
 from parallax.core.base import (
     DATE,
     INT64,
@@ -38,10 +43,9 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Cardinality,
     Column,
+    CompiledEntity,
     DefiningRelationshipDeclaration,
     EntityIdentity,
-    EntityMetadata,
-    FacetKey,
     IndexIdentity,
     IndexMetadata,
     InheritanceMetadata,
@@ -69,11 +73,14 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
     ValueObjectMetadata,
+    accept_metamodel,
     default_column_name,
 )
+from parallax.core.metamodel._accepted import FacetKey
+from parallax.core.model_formation import ModelCompilerRequirement
 
 
-class FakeValueObjectAttribute:
+class FakeValueObjectAttributeMetadata:
     """One scalar leaf of a Value Object occurrence."""
 
     def __init__(
@@ -91,7 +98,7 @@ class FakeValueObjectAttribute:
         self.definition = ScalarDefinition(identity.name, type, nullable, multiplicity)
 
 
-class FakeNestedValueObject:
+class FakeNestedValueObjectMetadata:
     """One nested Value Object occurrence with dictionary member lookup."""
 
     def __init__(
@@ -123,7 +130,7 @@ class FakeNestedValueObject:
         return self._value_objects.get(name)
 
 
-class FakeValueObject:
+class FakeValueObjectMetadata:
     """One top-level Value Object occurrence and the storage it owns."""
 
     def __init__(
@@ -157,7 +164,7 @@ class FakeValueObject:
         return self._value_objects.get(name)
 
 
-class FakeEntity:
+class FakeCompiledEntity:
     """One Entity's accepted local view over plain dictionary indices."""
 
     def __init__(
@@ -210,28 +217,49 @@ class FakeEntity:
         return self._indices.get(name)
 
 
-class FakeMetamodel:
-    """An accepted model whose Entity order and facet set are supplied outright.
+class FakeCompiledMetadata:
+    """Compiled Metadata whose Entity set is supplied outright.
 
     Enumeration is canonically sorted here rather than assumed of the caller, so
-    a suite may build the model in any order and still compare against a
-    formed one.
+    a suite may build the metadata in any order and still compare against a
+    formed model.
     """
 
-    def __init__(
-        self,
-        entities: Sequence[EntityMetadata],
-        facets: Mapping[FacetKey[Any], object] | None = None,
-    ) -> None:
+    def __init__(self, entities: Sequence[CompiledEntity]) -> None:
         self.entities = tuple(sorted(entities, key=lambda entity: entity.identity.sort_key))
-        self.facets = dict(facets or {})
         self._entities = {entity.identity: entity for entity in self.entities}
 
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None:
         return self._entities.get(identity)
 
-    def facet[T](self, key: FacetKey[T]) -> T:
-        return cast("T", self.facets[key])
+
+_ACCESSORS: Final[Mapping[FacetKey[Any], Callable[[Metamodel], object]]] = {
+    inheritance.FACET_KEY: inheritance.inheritance_facet_of,
+    relationship.FACET_KEY: relationship.relationship_facet_of,
+    temporal_read.FACET_KEY: temporal_read.temporal_facet_of,
+    concurrency.FACET_KEY: concurrency.concurrency_facet_of,
+    storage_layout.FACET_KEY: storage_layout.storage_layout_facet_of,
+}
+
+
+def facets_of(model: Metamodel) -> dict[FacetKey[Any], object]:
+    """Every built-in facet ``model`` carries, each read through its owner's accessor.
+
+    The built-in Formation Manifest is the canonical list of facet keys, so an
+    owner the manifest gains or loses fails here rather than going unread.
+    """
+    compiled = {
+        entry.compiler.facet_key
+        for entry in BUILTIN_MANIFEST.entries
+        if isinstance(entry.compiler, ModelCompilerRequirement)
+    }
+    assert set(_ACCESSORS) == compiled
+    return {key: read(model) for key, read in _ACCESSORS.items()}
+
+
+def with_facet(model: Metamodel, key: FacetKey[Any], facet: object) -> Metamodel:
+    """``model`` accepted again over its own metadata, with ``facet`` under ``key``."""
+    return accept_metamodel(model, facets_of(model) | {key: facet})
 
 
 NAMESPACE: Final[str] = "parallax.fake"
@@ -325,7 +353,7 @@ entities:
         type: int64
         primaryKey: true
 """
-"""The parity model as descriptor text, matching :func:`parity_model` exactly."""
+"""The parity model as descriptor text, matching :func:`parity_metadata` exactly."""
 
 
 def _primary_key_index(entity: EntityIdentity, table: str, *ends: str) -> IndexMetadata:
@@ -373,11 +401,11 @@ def _attribute(
     )
 
 
-def _account() -> EntityMetadata:
+def _account() -> CompiledEntity:
     contact = ValueObjectIdentity(ACCOUNT, ("contact",))
     address = ValueObjectIdentity(ACCOUNT, ("contact", "address"))
     phones = ValueObjectIdentity(ACCOUNT, ("contact", "phones"))
-    return FakeEntity(
+    return FakeCompiledEntity(
         ACCOUNT,
         declared_container=Table("account"),
         declared_attributes=(
@@ -404,32 +432,32 @@ def _account() -> EntityMetadata:
             ),
         ),
         declared_value_objects=(
-            FakeValueObject(
+            FakeValueObjectMetadata(
                 contact,
                 Column("contact_doc"),
                 nullable=True,
                 attributes=(
-                    FakeValueObjectAttribute(
+                    FakeValueObjectAttributeMetadata(
                         ValueObjectAttributeIdentity(contact, "email"), STRING
                     ),
                 ),
                 value_objects=(
-                    FakeNestedValueObject(
+                    FakeNestedValueObjectMetadata(
                         address,
                         attributes=(
-                            FakeValueObjectAttribute(
+                            FakeValueObjectAttributeMetadata(
                                 ValueObjectAttributeIdentity(address, "street"), STRING
                             ),
-                            FakeValueObjectAttribute(
+                            FakeValueObjectAttributeMetadata(
                                 ValueObjectAttributeIdentity(address, "city"), STRING
                             ),
                         ),
                     ),
-                    FakeNestedValueObject(
+                    FakeNestedValueObjectMetadata(
                         phones,
                         multiplicity=Multiplicity.MANY,
                         attributes=(
-                            FakeValueObjectAttribute(
+                            FakeValueObjectAttributeMetadata(
                                 ValueObjectAttributeIdentity(phones, "number"), STRING
                             ),
                         ),
@@ -441,12 +469,17 @@ def _account() -> EntityMetadata:
     )
 
 
-def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamodel:
-    """The parity model as an alternate implementation, with optional facets."""
-    return FakeMetamodel(
+def parity_metamodel(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamodel:
+    """The parity model accepted over its alternate metadata, with optional facets."""
+    return accept_metamodel(parity_metadata(), facets or {})
+
+
+def parity_metadata() -> FakeCompiledMetadata:
+    """The parity model as alternate Compiled Metadata."""
+    return FakeCompiledMetadata(
         (
             _account(),
-            FakeEntity(
+            FakeCompiledEntity(
                 LEDGER,
                 declared_container=Table("ledger"),
                 declared_attributes=(
@@ -455,7 +488,7 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                 ),
                 indices=(_primary_key_index(LEDGER, "ledger"),),
             ),
-            FakeEntity(
+            FakeCompiledEntity(
                 ENTRY,
                 declared_container=Table("entry"),
                 declared_attributes=(
@@ -471,7 +504,7 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                 ),
                 indices=(_primary_key_index(ENTRY, "entry"),),
             ),
-            FakeEntity(
+            FakeCompiledEntity(
                 AUDIT,
                 declared_container=Table("audit"),
                 declared_persistence=PersistenceMode.READ_ONLY,
@@ -490,5 +523,4 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                 indices=(_primary_key_index(AUDIT, "audit", "txEnd"),),
             ),
         ),
-        facets,
     )

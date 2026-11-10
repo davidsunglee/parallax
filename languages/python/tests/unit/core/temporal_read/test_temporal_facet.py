@@ -1,4 +1,4 @@
-"""m-temporal-read: the compiled Temporal Facet and its typed view."""
+"""m-temporal-read: the compiled Temporal Facet and its typed accessor."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ from parallax.core.temporal_read._compile import compile_facet
 from parallax.core.temporal_read._facet import NON_TEMPORAL
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
-from tests._support import fake_metamodel as fake
+from tests._support import fake_metadata as fake
 from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, identity, instant, key, source
 from tests.unit.core._family_owner_support import (
@@ -133,18 +133,13 @@ def test_the_temporal_row_follows_relationship_and_precedes_concurrency() -> Non
     assert owners.index(TEMPORAL_READ_MODULE) < owners.index("m-concurrency")
 
 
-def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
-    model = _formed("balance")
-    assert temporal_read.view(model) is model.facet(FACET_KEY)
-
-
 # --------------------------------------------------------------------------
 # Shapes over the corpus.
 # --------------------------------------------------------------------------
 
 
 def test_a_non_temporal_entity_has_the_non_temporal_shape() -> None:
-    facet = temporal_read.view(_formed("animal"))
+    facet = temporal_read.temporal_facet_of(_formed("animal"))
     for name in ("Animal", "Pet", "Dog", "Cat", "WildBoar", "Person"):
         assert _shape(facet, name) == NON_TEMPORAL, name
 
@@ -153,7 +148,7 @@ def test_a_transaction_time_only_entity_carries_that_one_axis() -> None:
     model = _formed("balance")
     balance = model.entity(_corpus_entity("Balance"))
     assert balance is not None
-    shape = temporal_read.view(model).shape(balance.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(balance.identity)
     assert isinstance(shape, TransactionTimeOnly)
     assert shape.transaction_time is balance.as_of_axis(_TX_TIME)
 
@@ -162,25 +157,25 @@ def test_a_bitemporal_entity_carries_valid_time_before_transaction_time() -> Non
     model = _formed("position")
     position = model.entity(_corpus_entity("Position"))
     assert position is not None
-    shape = temporal_read.view(model).shape(position.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(position.identity)
     assert isinstance(shape, Bitemporal)
     assert shape.valid_time is position.as_of_axis(_VALID_TIME)
     assert shape.transaction_time is position.as_of_axis(_TX_TIME)
 
 
 def test_axis_lookup_answers_only_the_dimensions_the_shape_declares() -> None:
-    facet = temporal_read.view(_formed("balance"))
+    facet = temporal_read.temporal_facet_of(_formed("balance"))
     balance = _corpus_entity("Balance")
     assert facet.axis(balance, _TX_TIME) is not None
     assert facet.axis(balance, _VALID_TIME) is None
-    animals = temporal_read.view(_formed("animal"))
+    animals = temporal_read.temporal_facet_of(_formed("animal"))
     assert animals.axis(_corpus_entity("Dog"), _TX_TIME) is None
     assert animals.axis(_corpus_entity("Dog"), _VALID_TIME) is None
 
 
 def test_axis_lookup_answers_both_dimensions_of_a_bitemporal_shape() -> None:
     model = _formed("position")
-    facet = temporal_read.view(model)
+    facet = temporal_read.temporal_facet_of(model)
     position = _corpus_entity("Position")
     shape = facet.shape(position)
     assert isinstance(shape, Bitemporal)
@@ -190,7 +185,7 @@ def test_axis_lookup_answers_both_dimensions_of_a_bitemporal_shape() -> None:
 
 def test_every_accepted_entity_has_a_shape_and_a_miss_returns_absence() -> None:
     model = _formed("instrument")
-    facet = temporal_read.view(model)
+    facet = temporal_read.temporal_facet_of(model)
     assert all(facet.shape(entity.identity) is not None for entity in model.entities)
     assert facet.shape(EntityIdentity("elsewhere", "Bond")) is None
     assert facet.axis(EntityIdentity("elsewhere", "Bond"), _TX_TIME) is None
@@ -203,7 +198,7 @@ def test_every_accepted_entity_has_a_shape_and_a_miss_returns_absence() -> None:
 
 def test_every_position_in_a_family_answers_with_its_roots_axes() -> None:
     model = _formed("instrument")
-    facet = temporal_read.view(model)
+    facet = temporal_read.temporal_facet_of(model)
     root = model.entity(_corpus_entity("Instrument"))
     assert root is not None
     for name in ("Instrument", "Bond", "Stock"):
@@ -214,7 +209,7 @@ def test_every_position_in_a_family_answers_with_its_roots_axes() -> None:
 
 
 def test_a_descendant_axis_keeps_the_declaring_roots_attribute_identities() -> None:
-    facet = temporal_read.view(_formed("instrument"))
+    facet = temporal_read.temporal_facet_of(_formed("instrument"))
     axis = facet.axis(_corpus_entity("Bond"), _TX_TIME)
     assert axis is not None
     assert axis.start_attribute == AttributeIdentity(_corpus_entity("Instrument"), "txStart")
@@ -245,7 +240,7 @@ def test_a_family_formed_by_hand_shares_one_shape() -> None:
             ),
         )
     )
-    facet = temporal_read.view(model)
+    facet = temporal_read.temporal_facet_of(model)
     assert facet.shape(entry) is facet.shape(root)
     assert facet.axis(entry, _TX_TIME) is facet.axis(root, _TX_TIME)
 
@@ -263,8 +258,8 @@ def test_every_position_in_a_family_answers_its_roots_one_shape_object(
     stem: str, root_name: str
 ) -> None:
     model = _formed(stem)
-    families = inheritance.view(model)
-    facet = temporal_read.view(model)
+    families = inheritance.inheritance_facet_of(model)
+    facet = temporal_read.temporal_facet_of(model)
     root = _corpus_entity(root_name)
     shape = facet.shape(root)
     assert isinstance(shape, TransactionTimeOnly | Bitemporal)
@@ -324,8 +319,8 @@ def test_an_entity_the_inheritance_facet_does_not_cover_is_a_contract_failure() 
     # The Inheritance Facet covers every accepted Entity, so a required facet
     # compiled over a different graph is a formation seam defect: the compiler
     # raises rather than inventing a family for the Entity it cannot place.
-    metadata = fake.parity_model()
-    narrower = fake.FakeMetamodel([entity for entity in metadata.entities[:1]])
+    metadata = fake.parity_metadata()
+    narrower = fake.FakeCompiledMetadata([entity for entity in metadata.entities[:1]])
     with pytest.raises(RuntimeError, match="Inheritance Facet view"):
         compile_facet(metadata, inheritance_compile.compile_facet(narrower))
 
@@ -333,7 +328,7 @@ def test_an_entity_the_inheritance_facet_does_not_cover_is_a_contract_failure() 
 def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     # The compiler reads the metadata protocols only, so an accepted graph the
     # descriptor path never touched compiles into the same shapes.
-    metadata = fake.parity_model()
+    metadata = fake.parity_metadata()
     facet = compile_facet(metadata, inheritance_compile.compile_facet(metadata))
     assert facet.shape(fake.ACCOUNT) == NON_TEMPORAL
     audit = facet.shape(fake.AUDIT)

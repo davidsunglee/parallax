@@ -24,7 +24,7 @@ from tests.unit._corpus_model_support import target as entity_of
 _ABSENT: Final = object()
 _MODEL = corpus_model("branch")
 _BRANCH = entity_of(_MODEL, "Branch")
-_VIEW = inheritance.view(_MODEL).entity(_BRANCH.identity)
+_VIEW = inheritance.inheritance_facet_of(_MODEL).entity(_BRANCH.identity)
 assert _VIEW is not None
 _SELECTION = RowSelection(_VIEW.member_selection, _ABSENT)
 _NAMES = tuple(member.name for member in _SELECTION.members.shape.members)

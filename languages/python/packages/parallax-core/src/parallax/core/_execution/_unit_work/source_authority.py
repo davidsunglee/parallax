@@ -35,7 +35,7 @@ from parallax.core._execution._unit_work.write_items import (
     ReadAuthorizedWrite,
 )
 from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import (
@@ -175,7 +175,7 @@ class SourceAuthority:
     ) -> None:
         self._lifetime = lifetime
         self._preference: ConcurrencyPreference = preference
-        self._versioning = concurrency.view(meta)
+        self._versioning = concurrency.concurrency_facet_of(meta)
         # This scope's participation identity: what a read of THIS attempt
         # stamps on the values it produces, and what a keyed write tests its
         # source against.
@@ -288,7 +288,7 @@ class SourceAuthority:
 
     def resolve_read_evidence(
         self,
-        target: EntityMetadata,
+        target: CompiledEntity,
         read_evidence: ReadEvidence | None,
         *,
         mutation: KeyedMutation,

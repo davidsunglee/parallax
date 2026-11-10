@@ -16,8 +16,8 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Cardinality,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     NullPlacement,
     SortDirection,
@@ -181,7 +181,7 @@ class PlannedEntityQuery:
     """
 
     target: EntityIdentity
-    entity: EntityMetadata
+    entity: CompiledEntity
     position: InheritancePositionView = field(compare=False, hash=False)
     predicate: TemporallyResolvedPredicate
     projection: ResolvedReadProjection
@@ -241,7 +241,7 @@ def plan(
     a plan that will ``defer_execution_values`` to a template carries their
     sources until :func:`release_execution_value_sources`."""
     entity = query.root
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     root = plan_root(
         query, model, projection=projection, defer_execution_values=defer_execution_values
     )
@@ -278,7 +278,7 @@ def plan_root(
     narrow_to = (
         None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
     )
-    position = _effective_position(inheritance.view(model), entity, narrow_to)
+    position = _effective_position(inheritance.inheritance_facet_of(model), entity, narrow_to)
     resolution = RootSelections(query.temporal)
     sources: ExecutionValueSources | None = None
     if defer_execution_values:
@@ -329,7 +329,7 @@ def _released(query: PlannedEntityQuery) -> PlannedEntityQuery:
 
 
 def plan_coverage_read(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     *,
     model: Metamodel,
     key: str,
@@ -350,7 +350,7 @@ def plan_coverage_read(
     little of it the window reaches.
     """
     assert terms  # a coverage read names at least one object
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
     key_member = _declared_attribute(view, key)
@@ -414,7 +414,7 @@ def _overlapping(
 
 
 def plan_target_read(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     *,
     model: Metamodel,
     key: str,
@@ -428,7 +428,7 @@ def plan_target_read(
     since what is read is the row's presence and revision, or, where the row is
     retained as the write's predecessor, projected whole as a coverage read
     projects it."""
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
     keyed = _managed_comparison(op="eq", member=_declared_attribute(view, key), value=key_value)
@@ -503,7 +503,7 @@ def _new_arrivals() -> dict[int, RelationshipMetadata]:
     return {}
 
 
-def _new_owners() -> dict[int, EntityMetadata]:
+def _new_owners() -> dict[int, CompiledEntity]:
     return {}
 
 
@@ -522,12 +522,12 @@ class _PlanBuilder:
     _arrivals: dict[int, RelationshipMetadata] = field(default_factory=_new_arrivals)
     # Each trie node's own Entity: the position a segment beneath it writes its
     # ``Class.relationship`` reference against.
-    _owners: dict[int, EntityMetadata] = field(default_factory=_new_owners)
+    _owners: dict[int, CompiledEntity] = field(default_factory=_new_owners)
     # The queried position's own effective concrete set, against which a path's
     # resolved root source set is measured for properness.
     _root_position: tuple[EntityIdentity, ...] = ()
 
-    def seed_root(self, root_entity: EntityMetadata) -> None:
+    def seed_root(self, root_entity: CompiledEntity) -> None:
         self._owners[_ROOT_ID] = root_entity
         self._root_position = _resolve_root_source(self.model, self.families, root_entity)
 
@@ -549,7 +549,9 @@ class _PlanBuilder:
         root_source: tuple[EntityIdentity, ...],
     ) -> int:
         owner = self._owners[parent_id]
-        direction = relationship.view(self.model).relationship(segment.relationship)
+        direction = relationship.relationship_facet_of(self.model).relationship(
+            segment.relationship
+        )
         if direction is None:
             raise InternalError(
                 DEEP_FETCH_PLANNING_FAILED,
@@ -650,7 +652,7 @@ class _PlanBuilder:
         return index
 
     def _child_predicate(
-        self, child: EntityMetadata, member: AttributeMetadata
+        self, child: CompiledEntity, member: AttributeMetadata
     ) -> tuple[TemporallyResolvedPredicate, ExecutionValueSources | None]:
         """A child read of the gathered keys of ``member``, restricted to the
         selections the root's propagate to ``child``; a deferring plan sources
@@ -675,7 +677,7 @@ class _PlanBuilder:
 
 def _effective_position(
     families: InheritanceFacet,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     narrow_to: tuple[EntityIdentity, ...] | None,
 ) -> InheritancePositionView:
     """The concrete types a read of ``entity`` narrowed to ``narrow_to`` can return."""
@@ -710,7 +712,7 @@ def _resolve_projection(
 
 def _resolved_order_terms(
     direction: RelationshipMetadata,
-    child: EntityMetadata,
+    child: CompiledEntity,
     families: InheritanceFacet,
 ) -> tuple[ResolvedOrderTerm, ...]:
     view = _entity_view(families, child.identity)
@@ -732,7 +734,7 @@ def _resolved_order_terms(
     return tuple(terms)
 
 
-def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
+def _entity(model: Metamodel, identity: EntityIdentity) -> CompiledEntity:
     entity = model.entity(identity)
     if entity is None:  # pragma: no cover - a resolved reference names a declared Entity
         raise InternalError(
@@ -783,7 +785,7 @@ def _attribute_metadata(facet: InheritanceFacet, attribute: AttributeIdentity) -
 def _resolve_root_source(
     model: Metamodel,
     facet: InheritanceFacet,
-    root: EntityMetadata,
+    root: CompiledEntity,
 ) -> tuple[EntityIdentity, ...]:
     """The concrete source set ONE path starts from (m-read-planning's root hop identity).
 
@@ -862,7 +864,7 @@ def narrowed_view_keys(model: Metamodel) -> NarrowedViewKeys:
     An alternative resolves as an Entity reference does: by its canonical
     spelling, or by a local name exactly one Entity carries.
     """
-    families = inheritance.view(model)
+    families = inheritance.inheritance_facet_of(model)
     local_names = Counter(entity.identity.name for entity in model.entities)
     effective: dict[str, tuple[str, ...]] = {}
     variants: dict[str, str] = {}

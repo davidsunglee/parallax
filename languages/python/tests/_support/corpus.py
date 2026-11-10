@@ -365,7 +365,7 @@ class _Node:
 
     def _related(self, name: str) -> _Node | None:
         """The node level one relationship view key reaches, broad or narrowed."""
-        from parallax.core.relationship import view as relationship_view
+        from parallax.core.relationship import relationship_facet_of
 
         local = name.split("[", 1)[0]
         declared = next(
@@ -378,7 +378,7 @@ class _Node:
         )
         if declared is None:
             return None
-        direction = relationship_view(self.model).relationship(declared.identity)
+        direction = relationship_facet_of(self.model).relationship(declared.identity)
         return None if direction is None else _node_level(self.model, direction.join.target.entity)
 
 
@@ -421,9 +421,9 @@ def _entity_level(model: Metamodel, name: str) -> _Node | None:
 
 def _node_level(model: Metamodel, identity: EntityIdentity) -> _Node | None:
     """One Entity's node level, absent only for an Identity the model lacks."""
-    from parallax.core.inheritance import view as inheritance_view
+    from parallax.core.inheritance import inheritance_facet_of
 
-    view = inheritance_view(model).entity(identity)
+    view = inheritance_facet_of(model).entity(identity)
     return None if view is None else _Node(model, view)
 
 

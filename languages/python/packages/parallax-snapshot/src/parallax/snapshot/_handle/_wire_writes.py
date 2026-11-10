@@ -35,7 +35,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle._activity import refuse_reentry
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.wire import decode_wire
 from parallax.core.write_plan import ObjectKey
@@ -342,7 +342,7 @@ def editable_wire_data(attempt: TxnAttempt, source: object) -> dict[str, object]
     return _published_writable(meta, entity, source, copy=True)
 
 
-def published_entity(meta: Metamodel, node: object, verb: str) -> EntityMetadata:
+def published_entity(meta: Metamodel, node: object, verb: str) -> CompiledEntity:
     """The concrete Entity a node Parallax published names, by the provenance
     it carries, or the refusal for anything else."""
     stored = stored_provenance_of(node) if isinstance(node, WireEntity) else None
@@ -365,7 +365,7 @@ def published_entity(meta: Metamodel, node: object, verb: str) -> EntityMetadata
 
 
 def _published_writable(
-    meta: Metamodel, entity: EntityMetadata, node: WireEntity, *, copy: bool
+    meta: Metamodel, entity: CompiledEntity, node: WireEntity, *, copy: bool
 ) -> dict[str, object]:
     """``node``'s primary key and published writable members, selected by the
     model: never a relationship, framework-owned revision or temporal member,
@@ -395,7 +395,7 @@ def _mutable_copy(value: object) -> object:
 def _prepared_wire_write(
     preparation: WritePreparation,
     mutation: KeyedMutation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     row: Mapping[str, object],
     authored: Set[str] | None,
     *,
@@ -422,7 +422,7 @@ def _prepared_wire_write(
 
 
 def _published_identity(
-    meta: Metamodel, entity: EntityMetadata, node: WireEntity
+    meta: Metamodel, entity: CompiledEntity, node: WireEntity
 ) -> dict[str, object]:
     """The object ``node`` names, in the spelling it was published in.
 
@@ -435,7 +435,7 @@ def _published_identity(
 
 
 def _published_address(
-    meta: Metamodel, entity: EntityMetadata, node: WireEntity, object_key: ObjectKey | None
+    meta: Metamodel, entity: CompiledEntity, node: WireEntity, object_key: ObjectKey | None
 ) -> tuple[tuple[str, object], ...]:
     """The key members the source's object is addressed by, as managed values.
 
@@ -637,7 +637,7 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
     return observed, entity
 
 
-def _concrete_entity(meta: Metamodel, entity: EntityIdentity) -> EntityMetadata:
+def _concrete_entity(meta: Metamodel, entity: EntityIdentity) -> CompiledEntity:
     """The accepted Metadata for the concrete Entity the source names.
 
     A source names the row's OWN Entity — the per-row answer under

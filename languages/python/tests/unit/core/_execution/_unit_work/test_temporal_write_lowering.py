@@ -41,7 +41,7 @@ from parallax.core.base import InternalError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, EntityMetadata
+from parallax.core.metamodel import CompiledEntity, EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, TransactionTimeOnly
@@ -103,7 +103,7 @@ def _no_flush(
     raise AssertionError(f"no step executes, yet {len(steps)} step(s) were handed over")
 
 
-def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
+def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, CompiledEntity]:
     """One corpus model and one of its Entities, both accepted."""
     model = formed(meta)
     entity = model.entity(EntityIdentity("parallax.compatibility", name))
@@ -426,7 +426,7 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
     # temporal bounds, so the chained milestone's cells are id, price, symbol,
     # then in_z / out_z.
     model, entity = _accepted("SpotQuote", QUOTE)
-    view = storage_layout.view(model).entity(entity.identity)
+    view = storage_layout.storage_layout_facet_of(model).entity(entity.identity)
     assert view is not None
     assert tuple(slot.column.name for slot in view.columns) == (
         "id",
@@ -456,7 +456,7 @@ def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_s
     # repeated row binder, so the open end crosses that path as a framework bind.
     model = model_of(DomainModel(AllocatedLedger))
     entity = model.entity(AllocatedLedger.identity)
-    shape = temporal_read.view(model).shape(AllocatedLedger.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(AllocatedLedger.identity)
     assert entity is not None
     assert isinstance(shape, TransactionTimeOnly)
     opened = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -610,7 +610,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
     # which the key selects, and it maps each identity onto its slot rather than
     # reading the key.
     model, entity = _accepted("Bond", INSTRUMENT)
-    view = storage_layout.view(model).entity(entity.identity)
+    view = storage_layout.storage_layout_facet_of(model).entity(entity.identity)
     assert view is not None
     assert tuple(slot.column.name for slot in view.layout.physical_primary_key) == (
         "id",

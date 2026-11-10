@@ -37,7 +37,7 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.concurrency import ConcurrencyFacet, ConcurrencyPreference
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, CompiledEntity, Metamodel
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.managed_row import ManagedRow
@@ -146,10 +146,10 @@ class WritePlanner:
         payloads: WritePayloadPreparer,
     ) -> None:
         self._model = model
-        self._families = inheritance.view(model)
-        self._temporal_facet = temporal_read.view(model)
-        self._relationships = relationship.view(model)
-        self._versioning = concurrency.view(model)
+        self._families = inheritance.inheritance_facet_of(model)
+        self._temporal_facet = temporal_read.temporal_facet_of(model)
+        self._relationships = relationship.relationship_facet_of(model)
+        self._versioning = concurrency.concurrency_facet_of(model)
         self._batching = batching
         self._audit = audit
         self._payloads = payloads
@@ -366,7 +366,7 @@ class WritePlanner:
         _close_region(phases, inserts, updates, deletes)
         return phases
 
-    def _ranked(self, entity: EntityMetadata) -> int:
+    def _ranked(self, entity: CompiledEntity) -> int:
         rank = self._relationships.referential_rank(entity.identity)
         return 0 if rank is None else rank
 
@@ -414,7 +414,7 @@ def _close_region(
 
 
 def _key_attribute(
-    families: inheritance.InheritanceFacet, entity: EntityMetadata
+    families: inheritance.InheritanceFacet, entity: CompiledEntity
 ) -> AttributeIdentity:
     position = families.entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity

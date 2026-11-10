@@ -1254,7 +1254,7 @@ def _family_member(
     strategy: family.Strategy, layout: family.Layout, member: family.Member
 ) -> tuple[Any, ObjectKey, AttributeIdentity]:
     metadata = family.member_metadata(strategy, layout, member)
-    view = inheritance.view(model_of(family.MODEL)).entity(metadata.identity)
+    view = inheritance.inheritance_facet_of(model_of(family.MODEL)).entity(metadata.identity)
     assert view is not None
     return metadata, ObjectKey(metadata.identity, (("id", 1),)), view.primary_key.identity
 
@@ -1407,7 +1407,7 @@ def test_a_family_members_retaining_read_refuses_an_invalid_attribute_at_the_rea
 
     scope(port, family.MODEL).transact(fn, itself, concurrency="locking")
     (failure,) = refused
-    view = inheritance.view(model_of(family.MODEL)).entity(metadata.identity)
+    view = inheritance.inheritance_facet_of(model_of(family.MODEL)).entity(metadata.identity)
     assert view is not None
     attribute = view.applicable_attribute(member)
     assert attribute is not None

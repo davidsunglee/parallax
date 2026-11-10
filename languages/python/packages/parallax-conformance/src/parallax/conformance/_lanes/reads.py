@@ -29,7 +29,7 @@ from parallax.core import read_delivery
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import (
     AttributeIdentity,
-    EntityMetadata,
+    CompiledEntity,
     MemberIdentity,
     TemporalDimension,
     ValueObjectAttributeIdentity,
@@ -502,7 +502,7 @@ def _milestone_partition(roots: Sequence[object]) -> list[tuple[Pin, list[Mappin
 
 
 def _milestone_groups(
-    entity: EntityMetadata, roots: Sequence[object]
+    entity: CompiledEntity, roots: Sequence[object]
 ) -> list[tuple[Pin, list[MappingRow | None]]]:
     """One streamed milestone-set delivery grouped back into its own graphs.
 
@@ -525,7 +525,7 @@ def _milestone_groups(
     return sorted(groups.items(), key=lambda entry: _milestone_rank(entity, entry[0]))
 
 
-def _milestone_rank(entity: EntityMetadata, pin: Pin) -> tuple[object, ...]:
+def _milestone_rank(entity: CompiledEntity, pin: Pin) -> tuple[object, ...]:
     """One milestone's chronological rank: its coordinates in canonical axis order."""
     coordinates = {
         TemporalDimension.VALID_TIME: pin.valid_time,

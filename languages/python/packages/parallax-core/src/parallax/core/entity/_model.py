@@ -15,12 +15,11 @@ from parallax.core.entity._errors import (
     METAMODEL_INVALID_ENTITY_CLASS,
     METAMODEL_INVALID_ENTITY_REFERENCE,
 )
-from parallax.core.inheritance import InheritanceFacet
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import InheritanceFacet, inheritance_facet_of
 from parallax.core.metamodel import (
     AttributeIdentity,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     Multiplicity,
     RelationshipIdentity,
@@ -28,7 +27,7 @@ from parallax.core.metamodel import (
     UnresolvedEntityDeclaration,
     UnresolvedMetamodel,
 )
-from parallax.core.relationship import view as relationship_view
+from parallax.core.relationship import relationship_facet_of
 
 __all__ = ["ClassIndex", "DomainModel", "class_index", "model_of"]
 
@@ -121,10 +120,10 @@ class DomainModel:
         self._classes = classes
 
     @property
-    def entities(self) -> Sequence[EntityMetadata]:
+    def entities(self) -> Sequence[CompiledEntity]:
         return self._model.entities
 
-    def meta(self, key: type | str | EntityIdentity) -> EntityMetadata:
+    def meta(self, key: type | str | EntityIdentity) -> CompiledEntity:
         """The accepted local metadata ``key`` names within this model.
 
         ``key`` is an Entity Class this model composed, a canonical spelling
@@ -243,8 +242,8 @@ def _reject_annotation_mismatches(classes: Sequence[type], model: Metamodel) -> 
     disagreement is collected rather than raised, so one error reports them all
     in canonical order.
     """
-    directions = relationship_view(model)
-    families = inheritance_view(model)
+    directions = relationship_facet_of(model)
+    families = inheritance_facet_of(model)
     findings: list[tuple[tuple[str, str, str], str, str]] = []
     for cls in classes:
         shapes = members_of(cls).relationship_shapes

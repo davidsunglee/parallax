@@ -102,7 +102,7 @@ def classify_root(
         issues=frozenset(issues),
         object_key=observed_object_key(layout, member_values, root.issues(0)),
         version=observed_version(versioning, layout, member_values),
-        edge=observed_edge(temporal_read.view(model), layout, member_values),
+        edge=observed_edge(temporal_read.temporal_facet_of(model), layout, member_values),
         node=0 if hydrating else None,
     )
 

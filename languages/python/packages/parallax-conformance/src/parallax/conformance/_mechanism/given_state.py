@@ -10,7 +10,7 @@ from parallax.conformance._mechanism.model_facts import case_entity
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import DocumentValue
 from parallax.core.db_port import DatabaseConnection, StructuredDocument
-from parallax.core.metamodel import EntityMetadata, PrimaryKey
+from parallax.core.metamodel import CompiledEntity, PrimaryKey
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
 from parallax.core.wire import WireValue, decode_wire
@@ -82,7 +82,7 @@ def _corrupt_stored_state(
     assertion, so it must mean the same thing on every provider.
     """
     entity = case_entity(model, cast("str", entry["entity"]))
-    view = storage_layout.view(model).entity(entity.identity)
+    view = storage_layout.storage_layout_facet_of(model).entity(entity.identity)
     if view is None:  # pragma: no cover - a corrupted Entity owns rows
         raise UnclassifiedEngineError(
             f"{case.path.name}: {entity.identity.canonical} owns no table"
@@ -109,18 +109,18 @@ def _corrupt_stored_state(
     )
 
 
-def _is_temporal(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
+def _is_temporal(model: AcceptedMetamodel, entity: CompiledEntity) -> bool:
     """Whether ``entity``'s family declares an As-Of Axis.
 
     Temporality is family-wide and root-owned, so the question is asked of the
     family root's own declaration; a descendant declares none of its own.
     """
-    position = inheritance.view(model).entity(entity.identity)
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     root = entity if position is None else model.entity(position.root)
     return root is not None and bool(root.declared_as_of_axes)
 
 
-def _temporal_corruption_refusal(entity: EntityMetadata) -> str:
+def _temporal_corruption_refusal(entity: CompiledEntity) -> str:
     """Why a corruption addressing ``entity`` is refused.
 
     Spelled exactly as the corpus's own static validation and the reference
@@ -167,7 +167,7 @@ def _replaced_at(document: object, path: tuple[object, ...], value: object) -> o
 def _corruption_target(
     case: case_format.Case,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     member: tuple[object, ...],
 ) -> tuple[str, tuple[object, ...]]:
     """The Structured Column and in-document path one addressed member resolves to.
@@ -183,8 +183,8 @@ def _corruption_target(
     layout keeps in a Column of its own is refused — only a Structured Column can
     hold a value its own declaration contradicts.
     """
-    view = storage_layout.view(model).entity(entity.identity)
-    family = inheritance.view(model).entity(entity.identity)
+    view = storage_layout.storage_layout_facet_of(model).entity(entity.identity)
+    family = inheritance.inheritance_facet_of(model).entity(entity.identity)
     name = member[0]
     declared = (
         None
@@ -206,7 +206,7 @@ def _corruption_target(
 
 
 def _corruption_key(
-    case: case_format.Case, model: AcceptedMetamodel, entity: EntityMetadata, key: object
+    case: case_format.Case, model: AcceptedMetamodel, entity: CompiledEntity, key: object
 ) -> tuple[str, object]:
     """The primary-key Column one corruption addresses its row by, and the managed
     value it binds.
@@ -214,8 +214,8 @@ def _corruption_key(
     `m-metamodel` admits no composite primary key, and the addressed Entity is
     non-temporal by then, so this one Column IS the row's physical key.
     """
-    view = storage_layout.view(model).entity(entity.identity)
-    family = inheritance.view(model).entity(entity.identity)
+    view = storage_layout.storage_layout_facet_of(model).entity(entity.identity)
+    family = inheritance.inheritance_facet_of(model).entity(entity.identity)
     attributes = () if family is None else family.applicable_attributes
     declared = next(
         (attribute for attribute in attributes if isinstance(attribute.primary_key, PrimaryKey)),

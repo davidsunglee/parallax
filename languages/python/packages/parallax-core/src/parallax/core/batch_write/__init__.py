@@ -7,7 +7,7 @@ from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core.metamodel import (
     ApplicationAssigned,
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     Metamodel,
     PrimaryKey,
 )
@@ -30,25 +30,25 @@ _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset(
 _OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion"})
 
 
-def _primary_key(model: Metamodel, entity: EntityMetadata) -> AttributeMetadata:
-    position = inheritance.view(model).entity(entity.identity)
+def _primary_key(model: Metamodel, entity: CompiledEntity) -> AttributeMetadata:
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         raise RuntimeError(f"{entity.identity.canonical}: no compiled inheritance position")
     return position.primary_key
 
 
-def _is_versioned(model: Metamodel, entity: EntityMetadata) -> bool:
-    return concurrency.view(model).settles_against(entity.identity) == "observation"
+def _is_versioned(model: Metamodel, entity: CompiledEntity) -> bool:
+    return concurrency.concurrency_facet_of(model).settles_against(entity.identity) == "observation"
 
 
-def _is_temporal(model: Metamodel, entity: EntityMetadata) -> bool:
+def _is_temporal(model: Metamodel, entity: CompiledEntity) -> bool:
     return isinstance(
-        temporal_read.view(model).shape(entity.identity),
+        temporal_read.temporal_facet_of(model).shape(entity.identity),
         temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
     )
 
 
-def _is_pk_gen_managed(model: Metamodel, entity: EntityMetadata) -> bool:
+def _is_pk_gen_managed(model: Metamodel, entity: CompiledEntity) -> bool:
     """Whether ``entity``'s family primary key is framework-allocated
     (`m-pk-gen`) — each row's own key allocation is independent, so a shared
     multi-row statement cannot express it."""
@@ -62,7 +62,7 @@ def _rows_carry_observation_keys(rows: Sequence[Mapping[str, object]]) -> bool:
     return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in rows)
 
 
-def insert_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
+def insert_collapses(model: Metamodel, entity: CompiledEntity) -> bool:
     """Whether same-entity ``insert`` rows collapse into one multi-row ``INSERT``
     (`m-batch-write.md` "Batching is a membership decision"). ``False`` for a
     temporal entity (its keyed
@@ -76,7 +76,7 @@ def insert_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
 
 
 def update_collapses(
-    model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
+    model: Metamodel, entity: CompiledEntity, rows: Sequence[Mapping[str, object]]
 ) -> bool:
     """Whether a run of same-entity ``update`` rows collapses into ONE
     ``UPDATE`` over a membership of their keys (`m-batch-write.md` "Batching is a
@@ -105,7 +105,7 @@ def update_collapses(
     return all(candidate == first for candidate in assigned[1:])
 
 
-def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
+def delete_collapses(model: Metamodel, entity: CompiledEntity) -> bool:
     """Whether same-entity ``delete`` rows collapse into one
     ``DELETE`` over a membership of their keys (`m-batch-write.md` "Batching is a
     membership decision" — the delete analogue of the multi-row INSERT). ``False``
@@ -122,7 +122,7 @@ def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
 
 def collapses(
     model: Metamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     mutation: str,
     rows: Sequence[Mapping[str, object]],
 ) -> bool:

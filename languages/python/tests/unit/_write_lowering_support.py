@@ -144,7 +144,7 @@ from parallax.core.entity._instance_state import declared_values
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle._activity import FlushActivity
-from parallax.core.storage_layout import view as storage_layout_view
+from parallax.core.storage_layout import storage_layout_facet_of as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
 from parallax.core.write_plan.managed_row import managed_row, named_members
 from parallax.core.write_plan.payload import PatchedDocument

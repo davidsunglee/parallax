@@ -8,8 +8,8 @@ from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     RelationshipIdentity,
 )
 from parallax.core.predicate._resolved import ResolvedPredicate
@@ -128,7 +128,7 @@ class Paging:
 @dataclass(frozen=True, slots=True)
 class ResolvedIncludeSegment:
     relationship: RelationshipIdentity
-    target: EntityMetadata
+    target: CompiledEntity
     position: tuple[EntityIdentity, ...]
     authored_narrow: bool
 
@@ -143,12 +143,12 @@ class ResolvedIncludePath:
 class ResolvedObjectQuery:
     """The complete resolved meaning of one accepted query."""
 
-    root: EntityMetadata
+    root: CompiledEntity
     predicate: ResolvedPredicate
     temporal: tuple[ResolvedTemporalSelection, ...]
     order_by: tuple[ResolvedOrderTerm, ...]
     includes: tuple[ResolvedIncludePath, ...]
-    narrow_to: tuple[EntityMetadata, ...] | None
+    narrow_to: tuple[CompiledEntity, ...] | None
     limit: int | None
     paging: Paging | None = None
 

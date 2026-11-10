@@ -363,7 +363,7 @@ def recoverable_conflict(
     """
     if error.constraint_name is None or not dialect.reports_exclusion_violation(error.native_code):
         return False
-    view = storage_layout.view(meta).entity(step.entity)
+    view = storage_layout.storage_layout_facet_of(meta).entity(step.entity)
     constraints = None if view is None else view.layout.temporal_constraints
     return constraints is not None and error.constraint_name == constraints.exclusion_name
 

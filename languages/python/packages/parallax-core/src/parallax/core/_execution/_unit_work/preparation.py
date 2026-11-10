@@ -101,7 +101,7 @@ class WritePreparation:
     ) -> None:
         self.meta = meta
         self.absent = absent
-        families = inheritance.view(meta)
+        families = inheritance.inheritance_facet_of(meta)
         catalog = AuthoringCatalog(_LANES, absent=absent)
         entities: dict[EntityIdentity, EntityPreparation] = {}
         for entity in meta.entities:

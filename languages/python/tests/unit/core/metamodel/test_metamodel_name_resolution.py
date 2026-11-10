@@ -21,7 +21,7 @@ from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import UsageError
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel, entity_by_name
 from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
 from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
@@ -217,7 +217,7 @@ def _cross_namespace_model() -> Metamodel:
     return form_metamodel(unresolved_metamodel(records.Metamodel((beast, wolf, bear, den))))
 
 
-def _named(model: Metamodel, name: str) -> EntityMetadata:
+def _named(model: Metamodel, name: str) -> CompiledEntity:
     entity = entity_by_name(model, name)
     assert entity is not None
     return entity
@@ -312,7 +312,7 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
     ] == ["den"]
 
 
-def _resolved_hop(model: Metamodel, position: EntityMetadata, op: oa.PredicateNode) -> object:
+def _resolved_hop(model: Metamodel, position: CompiledEntity, op: oa.PredicateNode) -> object:
     """The target of the one presence ``op`` reaches, once its visibility resolved."""
     product = validate_predicate(position, op, model)
     closed = resolve_temporal_visibility(

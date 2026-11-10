@@ -29,8 +29,8 @@ from parallax.core.metamodel import (
     WRITE_ASSIGNMENT_CODES,
     AttributeMetadata,
     AuthoringViolation,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     MemberDefinition,
     MemberShape,
     Multiplicity,
@@ -398,7 +398,7 @@ class PreparedKeyedInstruction:
 
     mutation: KeyedMutation
     assigns: bool
-    target: EntityMetadata
+    target: CompiledEntity
     rows: tuple[ManagedRow, ...]
     valid_time_window: TimeInterval | None
 
@@ -458,7 +458,7 @@ class PreparedTargetInstruction:
 
     mutation: TargetMutation
     assigns: bool
-    target: EntityMetadata
+    target: CompiledEntity
     row: ManagedRow
     valid_time_window: TimeInterval | None
     expectation: TargetExpectation
@@ -472,7 +472,7 @@ to its buffer and executes a predicate one at the call."""
 def _prepared_keyed_instruction(
     mutation: KeyedMutation,
     assigns: bool,
-    target: EntityMetadata,
+    target: CompiledEntity,
     rows: tuple[ManagedRow, ...],
     valid_time_window: TimeInterval | None,
 ) -> PreparedKeyedInstruction:
@@ -500,7 +500,7 @@ def _prepared_predicate_instruction(
 def _prepared_target_instruction(
     mutation: TargetMutation,
     assigns: bool,
-    target: EntityMetadata,
+    target: CompiledEntity,
     row: ManagedRow,
     valid_time_window: TimeInterval | None,
     expectation: TargetExpectation,
@@ -987,7 +987,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-    target: EntityMetadata | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedTargetInstruction: ...
 @overload
 def prepare_typed_write(
@@ -996,7 +996,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-    target: EntityMetadata | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedKeyedInstruction: ...
 @overload
 def prepare_typed_write(
@@ -1005,7 +1005,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-    target: EntityMetadata | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedPredicateInstruction: ...
 @overload
 def prepare_typed_write(
@@ -1014,7 +1014,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-    target: EntityMetadata | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_typed_write(
     instruction: WriteInstruction,
@@ -1022,7 +1022,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-    target: EntityMetadata | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction:
     """Convert developer values once, then judge the write.
 
@@ -1108,7 +1108,7 @@ def _prepare_write(
     lane: int,
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
-    target: EntityMetadata | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction:
     """The sole admissibility judgment of a write, each family's target first
     and then its payload, so a call whose verb or window is wrong for its
@@ -1162,7 +1162,7 @@ def _prepare_write(
 def prepare_typed_keyed_write(
     preparation: WritePreparation,
     mutation: KeyedMutation,
-    target: EntityMetadata,
+    target: CompiledEntity,
     *,
     values: Iterable[object] = (),
     pairs: Iterable[tuple[int, object]] = (),
@@ -1188,7 +1188,7 @@ def prepare_typed_keyed_write(
     position = _inheritance_entity_view(model, target)
     _judge_write_persistence(target, position)
     entry = preparation.entity(target.identity)
-    shape = temporal_read.view(model).shape(target.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(target.identity)
     window = _judge_applicability(
         model, target, shape, mutation, valid_from, until, surface="keyed"
     )
@@ -1231,7 +1231,7 @@ def prepare_typed_keyed_write(
 def prepare_typed_insert(
     preparation: WritePreparation,
     mutation: KeyedMutation,
-    target: EntityMetadata,
+    target: CompiledEntity,
     values: Iterable[object],
     *,
     valid_from: dt.datetime | None,
@@ -1260,7 +1260,7 @@ def prepare_typed_insert(
 def prepare_wire_insert(
     preparation: WritePreparation,
     mutation: KeyedMutation,
-    target: EntityMetadata,
+    target: CompiledEntity,
     payload: Mapping[str, object],
     *,
     valid_from: dt.datetime | None,
@@ -1285,7 +1285,7 @@ def prepare_wire_insert(
 def _judged_opening(
     preparation: WritePreparation,
     mutation: KeyedMutation,
-    target: EntityMetadata,
+    target: CompiledEntity,
     valid_from: dt.datetime | None,
     until: dt.datetime | None,
 ) -> tuple[EntityPreparation, inheritance.InheritanceEntityView, TimeInterval | None]:
@@ -1296,7 +1296,7 @@ def _judged_opening(
     model = preparation.meta
     position = _inheritance_entity_view(model, target)
     _judge_write_persistence(target, position)
-    shape = temporal_read.view(model).shape(target.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(target.identity)
     window = _judge_applicability(
         model, target, shape, mutation, valid_from, until, surface="keyed"
     )
@@ -1305,7 +1305,7 @@ def _judged_opening(
 
 def _opened_row(
     entry: EntityPreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     raws: Iterable[object],
     *,
     lane: int,
@@ -1333,7 +1333,7 @@ def _opened_row(
 
 def _sparse_row(
     entry: EntityPreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     pairs: Sequence[tuple[int, object]],
     *,
     lane: int,
@@ -1367,7 +1367,7 @@ def _sparse_row(
 def _assigned_row(
     model: AcceptedMetamodel,
     entry: EntityPreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     pairs: Sequence[tuple[int, object]],
     *,
     lane: int,
@@ -1406,7 +1406,7 @@ def _assigned_row(
 def _replacement_row(
     model: AcceptedMetamodel,
     entry: EntityPreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     raws: Iterable[object],
     *,
     lane: int,
@@ -1454,7 +1454,7 @@ def _replacement_row(
 
 def _refuse_owned_names(
     entry: EntityPreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     pairs: Iterable[tuple[int, object]],
     owned: int,
 ) -> None:
@@ -1472,14 +1472,14 @@ def _refuse_owned_names(
                 ) from error
 
 
-def _restated_assignment_refusal(entity: EntityMetadata, error: UsageError) -> UsageError:
+def _restated_assignment_refusal(entity: CompiledEntity, error: UsageError) -> UsageError:
     """The assignment judgement's ``error`` restated as the refusal of a write
     to ``entity``."""
     return UsageError(WRITE_INSTRUCTION_INVALID, f"{entity.identity.canonical}.{error.args[1]}")
 
 
 def _row_refusal(
-    entity: EntityMetadata, shape: MemberShape, refusal: AuthoringRefusal
+    entity: CompiledEntity, shape: MemberShape, refusal: AuthoringRefusal
 ) -> Exception:
     """``refusal`` worded as the refusal of a stated row's member, caused by
     the conversion failure where one raised it."""
@@ -1494,7 +1494,7 @@ def _row_refusal(
 
 
 def _assignment_refusal(
-    entry: EntityPreparation, entity: EntityMetadata, refusal: AuthoringRefusal
+    entry: EntityPreparation, entity: CompiledEntity, refusal: AuthoringRefusal
 ) -> Exception:
     """``refusal`` worded as the refusal of an assignment where it refuses a
     member beside the key, caused by the assignment rule's verdict, and as a
@@ -1520,7 +1520,7 @@ def _assignment_refusal(
 
 
 def _replacement_refusal(
-    entry: EntityPreparation, entity: EntityMetadata, refusal: AuthoringRefusal
+    entry: EntityPreparation, entity: CompiledEntity, refusal: AuthoringRefusal
 ) -> Exception:
     """``refusal`` worded as a replacement's: an unstated required member as
     one the complete state omits, any other as :func:`_assignment_refusal`
@@ -1600,7 +1600,7 @@ def joined_path(base: str, path: str) -> str:
 
 
 def _marker_planning(
-    entity: EntityMetadata, shape: MemberShape, context: _MarkerContext
+    entity: CompiledEntity, shape: MemberShape, context: _MarkerContext
 ) -> RootPolicy:
     """The planned value a top-level scalar's DB-computed marker stands for in
     ``context``."""
@@ -1681,14 +1681,18 @@ def _assigns_beside_key(
 type _MarkerContext = Literal["insert", "update"]
 
 
-def _assignment_context(model: AcceptedMetamodel, entity: EntityMetadata) -> _MarkerContext:
+def _assignment_context(model: AcceptedMetamodel, entity: CompiledEntity) -> _MarkerContext:
     """The planning context an assignment to ``entity`` writes in: a temporal
     one feeds the successor row it opens, any other revises the stored row."""
-    return "insert" if _is_temporal(temporal_read.view(model).shape(entity.identity)) else "update"
+    return (
+        "insert"
+        if _is_temporal(temporal_read.temporal_facet_of(model).shape(entity.identity))
+        else "update"
+    )
 
 
 def _planned_marker(
-    entity: EntityMetadata, name: str, marker: Mapping[str, object], context: _MarkerContext
+    entity: CompiledEntity, name: str, marker: Mapping[str, object], context: _MarkerContext
 ) -> PlannedValue:
     """The generated-value expression ``marker`` names in ``context``.
 
@@ -1711,7 +1715,7 @@ def _planned_marker(
 
 
 def _unplannable_marker(
-    entity: EntityMetadata, name: str, kind: str, context: _MarkerContext
+    entity: CompiledEntity, name: str, kind: str, context: _MarkerContext
 ) -> UsageError:
     return UsageError(
         WRITE_INSTRUCTION_INVALID,
@@ -1734,7 +1738,7 @@ def refuse_opening_registry_advance(assigned: PreparedKeyedInstruction) -> None:
 
 
 def _judge_write_persistence(
-    entity: EntityMetadata, position: inheritance.InheritanceEntityView
+    entity: CompiledEntity, position: inheritance.InheritanceEntityView
 ) -> None:
     """Refuse any write to an Entity whose family's effective Persistence Mode
     is ReadOnly (`m-unit-work`)."""
@@ -1749,7 +1753,7 @@ def _judge_write_persistence(
 def _prepare_keyed_write(
     instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     entry: EntityPreparation,
     *,
@@ -1759,7 +1763,7 @@ def _prepare_keyed_write(
 ) -> PreparedKeyedInstruction:
     """Judge a keyed write: its verb and window against its target, then its
     row count, then its rows' subtype shape, members, and values."""
-    shape = temporal_read.view(model).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,
         entity,
@@ -1793,7 +1797,7 @@ def _prepare_keyed_write(
 def _prepare_predicate_write(
     instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     entry: EntityPreparation,
     *,
@@ -1807,7 +1811,7 @@ def _prepare_predicate_write(
 
 def _judge_readless_target(
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     mutation: PredicateMutation,
 ) -> None:
@@ -1818,7 +1822,7 @@ def _judge_readless_target(
     observation before it is written, so the write needs its caller to read
     first; the refusal names the verbs that write through such a read or a
     revision the caller holds."""
-    shape = temporal_read.view(model).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     if _requires_observation(position, shape):
         raise UsageError(
             SET_BASED_WRITE_TARGET_UNSUPPORTED,
@@ -1827,7 +1831,7 @@ def _judge_readless_target(
 
 
 def _readless_target_advice(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     shape: temporal_read.TemporalShape | None,
     mutation: PredicateMutation,
@@ -1861,7 +1865,7 @@ def _is_temporal(shape: temporal_read.TemporalShape | None) -> bool:
 
 def _judge_applicability(
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     shape: temporal_read.TemporalShape | None,
     mutation: str,
     valid_from: object,
@@ -1971,7 +1975,7 @@ def _judge_window(
 def _prepare_target_write(
     instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     entry: EntityPreparation,
     *,
@@ -1989,7 +1993,7 @@ def _prepare_target_write(
     whose required revision is missing is refused before any member it names
     is weighed.
     """
-    shape = temporal_read.view(model).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,
         entity,
@@ -2108,7 +2112,7 @@ def _missing(root: EntityIdentity, mutation: str, required: str) -> str:
 def _prepare_target_payload(
     instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     entry: EntityPreparation,
     *,
@@ -2155,7 +2159,7 @@ def _prepare_target_payload(
 def _assignment_payload(
     model: AcceptedMetamodel,
     entry: EntityPreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     row: Mapping[str, object],
     *,
     lane: int,
@@ -2168,7 +2172,7 @@ def _assignment_payload(
 
 def _judge_row_members(
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     entry: EntityPreparation,
     row: Mapping[str, object],
     authored_members: Set[str] | None,
@@ -2223,7 +2227,7 @@ def _stated_instant(root: EntityIdentity, mutation: str, bound: str, value: obje
 def _prepare_keyed_payload(
     instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     entry: EntityPreparation,
     valid_time_window: TimeInterval | None,
@@ -2306,7 +2310,7 @@ def _prepare_keyed_payload(
 def _prepare_predicate_payload(
     instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     entry: EntityPreparation,
     *,
@@ -2358,7 +2362,7 @@ def _prepare_predicate_payload(
 
 def _row_from_assignments(
     model: AcceptedMetamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: inheritance.InheritanceEntityView,
     assignments: Sequence[WriteAssignment],
 ) -> dict[str, object]:
@@ -2395,7 +2399,7 @@ def _row_from_assignments(
 
 
 def _judge_prepared_assignment(
-    target: EntityMetadata,
+    target: CompiledEntity,
     member: _DeclaredMember,
     value: object,
 ) -> None:
@@ -2414,7 +2418,7 @@ def _judge_prepared_assignment(
 
 
 def assigned_members(
-    model: AcceptedMetamodel, entity: EntityMetadata, assignments: Sequence[WriteAssignment]
+    model: AcceptedMetamodel, entity: CompiledEntity, assignments: Sequence[WriteAssignment]
 ) -> dict[str, object]:
     """The members ``assignments`` assign to one object of ``entity``, keyed by
     name, each reference judged before any of them is flattened into a row.
@@ -2464,7 +2468,7 @@ def assigned_members(
 
 def addressed_members(
     preparation: WritePreparation,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     address: tuple[tuple[str, object], ...],
     document: Mapping[str, object],
 ) -> Mapping[str, object]:
@@ -2502,23 +2506,23 @@ type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 
 
 def _inheritance_entity_view(
-    model: AcceptedMetamodel, entity: EntityMetadata
+    model: AcceptedMetamodel, entity: CompiledEntity
 ) -> inheritance.InheritanceEntityView:
-    position = inheritance.view(model).entity(entity.identity)
+    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
     if position is None:
         raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
     return position
 
 
 def _member_selection(
-    model: AcceptedMetamodel, entity: EntityMetadata
+    model: AcceptedMetamodel, entity: CompiledEntity
 ) -> inheritance.EntityMemberSelection:
     """``entity``'s family-effective members: the whole inheritance FAMILY's
     applicable members for a participant, its own declarations otherwise."""
     return _inheritance_entity_view(model, entity).member_selection
 
 
-def _family_root(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityIdentity:
+def _family_root(model: AcceptedMetamodel, entity: CompiledEntity) -> EntityIdentity:
     return _inheritance_entity_view(model, entity).root
 
 
@@ -2529,7 +2533,7 @@ def _decoded_wire(neutral_type: NeutralType, value: object, path: str) -> object
         raise located_refusal(error, path) from error
 
 
-def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+def resolve_target(model: AcceptedMetamodel, name: str) -> CompiledEntity:
     """The accepted Metadata a write's bare-or-canonical target names, by
     :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule.
 

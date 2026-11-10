@@ -742,7 +742,7 @@ def test_an_inherited_milestone_set_read_orders_by_the_family_owners_key_and_edg
     # family root's, and the order names them there while the query still
     # addresses the subtype itself.
     deposit_rate = entity_of(RATE, "DepositRate")
-    shape = temporal_read.view(RATE).shape(deposit_rate.identity)
+    shape = temporal_read.temporal_facet_of(RATE).shape(deposit_rate.identity)
     assert isinstance(shape, temporal_read.Bitemporal)
     query = validate_object_query(
         deposit_rate,

@@ -5,13 +5,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard
 
-from parallax.core.metamodel import (
-    AsOfAxisMetadata,
-    EntityIdentity,
-    FacetKey,
-    Metamodel,
-    TemporalDimension,
-)
+from parallax.core.metamodel import AsOfAxisMetadata, EntityIdentity, Metamodel, TemporalDimension
+from parallax.core.metamodel._accepted import FacetKey, facet_of
 
 __all__ = [
     "FACET_KEY",
@@ -24,7 +19,7 @@ __all__ = [
     "TransactionTimeOnly",
     "ranked_axes",
     "temporal_facet",
-    "view",
+    "temporal_facet_of",
 ]
 
 TEMPORAL_READ_MODULE: Final[str] = "m-temporal-read"
@@ -155,11 +150,10 @@ FACET_KEY: Final[FacetKey[TemporalFacet]] = FacetKey(TEMPORAL_READ_MODULE, is_te
 """The typed key this module's facet is installed and retrieved under."""
 
 
-def view(model: Metamodel) -> TemporalFacet:
-    """``model``'s Temporal Facet.
+def temporal_facet_of(model: Metamodel) -> TemporalFacet:
+    """``model``'s Temporal Facet, the typed retrieval every consumer uses.
 
-    The typed retrieval every behavioral consumer uses, so generic facet lookup
-    stays an internal formation seam. Total for an accepted Metamodel, which by
-    construction carries the complete facet set.
+    Total for an accepted Metamodel, which by construction carries the complete
+    facet set.
     """
-    return model.facet(FACET_KEY)
+    return facet_of(model, FACET_KEY)

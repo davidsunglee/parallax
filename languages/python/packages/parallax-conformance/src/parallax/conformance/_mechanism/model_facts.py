@@ -13,7 +13,7 @@ from parallax.core.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.metamodel import CompiledEntity, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.temporal_read import scans_resolved_axis
@@ -113,7 +113,7 @@ def case_serving_model(case: case_format.Case) -> ServingModel:
     return ServingModel(prepare_model(load_case_domain_model(case), edition=case_edition(case)))
 
 
-def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+def case_entity(model: AcceptedMetamodel, name: str) -> CompiledEntity:
     """The accepted Metadata ``name`` denotes in ``model``.
 
     A case names an Entity by the spelling its own model authored — bare when
@@ -132,7 +132,7 @@ def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     return metadata
 
 
-def declaring_metadata(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+def declaring_metadata(model: AcceptedMetamodel, name: str) -> CompiledEntity:
     """The accepted Metadata of the position that DECLARES ``name``'s family
     facts — its family root, itself for a standalone Entity.
 
@@ -143,13 +143,13 @@ def declaring_metadata(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     return family_declarer(model, case_entity(model, name))
 
 
-def family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
+def family_declarer(model: AcceptedMetamodel, entity: CompiledEntity) -> CompiledEntity:
     """``entity``'s family root, which owns the family-wide declarations.
 
     A standalone Entity is its own root, so this is the identity there rather
     than a second code path.
     """
-    view = inheritance.view(model).entity(entity.identity)
+    view = inheritance.inheritance_facet_of(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise UnclassifiedEngineError(
             f"{entity.identity.canonical!r} names no entity the model declares"
@@ -160,7 +160,7 @@ def family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityM
     return root
 
 
-def default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
+def default_family_root(model: AcceptedMetamodel) -> CompiledEntity | None:
     """The family root the default-target conventions resolve through.
 
     ``None`` when the model declares no inheritance family at all, so a caller
@@ -175,7 +175,7 @@ def default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
     the root's own strategy, and a standalone Entity carries none, so the
     strategy-bearing views' distinct roots ARE the model's families.
     """
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     roots = {
         entity.identity: view.root
         for entity in model.entities

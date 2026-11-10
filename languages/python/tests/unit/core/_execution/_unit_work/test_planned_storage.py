@@ -30,7 +30,7 @@ from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
 )
 from parallax.core._formation_profile import BUILTIN_MANIFEST
-from parallax.core.metamodel import FacetKey
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.expansion import PredecessorExpander
@@ -46,6 +46,7 @@ from parallax.core.write_plan import (
     WritePlan,
 )
 from tests._support.clock_probes import CountingClock, inert_instant
+from tests._support.fake_metadata import facets_of
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
@@ -108,14 +109,14 @@ def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
     # A plan may reach nothing `_is_producer` recognizes, so every facet an
     # accepted model carries, and the clock, must count as a producer, while
     # what either produced for one settled write must not.
-    facets = [_BALANCE.facet(key) for key in _COMPILED_FACET_KEYS]
+    facets = list(facets_of(_BALANCE).values())
     assert len(facets) == len(_COMPILED_FACET_KEYS) > 1
 
     for facet in facets:
         assert _is_producer(facet)
     assert _is_producer(_BALANCE)
     entity = _BALANCE.entities[0]
-    assert not _is_producer(inheritance.view(_BALANCE).entity(entity.identity))
+    assert not _is_producer(inheritance.inheritance_facet_of(_BALANCE).entity(entity.identity))
     instant = inert_instant()
     assert _is_producer(instant.clock)
     assert not _is_producer(instant.value())
@@ -147,7 +148,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
             transaction_instant=TransactionInstant(clock),
             preference="optimistic",
             composed_writes=admitted_writes(
-                _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
+                _POSITION, [target_write(prepared, inheritance.inheritance_facet_of(_POSITION))]
             ),
             ownership=ownership,
         )

@@ -3,13 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from parallax.core.metamodel import (
-    CandidateMetamodel,
-    CompiledMetadata,
-    FacetKey,
-    IssueCode,
-    MetamodelIssue,
-)
+from parallax.core.metamodel import CandidateMetamodel, CompiledMetadata, IssueCode, MetamodelIssue
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation._manifest import ModuleIdentity
 
 __all__ = [

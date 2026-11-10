@@ -1756,9 +1756,12 @@ def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell
 def _rendered_at(plan: StatementPlan, family: Metamodel, root: str, path: tuple[int, ...]) -> str:
     entity = target(family, root)
     builder: StatementBuilder[EntityRowScope] = StatementBuilder(
-        family, inheritance.view(family), storage_layout.view(family), POSTGRES
+        family,
+        inheritance.inheritance_facet_of(family),
+        storage_layout.storage_layout_facet_of(family),
+        POSTGRES,
     )
-    view = storage_layout.view(family).entity(entity.identity)
+    view = storage_layout.storage_layout_facet_of(family).entity(entity.identity)
     assert view is not None
     row = EntityRowScope(builder, entity, view.layout)
     scope_id = plan.root_scopes[None]
@@ -1776,8 +1779,8 @@ def test_a_rendered_path_names_one_planned_occurrence_and_refuses_any_other() ->
         evaluation_context=EvaluationContext.SHARING_ALLOWED,
         entity=basket,
         meta=family,
-        facet=inheritance.view(family),
-        storage=storage_layout.view(family),
+        facet=inheritance.inheritance_facet_of(family),
+        storage=storage_layout.storage_layout_facet_of(family),
     )
     assert _rendered_at(plan, family, "Basket", (1, 0, 0)).startswith(
         "exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ?"

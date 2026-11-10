@@ -344,7 +344,7 @@ _TEMPORAL_MEMBERS = ("id", "validStart", "validEnd", "txStart", "txEnd")
 
 
 def _valid_time(entity: type[Entity]) -> Bitemporal:
-    shape = temporal_read.view(_BITEMPORAL_MODEL).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(_BITEMPORAL_MODEL).shape(entity.identity)
     assert isinstance(shape, Bitemporal)
     return shape
 
@@ -419,7 +419,7 @@ def test_a_predecessor_row_carrying_no_member_is_refused() -> None:
 # A scalar collection holds an assignment only element for element, in order.  #
 # --------------------------------------------------------------------------- #
 _COLLECTION_SELECTION = (
-    inheritance.view(corpus_model("scalar-collection-layout-twin-columns"))
+    inheritance.inheritance_facet_of(corpus_model("scalar-collection-layout-twin-columns"))
     .entity(EntityIdentity("parallax.compatibility", "CollectionTwinItem"))
     .member_selection  # pyright: ignore[reportOptionalMemberAccess] - the corpus declares it
 )
