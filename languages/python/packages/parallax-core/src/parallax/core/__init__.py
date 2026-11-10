@@ -57,6 +57,11 @@ from parallax.core.db_port import (
     DatabaseStartupError,
     DriverManaged,
     Password,
+    PoolAvailable,
+    PoolDetached,
+    PoolMetricsSource,
+    PoolSample,
+    PoolUnavailable,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
@@ -192,8 +197,13 @@ __all__ = [
     "Password",
     "PhysicalIndexName",
     "Pin",
+    "PoolAvailable",
+    "PoolDetached",
     "PoolMetricsObserver",
+    "PoolMetricsSource",
     "PoolObservation",
+    "PoolSample",
+    "PoolUnavailable",
     "Predicate",
     "Principal",
     "PublicationConflictError",

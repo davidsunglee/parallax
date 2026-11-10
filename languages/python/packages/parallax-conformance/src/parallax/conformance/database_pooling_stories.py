@@ -15,16 +15,14 @@ from parallax.core import (
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
     ExecutionLifecycleProvider,
-    RootExecution,
-    ServingModel,
-)
-from parallax.core.db_port import (
-    DatabaseAdapter,
     PoolAvailable,
     PoolDetached,
     PoolMetricsSource,
     PoolSample,
+    RootExecution,
+    ServingModel,
 )
+from parallax.core.db_port import DatabaseAdapter
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import ScopedDatabase, connect
 

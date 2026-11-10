@@ -104,7 +104,9 @@ def test_every_guide_import_names_an_exported_name_of_an_application_module() ->
                     for alias in node.names
                     if alias.name.split(".")[0] == "parallax"
                 ]
-            elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("parallax."):
+            elif (
+                isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "parallax"
+            ):
                 module = node.module or ""
                 exported: set[str] = (
                     set(import_module(module).__all__) if module in _APPLICATION_MODULES else set()
