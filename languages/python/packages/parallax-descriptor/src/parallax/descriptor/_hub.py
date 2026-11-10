@@ -23,7 +23,7 @@ __all__ = [
 
 
 def domain_model_from_document(document: Mapping[str, object]) -> DomainModel:
-    """Seal an already-decoded descriptor ``document`` into a hub.
+    """Build a Domain Model from an already-parsed descriptor document.
 
     Schema validation is the first gate, so this door never raises
     :class:`~parallax.descriptor.DescriptorError` with
@@ -45,7 +45,7 @@ def domain_model_from_document(document: Mapping[str, object]) -> DomainModel:
 
 
 def domain_model_from_json(text: str | bytes) -> DomainModel:
-    """Seal a JSON descriptor document into a hub.
+    """Build a Domain Model from JSON descriptor text.
 
     ``text`` is JSON source, decoded as UTF-8 when supplied as bytes. Adds phase
     1 to :func:`domain_model_from_document`'s contract: undecodable bytes or
@@ -57,13 +57,16 @@ def domain_model_from_json(text: str | bytes) -> DomainModel:
 
 
 def domain_model_from_yaml(text: str | bytes) -> DomainModel:
-    """Seal a YAML descriptor document into a hub — the YAML sibling of
-    :func:`domain_model_from_json`, reporting ``format="yaml"``."""
+    """Build a Domain Model from YAML descriptor text.
+
+    Seal a YAML descriptor document into a hub — the YAML sibling of
+    :func:`domain_model_from_json`, reporting ``format="yaml"``.
+    """
     return _sealed(parse_yaml(text))
 
 
 def export_document(model: DomainModel) -> dict[str, object]:
-    """The canonical minimal descriptor document for ``model``'s sealed model.
+    """Export a Domain Model as a canonical descriptor document.
 
     A fresh tree of ordinary mappings, lists, and JSON-compatible scalar values
     each call. Every hub is sealed by construction, so export performs no
@@ -78,7 +81,7 @@ def export_document(model: DomainModel) -> dict[str, object]:
 
 
 def export_json(model: DomainModel) -> str:
-    """``model``'s canonical descriptor document as JSON text.
+    """Export a Domain Model as canonical JSON descriptor text.
 
     Deterministic: repeated results are byte-identical, and key order is the
     canonical document's own authoring order rather than a sorted rewrite. Adds
@@ -90,8 +93,11 @@ def export_json(model: DomainModel) -> str:
 
 
 def export_yaml(model: DomainModel) -> str:
-    """``model``'s canonical descriptor document as YAML text — the YAML
-    sibling of :func:`export_json`, reporting target ``yaml``."""
+    """Export a Domain Model as canonical YAML descriptor text.
+
+    ``model``'s canonical descriptor document as YAML text — the YAML
+    sibling of :func:`export_json`, reporting target ``yaml``.
+    """
     return _text(model, "yaml")
 
 

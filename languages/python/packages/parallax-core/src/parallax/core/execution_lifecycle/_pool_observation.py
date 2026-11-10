@@ -15,7 +15,7 @@ __all__ = [
 
 
 class PoolObservation(Protocol):
-    """One live registration of an interest in a pool's measurements.
+    """One active pool observation; `close()` ends it.
 
     A handle holds it from composition until close and closes it exactly once.
     Nothing else reads it: it is a lifetime, not a channel.
@@ -35,7 +35,7 @@ class PoolObservation(Protocol):
 
 @runtime_checkable
 class PoolMetricsObserver(Protocol):
-    """The optional half of the composition seam: interest in the pool itself.
+    """Implement to observe the connection pools a database runtime keeps.
 
     An application implements this ON the Provider it already passes to
     ``connect``, which is what keeps composition to one argument. Implementing

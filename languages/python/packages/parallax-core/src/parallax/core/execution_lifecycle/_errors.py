@@ -7,7 +7,7 @@ from uuid import UUID
 from parallax.core.internal.diagnostics import FailureDiagnostic
 
 LIFECYCLE_PROVIDER_FAILED: Final = "lifecycle-provider-failed"
-"""A Provider's ``open`` failed ordinarily, so the operation is refused.
+"""Code for an operation refused because a lifecycle Provider failed to open.
 
 Refused before execution state, clocks, or database work, which is the whole
 reason opening is allowed to fail the operation at all. The ordinary exception
@@ -17,7 +17,7 @@ instead.
 """
 
 LIFECYCLE_REENTERED: Final = "lifecycle-reentered"
-"""A Handle was asked to work from inside one of its own lifecycle contexts.
+"""Code for an operation refused because a Handler called back into the Handle it observes.
 
 Provider opening, event delivery, and error reporting are lifecycle contexts,
 and calling an operation through the Handle or Transaction that opened one of
@@ -36,7 +36,7 @@ quarantines that Handler like any other.
 
 @dataclass(frozen=True, slots=True)
 class ExecutionLifecycleHandlerError:
-    """What a Provider is told when one of its Handlers raised ordinarily.
+    """A report a Provider receives when one of its Handlers raised; it is never raised itself.
 
     Deliberately a value rather than an exception: it is handed to
     ``report_handler_error`` and never raised, because a Handler failure must

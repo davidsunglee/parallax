@@ -35,8 +35,11 @@ __all__ = [
 ]
 
 type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
-"""What a Wire read accepts: the canonical Object Query mapping, the canonical
-node itself, or — on a class-backed model — the Typed authoring value."""
+"""What a Wire read accepts: a canonical query mapping or node, or a Typed query.
+
+What a Wire read accepts: the canonical Object Query mapping, the canonical
+node itself, or — on a class-backed model — the Typed authoring value.
+"""
 
 
 def wire_read_query(query: WireQuery) -> ReadQuery:
@@ -64,8 +67,7 @@ def wire_read_query(query: WireQuery) -> ReadQuery:
 
 
 class WireDatabaseView:
-    """The Wire read interface: ``db.wire`` outside any transaction, and
-    ``rtx.wire`` inside a read-only one.
+    """The Wire read interface: `db.wire`, and `rtx.wire` in a read-only transaction.
 
     It reads exactly as the Typed reads beside it do. Standalone, as ``db.find``
     is: no transaction, read lock, or Concurrency Preference. Inside a read-only
@@ -136,7 +138,7 @@ class WireDatabaseView:
 
 
 class WireTransactionView(WireDatabaseView):
-    """``tx.wire`` — the Wire read AND write interface inside a transaction.
+    """The Wire read and write interface inside a transaction: `tx.wire`.
 
     A view over the SAME unit of work, evidence retention, locking, and
     coalescing the Typed transaction interface uses. A Wire read

@@ -72,7 +72,7 @@ class PoolMeasurements:
 
 @dataclass(frozen=True, slots=True)
 class PoolAvailable:
-    """One reading of a pool, beside the readiness of the route it serves.
+    """A pool metrics sample taken while the pool was available.
 
     ``readiness`` is read with the measurements rather than fixed on the
     source, because a route whose verification was deferred at startup becomes
@@ -88,7 +88,7 @@ class PoolAvailable:
 
 @dataclass(frozen=True, slots=True)
 class PoolUnavailable:
-    """The source is still attached and this reading did not happen.
+    """A pool metrics sample reported when this reading could not be taken.
 
     Attached is the point: the runtime is alive and the next sample may well
     succeed, so an exporter that asks again later is asking a live source. What
@@ -102,7 +102,7 @@ class PoolUnavailable:
 
 @dataclass(frozen=True, slots=True)
 class PoolDetached:
-    """The runtime this source belonged to has been closed.
+    """A pool metrics sample reported after the pool's runtime closed.
 
     Terminal and self-describing: a detached source reaches no pool, takes no
     measurement, and answers this to every later sample. It carries no
@@ -112,7 +112,9 @@ class PoolDetached:
 
 
 type PoolSample = PoolAvailable | PoolUnavailable | PoolDetached
-"""Exhaustive and mutually exclusive.
+"""One pool metrics sample: available, unavailable or detached.
+
+Exhaustive and mutually exclusive.
 
 An exporter that handles all three has handled everything, and none of them is a
 degraded form of another.

@@ -17,7 +17,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class Password:
-    """One login secret, and its own source.
+    """A login password; its secret is kept out of every repr.
 
     A constant credential needs no wrapper to be a :class:`CredentialSource`: it
     resolves to itself, so an application writes ``credentials=Password(...)``
@@ -61,7 +61,7 @@ class CredentialSource(Protocol):
 
 
 class DriverManaged:
-    """Parallax supplies no secret; the driver and the server settle it themselves.
+    """Credential type for logins the database driver handles without a Parallax secret.
 
     Peer or trust authentication, a client certificate, Kerberos, or the driver's
     own environment (``PGPASSWORD``, ``.pgpass``, a ``service`` file) — each
@@ -85,7 +85,7 @@ class DriverManaged:
 
 
 DRIVER_MANAGED: Final[DriverManaged] = DriverManaged()
-"""The one :class:`DriverManaged` declaration, recognized by identity."""
+"""Credential setting that leaves login entirely to the database driver."""
 
 
 class CredentialResolutionError(ParallaxError):

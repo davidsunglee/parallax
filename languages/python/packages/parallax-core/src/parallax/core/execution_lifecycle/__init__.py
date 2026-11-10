@@ -1,3 +1,5 @@
+"""The lifecycle events an `ExecutionLifecycleHandler` receives."""
+
 from __future__ import annotations
 
 from parallax.core.execution_lifecycle._diagnostics import (

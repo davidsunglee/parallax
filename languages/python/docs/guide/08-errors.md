@@ -740,6 +740,9 @@ isn't caught: the client asked for something reasonable, so it reaches
 | A `DatabaseError` whose `category` is `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool; try later when it `is_transient` |
 | `DatabaseStartupError` | by `connect` | No | Check the route its `route` and `phase` name, and its cause |
+| `CredentialResolutionError` | as the cause of a `ConnectionAcquisitionError` or `DatabaseStartupError` | No | Check the credential source and the secret it reads; the message never carries the secret |
+| `UnsupportedSchemaEvolutionError` | by `schema_delta`, before any statement is produced | No | Write a migration by hand for each change its `operations` lists |
+| A `UsageError` whose `code` is `"lifecycle-provider-failed"` or `"lifecycle-reentered"` | before the operation does any work | No | Fix the Provider whose `open` failed (its `__cause__`), or stop the Handler calling back into the Handle it observes |
 | `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |
 
 ## How it works →

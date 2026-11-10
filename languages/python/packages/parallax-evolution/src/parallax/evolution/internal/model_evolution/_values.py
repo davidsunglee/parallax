@@ -152,7 +152,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class Absent:
-    """The explicit fresh-provisioning earlier endpoint.
+    """The type of `ABSENT`, the empty earlier model for fresh provisioning.
 
     Absence is authored, never inferred from an empty accepted model or from
     inspecting a physical schema.
@@ -160,6 +160,7 @@ class Absent:
 
 
 ABSENT: Final[Absent] = Absent()
+"""Pass as `evolve`'s earlier model to provision a database from nothing."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,8 +219,11 @@ class StorageChanged:
 
 @dataclass(frozen=True, slots=True)
 class PrimaryKeyChanged:
-    """The complete primary-key value of a surviving Attribute, so membership
-    and generation cannot form an invalid combination."""
+    """A surviving Attribute's primary-key membership or key generation changed.
+
+    The complete primary-key value of a surviving Attribute, so membership
+    and generation cannot form an invalid combination.
+    """
 
     earlier: AttributePrimaryKey
     later: AttributePrimaryKey
@@ -268,7 +272,9 @@ class MultiplicityChanged:
 
 @dataclass(frozen=True, slots=True)
 class DeclarationFormChanged:
-    """The complete earlier and later Relationship declaration.
+    """A surviving Relationship's declaration form changed.
+
+    The complete earlier and later Relationship declaration.
 
     Exclusive: no other Relationship delta accompanies it, because the two forms
     do not expose the same fields.
@@ -622,6 +628,7 @@ type EvolutionOperation = (
     | IndexAltered
     | DeclarationOrderChanged
 )
+"""Any operation an evolution reports."""
 
 
 def _model_location(operation: EvolutionOperation) -> ModelLocation:
@@ -692,8 +699,11 @@ def canonical_operation_key(operation: EvolutionOperation) -> tuple[int, ModelLo
 
 @dataclass(frozen=True, slots=True)
 class UniqueTuple:
-    """One secondary uniqueness rule as an unordered Attribute set, rendered in
-    canonical identity order so equivalent authored Indices collapse."""
+    """One secondary uniqueness rule, as an unordered set of Attributes.
+
+    One secondary uniqueness rule as an unordered Attribute set, rendered in
+    canonical identity order so equivalent authored Indices collapse.
+    """
 
     attributes: tuple[AttributeIdentity, ...]
 
@@ -862,8 +872,11 @@ type WriteCapabilityFacts = EntityWriteCapability | AttributeWriteCapability
 
 @dataclass(frozen=True, slots=True)
 class UniquenessEnforcementChanged:
-    """One surviving Entity whose semantic set of secondary uniqueness rules
-    differs. Derived primary-key uniqueness is excluded."""
+    """The secondary uniqueness rules a surviving Entity enforces changed.
+
+    One surviving Entity whose semantic set of secondary uniqueness rules
+    differs. Derived primary-key uniqueness is excluded.
+    """
 
     scope: EntityIdentity
     earlier: tuple[UniqueTuple, ...]
@@ -893,8 +906,7 @@ class DeletePropagationChanged:
 
 @dataclass(frozen=True, slots=True)
 class ConcurrencyControlChanged:
-    """One surviving Entity whose behavior under the ``optimistic`` Concurrency
-    Preference differs."""
+    """How optimistic concurrency guards a surviving Entity's writes changed."""
 
     scope: EntityIdentity
     earlier: ConcurrencyControl
@@ -941,6 +953,7 @@ type BehavioralImpact = (
     | QueryResultOrderingChanged
     | WriteCapabilityChanged
 )
+"""Any behavioral impact an evolution reports."""
 
 BEHAVIORAL_IMPACT_ORDER: Final[tuple[type, ...]] = (
     UniquenessEnforcementChanged,
@@ -954,7 +967,7 @@ BEHAVIORAL_IMPACT_ORDER: Final[tuple[type, ...]] = (
 
 
 class CoordinationReason(enum.Enum):
-    """Why unilateral application of one operation is unavailable."""
+    """Why an operation cannot be applied without coordination."""
 
     AUTHORING_SURFACE_CHANGE_REQUIRED = "AuthoringSurfaceChangeRequired"
     DATABASE_MIGRATION_REQUIRED = "DatabaseMigrationRequired"
@@ -968,7 +981,7 @@ COORDINATION_REASON_ORDER: Final[tuple[CoordinationReason, ...]] = (
 
 @dataclass(frozen=True, slots=True)
 class CoordinationRequirement:
-    """One coordinated operation and its nonempty fixed-order reason set."""
+    """An operation that needs coordination, with its reasons."""
 
     operation: EvolutionOperation
     reasons: tuple[CoordinationReason, ...]
@@ -976,7 +989,9 @@ class CoordinationRequirement:
 
 @dataclass(frozen=True, slots=True)
 class UnilateralEvolution:
-    """A complete difference a live tenant may apply through the schema path.
+    """A model change a live database can apply directly with `schema_delta`.
+
+    A complete difference a live tenant may apply through the schema path.
 
     ``earlier`` is ``None`` only for the fresh-provisioning evolution from
     :data:`ABSENT`.
@@ -991,8 +1006,11 @@ class UnilateralEvolution:
 
 @dataclass(frozen=True, slots=True)
 class CoordinatedEvolution:
-    """A complete difference whose application needs authoring, data, or rollout
-    coordination. ``coordination_requirements`` is nonempty."""
+    """A model change that needs code, data or rollout coordination before it is applied.
+
+    A complete difference whose application needs authoring, data, or rollout
+    coordination. ``coordination_requirements`` is nonempty.
+    """
 
     earlier: Metamodel
     later: Metamodel
@@ -1002,3 +1020,4 @@ class CoordinatedEvolution:
 
 
 type Evolution = UnilateralEvolution | CoordinatedEvolution
+"""The result of `evolve`: a `UnilateralEvolution` or a `CoordinatedEvolution`."""

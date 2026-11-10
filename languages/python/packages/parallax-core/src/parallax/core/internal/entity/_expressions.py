@@ -431,7 +431,7 @@ class AttributeAssignment[E]:
 
 @dataclass(frozen=True, slots=True)
 class SortKey[E]:
-    """One ordering term over the Entity position ``E``.
+    """One ordering term in a query's sort.
 
     Wraps the canonical ``OrderKey`` rather than being one, so a sort key carries
     the position it was built from while the node it holds stays serializable and
@@ -464,8 +464,7 @@ class SortKey[E]:
 
 @dataclass(frozen=True, slots=True)
 class AllPredicate[E]:
-    """The explicitly unfiltered query over the Entity position ``E``
-    (``Entity.all``).
+    """A predicate that matches every row of an Entity, written `Entity.all`.
 
     A distinct type rather than a :class:`Predicate`, and deliberately without
     boolean operators: ``all`` is the whole filter or it is not the filter at
@@ -493,8 +492,7 @@ class AllPredicate[E]:
 
 @dataclass(frozen=True, slots=True)
 class Predicate[E]:
-    """A built Predicate over the Entity position ``E``; composes with
-    ``&`` / ``|`` / ``~``.
+    """A filter over an Entity; combine predicates with `&`, `|` and `~`.
 
     ``authored`` is the one authored tree the predicate is: no model is reached
     while it is composed, and each operation that consumes it resolves it against
@@ -1229,7 +1227,9 @@ def authored_include_path(path: IncludePath[Any, Any]) -> AuthoredIncludePath:
 
 
 class IncludePath[E, R]:
-    """An Include traversal (``Order.items``, ``Owner.pets.narrow(Dog)``): the
+    """A relationship path to load with `.include(...)`, such as `Order.items`.
+
+    An Include traversal (``Order.items``, ``Owner.pets.narrow(Dog)``): the
     seed of ``.include(...)`` and of a node's narrowed-view inspection.
 
     ``E`` is the Entity the seeding class access went through — where the path

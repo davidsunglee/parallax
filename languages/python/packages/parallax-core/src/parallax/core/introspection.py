@@ -1,3 +1,5 @@
+"""Read-only metadata returned by `DomainModel.entity` and `DomainModel.entities`."""
+
 from __future__ import annotations
 
 from parallax.core.internal.entity import EntityMetadata, EntityProfile

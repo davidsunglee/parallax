@@ -124,7 +124,9 @@ def _target_key(target: AddressedTarget) -> dict[str, object]:
 
 
 class WritePreconditionError(ConflictError):
-    """A target write's caller-stated starting condition does not hold: the
+    """A target write's expected starting state no longer holds.
+
+    A target write's caller-stated starting condition does not hold: the
     state it addresses is gone, or a revision other than ``expected`` replaced
     it.
 

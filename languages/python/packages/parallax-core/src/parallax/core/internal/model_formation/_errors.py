@@ -112,7 +112,9 @@ as its own rather than being restated as that block's."""
 
 
 class MetamodelValidationError(UsageError):
-    """The supplied model is invalid, reported as every issue that makes it so.
+    """A model is invalid; `issues` lists every problem.
+
+    The supplied model is invalid, reported as every issue that makes it so.
 
     ``issues`` is nonempty and canonically ordered, so two runs over the same
     model produce the same report regardless of frontend, rule, profile, or

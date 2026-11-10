@@ -1,3 +1,5 @@
+"""Compare two Domain Models and produce the schema change between them."""
+
 from __future__ import annotations
 
 from parallax.evolution._domain_models import evolve

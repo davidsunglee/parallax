@@ -17,6 +17,7 @@ __all__ = [
 Category = Literal[
     "uniqueViolation", "constraintViolation", "deadlock", "lockWaitTimeout", "connectionDead"
 ]
+"""Which kind of database failure a `DatabaseError` reports."""
 
 UNIQUE_VIOLATION: Final[Category] = "uniqueViolation"
 CONSTRAINT_VIOLATION: Final[Category] = "constraintViolation"
@@ -62,7 +63,7 @@ def as_category(value: str | None) -> Category | None:
 
 
 class DatabaseError(ParallaxError):
-    """A neutral Parallax database error raised at the `m-db-port` boundary.
+    """The database refused a statement; `category` says what kind of failure it was.
 
     Carries the neutral :data:`Category` (``None`` when the native code did not
     classify), the preserved native code (Postgres SQLSTATE), the driver

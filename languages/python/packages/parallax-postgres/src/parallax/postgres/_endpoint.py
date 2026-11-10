@@ -104,8 +104,7 @@ def _retention(pool: object) -> RetentionOptions:
 
 @dataclass(frozen=True, slots=True)
 class PostgresEndpoint:
-    """Where one route's connections go, how its login authenticates, and how
-    its connections are retained.
+    """Where one route connects, how it logs in, and how it keeps connections.
 
     ``connection_string`` is libpq's own grammar — keyword/value pairs, a
     ``postgresql://`` URI, a ``service=`` reference, or the empty string, which

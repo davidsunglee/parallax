@@ -38,8 +38,7 @@ _BUILT_IN_RETRY: Final = RetryPolicy()
 
 @dataclass(frozen=True, slots=True)
 class TxnOptions:
-    """The three transaction options a Database Root configures as defaults, and
-    the resolved record every outer invocation runs under.
+    """Transaction options: a database's defaults, and the options each transaction runs under.
 
     ``retry`` is the one Retry Policy an invocation's attempts run under.
     ``concurrency`` is the Concurrency Preference each Entity's Effective

@@ -109,7 +109,9 @@ declare (the arity-accessor house pattern; use the ``*_or_none`` form)."""
 
 @dataclass(frozen=True, slots=True)
 class Pin:
-    """A temporal read's as-of coordinates — one entry per **genuinely pinned** axis.
+    """Where a temporal read stood: its as-of instant on each pinned axis.
+
+    A temporal read's as-of coordinates — one entry per **genuinely pinned** axis.
 
     A scanned axis (``history`` / ``as_of_range``) is **absent** (``None``), per the
     core rule that a scan is not a pin. A pinned axis carries either the finite pin
@@ -122,7 +124,9 @@ class Pin:
 
 
 class Edge:
-    """A temporal milestone's **edge** — the finite from-instant on every declared axis.
+    """Where a temporal node starts: its from-instant on each axis.
+
+    A temporal milestone's **edge** — the finite from-instant on every declared axis.
 
     Unlike a :class:`Pin`, an ``Edge`` answers *every declared axis* and is always
     finite (never :data:`LATEST`, never absent-because-scanned): a milestone's

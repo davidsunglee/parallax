@@ -133,7 +133,7 @@ class _CompositeObservation:
 
 
 class FanoutLifecycleProvider:
-    """Several Providers behind the one ``lifecycle_provider`` seam.
+    """A Provider that forwards lifecycle events to several Providers.
 
     Children open in declaration order and the fan-out declines a root only when
     every child declined it, so one Provider sampling its roots does not silence

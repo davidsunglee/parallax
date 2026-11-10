@@ -79,6 +79,7 @@ class Latest:
 
 
 LATEST: Final[Latest] = Latest()
+"""Read the current state on a temporal axis rather than as of a fixed instant."""
 
 
 class TemporalDimensionConstant:
@@ -120,17 +121,23 @@ class TemporalDimensionConstant:
 
 
 VALID_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("valid-time")
-"""The Valid Time dimension constant: the sole developer-surface spelling of the
+"""The Valid Time dimension, for temporal query arguments.
+
+The Valid Time dimension constant: the sole developer-surface spelling of the
 ``valid-time`` dimension wherever a query takes a dimension argument
 (``.history(VALID_TIME)``). A frozen module-level singleton — the query surface
-accepts exactly this instance, by identity, never an equal copy or a string."""
+accepts exactly this instance, by identity, never an equal copy or a string.
+"""
 
 TX_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("transaction-time")
-"""The Transaction Time dimension constant: the sole developer-surface spelling
+"""The Transaction Time dimension, for temporal query arguments.
+
+The Transaction Time dimension constant: the sole developer-surface spelling
 of the ``transaction-time`` dimension wherever a query takes a dimension
 argument (``.history(TX_TIME)``). A frozen module-level singleton — the query
 surface accepts exactly this instance, by identity, never an equal copy or a
-string."""
+string.
+"""
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,3 +1,5 @@
+"""RDS IAM endpoints for Postgres; requires the `parallax-aws[postgres]` extra."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

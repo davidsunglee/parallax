@@ -363,8 +363,7 @@ INFINITY_LITERAL: Final[str] = "infinity"
 
 
 class TemporalBound(enum.Enum):
-    """The open upper bound of a temporal interval — the database's native
-    infinity (m-core), distinct from every finite instant and from ``None``."""
+    """The open upper bound of a temporal interval, distinct from every instant and from `None`."""
 
     INFINITY = "infinity"
 

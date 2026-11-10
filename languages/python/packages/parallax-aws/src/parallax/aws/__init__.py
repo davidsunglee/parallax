@@ -1,3 +1,5 @@
+"""AWS credentials for Parallax database connections."""
+
 from __future__ import annotations
 
 from parallax.aws._rds import RdsIamCredentials

@@ -92,14 +92,14 @@ class PersistenceMode(enum.Enum):
 
 
 class Multiplicity(enum.Enum):
-    """The shared one/many algebra used by relationship sides and Value Objects."""
+    """One or many: the multiplicity of a relationship side or Value Object."""
 
     ONE = enum.auto()
     MANY = enum.auto()
 
 
 class SortDirection(enum.Enum):
-    """The ordering direction shared by relationship order and Object Query Sort Keys."""
+    """Ascending or descending, for relationship ordering and query sorts."""
 
     ASCENDING = enum.auto()
     DESCENDING = enum.auto()
@@ -118,7 +118,7 @@ class NullPlacement(enum.Enum):
 
 
 class TemporalDimension(enum.Enum):
-    """The closed temporal axis vocabulary.
+    """The temporal axes: Valid Time and Transaction Time.
 
     Member values are the canonical axis rank — Valid Time precedes Transaction
     Time wherever axes are ordered, including canonical issue ordering.
@@ -152,7 +152,10 @@ class Cardinality(enum.Enum):
 
 @dataclass(frozen=True, slots=True)
 class Table:
-    """An Entity's physical table; an empty name raises :class:`ValueError`."""
+    """An Entity's physical table.
+
+    An empty name raises :class:`ValueError`.
+    """
 
     name: str
 
@@ -168,8 +171,10 @@ variant is not constructible in this contract."""
 
 @dataclass(frozen=True, slots=True)
 class Column:
-    """A mapped top-level member's physical column; an empty name raises
-    :class:`ValueError`."""
+    """A member's physical column.
+
+    An empty name raises :class:`ValueError`.
+    """
 
     name: str
 
@@ -189,8 +194,11 @@ carries one here under any layout."""
 
 @dataclass(frozen=True, slots=True)
 class Columns:
-    """Conventional layout: each mapped Attribute owns its own Column and each
-    top-level Value Object occurrence its own Structured Column."""
+    """Storage layout that gives each attribute its own column; the default.
+
+    Conventional layout: each mapped Attribute owns its own Column and each
+    top-level Value Object occurrence its own Structured Column.
+    """
 
 
 DEFAULT_STRUCTURED_COLUMN: Final = "payload"
@@ -200,7 +208,9 @@ names none."""
 
 @dataclass(frozen=True, slots=True)
 class Document:
-    """Relational Document Layout: one shared Structured Column, named
+    """Storage layout that keeps document members in one shared JSON column.
+
+    Relational Document Layout: one shared Structured Column, named
     ``column``, carries every document-resident member of the governed rows.
 
     One class serves authoring and reading back, so ``layout=Document`` and
@@ -221,7 +231,7 @@ declaration is a family-invariant rejection rather than an override. Declaring
 
 @dataclass(frozen=True, slots=True)
 class ApplicationAssigned:
-    """The application supplies the key value."""
+    """Key generation where the application supplies each primary-key value."""
 
 
 # The shared instance of the nullary variant above. Variants are frozen value
@@ -237,11 +247,12 @@ class Max:
 
 # The shared :class:`Max` instance, on the same value-object terms.
 MAX: Final[Max] = Max()
+"""Key generation that allocates from the largest stored key."""
 
 
 @dataclass(frozen=True, slots=True)
 class Sequence:
-    """The framework allocates from a named database sequence in batches.
+    """Key generation that allocates from a named database sequence in batches.
 
     Every parameter is complete at this seam: descriptor omissions are replaced
     by their semantic defaults before acceptance. An empty name, or a
@@ -290,7 +301,7 @@ so a non-key Attribute cannot carry a meaningless generation value."""
 
 @dataclass(frozen=True, slots=True)
 class TablePerHierarchy:
-    """One shared family table discriminated by a framework-owned tag column.
+    """Inheritance strategy that stores a whole family in one table with a tag column.
 
     The tag column is a plain physical name rather than a Storage Location: it
     holds no mapped model member, so nothing addresses it by member identity.
@@ -312,6 +323,7 @@ class TablePerConcreteSubtype:
 # The shared :class:`TablePerConcreteSubtype` instance, on the same
 # value-object terms.
 TABLE_PER_CONCRETE_SUBTYPE: Final[TablePerConcreteSubtype] = TablePerConcreteSubtype()
+"""Inheritance strategy that gives each concrete subtype its own table."""
 
 type InheritanceStrategy = TablePerHierarchy | TablePerConcreteSubtype
 """The root-owned physical mapping strategy for an inheritance family."""
@@ -319,7 +331,10 @@ type InheritanceStrategy = TablePerHierarchy | TablePerConcreteSubtype
 
 @dataclass(frozen=True, slots=True)
 class AbstractRoot:
-    """The rowless root of a closed family; it alone declares the strategy."""
+    """Inheritance role for the abstract root of an Entity family.
+
+    The rowless root of a closed family; it alone declares the strategy.
+    """
 
     strategy: InheritanceStrategy
 
@@ -379,7 +394,7 @@ def inheritance_parent[Parent](inheritance: Inheritance[Parent] | None) -> Paren
 
 @dataclass(frozen=True, slots=True)
 class AttributeMetadata:
-    """One self-identifying scalar Attribute.
+    """Resolved metadata for one scalar Attribute.
 
     Reference-free, so a frontend supplies it unchanged at the Unresolved seam
     and accepted Metadata reuses it. It duplicates neither its own name nor its

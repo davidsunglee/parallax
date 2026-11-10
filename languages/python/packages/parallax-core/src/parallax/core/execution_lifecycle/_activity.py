@@ -105,7 +105,7 @@ type _ReadPurpose = ResultRepresentation | Literal["row-acquisition"]
 
 @runtime_checkable
 class ExecutionLifecycleHandler(Protocol):
-    """One accepted Root Execution's Handler.
+    """Receives the lifecycle events of one root execution.
 
     Invoked synchronously and serially for its one root, so per-root counters
     and correlation state belong here while shared, concurrency-safe exporters
@@ -150,7 +150,7 @@ class CompletingHandler:
 
 @runtime_checkable
 class ExecutionLifecycleProvider(Protocol):
-    """The composition root's one lifecycle seam.
+    """Opens a Handler for each root execution, so an application can observe Parallax's work.
 
     ``open`` may run concurrently for different roots, and each accepted root
     gets a distinct Handler. The Provider owns the error reporter as well, which
