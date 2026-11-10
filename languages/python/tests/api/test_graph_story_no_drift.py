@@ -800,7 +800,7 @@ class _RecordingDatabase(ScopedDatabase):
         clock: Clock | None = None,
         group_finds: bool = False,
     ) -> None:
-        root = Database(port.open(), model, clock=clock)
+        root = own_root(Database(port.open(), model, clock=clock))
         scoped = cast("Any", root.using_database_login())
         object.__setattr__(self, "_execution", scoped._execution)
         object.__setattr__(self, "_root", root)

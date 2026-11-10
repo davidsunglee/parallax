@@ -138,8 +138,9 @@ def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) 
 
 
 def test_the_joined_usage_guide_story_runs_against_a_real_database(profile_run: Any) -> None:
+    port = _seeded(profile_run)
     shape = execution_lifecycle_stories.a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-        _seeded(profile_run), MODELS["account"]
+        port, MODELS["account"]
     )
     # One outermost operation is one root, however many joined calls it makes,
     # and a joined call runs no attempt of its own.
@@ -147,3 +148,6 @@ def test_the_joined_usage_guide_story_runs_against_a_real_database(profile_run: 
     assert shape.attempts == 1
     assert shape.joined_parent_is_the_attempt
     assert shape.balance == Decimal("251.00")
+    # The joined body's write committed with the outer boundary.
+    stored = own_root(connect(port, MODELS["account"])).using_database_login()
+    assert stored.find(Account.where(Account.id == 2)).result().balance == Decimal("251.00")

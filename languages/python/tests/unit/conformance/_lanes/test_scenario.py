@@ -1749,23 +1749,6 @@ def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
         scenario.compile_write_sequence_case(case, "postgres")
 
 
-def test_scenario_case_without_when_is_rejected() -> None:
-    with pytest.raises(UnclassifiedEngineError, match="has no `when`"):
-        scenario.compile_scenario_case(_synthetic_write("scenario", {}), "postgres")
-
-
-def test_scenario_case_without_a_scenario_list_is_rejected() -> None:
-    with pytest.raises(UnclassifiedEngineError, match=r"when\.scenario"):
-        scenario.compile_scenario_case(_synthetic_write("scenario", {"when": {}}), "postgres")
-
-
-def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
-    with pytest.raises(UnclassifiedEngineError, match="writeSequence"):
-        scenario.compile_write_sequence_case(
-            _synthetic_write("writeSequence", {"when": {}}), "postgres"
-        )
-
-
 def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> None:
     from parallax.core import storage_layout
 

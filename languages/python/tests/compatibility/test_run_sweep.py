@@ -1196,11 +1196,12 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     """Run each `conflict`-shape case against a reset real database.
 
     The single-attempt form (`m-concurrency-005/006/013`) grades the golden write's
-    emissions and `then.affectedRows` — the count the write's own target expects,
-    or the count a refused write reached instead. The `when.attempts` replay form
-    (`m-concurrency-009`) grades each attempt's own statements flattened in order
-    (proving the `0`-then-`1` transition through each attempt's own distinct gate
-    bind) and the FINAL affected-row count. A case authoring `then.databaseCalls`
+    emissions, each at `/when/write`, and `then.affectedRows` — the count the
+    write's own target expects, or the count a refused write reached instead. The
+    `when.attempts` replay form (`m-concurrency-009`) grades each attempt's own
+    statements flattened in order, each at its attempt's `write` (proving the
+    `0`-then-`1` transition through each attempt's own distinct gate bind), and
+    the FINAL affected-row count. A case authoring `then.databaseCalls`
     grades the calls that reached the database across every attempt — its
     resolving reads among them — and a case authoring
     `then.executionLifecycle` grades the delivered stream those calls came from,
@@ -1221,24 +1222,27 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     emissions = envelope["emissions"]
 
     if "affectedRows" in then:
-        golden_statements = _conflict_golden_statements(then, profile.dialect.name)
-        assert len(emissions) == len(golden_statements), (case.case_id, emissions)
-        for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
-            assert emission["sql"] == golden_sql, (case.case_id, emission)
-            assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
-        assert observations["affectedRows"] == then["affectedRows"], case.case_id
+        golden_statements = [
+            ("/when/write", sql, binds)
+            for sql, binds in _conflict_golden_statements(then, profile.dialect.name)
+        ]
+        final_affected_rows = then["affectedRows"]
     else:
         attempts = cast("list[dict[str, Any]]", doc["when"]["attempts"])
         golden_statements = [
-            entry
-            for attempt in attempts
-            for entry in _conflict_golden_statements(attempt, profile.dialect.name)
+            (f"/when/attempts/{index}/write", sql, binds)
+            for index, attempt in enumerate(attempts)
+            for sql, binds in _conflict_golden_statements(attempt, profile.dialect.name)
         ]
-        assert len(emissions) == len(golden_statements), (case.case_id, emissions)
-        for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
-            assert emission["sql"] == golden_sql, (case.case_id, emission)
-            assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
-        assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
+        final_affected_rows = attempts[-1]["affectedRows"]
+    assert len(emissions) == len(golden_statements), (case.case_id, emissions)
+    for emission, (pointer, golden_sql, golden_binds) in zip(
+        emissions, golden_statements, strict=True
+    ):
+        assert emission["casePointer"] == pointer, (case.case_id, emission)
+        assert emission["sql"] == golden_sql, (case.case_id, emission)
+        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
+    assert observations["affectedRows"] == final_affected_rows, case.case_id
 
     # `then.databaseCalls` where the case authors it: the calls that actually
     # reached the database, summed across every attempt and counting each

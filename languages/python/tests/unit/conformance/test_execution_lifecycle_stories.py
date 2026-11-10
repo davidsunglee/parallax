@@ -1,78 +1,18 @@
-"""The Usage Guide's lifecycle story, over a fake port.
-
-The story is documentation that runs: its source IS the guide's snippet, and
-`tests/api/test_execution_lifecycle_story.py` executes it against real Postgres
-so what is documented is what works. This is the database-free half — the same
-call over a scripted port — because a snippet that stopped compiling, or a
-Provider that stopped being asked, should fail on the first run of the fast
-suite rather than on the Docker-backed one.
-"""
+"""The Usage Guide lifecycle story's Provider, which treats a reported Handler
+failure as its own defect."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 
 from parallax.conformance import execution_lifecycle_stories
-from parallax.conformance.class_models import MODELS
-from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.diagnostics import FailureDiagnostic
-from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandlerError,
     RootExecution,
 )
-from tests._support.db_port import ConnectsAsItself, body_outcome
-
-
-class _AccountPort(ConnectsAsItself):
-    """The one seeded row the story bumps, and a driver that accepts the write."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self) -> None:
-        self.writes: list[str] = []
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[Bind],
-        document_reads: Sequence[object] = (),
-        *,
-        read_only: bool = False,
-    ) -> list[Row]:
-        return [(2, "Linus", Decimal("250.00"), 1)]
-
-    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
-        self.writes.append(sql)
-        return 1
-
-    def transaction[T](
-        self,
-        body: Callable[[DatabaseConnection], T],
-        *,
-        isolation: str | None = None,
-        access_mode: str | None = None,
-    ) -> TransactionOutcome[T]:
-        return body_outcome(self, body)
-
-
-def test_the_documented_joined_story_observes_one_root_and_one_attempt() -> None:
-    port = _AccountPort()
-    shape = execution_lifecycle_stories.a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-        port, MODELS["account"]
-    )
-    # One outermost operation is one Root Execution however many joined calls it
-    # makes, and a joined call creates no Transaction Attempt of its own.
-    assert shape.roots == 1
-    assert shape.attempts == 1
-    assert shape.joined_parent_is_the_attempt
-    assert shape.balance == Decimal("251.00")
-    # The joined body's write reached the database under the OUTER boundary.
-    assert len(port.writes) == 1
 
 
 def test_the_storys_provider_refuses_to_swallow_a_handler_failure() -> None:
