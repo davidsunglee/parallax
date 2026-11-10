@@ -30,6 +30,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       postgres: ${{ steps.matrix.outputs.postgres }}
       source: ${{ steps.matrix.outputs.source }}
+      companions: ${{ steps.companions.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,6 +51,7 @@ jobs:
       - name: Build shared companion wheels
         run: python languages/python/tools/wheel_build.py --prepare-companions languages/python/reports/wheel-companions
       - uses: actions/upload-artifact@v7
+        id: companions
         if: always()
         with:
           name: wheel-companions-${{ github.run_attempt }}
@@ -78,9 +80,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v7
+      # By id: a lookup by name can miss an artifact finalized moments earlier.
       - uses: actions/download-artifact@v8
         with:
-          name: wheel-companions-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.prepare.outputs.companions }}
+          merge-multiple: true
           path: languages/python/reports/wheel-companions
       - name: Build repaired wheel and validate both drivers
         env:
